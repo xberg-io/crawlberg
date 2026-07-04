@@ -153,10 +153,12 @@ async fn non_streaming_crawl_respects_max_pages() {
 async fn streaming_crawl_with_depth_limit() {
     let (_mock, url) = setup_mock_chain(5).await;
 
-    let engine = engine_with_config(CrawlConfig::builder()
+    let engine = engine_with_config(
+        CrawlConfig::builder()
             .allow_private_networks(true)
             .max_depth(1) // Only crawl seed + 1 level
-            .build());
+            .build(),
+    );
     let stream_result = crawl_stream(&engine, &url).await;
     assert!(stream_result.is_ok(), "crawl_stream must not fail");
 

@@ -300,6 +300,7 @@ e2e/ruby/.bundle/
 !.github/skills/mcp/SKILL.md
 
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
+.ai-rulez/.generated-manifest.json
 .cursor/
 .github/agents/
 .github/commands/

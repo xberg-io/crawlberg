@@ -16,20 +16,16 @@
       "default": "./index.js"
     }
   },
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "*.node"
-  ],
+  "files": ["index.js", "index.d.ts", "*.node"],
   "optionalDependencies": {
-    "@xberg-io/crawlberg-darwin-arm64": "1.0.2",
-    "@xberg-io/crawlberg-darwin-x64": "1.0.2",
-    "@xberg-io/crawlberg-linux-arm64-gnu": "1.0.2",
-    "@xberg-io/crawlberg-linux-arm64-musl": "1.0.2",
     "@xberg-io/crawlberg-linux-x64-gnu": "1.0.2",
+    "@xberg-io/crawlberg-linux-arm64-gnu": "1.0.2",
     "@xberg-io/crawlberg-linux-x64-musl": "1.0.2",
-    "@xberg-io/crawlberg-win32-arm64-msvc": "1.0.2",
-    "@xberg-io/crawlberg-win32-x64-msvc": "1.0.2"
+    "@xberg-io/crawlberg-linux-arm64-musl": "1.0.2",
+    "@xberg-io/crawlberg-darwin-x64": "1.0.2",
+    "@xberg-io/crawlberg-darwin-arm64": "1.0.2",
+    "@xberg-io/crawlberg-win32-x64-msvc": "1.0.2",
+    "@xberg-io/crawlberg-win32-arm64-msvc": "1.0.2"
   },
   "napi": {
     "packageName": "@xberg-io/crawlberg",
@@ -50,13 +46,7 @@
     "artifacts": "npx --yes -p @napi-rs/cli@^3.6.2 napi artifacts",
     "prepublishOnly": "npx --yes -p @napi-rs/cli@^3.6.2 napi prepublish -t npm --skip-optional-publish"
   },
-  "engines": {
-    "node": ">= 22"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "devDependencies": {
-    "@napi-rs/cli": "^3.7.2"
-  }
+  "engines": { "node": ">= 22" },
+  "publishConfig": { "access": "public" },
+  "devDependencies": { "@napi-rs/cli": "^3.6.2" }
 }

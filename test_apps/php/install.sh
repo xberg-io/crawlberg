@@ -61,7 +61,7 @@ else
   else
     # Guard against duplicate: check if extension line already exists (uncommented).
     if ! grep -q "^extension=crawlberg" "$PHP_INI"; then
-      echo "extension=crawlberg" >>"$PHP_INI"
+      echo "extension=crawlberg" >> "$PHP_INI"
     fi
   fi
 fi

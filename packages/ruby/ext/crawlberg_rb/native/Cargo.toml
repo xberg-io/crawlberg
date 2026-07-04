@@ -17,10 +17,7 @@ path = "../src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-crawlberg = { version = "1.0.2", path = "../../../../../crates/crawlberg", features = [
-    "interact",
-    "browser-chromiumoxide",
-] }
+crawlberg = { version = "1.0.2", path = "../../../../../crates/crawlberg", features = ["interact", "browser-chromiumoxide"] }
 futures = "0.3"
 magnus = "0.8"
 rb-sys = ">=0.9, <0.9.128"
