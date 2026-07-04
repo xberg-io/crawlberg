@@ -33,9 +33,9 @@
     <dependency>
       <groupId>io.xberg.crawlberg</groupId>
       <artifactId>crawlberg</artifactId>
-      <version>1.0.2</version>
+      <version>1.0.3</version>
       <scope>system</scope>
-      <systemPath>${project.basedir}/../../packages/java/target/crawlberg-1.0.2.jar</systemPath>
+      <systemPath>${project.basedir}/../../packages/java/target/crawlberg-1.0.3.jar</systemPath>
     </dependency>
 
     <dependency>

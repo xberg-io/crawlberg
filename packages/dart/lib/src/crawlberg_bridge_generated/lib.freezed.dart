@@ -59,9 +59,9 @@ extension AuthConfigPatterns on AuthConfig {
     final _that = this;
     switch (_that) {
       case AuthConfig_Basic() when basic != null:
-        return basic(_that);case AuthConfig_Bearer() when bearer != null:
-        return bearer(_that);case AuthConfig_Header() when header != null:
-        return header(_that);case _:
+      return basic(_that);case AuthConfig_Bearer() when bearer != null:
+      return bearer(_that);case AuthConfig_Header() when header != null:
+      return header(_that);case _:
       return orElse();
 
     }
@@ -83,9 +83,9 @@ extension AuthConfigPatterns on AuthConfig {
     final _that = this;
     switch (_that) {
       case AuthConfig_Basic():
-        return basic(_that);case AuthConfig_Bearer():
-        return bearer(_that);case AuthConfig_Header():
-        return header(_that);}
+      return basic(_that);case AuthConfig_Bearer():
+      return bearer(_that);case AuthConfig_Header():
+      return header(_that);}
   }
   /// A variant of `map` that fallback to returning `null`.
   ///
@@ -103,9 +103,9 @@ extension AuthConfigPatterns on AuthConfig {
     final _that = this;
     switch (_that) {
       case AuthConfig_Basic() when basic != null:
-        return basic(_that);case AuthConfig_Bearer() when bearer != null:
-        return bearer(_that);case AuthConfig_Header() when header != null:
-        return header(_that);case _:
+      return basic(_that);case AuthConfig_Bearer() when bearer != null:
+      return bearer(_that);case AuthConfig_Header() when header != null:
+      return header(_that);case _:
       return null;
 
     }
@@ -125,9 +125,9 @@ extension AuthConfigPatterns on AuthConfig {
   @optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String username,  String password)?  basic,TResult Function( String token)?  bearer,TResult Function( String name,  String value)?  header,required TResult orElse(),}) {final _that = this;
     switch (_that) {
       case AuthConfig_Basic() when basic != null:
-        return basic(_that.username,_that.password);case AuthConfig_Bearer() when bearer != null:
-        return bearer(_that.token);case AuthConfig_Header() when header != null:
-        return header(_that.name,_that.value);case _:
+      return basic(_that.username,_that.password);case AuthConfig_Bearer() when bearer != null:
+      return bearer(_that.token);case AuthConfig_Header() when header != null:
+      return header(_that.name,_that.value);case _:
       return orElse();
 
     }
@@ -148,9 +148,9 @@ extension AuthConfigPatterns on AuthConfig {
   @optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String username,  String password)  basic,required TResult Function( String token)  bearer,required TResult Function( String name,  String value)  header,}) {final _that = this;
     switch (_that) {
       case AuthConfig_Basic():
-        return basic(_that.username,_that.password);case AuthConfig_Bearer():
-        return bearer(_that.token);case AuthConfig_Header():
-        return header(_that.name,_that.value);}
+      return basic(_that.username,_that.password);case AuthConfig_Bearer():
+      return bearer(_that.token);case AuthConfig_Header():
+      return header(_that.name,_that.value);}
   }
   /// A variant of `when` that fallback to returning `null`
   ///
@@ -167,9 +167,9 @@ extension AuthConfigPatterns on AuthConfig {
   @optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String username,  String password)?  basic,TResult? Function( String token)?  bearer,TResult? Function( String name,  String value)?  header,}) {final _that = this;
     switch (_that) {
       case AuthConfig_Basic() when basic != null:
-        return basic(_that.username,_that.password);case AuthConfig_Bearer() when bearer != null:
-        return bearer(_that.token);case AuthConfig_Header() when header != null:
-        return header(_that.name,_that.value);case _:
+      return basic(_that.username,_that.password);case AuthConfig_Bearer() when bearer != null:
+      return bearer(_that.token);case AuthConfig_Header() when header != null:
+      return header(_that.name,_that.value);case _:
       return null;
 
     }
@@ -432,25 +432,25 @@ extension CrawlErrorPatterns on CrawlError {
     final _that = this;
     switch (_that) {
       case CrawlError_NotFound() when notFound != null:
-        return notFound(_that);case CrawlError_Unauthorized() when unauthorized != null:
-        return unauthorized(_that);case CrawlError_Forbidden() when forbidden != null:
-        return forbidden(_that);case CrawlError_WafBlocked() when wafBlocked != null:
-        return wafBlocked(_that);case CrawlError_Timeout() when timeout != null:
-        return timeout(_that);case CrawlError_RateLimited() when rateLimited != null:
-        return rateLimited(_that);case CrawlError_ServerError() when serverError != null:
-        return serverError(_that);case CrawlError_BadGateway() when badGateway != null:
-        return badGateway(_that);case CrawlError_Gone() when gone != null:
-        return gone(_that);case CrawlError_Connection() when connection != null:
-        return connection(_that);case CrawlError_Dns() when dns != null:
-        return dns(_that);case CrawlError_Ssl() when ssl != null:
-        return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
-        return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
-        return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
-        return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
-        return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
-        return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
-        return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
-        return other(_that);case _:
+      return notFound(_that);case CrawlError_Unauthorized() when unauthorized != null:
+      return unauthorized(_that);case CrawlError_Forbidden() when forbidden != null:
+      return forbidden(_that);case CrawlError_WafBlocked() when wafBlocked != null:
+      return wafBlocked(_that);case CrawlError_Timeout() when timeout != null:
+      return timeout(_that);case CrawlError_RateLimited() when rateLimited != null:
+      return rateLimited(_that);case CrawlError_ServerError() when serverError != null:
+      return serverError(_that);case CrawlError_BadGateway() when badGateway != null:
+      return badGateway(_that);case CrawlError_Gone() when gone != null:
+      return gone(_that);case CrawlError_Connection() when connection != null:
+      return connection(_that);case CrawlError_Dns() when dns != null:
+      return dns(_that);case CrawlError_Ssl() when ssl != null:
+      return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
+      return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
+      return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
+      return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
+      return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
+      return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+      return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
+      return other(_that);case _:
       return orElse();
 
     }
@@ -472,25 +472,25 @@ extension CrawlErrorPatterns on CrawlError {
     final _that = this;
     switch (_that) {
       case CrawlError_NotFound():
-        return notFound(_that);case CrawlError_Unauthorized():
-        return unauthorized(_that);case CrawlError_Forbidden():
-        return forbidden(_that);case CrawlError_WafBlocked():
-        return wafBlocked(_that);case CrawlError_Timeout():
-        return timeout(_that);case CrawlError_RateLimited():
-        return rateLimited(_that);case CrawlError_ServerError():
-        return serverError(_that);case CrawlError_BadGateway():
-        return badGateway(_that);case CrawlError_Gone():
-        return gone(_that);case CrawlError_Connection():
-        return connection(_that);case CrawlError_Dns():
-        return dns(_that);case CrawlError_Ssl():
-        return ssl(_that);case CrawlError_DataLoss():
-        return dataLoss(_that);case CrawlError_BrowserError():
-        return browserError(_that);case CrawlError_BrowserTimeout():
-        return browserTimeout(_that);case CrawlError_InvalidConfig():
-        return invalidConfig(_that);case CrawlError_Unsupported():
-        return unsupported(_that);case CrawlError_SsrfPolicyViolation():
-        return ssrfPolicyViolation(_that);case CrawlError_Other():
-        return other(_that);}
+      return notFound(_that);case CrawlError_Unauthorized():
+      return unauthorized(_that);case CrawlError_Forbidden():
+      return forbidden(_that);case CrawlError_WafBlocked():
+      return wafBlocked(_that);case CrawlError_Timeout():
+      return timeout(_that);case CrawlError_RateLimited():
+      return rateLimited(_that);case CrawlError_ServerError():
+      return serverError(_that);case CrawlError_BadGateway():
+      return badGateway(_that);case CrawlError_Gone():
+      return gone(_that);case CrawlError_Connection():
+      return connection(_that);case CrawlError_Dns():
+      return dns(_that);case CrawlError_Ssl():
+      return ssl(_that);case CrawlError_DataLoss():
+      return dataLoss(_that);case CrawlError_BrowserError():
+      return browserError(_that);case CrawlError_BrowserTimeout():
+      return browserTimeout(_that);case CrawlError_InvalidConfig():
+      return invalidConfig(_that);case CrawlError_Unsupported():
+      return unsupported(_that);case CrawlError_SsrfPolicyViolation():
+      return ssrfPolicyViolation(_that);case CrawlError_Other():
+      return other(_that);}
   }
   /// A variant of `map` that fallback to returning `null`.
   ///
@@ -508,25 +508,25 @@ extension CrawlErrorPatterns on CrawlError {
     final _that = this;
     switch (_that) {
       case CrawlError_NotFound() when notFound != null:
-        return notFound(_that);case CrawlError_Unauthorized() when unauthorized != null:
-        return unauthorized(_that);case CrawlError_Forbidden() when forbidden != null:
-        return forbidden(_that);case CrawlError_WafBlocked() when wafBlocked != null:
-        return wafBlocked(_that);case CrawlError_Timeout() when timeout != null:
-        return timeout(_that);case CrawlError_RateLimited() when rateLimited != null:
-        return rateLimited(_that);case CrawlError_ServerError() when serverError != null:
-        return serverError(_that);case CrawlError_BadGateway() when badGateway != null:
-        return badGateway(_that);case CrawlError_Gone() when gone != null:
-        return gone(_that);case CrawlError_Connection() when connection != null:
-        return connection(_that);case CrawlError_Dns() when dns != null:
-        return dns(_that);case CrawlError_Ssl() when ssl != null:
-        return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
-        return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
-        return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
-        return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
-        return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
-        return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
-        return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
-        return other(_that);case _:
+      return notFound(_that);case CrawlError_Unauthorized() when unauthorized != null:
+      return unauthorized(_that);case CrawlError_Forbidden() when forbidden != null:
+      return forbidden(_that);case CrawlError_WafBlocked() when wafBlocked != null:
+      return wafBlocked(_that);case CrawlError_Timeout() when timeout != null:
+      return timeout(_that);case CrawlError_RateLimited() when rateLimited != null:
+      return rateLimited(_that);case CrawlError_ServerError() when serverError != null:
+      return serverError(_that);case CrawlError_BadGateway() when badGateway != null:
+      return badGateway(_that);case CrawlError_Gone() when gone != null:
+      return gone(_that);case CrawlError_Connection() when connection != null:
+      return connection(_that);case CrawlError_Dns() when dns != null:
+      return dns(_that);case CrawlError_Ssl() when ssl != null:
+      return ssl(_that);case CrawlError_DataLoss() when dataLoss != null:
+      return dataLoss(_that);case CrawlError_BrowserError() when browserError != null:
+      return browserError(_that);case CrawlError_BrowserTimeout() when browserTimeout != null:
+      return browserTimeout(_that);case CrawlError_InvalidConfig() when invalidConfig != null:
+      return invalidConfig(_that);case CrawlError_Unsupported() when unsupported != null:
+      return unsupported(_that);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+      return ssrfPolicyViolation(_that);case CrawlError_Other() when other != null:
+      return other(_that);case _:
       return null;
 
     }
@@ -546,25 +546,25 @@ extension CrawlErrorPatterns on CrawlError {
   @optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String field0)?  notFound,TResult Function( String field0)?  unauthorized,TResult Function( String field0)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String field0)?  timeout,TResult Function( String field0)?  rateLimited,TResult Function( String field0)?  serverError,TResult Function( String field0)?  badGateway,TResult Function( String field0)?  gone,TResult Function( String field0)?  connection,TResult Function( String field0)?  dns,TResult Function( String field0)?  ssl,TResult Function( String field0)?  dataLoss,TResult Function( String field0)?  browserError,TResult Function( String field0)?  browserTimeout,TResult Function( String field0)?  invalidConfig,TResult Function( String field0)?  unsupported,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String field0)?  other,required TResult orElse(),}) {final _that = this;
     switch (_that) {
       case CrawlError_NotFound() when notFound != null:
-        return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
-        return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
-        return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
-        return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
-        return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
-        return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
-        return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
-        return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
-        return gone(_that.field0);case CrawlError_Connection() when connection != null:
-        return connection(_that.field0);case CrawlError_Dns() when dns != null:
-        return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
-        return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
-        return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
-        return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
-        return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
-        return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
-        return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
-        return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
-        return other(_that.field0);case _:
+      return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
+      return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
+      return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
+      return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
+      return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
+      return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
+      return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
+      return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
+      return gone(_that.field0);case CrawlError_Connection() when connection != null:
+      return connection(_that.field0);case CrawlError_Dns() when dns != null:
+      return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
+      return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
+      return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
+      return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
+      return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
+      return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
+      return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+      return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
+      return other(_that.field0);case _:
       return orElse();
 
     }
@@ -585,25 +585,25 @@ extension CrawlErrorPatterns on CrawlError {
   @optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String field0)  notFound,required TResult Function( String field0)  unauthorized,required TResult Function( String field0)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String field0)  timeout,required TResult Function( String field0)  rateLimited,required TResult Function( String field0)  serverError,required TResult Function( String field0)  badGateway,required TResult Function( String field0)  gone,required TResult Function( String field0)  connection,required TResult Function( String field0)  dns,required TResult Function( String field0)  ssl,required TResult Function( String field0)  dataLoss,required TResult Function( String field0)  browserError,required TResult Function( String field0)  browserTimeout,required TResult Function( String field0)  invalidConfig,required TResult Function( String field0)  unsupported,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String field0)  other,}) {final _that = this;
     switch (_that) {
       case CrawlError_NotFound():
-        return notFound(_that.field0);case CrawlError_Unauthorized():
-        return unauthorized(_that.field0);case CrawlError_Forbidden():
-        return forbidden(_that.field0);case CrawlError_WafBlocked():
-        return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout():
-        return timeout(_that.field0);case CrawlError_RateLimited():
-        return rateLimited(_that.field0);case CrawlError_ServerError():
-        return serverError(_that.field0);case CrawlError_BadGateway():
-        return badGateway(_that.field0);case CrawlError_Gone():
-        return gone(_that.field0);case CrawlError_Connection():
-        return connection(_that.field0);case CrawlError_Dns():
-        return dns(_that.field0);case CrawlError_Ssl():
-        return ssl(_that.field0);case CrawlError_DataLoss():
-        return dataLoss(_that.field0);case CrawlError_BrowserError():
-        return browserError(_that.field0);case CrawlError_BrowserTimeout():
-        return browserTimeout(_that.field0);case CrawlError_InvalidConfig():
-        return invalidConfig(_that.field0);case CrawlError_Unsupported():
-        return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation():
-        return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other():
-        return other(_that.field0);}
+      return notFound(_that.field0);case CrawlError_Unauthorized():
+      return unauthorized(_that.field0);case CrawlError_Forbidden():
+      return forbidden(_that.field0);case CrawlError_WafBlocked():
+      return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout():
+      return timeout(_that.field0);case CrawlError_RateLimited():
+      return rateLimited(_that.field0);case CrawlError_ServerError():
+      return serverError(_that.field0);case CrawlError_BadGateway():
+      return badGateway(_that.field0);case CrawlError_Gone():
+      return gone(_that.field0);case CrawlError_Connection():
+      return connection(_that.field0);case CrawlError_Dns():
+      return dns(_that.field0);case CrawlError_Ssl():
+      return ssl(_that.field0);case CrawlError_DataLoss():
+      return dataLoss(_that.field0);case CrawlError_BrowserError():
+      return browserError(_that.field0);case CrawlError_BrowserTimeout():
+      return browserTimeout(_that.field0);case CrawlError_InvalidConfig():
+      return invalidConfig(_that.field0);case CrawlError_Unsupported():
+      return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation():
+      return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other():
+      return other(_that.field0);}
   }
   /// A variant of `when` that fallback to returning `null`
   ///
@@ -620,25 +620,25 @@ extension CrawlErrorPatterns on CrawlError {
   @optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String field0)?  notFound,TResult? Function( String field0)?  unauthorized,TResult? Function( String field0)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String field0)?  timeout,TResult? Function( String field0)?  rateLimited,TResult? Function( String field0)?  serverError,TResult? Function( String field0)?  badGateway,TResult? Function( String field0)?  gone,TResult? Function( String field0)?  connection,TResult? Function( String field0)?  dns,TResult? Function( String field0)?  ssl,TResult? Function( String field0)?  dataLoss,TResult? Function( String field0)?  browserError,TResult? Function( String field0)?  browserTimeout,TResult? Function( String field0)?  invalidConfig,TResult? Function( String field0)?  unsupported,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String field0)?  other,}) {final _that = this;
     switch (_that) {
       case CrawlError_NotFound() when notFound != null:
-        return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
-        return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
-        return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
-        return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
-        return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
-        return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
-        return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
-        return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
-        return gone(_that.field0);case CrawlError_Connection() when connection != null:
-        return connection(_that.field0);case CrawlError_Dns() when dns != null:
-        return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
-        return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
-        return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
-        return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
-        return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
-        return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
-        return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
-        return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
-        return other(_that.field0);case _:
+      return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
+      return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
+      return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
+      return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
+      return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
+      return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
+      return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
+      return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
+      return gone(_that.field0);case CrawlError_Connection() when connection != null:
+      return connection(_that.field0);case CrawlError_Dns() when dns != null:
+      return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
+      return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
+      return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
+      return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
+      return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
+      return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
+      return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+      return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
+      return other(_that.field0);case _:
       return null;
 
     }
@@ -1952,9 +1952,9 @@ extension CrawlEventPatterns on CrawlEvent {
     final _that = this;
     switch (_that) {
       case CrawlEvent_Page() when page != null:
-        return page(_that);case CrawlEvent_Error() when error != null:
-        return error(_that);case CrawlEvent_Complete() when complete != null:
-        return complete(_that);case _:
+      return page(_that);case CrawlEvent_Error() when error != null:
+      return error(_that);case CrawlEvent_Complete() when complete != null:
+      return complete(_that);case _:
       return orElse();
 
     }
@@ -1976,9 +1976,9 @@ extension CrawlEventPatterns on CrawlEvent {
     final _that = this;
     switch (_that) {
       case CrawlEvent_Page():
-        return page(_that);case CrawlEvent_Error():
-        return error(_that);case CrawlEvent_Complete():
-        return complete(_that);}
+      return page(_that);case CrawlEvent_Error():
+      return error(_that);case CrawlEvent_Complete():
+      return complete(_that);}
   }
   /// A variant of `map` that fallback to returning `null`.
   ///
@@ -1996,9 +1996,9 @@ extension CrawlEventPatterns on CrawlEvent {
     final _that = this;
     switch (_that) {
       case CrawlEvent_Page() when page != null:
-        return page(_that);case CrawlEvent_Error() when error != null:
-        return error(_that);case CrawlEvent_Complete() when complete != null:
-        return complete(_that);case _:
+      return page(_that);case CrawlEvent_Error() when error != null:
+      return error(_that);case CrawlEvent_Complete() when complete != null:
+      return complete(_that);case _:
       return null;
 
     }
@@ -2018,9 +2018,9 @@ extension CrawlEventPatterns on CrawlEvent {
   @optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( CrawlPageResult result)?  page,TResult Function( String url,  String error)?  error,TResult Function( PlatformInt64 pagesCrawled)?  complete,required TResult orElse(),}) {final _that = this;
     switch (_that) {
       case CrawlEvent_Page() when page != null:
-        return page(_that.result);case CrawlEvent_Error() when error != null:
-        return error(_that.url,_that.error);case CrawlEvent_Complete() when complete != null:
-        return complete(_that.pagesCrawled);case _:
+      return page(_that.result);case CrawlEvent_Error() when error != null:
+      return error(_that.url,_that.error);case CrawlEvent_Complete() when complete != null:
+      return complete(_that.pagesCrawled);case _:
       return orElse();
 
     }
@@ -2041,9 +2041,9 @@ extension CrawlEventPatterns on CrawlEvent {
   @optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( CrawlPageResult result)  page,required TResult Function( String url,  String error)  error,required TResult Function( PlatformInt64 pagesCrawled)  complete,}) {final _that = this;
     switch (_that) {
       case CrawlEvent_Page():
-        return page(_that.result);case CrawlEvent_Error():
-        return error(_that.url,_that.error);case CrawlEvent_Complete():
-        return complete(_that.pagesCrawled);}
+      return page(_that.result);case CrawlEvent_Error():
+      return error(_that.url,_that.error);case CrawlEvent_Complete():
+      return complete(_that.pagesCrawled);}
   }
   /// A variant of `when` that fallback to returning `null`
   ///
@@ -2060,9 +2060,9 @@ extension CrawlEventPatterns on CrawlEvent {
   @optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( CrawlPageResult result)?  page,TResult? Function( String url,  String error)?  error,TResult? Function( PlatformInt64 pagesCrawled)?  complete,}) {final _that = this;
     switch (_that) {
       case CrawlEvent_Page() when page != null:
-        return page(_that.result);case CrawlEvent_Error() when error != null:
-        return error(_that.url,_that.error);case CrawlEvent_Complete() when complete != null:
-        return complete(_that.pagesCrawled);case _:
+      return page(_that.result);case CrawlEvent_Error() when error != null:
+      return error(_that.url,_that.error);case CrawlEvent_Complete() when complete != null:
+      return complete(_that.pagesCrawled);case _:
       return null;
 
     }
@@ -2322,14 +2322,14 @@ extension PageActionPatterns on PageAction {
     final _that = this;
     switch (_that) {
       case PageAction_Click() when click != null:
-        return click(_that);case PageAction_TypeText() when typeText != null:
-        return typeText(_that);case PageAction_Press() when press != null:
-        return press(_that);case PageAction_Scroll() when scroll != null:
-        return scroll(_that);case PageAction_Wait() when wait != null:
-        return wait(_that);case PageAction_Screenshot() when screenshot != null:
-        return screenshot(_that);case PageAction_ExecuteJs() when executeJs != null:
-        return executeJs(_that);case PageAction_Scrape() when scrape != null:
-        return scrape(_that);case _:
+      return click(_that);case PageAction_TypeText() when typeText != null:
+      return typeText(_that);case PageAction_Press() when press != null:
+      return press(_that);case PageAction_Scroll() when scroll != null:
+      return scroll(_that);case PageAction_Wait() when wait != null:
+      return wait(_that);case PageAction_Screenshot() when screenshot != null:
+      return screenshot(_that);case PageAction_ExecuteJs() when executeJs != null:
+      return executeJs(_that);case PageAction_Scrape() when scrape != null:
+      return scrape(_that);case _:
       return orElse();
 
     }
@@ -2351,14 +2351,14 @@ extension PageActionPatterns on PageAction {
     final _that = this;
     switch (_that) {
       case PageAction_Click():
-        return click(_that);case PageAction_TypeText():
-        return typeText(_that);case PageAction_Press():
-        return press(_that);case PageAction_Scroll():
-        return scroll(_that);case PageAction_Wait():
-        return wait(_that);case PageAction_Screenshot():
-        return screenshot(_that);case PageAction_ExecuteJs():
-        return executeJs(_that);case PageAction_Scrape():
-        return scrape(_that);}
+      return click(_that);case PageAction_TypeText():
+      return typeText(_that);case PageAction_Press():
+      return press(_that);case PageAction_Scroll():
+      return scroll(_that);case PageAction_Wait():
+      return wait(_that);case PageAction_Screenshot():
+      return screenshot(_that);case PageAction_ExecuteJs():
+      return executeJs(_that);case PageAction_Scrape():
+      return scrape(_that);}
   }
   /// A variant of `map` that fallback to returning `null`.
   ///
@@ -2376,14 +2376,14 @@ extension PageActionPatterns on PageAction {
     final _that = this;
     switch (_that) {
       case PageAction_Click() when click != null:
-        return click(_that);case PageAction_TypeText() when typeText != null:
-        return typeText(_that);case PageAction_Press() when press != null:
-        return press(_that);case PageAction_Scroll() when scroll != null:
-        return scroll(_that);case PageAction_Wait() when wait != null:
-        return wait(_that);case PageAction_Screenshot() when screenshot != null:
-        return screenshot(_that);case PageAction_ExecuteJs() when executeJs != null:
-        return executeJs(_that);case PageAction_Scrape() when scrape != null:
-        return scrape(_that);case _:
+      return click(_that);case PageAction_TypeText() when typeText != null:
+      return typeText(_that);case PageAction_Press() when press != null:
+      return press(_that);case PageAction_Scroll() when scroll != null:
+      return scroll(_that);case PageAction_Wait() when wait != null:
+      return wait(_that);case PageAction_Screenshot() when screenshot != null:
+      return screenshot(_that);case PageAction_ExecuteJs() when executeJs != null:
+      return executeJs(_that);case PageAction_Scrape() when scrape != null:
+      return scrape(_that);case _:
       return null;
 
     }
@@ -2403,14 +2403,14 @@ extension PageActionPatterns on PageAction {
   @optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String selector)?  click,TResult Function( String selector,  String text)?  typeText,TResult Function( String key)?  press,TResult Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)?  scroll,TResult Function( PlatformInt64 milliseconds,  String selector)?  wait,TResult Function( bool fullPage)?  screenshot,TResult Function( String script)?  executeJs,TResult Function()?  scrape,required TResult orElse(),}) {final _that = this;
     switch (_that) {
       case PageAction_Click() when click != null:
-        return click(_that.selector);case PageAction_TypeText() when typeText != null:
-        return typeText(_that.selector,_that.text);case PageAction_Press() when press != null:
-        return press(_that.key);case PageAction_Scroll() when scroll != null:
-        return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait() when wait != null:
-        return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot() when screenshot != null:
-        return screenshot(_that.fullPage);case PageAction_ExecuteJs() when executeJs != null:
-        return executeJs(_that.script);case PageAction_Scrape() when scrape != null:
-        return scrape();case _:
+      return click(_that.selector);case PageAction_TypeText() when typeText != null:
+      return typeText(_that.selector,_that.text);case PageAction_Press() when press != null:
+      return press(_that.key);case PageAction_Scroll() when scroll != null:
+      return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait() when wait != null:
+      return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot() when screenshot != null:
+      return screenshot(_that.fullPage);case PageAction_ExecuteJs() when executeJs != null:
+      return executeJs(_that.script);case PageAction_Scrape() when scrape != null:
+      return scrape();case _:
       return orElse();
 
     }
@@ -2431,14 +2431,14 @@ extension PageActionPatterns on PageAction {
   @optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String selector)  click,required TResult Function( String selector,  String text)  typeText,required TResult Function( String key)  press,required TResult Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)  scroll,required TResult Function( PlatformInt64 milliseconds,  String selector)  wait,required TResult Function( bool fullPage)  screenshot,required TResult Function( String script)  executeJs,required TResult Function()  scrape,}) {final _that = this;
     switch (_that) {
       case PageAction_Click():
-        return click(_that.selector);case PageAction_TypeText():
-        return typeText(_that.selector,_that.text);case PageAction_Press():
-        return press(_that.key);case PageAction_Scroll():
-        return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait():
-        return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot():
-        return screenshot(_that.fullPage);case PageAction_ExecuteJs():
-        return executeJs(_that.script);case PageAction_Scrape():
-        return scrape();}
+      return click(_that.selector);case PageAction_TypeText():
+      return typeText(_that.selector,_that.text);case PageAction_Press():
+      return press(_that.key);case PageAction_Scroll():
+      return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait():
+      return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot():
+      return screenshot(_that.fullPage);case PageAction_ExecuteJs():
+      return executeJs(_that.script);case PageAction_Scrape():
+      return scrape();}
   }
   /// A variant of `when` that fallback to returning `null`
   ///
@@ -2455,14 +2455,14 @@ extension PageActionPatterns on PageAction {
   @optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String selector)?  click,TResult? Function( String selector,  String text)?  typeText,TResult? Function( String key)?  press,TResult? Function( ScrollDirection direction,  String selector,  PlatformInt64 amount)?  scroll,TResult? Function( PlatformInt64 milliseconds,  String selector)?  wait,TResult? Function( bool fullPage)?  screenshot,TResult? Function( String script)?  executeJs,TResult? Function()?  scrape,}) {final _that = this;
     switch (_that) {
       case PageAction_Click() when click != null:
-        return click(_that.selector);case PageAction_TypeText() when typeText != null:
-        return typeText(_that.selector,_that.text);case PageAction_Press() when press != null:
-        return press(_that.key);case PageAction_Scroll() when scroll != null:
-        return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait() when wait != null:
-        return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot() when screenshot != null:
-        return screenshot(_that.fullPage);case PageAction_ExecuteJs() when executeJs != null:
-        return executeJs(_that.script);case PageAction_Scrape() when scrape != null:
-        return scrape();case _:
+      return click(_that.selector);case PageAction_TypeText() when typeText != null:
+      return typeText(_that.selector,_that.text);case PageAction_Press() when press != null:
+      return press(_that.key);case PageAction_Scroll() when scroll != null:
+      return scroll(_that.direction,_that.selector,_that.amount);case PageAction_Wait() when wait != null:
+      return wait(_that.milliseconds,_that.selector);case PageAction_Screenshot() when screenshot != null:
+      return screenshot(_that.fullPage);case PageAction_ExecuteJs() when executeJs != null:
+      return executeJs(_that.script);case PageAction_Scrape() when scrape != null:
+      return scrape();case _:
       return null;
 
     }
@@ -3035,12 +3035,12 @@ extension SsrfErrorPatterns on SsrfError {
     final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy() when deniedByPolicy != null:
-        return deniedByPolicy(_that);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
-        return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
-        return dnsResolutionFailed(_that);case SsrfError_InvalidUrl() when invalidUrl != null:
-        return invalidUrl(_that);case SsrfError_DisallowedScheme() when disallowedScheme != null:
-        return disallowedScheme(_that);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
-        return tooManyRedirects(_that);case _:
+      return deniedByPolicy(_that);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
+      return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
+      return dnsResolutionFailed(_that);case SsrfError_InvalidUrl() when invalidUrl != null:
+      return invalidUrl(_that);case SsrfError_DisallowedScheme() when disallowedScheme != null:
+      return disallowedScheme(_that);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
+      return tooManyRedirects(_that);case _:
       return orElse();
 
     }
@@ -3062,12 +3062,12 @@ extension SsrfErrorPatterns on SsrfError {
     final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy():
-        return deniedByPolicy(_that);case SsrfError_NotOnAllowlist():
-        return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed():
-        return dnsResolutionFailed(_that);case SsrfError_InvalidUrl():
-        return invalidUrl(_that);case SsrfError_DisallowedScheme():
-        return disallowedScheme(_that);case SsrfError_TooManyRedirects():
-        return tooManyRedirects(_that);}
+      return deniedByPolicy(_that);case SsrfError_NotOnAllowlist():
+      return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed():
+      return dnsResolutionFailed(_that);case SsrfError_InvalidUrl():
+      return invalidUrl(_that);case SsrfError_DisallowedScheme():
+      return disallowedScheme(_that);case SsrfError_TooManyRedirects():
+      return tooManyRedirects(_that);}
   }
   /// A variant of `map` that fallback to returning `null`.
   ///
@@ -3085,12 +3085,12 @@ extension SsrfErrorPatterns on SsrfError {
     final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy() when deniedByPolicy != null:
-        return deniedByPolicy(_that);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
-        return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
-        return dnsResolutionFailed(_that);case SsrfError_InvalidUrl() when invalidUrl != null:
-        return invalidUrl(_that);case SsrfError_DisallowedScheme() when disallowedScheme != null:
-        return disallowedScheme(_that);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
-        return tooManyRedirects(_that);case _:
+      return deniedByPolicy(_that);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
+      return notOnAllowlist(_that);case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
+      return dnsResolutionFailed(_that);case SsrfError_InvalidUrl() when invalidUrl != null:
+      return invalidUrl(_that);case SsrfError_DisallowedScheme() when disallowedScheme != null:
+      return disallowedScheme(_that);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
+      return tooManyRedirects(_that);case _:
       return null;
 
     }
@@ -3110,12 +3110,12 @@ extension SsrfErrorPatterns on SsrfError {
   @optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String reason)?  deniedByPolicy,TResult Function()?  notOnAllowlist,TResult Function( String field0)?  dnsResolutionFailed,TResult Function( String field0)?  invalidUrl,TResult Function( String field0)?  disallowedScheme,TResult Function()?  tooManyRedirects,required TResult orElse(),}) {final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy() when deniedByPolicy != null:
-        return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
-        return notOnAllowlist();case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
-        return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl() when invalidUrl != null:
-        return invalidUrl(_that.field0);case SsrfError_DisallowedScheme() when disallowedScheme != null:
-        return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
-        return tooManyRedirects();case _:
+      return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
+      return notOnAllowlist();case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
+      return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl() when invalidUrl != null:
+      return invalidUrl(_that.field0);case SsrfError_DisallowedScheme() when disallowedScheme != null:
+      return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
+      return tooManyRedirects();case _:
       return orElse();
 
     }
@@ -3136,12 +3136,12 @@ extension SsrfErrorPatterns on SsrfError {
   @optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String reason)  deniedByPolicy,required TResult Function()  notOnAllowlist,required TResult Function( String field0)  dnsResolutionFailed,required TResult Function( String field0)  invalidUrl,required TResult Function( String field0)  disallowedScheme,required TResult Function()  tooManyRedirects,}) {final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy():
-        return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist():
-        return notOnAllowlist();case SsrfError_DnsResolutionFailed():
-        return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl():
-        return invalidUrl(_that.field0);case SsrfError_DisallowedScheme():
-        return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects():
-        return tooManyRedirects();}
+      return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist():
+      return notOnAllowlist();case SsrfError_DnsResolutionFailed():
+      return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl():
+      return invalidUrl(_that.field0);case SsrfError_DisallowedScheme():
+      return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects():
+      return tooManyRedirects();}
   }
   /// A variant of `when` that fallback to returning `null`
   ///
@@ -3158,12 +3158,12 @@ extension SsrfErrorPatterns on SsrfError {
   @optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String reason)?  deniedByPolicy,TResult? Function()?  notOnAllowlist,TResult? Function( String field0)?  dnsResolutionFailed,TResult? Function( String field0)?  invalidUrl,TResult? Function( String field0)?  disallowedScheme,TResult? Function()?  tooManyRedirects,}) {final _that = this;
     switch (_that) {
       case SsrfError_DeniedByPolicy() when deniedByPolicy != null:
-        return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
-        return notOnAllowlist();case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
-        return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl() when invalidUrl != null:
-        return invalidUrl(_that.field0);case SsrfError_DisallowedScheme() when disallowedScheme != null:
-        return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
-        return tooManyRedirects();case _:
+      return deniedByPolicy(_that.reason);case SsrfError_NotOnAllowlist() when notOnAllowlist != null:
+      return notOnAllowlist();case SsrfError_DnsResolutionFailed() when dnsResolutionFailed != null:
+      return dnsResolutionFailed(_that.field0);case SsrfError_InvalidUrl() when invalidUrl != null:
+      return invalidUrl(_that.field0);case SsrfError_DisallowedScheme() when disallowedScheme != null:
+      return disallowedScheme(_that.field0);case SsrfError_TooManyRedirects() when tooManyRedirects != null:
+      return tooManyRedirects();case _:
       return null;
 
     }

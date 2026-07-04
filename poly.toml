@@ -68,6 +68,10 @@ select = ["correctness", "security"]
 ignore = ["strict-assertions", "use-specific-assertions", "no-redundant-variable", "sensitive-parameter"]
 php_version = "8.2"
 
+[lint.typos.extend_words]
+flate = "flate"
+ser = "ser"
+
 [per-file-ignores]
 "**/api.py" = ["F401", "I001", "TC006", "UP035"]
 "**/*.pyi" = ["A002", "F401", "I001", "PYI033", "TC006", "UP035"]

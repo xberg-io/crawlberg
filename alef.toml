@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.30.19"
+alef_version = "0.31.1"
 languages = [
     "python",
     "node",
@@ -132,6 +132,16 @@ replace = 'crawlberg = { path = "../crawlberg", version = "={version}"'
 "tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
 "crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
 "readme_templates/**/*.md" = ["MD057"]
+
+# Spell-checker allowlist merged into the generated poly.toml as
+# `[lint.typos.extend_words]`. Key = the spelling typos would flag; value =
+# intended spelling. Set both equal to suppress a false positive without
+# auto-correcting.
+[workspace.poly.typos.extend-words]
+# flate2 crate (sitemap gzip decompression) — typos wants to "fix" flate -> flat
+flate = "flate"
+# Jackson `databind.ser.std` serializer package path in generated Kotlin bindings
+ser = "ser"
 
 [[crates]]
 name = "crawlberg"
@@ -1540,64 +1550,64 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.0.2"
+version = ">=1.0.3"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.0.2"
+version = "^1.0.3"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.0.2"
+version = "v1.0.3"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.e2e.registry.packages.csharp]
 name = "Crawlberg"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.0.2"
+version = ">=1.0.3"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.0.2"
+version = ">= 1.0.3"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.0.2"
+version = "~> 1.0.3"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.0.2"
+version = "^1.0.3"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.0.2"
+version = "1.0.3"
 # Placeholder hash with embedded version triggers alef's STALE detection (added
 # in v0.22.1) — the generator emits a STALE comment in build.zig.zon and the
 # zig fetch flow auto-recomputes the real multihash at consume time. Update
 # after publishing the first zig tarball: `zig fetch --save <release-url>`.
-hash = "crawlberg-1.0.2-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+hash = "crawlberg-1.0.3-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.0.2"
+version = "1.0.3"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"
