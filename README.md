@@ -82,8 +82,6 @@ High-performance Rust web crawling engine for structured data extraction. Scrape
 
 Crawlberg is the crawling **substrate**: everything you need to scrape and crawl a site end-to-end from a single Rust core — HTML→Markdown, headless-Chrome fallback, robots/sitemap parsing, per-domain throttling, and an SSRF-safe policy — with identical results across 14 language bindings.
 
-Productization concerns (managed proxy pools, tuned WAF fingerprints, authenticated-session injection, scheduling, billing) live in [xberg-enterprise](https://github.com/xberg-io/xberg-enterprise), the reference operational implementation. Every extension point (`Frontier`, `RateLimiter`, `CrawlStore`, `EventEmitter`, `ContentFilter`, `WafClassifier`, …) is a trait you inject via `CrawlEngineBuilder::with_<trait>(...)`.
-
 ### Features
 
 | Feature | Description |
