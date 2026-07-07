@@ -2,9 +2,17 @@
 title: "AI Coding Assistants"
 ---
 
-The Crawlberg plugin lives in the [`xberg-io/plugins`](https://github.com/xberg-io/plugins) marketplace. It ships the Crawlberg agent skills (site crawling, HTML→Markdown scraping, headless-Chrome fallback) plus the `crawlberg` MCP server, and works with every major coding agent.
+The Crawlberg plugin lets your coding agent crawl and scrape the web without leaving the chat — ask it to pull a page as Markdown, map a site, or extract metadata, and it drives Crawlberg for you.
+
+**What the plugin does:** it bundles the Crawlberg agent skills (site crawling, HTML→Markdown scraping, headless-Chrome fallback) and wires up the `crawlberg` MCP server, so any major coding agent can call the crawler directly.
 
 The plugin shells out to the `crawlberg` CLI. Install it from the [Installation](/getting-started/installation/) guide (for example, `brew install xberg-io/tap/crawlberg`) before driving the crawler from an assistant.
+
+The plugin, its per-platform manifests, and version history live in the [`xberg-io/plugins`](https://github.com/xberg-io/plugins) marketplace.
+
+:::note
+The plugin registers the `crawlberg` MCP server for you. To configure or run that server standalone, see the [MCP Server guide](/guides/mcp-server/) and the [MCP reference](/reference/mcp/).
+:::
 
 ## Installing
 

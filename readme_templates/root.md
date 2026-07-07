@@ -9,13 +9,15 @@
 
 {% include 'partials/_badges.md' %}
 
-High-performance Rust web crawling engine for structured data extraction. Scrape, crawl, and map websites with native bindings for 14 languages — same engine, identical results across every runtime.
+Turn any website into clean, structured data. Point Crawlberg at a URL and get back Markdown, metadata, and links — from a single page or a whole site — in the language you already use.
 
 ## What and Why?
 
-Crawlberg is the crawling **substrate**: everything you need to scrape and crawl a site end-to-end from a single Rust core — HTML→Markdown, headless-Chrome fallback, robots/sitemap parsing, per-domain throttling, and an SSRF-safe policy — with identical results across 14 language bindings.
+You need data that lives on the web, and raw HTML is not it. Crawlberg does the crawling, scraping, and cleanup end-to-end: it fetches pages, follows links, converts each one to Markdown, and hands you structured metadata (titles, links, images, social-card and JSON-LD data) — so you skip the parsing and go straight to the content.
 
-Productization concerns (managed proxy pools, tuned WAF fingerprints, authenticated-session injection, scheduling, billing) live in [xberg-enterprise](https://github.com/xberg-io/xberg-enterprise), the reference operational implementation. Every extension point (`Frontier`, `RateLimiter`, `CrawlStore`, `EventEmitter`, `ContentFilter`, `WafClassifier`, …) is a trait you inject via `CrawlEngineBuilder::with_<trait>(...)`.
+It runs from a single Rust core with identical results across 14 language bindings, and it handles the awkward parts for you: JavaScript-heavy pages fall back to a real headless browser, bot filters are detected and worked around, robots and sitemaps are respected, requests are throttled per domain, and requests to private or internal addresses are refused by default. Drive it from your code, an AI agent, a REST service, or the CLI.
+
+Every part of the pipeline is a trait you can swap — the crawl frontier, rate limiter, storage, event stream, and content filters — so you can plug in your own behavior. Managed extras like proxy pools, tuned bot-evasion, authenticated sessions, scheduling, and billing live in [xberg-enterprise](https://github.com/xberg-io/xberg-enterprise).
 
 ### Features
 

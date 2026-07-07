@@ -6,8 +6,8 @@ description: >-
 template: splash
 hero:
   tagline: >-
-    High-performance web crawling and scraping with a Rust core and generated language packages.
-    Always-on HTML→Markdown, structured metadata, browser backends, REST/MCP servers, a CLI, and Docker.
+    Turn any website into clean, structured data. Point crawlberg at a URL and get back Markdown,
+    metadata, and links — from a single page or a whole site — in the language you already use.
   image:
     dark: ../../assets/hero-logo.svg
     light: ../../assets/hero-logo-light.svg
@@ -31,29 +31,29 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 ## Why crawlberg
 
 <CardGrid>
-	<Card title="Flexible crawling" icon="random">
-		BFS, DFS, BestFirst, and Adaptive traversal with concurrent fetching, streaming events, and
-		batch crawl/scrape.
+	<Card title="Crawl a whole site or a single page" icon="random">
+		Follow links across an entire site or fetch one URL, with concurrent requests and live progress
+		events. Tune how it walks the site with breadth-first, depth-first, best-first, or adaptive strategies.
 	</Card>
-	<Card title="Always-on Markdown" icon="document">
-		Every fetched page is converted to Markdown. `MarkdownResult.citations` is a boolean; call
-		`generate_citations` when you need the reference list.
+	<Card title="Clean Markdown, every time" icon="document">
+		Every page comes back as ready-to-use Markdown — feed it straight to an LLM or your own pipeline.
+		Generate a citation list when you need one.
 	</Card>
-	<Card title="Rich metadata" icon="magnifier">
-		`PageMetadata` carries Open Graph, Twitter Card, Dublin Core, article fields, JSON-LD, links,
-		images, feeds, favicons, and hreflang.
+	<Card title="Know what's on every page" icon="magnifier">
+		Titles, links, images, feeds, and social-card data arrive already extracted and structured, so you
+		skip the HTML parsing. Covers Open Graph, Twitter Card, Dublin Core, JSON-LD, and hreflang.
 	</Card>
-	<Card title="Browser fallback" icon="laptop">
-		Use the Chromiumoxide CDP backend or the native browser backend. WAF signals can trigger browser
-		escalation; the vendor is surfaced when the classifier can identify it.
+	<Card title="Handles JS-heavy and bot-protected sites" icon="laptop">
+		When a page needs JavaScript or trips a bot filter, crawlberg renders it in a real browser for you.
+		It escalates to a Chromium (CDP) or native browser backend only when a page needs it.
 	</Card>
-	<Card title="MCP & REST servers" icon="setting">
-		Built-in MCP server for AI agents, REST API for service deployments, both gated behind cargo
-		features.
+	<Card title="Use it from your agent, API, or CLI" icon="setting">
+		Drive crawlberg from an AI agent over MCP, a REST service, or the command line — no glue code
+		required. The MCP and REST servers are gated behind cargo features.
 	</Card>
-	<Card title="Rust + generated packages" icon="translate">
-		Rust uses the core crate. Generated packages cover Python, TypeScript, WebAssembly, Go, Java,
-		Kotlin Android, C#, Ruby, PHP, Elixir, Dart, Swift, Zig, and C FFI.
+	<Card title="Works in the language you already use" icon="translate">
+		One Rust engine, identical results across 14 languages: Python, TypeScript, Go, Java, Kotlin Android,
+		C#, Ruby, PHP, Elixir, Dart, Swift, Zig, WebAssembly, and C FFI.
 	</Card>
 </CardGrid>
 

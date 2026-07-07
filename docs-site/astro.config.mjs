@@ -35,7 +35,24 @@ export default defineConfig({
           "browser fallback, REST/MCP servers, and native bindings for 14 languages.",
         githubUrl: "https://github.com/xberg-io/crawlberg",
         editBaseUrl: "https://github.com/xberg-io/crawlberg/edit/main/docs-site/",
-        plugins: [starlightLlmsTxt()],
+        plugins: [
+          starlightLlmsTxt({
+            customSets: [
+              { label: "Get Started", paths: ["getting-started/**"] },
+              { label: "Guides", paths: ["guides/**", "cli/**", "antibot", "observability"] },
+              { label: "Concepts", paths: ["concepts/**"] },
+              { label: "Reference", paths: ["reference/**"] },
+              { label: "More", paths: ["features", "contributing", "changelog", "ecosystem"] },
+            ],
+            optionalLinks: [
+              {
+                label: "GitHub",
+                url: "https://github.com/xberg-io/crawlberg",
+                description: "Source code and issues",
+              },
+            ],
+          }),
+        ],
         sidebar: [
           { label: "Home", link: "/" },
           {
