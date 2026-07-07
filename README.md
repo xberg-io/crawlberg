@@ -9,7 +9,7 @@
 
 <div align="center" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 20px 0;">
   <a href="https://github.com/xberg-io/alef">
-    <img src="https://img.shields.io/badge/Bindings-alef%20%D7%90-007ec6" alt="Bindings">
+    <img src="https://img.shields.io/badge/built%20with-alef%20%D7%90-007ec6" alt="Built with alef">
   </a>
   <!-- Language Bindings -->
   <a href="https://crates.io/crates/crawlberg">
@@ -82,6 +82,8 @@ High-performance Rust web crawling engine for structured data extraction. Scrape
 
 Crawlberg is the crawling **substrate**: everything you need to scrape and crawl a site end-to-end from a single Rust core — HTML→Markdown, headless-Chrome fallback, robots/sitemap parsing, per-domain throttling, and an SSRF-safe policy — with identical results across 14 language bindings.
 
+Productization concerns (managed proxy pools, tuned WAF fingerprints, authenticated-session injection, scheduling, billing) live in [xberg-enterprise](https://github.com/xberg-io/xberg-enterprise), the reference operational implementation. Every extension point (`Frontier`, `RateLimiter`, `CrawlStore`, `EventEmitter`, `ContentFilter`, `WafClassifier`, …) is a trait you inject via `CrawlEngineBuilder::with_<trait>(...)`.
+
 ### Features
 
 | Feature | Description |
@@ -100,12 +102,6 @@ Crawlberg is the crawling **substrate**: everything you need to scrape and crawl
 ### Supported Platforms
 
 Precompiled binaries for Linux (x86_64/aarch64), macOS (ARM64), and Windows (x64) across every binding. See the [platform support reference](https://docs.crawlberg.xberg.io) for the full matrix.
-
-<div align="center">
-  <a href="https://github.com/xberg-io/crawlberg/stargazers">
-    <img src="docs/assets/star.gif" alt="Star Crawlberg on GitHub" width="640">
-  </a>
-</div>
 
 <p align="center"><strong>⭐ Star this repo to show your support — it helps others discover Crawlberg.</strong></p>
 

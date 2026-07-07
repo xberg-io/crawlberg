@@ -36,12 +36,6 @@ Productization concerns (managed proxy pools, tuned WAF fingerprints, authentica
 
 Precompiled binaries for Linux (x86_64/aarch64), macOS (ARM64), and Windows (x64) across every binding. See the [platform support reference](https://docs.crawlberg.xberg.io) for the full matrix.
 
-<div align="center">
-  <a href="https://github.com/xberg-io/crawlberg/stargazers">
-    <img src="docs/assets/star.gif" alt="Star Crawlberg on GitHub" width="640">
-  </a>
-</div>
-
 <p align="center"><strong>⭐ Star this repo to show your support — it helps others discover Crawlberg.</strong></p>
 
 ## Quick Start
