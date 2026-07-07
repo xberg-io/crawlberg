@@ -1,11 +1,16 @@
 # Configuration for the lychee link checker.
 # https://github.com/lycheeverse/lychee
 
-# Root directory for resolving relative paths in the built site
-root_dir = "site"
+# The root directory for resolving root-relative links (e.g. /reference/…) is
+# passed on the command line as an absolute path (--root-dir "$PWD/docs-site/dist")
+# by the `docs:lint:links` task, since lychee requires an absolute root_dir.
 
 # Exclude common patterns that produce false positives
 exclude = [
+    # Favicon is served from the shared brand-asset CDN via @xberg-io/docs-theme;
+    # Starlight's default /favicon.svg reference has no local file in dist.
+    "favicon\\.svg",
+
     # Localhost / loopback addresses
     "localhost",
     "127\\.0\\.0\\.1",
