@@ -95,6 +95,8 @@ export default defineConfig({
               { label: "API", items: API_LANGUAGES },
               { label: "REST API", slug: "reference/rest-api" },
               { label: "MCP Tools", slug: "reference/mcp-tools" },
+              { label: "MCP Reference", slug: "reference/mcp" },
+              { label: "CLI Reference", slug: "reference/cli" },
               { label: "Configuration", slug: "reference/configuration" },
               { label: "Types", slug: "reference/types" },
               { label: "Parsers", slug: "reference/parsers" },
