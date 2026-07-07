@@ -306,3 +306,7 @@ e2e/ruby/.bundle/
 .github/commands/
 .github/copilot-instructions.md
 # END ai-rulez
+
+# Astro Starlight docs site build artifacts
+docs-site/dist/
+docs-site/.astro/

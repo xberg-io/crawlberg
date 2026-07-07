@@ -1,0 +1,327 @@
+---
+title: Quick Start
+description: Scrape, crawl, and map websites with Crawlberg in under 5 minutes
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+## Quick Start
+
+This guide walks through the three core operations: **scrape** (single page), **crawl** (follow links), and **map** (discover URLs). Each example is shown in multiple languages.
+
+---
+
+## 1. Scrape a Single Page
+
+Scraping fetches one URL and returns its metadata, links, images, and markdown content.
+
+<Tabs syncKey="lang">
+<TabItem label="Rust">
+
+```rust title="src/main.rs"
+use crawlberg::{CrawlConfig, create_engine, scrape};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(Some(CrawlConfig::default()))?;
+    let result = scrape(&engine, "https://example.com").await?;
+
+    println!("Status: {}", result.status_code);
+    println!("Title: {}", result.metadata.title.as_deref().unwrap_or("(none)"));
+    println!("Description: {}", result.metadata.description.as_deref().unwrap_or("(none)"));
+    println!("Links: {}", result.links.len());
+    println!("Images: {}", result.images.len());
+
+    if let Some(ref md) = result.markdown {
+        let preview_len = 200.min(md.content.len());
+        println!("\n--- Markdown ({} chars) ---\n{}", md.content.len(), &md.content[..preview_len]);
+    }
+
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="scrape.py"
+import asyncio
+from crawlberg import CrawlConfig, create_engine, scrape
+
+async def main() -> None:
+    engine = create_engine(CrawlConfig())
+    result = await scrape(engine, "https://example.com")
+
+    print(f"Status: {result.status_code}")
+    print(f"Title: {result.metadata.title}")
+    print(f"Description: {result.metadata.description}")
+    print(f"Links: {len(result.links)}")
+    print(f"Images: {len(result.images)}")
+
+    if result.markdown:
+        print(f"\n--- Markdown ({len(result.markdown.content)} chars) ---")
+        print(result.markdown.content[:200])
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript title="scrape.ts"
+import { createEngine, scrape } from "@xberg-io/crawlberg";
+
+const engine = createEngine();
+const result = await scrape(engine, "https://example.com");
+
+console.log(`Status: ${result.statusCode}`);
+console.log(`Title: ${result.metadata.title ?? "(none)"}`);
+console.log(`Description: ${result.metadata.description ?? "(none)"}`);
+console.log(`Links: ${result.links.length}`);
+console.log(`Images: ${result.images.length}`);
+
+if (result.markdown) {
+    console.log(`\n--- Markdown (${result.markdown.content.length} chars) ---`);
+    console.log(result.markdown.content.slice(0, 200));
+}
+```
+
+</TabItem>
+<TabItem label="CLI">
+
+```bash
+# JSON output with all metadata
+crawlberg scrape https://example.com
+
+# Markdown output
+crawlberg scrape https://example.com --format markdown
+```
+
+</TabItem>
+</Tabs>
+
+The `ScrapeResult` includes:
+
+- `status_code` -- HTTP response status
+- `metadata` -- 40+ fields (Open Graph, Twitter Card, Dublin Core, JSON-LD, etc.)
+- `links` -- all links categorized as Internal, External, Anchor, or Document
+- `images` -- all image sources from `<img>`, `<picture>`, `og:image`, `srcset`
+- `markdown` -- converted markdown with optional citations and fit content
+- `feeds` -- discovered RSS, Atom, and JSON Feed links
+- `json_ld` -- parsed JSON-LD entries
+
+---
+
+## 2. Crawl a Website
+
+Crawling starts from a URL, follows links up to a configured depth, and returns results for all discovered pages.
+
+<Tabs syncKey="lang">
+<TabItem label="Rust">
+
+```rust title="src/main.rs"
+use crawlberg::{CrawlConfig, create_engine, crawl};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(Some(CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(50),
+        stay_on_domain: true,
+        respect_robots_txt: true,
+        ..Default::default()
+    }))?;
+
+    let result = crawl(&engine, "https://example.com").await?;
+
+    println!("Crawled {} pages (final URL: {})", result.pages.len(), result.final_url);
+
+    for page in &result.pages {
+        let title = page.metadata.title.as_deref().unwrap_or("(no title)");
+        let md_len = page.markdown.as_ref().map_or(0, |m| m.content.len());
+        println!("  [depth={}] {} - {} ({} chars markdown)", page.depth, page.url, title, md_len);
+    }
+
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="crawl.py"
+import asyncio
+from crawlberg import CrawlConfig, create_engine, crawl
+
+async def main() -> None:
+    engine = create_engine(CrawlConfig(
+        max_depth=2,
+        max_pages=50,
+        stay_on_domain=True,
+        respect_robots_txt=True,
+    ))
+    result = await crawl(engine, "https://example.com")
+
+    print(f"Crawled {len(result.pages)} pages (final URL: {result.final_url})")
+
+    for page in result.pages:
+        title = page.metadata.title or "(no title)"
+        md_len = len(page.markdown.content) if page.markdown else 0
+        print(f"  [depth={page.depth}] {page.url} - {title} ({md_len} chars markdown)")
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript title="crawl.ts"
+import { createEngine, crawl } from "@xberg-io/crawlberg";
+
+const engine = createEngine({
+    maxDepth: 2,
+    maxPages: 50,
+    stayOnDomain: true,
+    respectRobotsTxt: true,
+});
+
+const result = await crawl(engine, "https://example.com");
+
+console.log(`Crawled ${result.pages.length} pages (final URL: ${result.finalUrl})`);
+
+for (const page of result.pages) {
+    const title = page.metadata.title ?? "(no title)";
+    const mdLen = page.markdown?.content.length ?? 0;
+    console.log(`  [depth=${page.depth}] ${page.url} - ${title} (${mdLen} chars markdown)`);
+}
+```
+
+</TabItem>
+<TabItem label="CLI">
+
+```bash
+# Crawl with depth and page limits
+crawlberg crawl https://example.com --depth 2 --max-pages 50 --respect-robots-txt
+
+# Markdown output
+crawlberg crawl https://example.com --depth 2 --format markdown
+```
+
+</TabItem>
+</Tabs>
+
+Key `CrawlConfig` fields for crawling:
+
+| Field                | Default            | Description                                    |
+| -------------------- | ------------------ | ---------------------------------------------- |
+| `max_depth`          | `None` (0)         | Maximum link hops from the start URL           |
+| `max_pages`          | `None` (unlimited) | Maximum number of pages to crawl               |
+| `max_concurrent`     | `None` (10)        | Maximum parallel requests                      |
+| `stay_on_domain`     | `false`            | Restrict crawling to the same domain           |
+| `allow_subdomains`   | `false`            | Allow subdomains when `stay_on_domain` is true |
+| `respect_robots_txt` | `false`            | Honor robots.txt directives                    |
+| `include_paths`      | `[]`               | Regex patterns for paths to include            |
+| `exclude_paths`      | `[]`               | Regex patterns for paths to exclude            |
+
+---
+
+## 3. Map a Website
+
+Mapping discovers all URLs on a site using sitemaps and link extraction, without downloading full page content.
+
+<Tabs syncKey="lang">
+<TabItem label="Rust">
+
+```rust title="src/main.rs"
+use crawlberg::{CrawlConfig, create_engine, map_urls};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = create_engine(Some(CrawlConfig {
+        respect_robots_txt: true,
+        map_limit: Some(100),
+        ..Default::default()
+    }))?;
+
+    let result = map_urls(&engine, "https://example.com").await?;
+
+    println!("Discovered {} URLs:", result.urls.len());
+    for entry in &result.urls {
+        let lastmod = entry.lastmod.as_deref().unwrap_or("(unknown)");
+        println!("  {} (last modified: {})", entry.url, lastmod);
+    }
+
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="map.py"
+import asyncio
+from crawlberg import CrawlConfig, create_engine, map_urls
+
+async def main() -> None:
+    engine = create_engine(CrawlConfig(
+        respect_robots_txt=True,
+        map_limit=100,
+    ))
+    result = await map_urls(engine, "https://example.com")
+
+    print(f"Discovered {len(result.urls)} URLs:")
+    for entry in result.urls:
+        lastmod = entry.lastmod or "(unknown)"
+        print(f"  {entry.url} (last modified: {lastmod})")
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript title="map.ts"
+import { createEngine, mapUrls } from "@xberg-io/crawlberg";
+
+const engine = createEngine({
+    respectRobotsTxt: true,
+    mapLimit: 100,
+});
+
+const result = await mapUrls(engine, "https://example.com");
+
+console.log(`Discovered ${result.urls.length} URLs:`);
+for (const entry of result.urls) {
+    const lastmod = entry.lastmod ?? "(unknown)";
+    console.log(`  ${entry.url} (last modified: ${lastmod})`);
+}
+```
+
+</TabItem>
+<TabItem label="CLI">
+
+```bash
+# Discover URLs
+crawlberg map https://example.com --respect-robots-txt
+
+# Limit results and filter by search term
+crawlberg map https://example.com --limit 100 --search "blog"
+```
+
+</TabItem>
+</Tabs>
+
+Each `SitemapUrl` in the result includes:
+
+- `url` -- the discovered URL
+- `lastmod` -- last modification date (from sitemap, if available)
+- `changefreq` -- change frequency hint (from sitemap)
+- `priority` -- priority value (from sitemap)
+
+---
+
+## Next Steps
+
+- **[Features](/features/)** -- Full feature breakdown and competitive comparison
+- **[Configuration Reference](/reference/)** -- Complete `CrawlConfig` field reference
+- **[Guides](/guides/)** -- Browser automation, LLM extraction, custom strategies, and more

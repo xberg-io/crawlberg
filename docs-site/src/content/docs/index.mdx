@@ -1,0 +1,178 @@
+---
+title: crawlberg
+description: >-
+  High-performance Rust web crawling and scraping with always-on HTML→Markdown, browser
+  fallback, REST/MCP servers, and native bindings for 14 languages.
+template: splash
+hero:
+  tagline: >-
+    High-performance web crawling and scraping with a Rust core and generated language packages.
+    Always-on HTML→Markdown, structured metadata, browser backends, REST/MCP servers, a CLI, and Docker.
+  image:
+    file: ../../assets/hero-logo.svg
+  actions:
+    - text: Quick Start
+      link: /getting-started/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: Installation
+      link: /getting-started/installation/
+      icon: download
+      variant: minimal
+    - text: View on GitHub
+      link: https://github.com/xberg-io/crawlberg
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/components";
+
+## Why crawlberg
+
+<CardGrid>
+	<Card title="Flexible crawling" icon="random">
+		BFS, DFS, BestFirst, and Adaptive traversal with concurrent fetching, streaming events, and
+		batch crawl/scrape.
+	</Card>
+	<Card title="Always-on Markdown" icon="document">
+		Every fetched page is converted to Markdown. `MarkdownResult.citations` is a boolean; call
+		`generate_citations` when you need the reference list.
+	</Card>
+	<Card title="Rich metadata" icon="magnifier">
+		`PageMetadata` carries Open Graph, Twitter Card, Dublin Core, article fields, JSON-LD, links,
+		images, feeds, favicons, and hreflang.
+	</Card>
+	<Card title="Browser fallback" icon="laptop">
+		Use the Chromiumoxide CDP backend or the native browser backend. WAF signals can trigger browser
+		escalation; the vendor is surfaced when the classifier can identify it.
+	</Card>
+	<Card title="MCP & REST servers" icon="setting">
+		Built-in MCP server for AI agents, REST API for service deployments, both gated behind cargo
+		features.
+	</Card>
+	<Card title="Rust + generated packages" icon="translate">
+		Rust uses the core crate. Generated packages cover Python, TypeScript, WebAssembly, Go, Java,
+		Kotlin Android, C#, Ruby, PHP, Elixir, Dart, Swift, Zig, and C FFI.
+	</Card>
+</CardGrid>
+
+[See all features →](/features/)
+
+## Language support
+
+| Language              | Package                                                | Docs                                              |
+| :-------------------- | :----------------------------------------------------- | :------------------------------------------------ |
+| **Rust**              | `cargo add crawlberg`                                  | [API Reference](/reference/api-rust/)             |
+| **Python**            | `pip install crawlberg`                                | [API Reference](/reference/api-python/)           |
+| **TypeScript / Node** | `npm install @xberg-io/crawlberg`                      | [API Reference](/reference/api-typescript/)       |
+| **WebAssembly**       | `npm install @xberg-io/crawlberg-wasm`                 | [API Reference](/reference/api-wasm/)             |
+| **Go**                | `go get github.com/xberg-io/crawlberg/packages/go`     | [API Reference](/reference/api-go/)               |
+| **Java**              | Maven Central `io.xberg.crawlberg:crawlberg`           | [API Reference](/reference/api-java/)             |
+| **Kotlin (Android)**  | Maven Central `io.xberg.crawlberg:crawlberg-android`   | [API Reference](/reference/api-kotlin-android/)   |
+| **C#**                | `dotnet add package Crawlberg`                         | [API Reference](/reference/api-csharp/)           |
+| **Ruby**              | `gem install crawlberg`                                | [API Reference](/reference/api-ruby/)             |
+| **PHP**               | `composer require xberg-io/crawlberg`                  | [API Reference](/reference/api-php/)              |
+| **Elixir**            | `{:crawlberg, "~> 0.3.0"}`                             | [API Reference](/reference/api-elixir/)           |
+| **Dart / Flutter**    | `dart pub add crawlberg`                               | [API Reference](/reference/api-dart/)             |
+| **Swift**             | Swift Package Manager                                   | [API Reference](/reference/api-swift/)            |
+| **Zig**               | `zig fetch --save` from GitHub                          | [API Reference](/reference/api-zig/)              |
+| **C (FFI)**           | Shared library + header                                 | [API Reference](/reference/api-c/)               |
+| **CLI**               | `cargo install crawlberg-cli`                          | [CLI Guide](/cli/usage/)                          |
+| **Docker**            | `ghcr.io/xberg-io/crawlberg`                           | [Docker Guide](/guides/docker/)                   |
+
+:::tip[Choosing between TypeScript packages]
+**`@xberg-io/crawlberg`** — Native NAPI-RS bindings. Use for Node.js servers and CLI tools. Full
+feature set including the browser fallback.
+
+**`@xberg-io/crawlberg-wasm`** — Pure WebAssembly. Use for browsers, Cloudflare Workers, Deno, Bun,
+and serverless. No native browser backend, REST server, MCP server, or native streaming crawl wrappers.
+:::
+
+## Quick example
+
+<Tabs syncKey="lang">
+<TabItem label="Rust">
+
+```rust title="src/main.rs"
+use crawlberg::{CrawlConfig, ContentConfig, create_engine, crawl};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(50),
+        content: ContentConfig::default(),
+        ..Default::default()
+    };
+    let engine = create_engine(Some(config))?;
+
+    let result = crawl(&engine, "https://example.com").await?;
+    for page in &result.pages {
+        let title = page.metadata.title.as_deref().unwrap_or("(no title)");
+        println!("{} — {}", page.url, title);
+    }
+    Ok(())
+}
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python title="main.py"
+import asyncio
+from crawlberg import CrawlConfig, create_engine, crawl
+
+async def main():
+    engine = create_engine(CrawlConfig(max_depth=2, max_pages=50))
+    result = await crawl(engine, "https://example.com")
+    for page in result.pages:
+        print(f"{page.url} — {page.metadata.title or '(no title)'}")
+
+asyncio.run(main())
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript title="index.ts"
+import { createEngine, crawl } from "@xberg-io/crawlberg";
+
+const engine = createEngine({ maxDepth: 2, maxPages: 50 });
+const result = await crawl(engine, "https://example.com");
+
+for (const page of result.pages) {
+  console.log(`${page.url} — ${page.metadata.title ?? "(no title)"}`);
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Part of Xberg.io
+
+<CardGrid>
+	<LinkCard title="Xberg" href="https://github.com/xberg-io/xberg" description="Document intelligence: text, tables, metadata from 91+ formats with optional OCR." />
+	<LinkCard title="Xberg Enterprise" href="https://github.com/xberg-io/xberg-enterprise" description="Managed extraction API with SDKs, dashboards, and observability." />
+	<LinkCard title="crawlberg" href="https://github.com/xberg-io/crawlberg" description="Web crawling and scraping with HTML→Markdown and headless-Chrome fallback." />
+	<LinkCard title="html-to-markdown" href="https://github.com/xberg-io/html-to-markdown" description="Fast, lossless HTML→Markdown engine." />
+	<LinkCard title="liter-llm" href="https://github.com/xberg-io/liter-llm" description="Universal LLM API client with native bindings for 14 languages and 143 providers." />
+	<LinkCard title="tree-sitter-language-pack" href="https://github.com/xberg-io/tree-sitter-language-pack" description="Tree-sitter grammars and code-intelligence primitives." />
+	<LinkCard title="alef" href="https://github.com/xberg-io/alef" description="The polyglot binding generator that produces every per-language binding across the 5 polyglot repos." />
+</CardGrid>
+
+## Explore the docs
+
+<CardGrid>
+	<LinkCard title="Get Started" href="/getting-started/quickstart/" description="Install crawlberg and run your first crawl in under five minutes." />
+	<LinkCard title="Guides" href="/guides/crawling/" description="Crawling, scraping, URL discovery, browser automation, WARC output, and deployment." />
+	<LinkCard title="Concepts" href="/concepts/architecture/" description="Public surface, data flow, the binding matrix, feature gates, and the extraction pipeline." />
+	<LinkCard title="Reference" href="/reference/api-rust/" description="Per-language API docs, the configuration schema, type catalogue, and error matrix." />
+	<LinkCard title="CLI & Servers" href="/cli/usage/" description="The crawlberg CLI, REST API server, and MCP server for AI agents." />
+	<LinkCard title="Features" href="/features/" description="Crawl strategies, metadata extraction, browser backends, WARC, MCP, REST." />
+</CardGrid>
+
+## Getting help
+
+- **Bugs & feature requests** — [Open an issue on GitHub](https://github.com/xberg-io/crawlberg/issues)
+- **Community chat** — [Join the Discord](https://discord.gg/xt9WY3GnKR)
+- **Contributing** — [Read the contributor guide](/contributing/)

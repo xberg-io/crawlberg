@@ -1,0 +1,301 @@
+---
+title: "API Server"
+---
+
+Crawlberg includes a Firecrawl v1-compatible REST API server built on Axum. The server
+is feature-gated behind `api`.
+
+## Starting the server
+
+### CLI
+
+```bash
+crawlberg serve --host 0.0.0.0 --port 3000
+```
+
+| Flag     | Default   | Description            |
+| -------- | --------- | ---------------------- |
+| `--host` | `0.0.0.0` | IP address to bind to. |
+| `--port` | `3000`    | TCP port to listen on. |
+
+### Programmatic
+
+The `api` module is internal. The public entry point is `serve_api`, re-exported from the crate root:
+
+```rust
+use crawlberg::{CrawlConfig, serve_api};
+
+serve_api("0.0.0.0", 3000, CrawlConfig::default()).await?;
+```
+
+Pass a custom config if you need non-default crawl settings:
+
+```rust
+use crawlberg::{CrawlConfig, serve_api};
+
+serve_api("127.0.0.1", 8080, CrawlConfig {
+    max_concurrent: Some(20),
+    respect_robots_txt: true,
+    ..Default::default()
+}).await?;
+```
+
+## Middleware stack
+
+The server applies the following middleware (outermost first):
+
+- **Request ID** -- Generates and propagates `X-Request-Id` headers (UUID v4).
+- **Sensitive headers** -- Redacts the `Authorization` header from logs.
+- **Request timeout** -- 5-minute hard cap per request (returns 408 on timeout).
+- **Body size limit** -- Maximum 10 MB request body.
+- **CORS** -- Permissive (allows any origin, method, and headers).
+- **Compression** -- Transparent response compression.
+- **Panic recovery** -- Catches panics and returns 500 instead of crashing.
+- **Tracing** -- HTTP request/response logging.
+
+## Endpoints
+
+### Scrape (synchronous)
+
+**`POST /v1/scrape`** -- Scrape a single URL and return extracted content.
+
+Request:
+
+```json
+{
+  "url": "https://example.com"
+}
+```
+
+`formats`, `onlyMainContent`, `includeTags`, `excludeTags`, and `timeout` are accepted for Firecrawl-compatible request bodies, but `POST /v1/scrape` currently uses the server engine configuration and does not apply those fields per request.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status_code": 200,
+    "content_type": "text/html",
+    "body_size": 15234,
+    "metadata": { "title": "Example", "description": "..." },
+    "markdown": { "content": "# Example\n\nHello world..." },
+    "html": "<html>...</html>",
+    "links": [...],
+    "images": [...]
+  }
+}
+```
+
+### Crawl (asynchronous)
+
+**`POST /v1/crawl`** -- Start an asynchronous crawl job.
+
+Request:
+
+```json
+{
+  "url": "https://example.com",
+  "maxDepth": 2,
+  "maxPages": 100,
+  "includePaths": ["/docs/.*"],
+  "excludePaths": ["/blog/.*"],
+  "onlyMainContent": true
+}
+```
+
+`maxDepth`, `maxPages`, `includePaths`, `excludePaths`, and crawl `onlyMainContent` are applied to the asynchronous crawl job.
+
+Response (202 Accepted):
+
+```json
+{
+  "success": true,
+  "id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**`GET /v1/crawl/{id}`** -- Poll the status of a crawl job.
+
+Response (in progress):
+
+```json
+{
+  "status": "in_progress",
+  "total": 0,
+  "completed": 12
+}
+```
+
+Response (completed):
+
+```json
+{
+  "status": "completed",
+  "total": 25,
+  "completed": 25,
+  "data": [
+    { "url": "https://example.com/", "status_code": 200, "depth": 0, ... },
+    { "url": "https://example.com/about", "status_code": 200, "depth": 1, ... }
+  ]
+}
+```
+
+**`DELETE /v1/crawl/{id}`** -- Cancel a pending or in-progress crawl job.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": "cancelled"
+}
+```
+
+### Map (synchronous)
+
+**`POST /v1/map`** -- Discover all URLs on a website via links and sitemaps.
+
+Request:
+
+```json
+{
+  "url": "https://example.com",
+  "limit": 100,
+  "search": "docs"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "urls": [
+      { "url": "https://example.com/docs/intro", "lastmod": "2026-01-15" },
+      { "url": "https://example.com/docs/api", "priority": "0.8" }
+    ]
+  }
+}
+```
+
+### Batch scrape (asynchronous)
+
+**`POST /v1/batch/scrape`** -- Scrape multiple URLs concurrently.
+
+Request:
+
+```json
+{
+  "urls": ["https://example.com", "https://example.org"]
+}
+```
+
+`formats` and `onlyMainContent` are accepted for compatibility, but `POST /v1/batch/scrape` currently uses the server engine configuration.
+
+Response (202 Accepted):
+
+```json
+{
+  "success": true,
+  "id": "660e9500-f39c-52e5-b827-557766551111"
+}
+```
+
+**`GET /v1/batch/scrape/{id}`** -- Poll batch job status. Same response shape as crawl status.
+
+### Download (synchronous)
+
+**`POST /v1/download`** -- Download a document from a URL.
+
+Request:
+
+```json
+{
+  "url": "https://example.com/report.pdf"
+}
+```
+
+Uses the scrape pipeline internally, returning document metadata and content. `maxSize` is accepted for compatibility but ignored today; configure `document_max_size` on the server engine instead.
+
+### Operational endpoints
+
+**`GET /health`** -- Health check.
+
+```json
+{ "status": "ok", "version": "0.3.0" }
+```
+
+**`GET /version`** -- Version information.
+
+```json
+{ "version": "0.3.0" }
+```
+
+**`GET /openapi.json`** -- OpenAPI schema (generated by utoipa).
+
+## Async job lifecycle
+
+Crawl and batch scrape operations follow this lifecycle:
+
+```text
+POST request  -->  pending  -->  in_progress  -->  completed
+                                     |                 |
+                                     v                 v
+                                  failed          (evicted after TTL)
+                                     |
+                                     v
+                               cancelled (via DELETE)
+```
+
+1. **pending** -- Job accepted, not yet started.
+2. **in_progress** -- Worker is actively fetching pages.
+3. **completed** -- All pages fetched; data available in the status response.
+4. **failed** -- A fatal error occurred; the `error` field contains the message.
+5. **cancelled** -- User cancelled via `DELETE`. Only pending and in-progress jobs can be cancelled.
+
+## Job TTL and eviction
+
+Jobs are stored in an in-memory `DashMap` registry. A background task runs every 60 seconds
+and evicts jobs older than the configured maximum age.
+
+| Setting           | Value      |
+| ----------------- | ---------- |
+| Default job TTL   | 1 hour     |
+| Eviction interval | 60 seconds |
+
+Once evicted, a job ID returns 404. There is no persistent job storage; jobs are lost
+on server restart.
+
+## Error responses
+
+All error responses follow the same structure:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "url is required"
+  }
+}
+```
+
+Error codes map to HTTP status codes:
+
+| Error code       | HTTP status | Condition                               |
+| ---------------- | ----------- | --------------------------------------- |
+| `BAD_REQUEST`    | 400         | Invalid input (missing URL, bad config) |
+| `NOT_FOUND`      | 404         | Job or resource not found               |
+| `UNAUTHORIZED`   | 401         | Authentication required                 |
+| `FORBIDDEN`      | 403         | Access denied                           |
+| `WAF_BLOCKED`    | 403         | Blocked by WAF/bot protection           |
+| `TIMEOUT`        | 504         | Request or browser timed out            |
+| `RATE_LIMITED`   | 429         | Rate limit exceeded                     |
+| `SERVER_ERROR`   | 502         | Upstream server error                   |
+| `INTERNAL_ERROR` | 500         | Unexpected internal error               |
+
+:::note[Feature gate]
+The server requires the `api` Cargo feature. Add `features = ["api"]` to your `Cargo.toml` dependency, or pass `--features api` to `cargo run`.
+:::
