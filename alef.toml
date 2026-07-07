@@ -1618,7 +1618,7 @@ keywords = ["crawl", "scrape", "web", "spider"]
 
 [crates.readme]
 template_dir = "readme_templates"
-snippets_dir = "docs/snippets"
+snippets_dir = "docs-site/src/snippets"
 
 [crates.readme.targets.root]
 name = "Crawlberg"

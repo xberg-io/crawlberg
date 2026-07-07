@@ -5,11 +5,6 @@ tasks:
     desc: Sync version from Cargo.toml to all package manifests
     cmds:
       - alef sync-versions
-      - alef readme
-      - alef docs
-      - alef generate --clean
-      - alef stubs
-      - alef e2e generate
 
   bump:major:
     desc: Bump major version and sync all packages

@@ -22,9 +22,9 @@ tasks:
       - cargo install --path ../alef --locked
 
   alef:generate:
-    desc: Regenerate all Alef-managed outputs without formatting or building
+    desc: Regenerate all Alef-managed outputs without building
     cmds:
-      - alef all --clean --format=false
+      - alef all --clean
 
   alef:verify:
     desc: Check Alef-generated files are up to date

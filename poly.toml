@@ -210,7 +210,7 @@ ser = "ser"
 stages = ["pre-commit"]
 
 [hooks.builtin]
-polylint = { exclude = [
+lint = { exclude = [
     "**/*.freezed.dart",
     "**/*.g.dart",
     "**/*.jinja",
@@ -234,7 +234,7 @@ polylint = { exclude = [
     "vendor/**",
     "**/Cargo.toml",
 ] }
-polyfmt = { exclude = [
+fmt = { exclude = [
     "**/*.freezed.dart",
     "**/*.g.dart",
     "**/*.jinja",

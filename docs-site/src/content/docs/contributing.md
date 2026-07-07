@@ -123,4 +123,4 @@ CI runs the full binding test suite on each PR. You don't need Ruby, Java, PHP, 
 
 ## License
 
-Crawlberg is under the [MIT License](../LICENSE). Contributing means your changes are covered by it.
+Crawlberg is under the [MIT License](https://github.com/xberg-io/crawlberg/blob/main/LICENSE). Contributing means your changes are covered by it.

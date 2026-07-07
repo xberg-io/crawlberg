@@ -299,14 +299,14 @@ e2e/ruby/.bundle/
 !.github/skills/mcp/
 !.github/skills/mcp/SKILL.md
 
+
+# Astro Starlight docs site build artifacts
+docs-site/dist/
+docs-site/.astro/
+
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
-.ai-rulez/.generated-manifest.json
 .cursor/
 .github/agents/
 .github/commands/
 .github/copilot-instructions.md
 # END ai-rulez
-
-# Astro Starlight docs site build artifacts
-docs-site/dist/
-docs-site/.astro/
