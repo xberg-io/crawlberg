@@ -3,19 +3,24 @@
 //! This module is only compiled when the `browser` feature is enabled.
 
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
+use chromiumoxide::cdp::browser_protocol::fetch::{
+    ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
+    FailRequestParams,
+};
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, SetCookieParams, SetExtraHttpHeadersParams};
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
 use crate::browser_pool::BrowserPool;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::net::ssrf::validate_url;
+use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{AuthConfig, BrowserBackend, BrowserWait, CookieInfo, CrawlConfig};
@@ -193,6 +198,99 @@ async fn native_fetch(
     ))
 }
 
+/// Active CDP Fetch-domain interception that re-validates every browser-issued
+/// request against the SSRF policy. Held alive across a navigation; consuming it
+/// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
+/// and reports the first request that was blocked.
+struct SsrfInterceptGuard {
+    page: chromiumoxide::Page,
+    listener: tokio::task::JoinHandle<()>,
+    blocked: Arc<Mutex<Option<(String, String)>>>,
+}
+
+impl SsrfInterceptGuard {
+    /// Disable interception, stop the listener, and return the first blocked
+    /// `(url, reason)` observed during the navigation, if any.
+    async fn finish(self) -> Option<(String, String)> {
+        let _ = self.page.execute(FetchDisableParams::default()).await;
+        self.listener.abort();
+        // The listener is aborted, so this lock is uncontended.
+        match self.blocked.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        }
+    }
+}
+
+/// Enable CDP Fetch interception on `page`, validating every intercepted request
+/// URL against `policy` before Chrome connects. Requests resolving to blocked
+/// addresses (loopback, RFC1918, link-local, cloud metadata, non-http(s)
+/// schemes) are failed with `BlockedByClient` and the first one is recorded so
+/// the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
+///
+/// This closes the residual gap left by the pre-navigation seed check: the
+/// browser follows 3xx redirects and client-side navigations internally, so
+/// without per-request interception a redirect or `location` change to a
+/// private/metadata address would reach the network unchecked.
+/// Decide whether an intercepted request URL is permitted by the SSRF policy.
+/// Returns `Err(reason)` when the request must be failed at the CDP layer. This
+/// is the per-request decision applied to every browser-issued request.
+async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), String> {
+    match url::Url::parse(request_url) {
+        Ok(parsed) => validate_url(&parsed, policy).await.map_err(|e| e.to_string()),
+        Err(e) => Err(format!("invalid URL: {e}")),
+    }
+}
+
+async fn start_ssrf_interception(
+    page: &chromiumoxide::Page,
+    policy: &SsrfPolicy,
+) -> Result<SsrfInterceptGuard, CrawlError> {
+    // Register the listener before enabling so no paused request is missed.
+    let mut events = page
+        .event_listener::<EventRequestPaused>()
+        .await
+        .map_err(|e| CrawlError::BrowserError(format!("failed to register intercept listener: {e}")))?;
+
+    page.execute(FetchEnableParams::default())
+        .await
+        .map_err(|e| CrawlError::BrowserError(format!("failed to enable request interception: {e}")))?;
+
+    let blocked: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
+    let listener_page = page.clone();
+    let listener_policy = policy.clone();
+    let listener_blocked = Arc::clone(&blocked);
+
+    let listener = tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            let request_id = event.request_id.clone();
+            let request_url = event.request.url.clone();
+
+            match ssrf_verdict(&request_url, &listener_policy).await {
+                Ok(()) => {
+                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
+                }
+                Err(reason) => {
+                    if let Ok(mut slot) = listener_blocked.lock()
+                        && slot.is_none()
+                    {
+                        *slot = Some((request_url, reason));
+                    }
+                    let _ = listener_page
+                        .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
+                        .await;
+                }
+            }
+        }
+    });
+
+    Ok(SsrfInterceptGuard {
+        page: page.clone(),
+        listener,
+        blocked,
+    })
+}
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -265,7 +363,14 @@ async fn page_fetch(
     }
 
     let timeout = config.browser.timeout;
-    tokio::time::timeout(timeout, async {
+
+    // Re-validate every request the browser issues (initial navigation, 3xx
+    // redirects, client-side navigations, and subresources) against the SSRF
+    // policy. The seed is already checked before we get here, but the browser
+    // follows redirects internally; interception is what re-checks each hop.
+    let interceptor = start_ssrf_interception(page, &config.ssrf).await?;
+
+    let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
             .map_err(|e| CrawlError::BrowserError(format!("navigation failed: {e}")))?;
@@ -276,8 +381,35 @@ async fn page_fetch(
 
         Ok::<(), CrawlError>(())
     })
-    .await
-    .map_err(|_| CrawlError::BrowserTimeout(format!("browser timed out after {timeout:?}")))??;
+    .await;
+
+    // Tear down interception and recover the first blocked (url, reason), if any.
+    // A blocked main-frame request makes navigation fail; prefer the precise
+    // SSRF reason over the generic navigation/timeout error in that case.
+    let blocked = interceptor.finish().await;
+    match navigation {
+        Ok(Ok(())) => {}
+        Ok(Err(navigation_error)) => {
+            if let Some((blocked_url, reason)) = blocked {
+                return Err(CrawlError::SsrfPolicyViolation {
+                    url: blocked_url,
+                    reason,
+                });
+            }
+            return Err(navigation_error);
+        }
+        Err(_) => {
+            if let Some((blocked_url, reason)) = blocked {
+                return Err(CrawlError::SsrfPolicyViolation {
+                    url: blocked_url,
+                    reason,
+                });
+            }
+            return Err(CrawlError::BrowserTimeout(format!(
+                "browser timed out after {timeout:?}"
+            )));
+        }
+    }
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -389,4 +521,60 @@ async fn set_viewport(page: &chromiumoxide::Page, width: u32, height: u32) -> Re
 
     page.execute(params).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod ssrf_interception_tests {
+    //! Unit tests for the per-request SSRF decision applied by browser-tier
+    //! Fetch interception. These cover the security-critical verdict (the CDP
+    //! plumbing around it is thin glue) and stay hermetic by using literal-IP
+    //! and scheme rejections that require no DNS resolution or network.
+    use super::ssrf_verdict;
+    use crate::net::ssrf::SsrfPolicy;
+
+    fn deny_policy() -> SsrfPolicy {
+        SsrfPolicy::default()
+    }
+
+    fn allow_private_policy() -> SsrfPolicy {
+        SsrfPolicy {
+            deny_private: false,
+            ..SsrfPolicy::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_loopback_navigation() {
+        let verdict = ssrf_verdict("http://127.0.0.1/admin", &deny_policy()).await;
+        assert!(verdict.is_err(), "loopback must be rejected: {verdict:?}");
+    }
+
+    #[tokio::test]
+    async fn rejects_cloud_metadata_address() {
+        let verdict = ssrf_verdict("http://169.254.169.254/latest/meta-data/", &deny_policy()).await;
+        assert!(verdict.is_err(), "cloud metadata IP must be rejected: {verdict:?}");
+    }
+
+    #[tokio::test]
+    async fn rejects_non_http_scheme() {
+        let verdict = ssrf_verdict("file:///etc/passwd", &deny_policy()).await;
+        assert!(verdict.is_err(), "file:// scheme must be rejected: {verdict:?}");
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_url() {
+        let verdict = ssrf_verdict("not a url", &deny_policy()).await;
+        assert!(verdict.is_err(), "malformed URL must be rejected: {verdict:?}");
+    }
+
+    #[tokio::test]
+    async fn allows_loopback_when_private_networks_permitted() {
+        // The opt-out must let the interceptor pass private targets so browser
+        // behavior matches the HTTP tier under the same policy.
+        let verdict = ssrf_verdict("http://127.0.0.1/", &allow_private_policy()).await;
+        assert!(
+            verdict.is_ok(),
+            "loopback must pass when deny_private=false: {verdict:?}"
+        );
+    }
 }
