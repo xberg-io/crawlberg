@@ -14,11 +14,9 @@ setup_go_paths "$REPO_ROOT"
 
 cd "${REPO_ROOT}/packages/go/v4"
 
-# Check if we're in CI mode (detect from environment variables or command line flags)
 verbose_mode="${VERBOSE_MODE:-${CI:-false}}"
 is_ci="${CI:-}"
 
-# Parse command line flags
 while [[ $# -gt 0 ]]; do
   case $1 in
   --verbose | -v)
@@ -31,16 +29,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Set up Go test flags
 go_test_flags=("-timeout" "10m")
 
-# In CI or verbose mode, enable detailed output
 if [ "$verbose_mode" = "true" ] || [ -n "$is_ci" ]; then
   go_test_flags+=("-v")
   echo "Running Go tests with verbose output..."
 fi
 
-# Print environment information for debugging
 if [ -n "$is_ci" ] || [ "$verbose_mode" = "true" ]; then
   echo "Environment Information:"
   echo "  Go version: $(go version)"
@@ -53,10 +48,8 @@ if [ -n "$is_ci" ] || [ "$verbose_mode" = "true" ]; then
   echo ""
 fi
 
-# Export RUST_BACKTRACE for better error output on segfault
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 
-# Run tests with better error reporting
 echo "Starting Go tests..."
 go test "${go_test_flags[@]}" ./... || {
   exit_code=$?

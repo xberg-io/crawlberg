@@ -518,14 +518,14 @@ class Node {
   compareDocumentPosition(other) {
     if (!other) return 0;
     if (this._nid === other._nid) return 0;
-    if (this.contains(other)) return 16 | 4; // DOCUMENT_POSITION_CONTAINED_BY | FOLLOWING
-    if (other.contains && other.contains(this)) return 8 | 2; // DOCUMENT_POSITION_CONTAINS | PRECEDING
-    return 4; // DOCUMENT_POSITION_FOLLOWING
+    if (this.contains(other)) return 16 | 4;
+    if (other.contains && other.contains(this)) return 8 | 2;
+    return 4;
   }
   getRootNode() {
     return globalThis.document;
   }
-  normalize() {} // no-op
+  normalize() {}
   isEqualNode(other) {
     return other && this._nid === other._nid;
   }
@@ -730,7 +730,7 @@ class Element extends Node {
   }
   setAttributeNS(ns, n, v) {
     this.setAttribute(n, v);
-  } // Simplified NS handling
+  }
   removeAttribute(n) {
     _dom("remove_attribute", this._nid, n);
   }
@@ -742,7 +742,7 @@ class Element extends Node {
   }
   hasAttributes() {
     return true;
-  } // Simplified
+  }
   getAttributeNS(ns, n) {
     return this.getAttribute(n);
   }
@@ -1003,7 +1003,7 @@ class Element extends Node {
       if (pageOrigin === iframeOrigin || this.src === "" || this.src === "about:blank" || !this.src.includes("://")) {
         return this._iframeDoc;
       }
-      return null; // Cross-origin: blocked
+      return null;
     }
     if (!this._iframeDoc) {
       this._iframeDoc = new _IframeDocument(
@@ -1018,7 +1018,7 @@ class Element extends Node {
   get contentWindow() {
     if (this.localName !== "iframe") return undefined;
     if (!this._iframeWin) {
-      this.contentDocument; // side effect: creates _iframeDoc + _iframeWin
+      this.contentDocument;
     }
     return this._iframeWin;
   }
@@ -1079,7 +1079,7 @@ class Element extends Node {
       if (type === "button") continue;
       if (type === "submit" || tag === "button") {
         if (submitter && f !== submitter) continue;
-        if (!submitter) continue; // default submit: don't include submit button value
+        if (!submitter) continue;
       }
 
       let val;
@@ -1275,7 +1275,7 @@ class Document extends Node {
   }
   get ownerDocument() {
     return null;
-  } // Document has no ownerDocument
+  }
   get compatMode() {
     return "CSS1Compat";
   }
@@ -1340,10 +1340,6 @@ class Document extends Node {
     _cache.set(nid, frag);
     return frag;
   }
-  // Legacy DOM Level 2 event factory. Spec returns an event of the requested
-  // class with an empty type until init*Event() is called. We previously
-  // returned a generic Event for every type, which broke libraries that call
-  // createEvent('CustomEvent').initCustomEvent(...) — see issue #41.
   createEvent(type) {
     const map = {
       customevent: CustomEvent,
@@ -1383,7 +1379,7 @@ class Document extends Node {
     return true;
   }
   createTreeWalker(root, whatToShow, filter) {
-    whatToShow = whatToShow || 0xffffffff; // NodeFilter.SHOW_ALL
+    whatToShow = whatToShow || 0xffffffff;
     const walker = {
       root: root,
       currentNode: root,
@@ -2047,7 +2043,7 @@ globalThis.pageXOffset = 0;
 globalThis.pageYOffset = 0;
 
 globalThis.__fetchInterceptEnabled = false;
-globalThis.__fetchInterceptCallback = null; // Set by CDP to handle paused requests
+globalThis.__fetchInterceptCallback = null;
 
 function _base64ToUint8Array(b64) {
   const clean = String(b64 || "").replace(/[\r\n\s]/g, "");
@@ -2113,9 +2109,7 @@ globalThis.fetch = async (input, init = {}) => {
     try {
       const base = _domParse("document_url") || "about:blank";
       url = new URL(url, base).href;
-    } catch (e) {
-      /* keep as-is if URL resolution fails */
-    }
+    } catch (e) {}
   }
   const method = init.method || (input instanceof Request ? input.method : "GET");
   const hdrs = JSON.stringify(
@@ -2310,13 +2304,13 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
           });
         }
 
-        xhr._setReadyState(2); // HEADERS_RECEIVED
+        xhr._setReadyState(2);
 
         const text = await resp.text();
         if (xhr._aborted) return;
 
         xhr.responseText = text;
-        xhr._setReadyState(3); // LOADING
+        xhr._setReadyState(3);
 
         switch (xhr.responseType) {
           case "json":
@@ -2337,13 +2331,13 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
             xhr.response = new Blob([text]);
             break;
           case "document":
-            xhr.response = text; // simplified
+            xhr.response = text;
             break;
           default:
             xhr.response = text;
         }
 
-        xhr._setReadyState(4); // DONE
+        xhr._setReadyState(4);
         xhr._fireEvent("load");
         xhr._fireEvent("loadend");
       })
@@ -2627,7 +2621,7 @@ if (!("isConnected" in Node.prototype)) {
     get() {
       let node = this;
       while (node) {
-        if (node.nodeType === 9) return true; // Document node
+        if (node.nodeType === 9) return true;
         node = node.parentNode;
       }
       return false;
@@ -2934,9 +2928,7 @@ globalThis.MutationObserver = class MutationObserver {
         const batch = this._records.splice(0);
         try {
           this._callback(batch, this);
-        } catch (e) {
-          /* observer errors shouldn't propagate */
-        }
+        } catch (e) {}
       }
     });
   }
@@ -2946,7 +2938,7 @@ globalThis.__notifyMutation = function (type, target_nid, addedNodes, removedNod
   const target = globalThis._cache?.get(target_nid) || null;
   if (!target) return;
   const record = {
-    type: type, // 'childList', 'attributes', 'characterData'
+    type: type,
     target: target,
     addedNodes: (addedNodes || []).map((nid) => globalThis._cache?.get(nid) || null).filter(Boolean),
     removedNodes: (removedNodes || []).map((nid) => globalThis._cache?.get(nid) || null).filter(Boolean),
@@ -3061,9 +3053,6 @@ globalThis.CustomEvent = class extends Event {
     super(t, o);
     this.detail = o.detail;
   }
-  // Legacy DOM Level 2 init; some libraries (Starbucks China bundle, older
-  // analytics shims) still call createEvent('CustomEvent') + initCustomEvent
-  // instead of new CustomEvent(...). See issue #41.
   initCustomEvent(type, bubbles, cancelable, detail) {
     this.type = type;
     this.bubbles = !!bubbles;
@@ -3597,7 +3586,7 @@ class _IframeDocument {
       .replace(/<\/?html[^>]*>/gi, "")
       .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "")
       .replace(/<\/?body[^>]*>/gi, "")
-      .replace(/^\s+/, ""); // trim leading whitespace (before <body> content)
+      .replace(/^\s+/, "");
     if (bodyContent) {
       this._body.innerHTML = bodyContent;
     }
@@ -3848,9 +3837,7 @@ class _IframeWindow {
 globalThis.__ariaQuerySelector = function (root, selector) {
   return null;
 };
-globalThis.__ariaQuerySelectorAll = async function* (root, selector) {
-  /* yields nothing */
-};
+globalThis.__ariaQuerySelectorAll = async function* (root, selector) {};
 class _Canvas2D {
   constructor(canvas) {
     this.canvas = canvas;
@@ -4138,10 +4125,10 @@ Element.prototype.getContext = function getContext(type) {
       getParameter(pname) {
         if (pname === 0x9245) return _fp("gpuVendor");
         if (pname === 0x9246) return _fp("gpu");
-        if (pname === 0x1f01) return "WebKit WebGL"; // GL_RENDERER
-        if (pname === 0x1f00) return "WebKit"; // GL_VENDOR
-        if (pname === 0x1f02) return "OpenGL ES 3.0 (ANGLE)"; // GL_VERSION
-        if (pname === 0x8b8c) return "WebGL GLSL ES 3.00 (ANGLE)"; // GL_SHADING_LANGUAGE_VERSION
+        if (pname === 0x1f01) return "WebKit WebGL";
+        if (pname === 0x1f00) return "WebKit";
+        if (pname === 0x1f02) return "OpenGL ES 3.0 (ANGLE)";
+        if (pname === 0x8b8c) return "WebGL GLSL ES 3.00 (ANGLE)";
         return 0;
       },
       getSupportedExtensions() {
@@ -4293,9 +4280,7 @@ Element.prototype.attachShadow = function attachShadow(opts) {
         children.push(c);
         try {
           c.parentNode = shadow;
-        } catch (_) {
-          /* parentNode is getter-only on Node, ignore */
-        }
+        } catch (_) {}
       }
       return c;
     },
@@ -4361,7 +4346,7 @@ Element.prototype.attachShadow = function attachShadow(opts) {
     },
     get nodeType() {
       return 11;
-    }, // DOCUMENT_FRAGMENT_NODE
+    },
     get nodeName() {
       return "#document-fragment";
     },
@@ -5499,10 +5484,6 @@ if (typeof Document !== "undefined" && !Document.prototype.importNode) {
   };
 }
 
-// Document.elementFromPoint / elementsFromPoint — no layout engine, so this is a stub:
-// in-viewport coords return <body> (or <html> as fallback), out-of-viewport returns null.
-// Wrong-but-non-throwing beats "undefined", which traps ad/analytics bootstraps in retry loops
-// (see issue #63).
 if (typeof Document !== "undefined" && !Document.prototype.elementFromPoint) {
   Document.prototype.elementFromPoint = function (x, y) {
     if (typeof x !== "number" || typeof y !== "number" || !isFinite(x) || !isFinite(y)) {

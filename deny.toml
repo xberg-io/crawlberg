@@ -7,12 +7,7 @@ no-default-features = false
 feature-depth = 1
 
 [advisories]
-ignore = [
-    "RUSTSEC-2024-0436", # paste crate unmaintained - transitive dep from biblatex/tokenizers
-    "RUSTSEC-2025-0141", # bincode 1.3.3 unmaintained - build-dep of deno_core 0.400 (crawlberg-browser)
-    "RUSTSEC-2026-0176", # pyo3 0.28 PyCFunction::new_closure missing Sync bound - crawlberg-py does not use new_closure; pyo3 0.29 upgrade blocked on pyo3-async-runtimes 0.28 (no 0.29 release yet)
-    "RUSTSEC-2026-0177", # pyo3 0.28 PyCFunction::new_closure missing Sync bound - crawlberg-py does not use new_closure; pyo3 0.29 upgrade blocked on pyo3-async-runtimes 0.28 (no 0.29 release yet)
-]
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2025-0141", "RUSTSEC-2026-0176", "RUSTSEC-2026-0177"]
 
 [licenses]
 allow = [
@@ -36,23 +31,31 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# Per-crate exceptions for copyleft licenses.
-# These are pinned to specific crates — nothing else can use these licenses.
 exceptions = [
-    # cbindgen: build-time C header generator, not linked into binaries
-    { allow = ["MPL-2.0"], crate = "cbindgen" },
-    # option-ext: tiny utility (transitive dep of cbindgen)
-    { allow = ["MPL-2.0"], crate = "option-ext" },
-    # r-efi: UEFI bindings, platform-specific transitive dep, never linked
-    { allow = ["LGPL-2.1-or-later"], crate = "r-efi" },
-    # crawlberg-browser DOM/CSS deps (Servo) — vendored from Apache-2.0 Obscura
-    # into a `publish = false` crate; mainstream Servo libs widely used in Rust.
-    { allow = ["MPL-2.0"], crate = "cssparser" },
-    { allow = ["MPL-2.0"], crate = "cssparser-macros" },
-    { allow = ["MPL-2.0"], crate = "dtoa-short" },
-    { allow = ["MPL-2.0"], crate = "selectors" },
-    # cooked-waker: deno_core build-time dep, never linked into the final binary
-    { allow = ["MPL-2.0"], crate = "cooked-waker" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "cbindgen" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "option-ext" },
+    { allow = [
+        "LGPL-2.1-or-later",
+    ], crate = "r-efi" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "cssparser" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "cssparser-macros" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "dtoa-short" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "selectors" },
+    { allow = [
+        "MPL-2.0",
+    ], crate = "cooked-waker" },
 ]
 
 [licenses.private]

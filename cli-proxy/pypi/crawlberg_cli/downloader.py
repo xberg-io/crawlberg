@@ -175,7 +175,6 @@ def _reject_unsafe_member(name: str) -> None:
     pure = PurePosixPath(normalized)
     if pure.is_absolute() or normalized.startswith("/"):
         raise RuntimeError(f"refusing absolute path in archive: {name}")
-    # Windows drive letters / UNC prefixes are also absolute escapes.
     if len(normalized) >= 2 and normalized[1] == ":":
         raise RuntimeError(f"refusing absolute path in archive: {name}")
     if any(part == ".." for part in pure.parts):
@@ -206,7 +205,6 @@ def _safe_extract(archive_path: Path, asset_name: str, dest: Path) -> None:
                 _reject_unsafe_member(member.name)
                 if not _is_within(dest, dest / member.name):
                     raise RuntimeError(f"refusing archive entry escaping dest: {member.name}")
-                # Reject link members that point outside dest as well.
                 if member.islnk() or member.issym():
                     link_target = dest / member.name
                     if not _is_within(dest, link_target.parent / member.linkname):

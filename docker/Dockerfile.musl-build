@@ -1,41 +1,26 @@
 # =============================================================================
-# Alpine-based builder for musl CLI binaries.
-#
-# Usage:
-#   docker build -f docker/Dockerfile.musl-build \
-#     --output type=local,dest=./dist .
-#
-# Produces: dist/crawlberg (binary)
 # =============================================================================
 FROM alpine:3.21 AS builder
 
 WORKDIR /build
 
-# Install build dependencies
-# `sed` installs GNU sed; the default BusyBox sed lacks -z (null-terminated) mode
-# which is needed to rewrite the multi-line workspace members array below.
 RUN apk add --no-cache \
     curl gcc g++ musl-dev cmake make pkgconf \
     openssl-dev openssl-libs-static \
     perl linux-headers git file sed
 
-# Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --component rust-src && \
     echo "Rust host: $(~/.cargo/bin/rustc -vV | grep host)" && \
     echo "Default target: $(~/.cargo/bin/rustc --print cfg | grep target)"
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Copy workspace manifests and only the required crates
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crawlberg/ crates/crawlberg/
 COPY crates/crawlberg-cli/ crates/crawlberg-cli/
 COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 
-# Replace workspace members with only the crates we have.
-# Use sed -z (null-terminated mode) so the regex spans newlines: the workspace
-# members list in Cargo.toml is multi-line.
 RUN sed -i -z 's|members = \[[^]]*\]|members = ["crates/crawlberg", "crates/crawlberg-cli", "crates/crawlberg-bindings-common", "crates/crawlberg-browser"]|' Cargo.toml
 
 RUN . "$HOME/.cargo/env" && \
@@ -43,11 +28,7 @@ RUN . "$HOME/.cargo/env" && \
     cp target/release/crawlberg /build/crawlberg && \
     strip /build/crawlberg
 
-# Verify the binary
 RUN file /build/crawlberg
 
-# =============================================================================
-# Output stage — just the binary
-# =============================================================================
 FROM scratch
 COPY --from=builder /build/crawlberg /crawlberg

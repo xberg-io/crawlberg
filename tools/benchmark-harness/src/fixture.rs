@@ -98,7 +98,6 @@ impl FixtureManager {
             .map_err(|error| Error::Fixture(format!("failed to parse JSON from {}: {error}", path.display())))?;
 
         let fixtures: Vec<ScrapeFixture> = if value.is_array() {
-            // Direct array format.
             serde_json::from_value::<Vec<ScrapeFixtureRaw>>(value)
                 .map_err(|error| {
                     Error::Fixture(format!(
@@ -110,7 +109,6 @@ impl FixtureManager {
                 .map(ScrapeFixture::from)
                 .collect()
         } else if value.get("rows").is_some() {
-            // HuggingFace rows wrapper format.
             serde_json::from_value::<HfResponse>(value)
                 .map_err(|error| {
                     Error::Fixture(format!(
@@ -370,7 +368,6 @@ mod tests {
         let mut manager = FixtureManager::new();
         manager.load(file.path()).unwrap();
         manager.apply_shard(0, 2);
-        // After sort-by-id: a, b, c, d — shard 0/2 keeps indices 0 and 2 (a, c).
         assert_eq!(manager.len(), 2);
         let ids: Vec<&str> = manager.entries().iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["a", "c"]);
@@ -398,7 +395,6 @@ mod tests {
             r#"[{"id": "2", "url": "https://b.com"}, {"id": "3", "url": "https://c.com"}]"#,
         )
         .unwrap();
-        // Non-JSON file should be ignored.
         fs::write(dir.path().join("notes.txt"), "ignore me").unwrap();
 
         let mut manager = FixtureManager::new();

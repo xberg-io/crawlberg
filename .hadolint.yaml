@@ -1,9 +1,5 @@
-# hadolint configuration
 # DL3008/DL3018: version-pinning apt/apk packages is intentionally not done —
 #   the build images track distro security updates and pinned versions are
-#   routinely garbage-collected from upstream mirrors, breaking reproducible builds.
-# DL4006: the Alpine images run busybox `ash`, where `set -o pipefail` is the
-#   default-safe behaviour and the explicit SHELL directive is unnecessary.
 ignored:
   - DL3008
   - DL3018

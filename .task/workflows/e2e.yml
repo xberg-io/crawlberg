@@ -45,7 +45,6 @@ tasks:
     desc: Run all E2E tests across all supported languages (builds bindings, starts mock server)
     deps: [mock-server:start]
     cmds:
-      # Build bindings before testing.
       - task: :rust:build
       - task: :python:build:dev
       - task: :node:build:dev
@@ -56,7 +55,6 @@ tasks:
       - task: :ruby:build
       - task: :php:build
       - task: :elixir:build
-      # Run e2e tests (source mock server URL, run all suites, fail at end if any failed).
       - cmd: |
           eval "$(cat .mock-server.env 2>/dev/null)"
           export MOCK_SERVER_URL

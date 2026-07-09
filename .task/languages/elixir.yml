@@ -131,13 +131,7 @@ tasks:
     desc: Run generated Elixir E2E tests
     dir: e2e/elixir
     env:
-      # Force the crawlberg path-dep to build the NIF from source rather than
-      # downloading the precompiled binary tagged at the package's release version,
-      # which lags the local source by a few commits during active development.
       CRAWLBERG_BUILD: "1"
-      # Allow private networks (loopback) for E2E testing against the mock-server.
-      # System.put_env() in Elixir does not propagate to the Rust NIF's libc environ,
-      # so the env var must be set at the process level before the runtime starts.
       CRAWLBERG_ALLOW_PRIVATE_NETWORK: "true"
     cmds:
       - mix deps.get

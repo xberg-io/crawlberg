@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Generate e2e test suite for a specific language via alef e2e generate
 set -euo pipefail
 
 if [ $# -ne 1 ]; then

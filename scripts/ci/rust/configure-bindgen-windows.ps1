@@ -1,6 +1,4 @@
 #!/usr/bin/env pwsh
-# Configure bindgen compatibility headers for Windows (Rust)
-# Used by: ci-rust.yaml - Configure bindgen compatibility headers step
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'

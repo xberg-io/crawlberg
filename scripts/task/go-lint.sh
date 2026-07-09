@@ -10,21 +10,17 @@ export PKG_CONFIG_PATH="$root/crates/crawlberg-ffi:${PKG_CONFIG_PATH:-}"
 export DYLD_LIBRARY_PATH="$root/target/release:$root/target/debug:${DYLD_LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="$root/target/release:$root/target/debug:${LD_LIBRARY_PATH:-}"
 
-# Ensure FFI library is built (Go bindings link against it via cgo).
 if [ ! -f "$root/target/release/libcrawlberg_ffi.dylib" ] && [ ! -f "$root/target/release/libcrawlberg_ffi.so" ] && [ ! -f "$root/target/debug/libcrawlberg_ffi.dylib" ] && [ ! -f "$root/target/debug/libcrawlberg_ffi.so" ]; then
   echo "==> Building crawlberg-ffi (required by Go bindings)..."
   cargo build -p crawlberg-ffi 2>/dev/null
 fi
 
-# Go module directories in go.work
 workspace_dirs=(
   packages/go/v4
   e2e/go
   tools/benchmark-harness/scripts
 )
 
-# Standalone modules NOT in go.work (duplicate module paths, need GOWORK=off)
-# Note: these have broken replace directives when run locally; they work in CI
 standalone_dirs=()
 
 failed=0

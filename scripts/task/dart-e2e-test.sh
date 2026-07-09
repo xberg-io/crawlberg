@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Spawn the alef-generated mock-server, parse env markers
-# (MOCK_SERVER_URL + per-fixture MOCK_SERVERS={...}), export per-fixture
-# MOCK_SERVER_<UPPER_ID> vars, then run the dart e2e suite.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -32,7 +32,6 @@ pub fn percentile_r7(samples: &mut [f64], percentile: f64) -> Option<f64> {
         return Some(samples[0]);
     }
 
-    // R-7: h = (n-1)*p + 1, then interpolate between floor and ceil indices.
     let h = (n - 1) as f64 * percentile;
     let lo = h.floor() as usize;
     let hi = h.ceil() as usize;
@@ -125,7 +124,6 @@ mod tests {
     #[test]
     fn percentile_r7_median_even() {
         let mut data = vec![1.0_f64, 2.0, 3.0, 4.0];
-        // R-7: h = 3*0.5 = 1.5, interpolates between index 1 (2.0) and 2 (3.0)
         assert_eq!(percentile_r7(&mut data, 0.5), Some(2.5));
     }
 
@@ -133,7 +131,6 @@ mod tests {
     fn percentile_r7_p95() {
         let mut data: Vec<f64> = (1..=100).map(|x| x as f64).collect();
         let p95 = percentile_r7(&mut data, 0.95).unwrap();
-        // R-7 p95 for 1..=100: h = 99*0.95 = 94.05, interpolates between 95 and 96
         assert!((p95 - 95.05).abs() < 1e-9);
     }
 
@@ -163,7 +160,6 @@ mod tests {
 
     #[test]
     fn calculate_variance_known_value() {
-        // Dataset from Wikipedia sample variance example.
         let data = vec![2.0_f64, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
         let variance = calculate_variance(&data);
         assert!((variance - 4.571_428).abs() < 1e-3);

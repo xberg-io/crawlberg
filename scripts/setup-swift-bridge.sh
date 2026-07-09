@@ -1,17 +1,10 @@
 #!/bin/bash
-# Setup Swift bridge files after cargo build
-# Usage: setup-swift-bridge.sh [debug|release]  (default: release)
 
 set -e
 
 PROFILE="${1:-release}"
 BUILD_DIR="target/${PROFILE}/build"
 
-# Find the most recently built output directory
-# Use platform-appropriate stat flags: BSD/macOS uses `-f`, GNU/Linux uses `-c`.
-# Use a bash array so the format string survives `-exec` word-splitting; a plain
-# variable would split `%m %N` into two args and stat would treat `%N` as a
-# filename, printing only mtime and erroring on a missing file.
 if stat -f '%m %N' "$BUILD_DIR" >/dev/null 2>&1; then
   STAT_FMT=(-f '%m %N')
 else
@@ -26,15 +19,12 @@ fi
 
 echo "Using swift-bridge output from: $OUT"
 
-# Ensure target directories exist
 mkdir -p packages/swift/Sources/RustBridgeC
 mkdir -p packages/swift/Sources/RustBridge
 
-# Copy C headers
 cat "$OUT/SwiftBridgeCore.h" "$OUT/crawlberg-swift/crawlberg-swift.h" \
   >packages/swift/Sources/RustBridgeC/RustBridgeC.h
 
-# Copy Swift bridge files with import statement prepended
 {
   printf 'import RustBridgeC\n'
   cat "$OUT/SwiftBridgeCore.swift"

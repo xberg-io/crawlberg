@@ -219,11 +219,6 @@ tasks:
     dir: e2e/wasm
     cmds:
       - pnpm install
-      # Use `pnpm exec` (not `pnpm dlx`) so vitest runs against the
-      # e2e/wasm/node_modules deps (vite-plugin-wasm etc.). `pnpm dlx`
-      # downloads vitest into a temp dir and resolves config from
-      # parent directories, finding a repo-root vitest.config and
-      # failing to import vite-plugin-wasm from there.
       - pnpm exec vitest run
 
   e2e:deno:verify:

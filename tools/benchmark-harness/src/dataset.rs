@@ -30,7 +30,7 @@ async fn fetch_with_retry(client: &reqwest::Client, url: &str, max_retries: u32)
     let mut last_error: Option<String> = None;
     for attempt in 0..=max_retries {
         if attempt > 0 {
-            let delay = Duration::from_secs(1 << (attempt - 1)); // 1s, 2s, 4s
+            let delay = Duration::from_secs(1 << (attempt - 1));
             eprintln!(
                 "  retrying in {}s (attempt {}/{})",
                 delay.as_secs(),
@@ -155,7 +155,6 @@ pub async fn download_scrape_evals(output_dir: &Path, force: bool) -> Result<usi
         let fetched = page.rows.len() as u64;
         all_fixtures.extend(page.rows.into_iter().map(|wrapper| raw_to_fixture(wrapper.row)));
 
-        // Write accumulated progress to partial file after each successful page.
         let partial_json = serde_json::to_string_pretty(&all_fixtures)?;
         std::fs::write(&partial_path, partial_json).map_err(|error| {
             Error::Dataset(format!(
@@ -172,7 +171,6 @@ pub async fn download_scrape_evals(output_dir: &Path, force: bool) -> Result<usi
     }
 
     if all_fixtures.is_empty() {
-        // Clean up the partial file before returning an error.
         let _ = std::fs::remove_file(&partial_path);
         return Err(Error::Dataset("no fixtures downloaded from HuggingFace API".to_owned()));
     }
@@ -183,7 +181,6 @@ pub async fn download_scrape_evals(output_dir: &Path, force: bool) -> Result<usi
         output_path.display()
     );
 
-    // Atomic write: rename the partial file to the final filename.
     std::fs::rename(&partial_path, &output_path).map_err(|error| {
         Error::Dataset(format!(
             "failed to finalize dataset file at {}: {error}",
@@ -242,7 +239,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let output_path = dir.path().join(OUTPUT_FILENAME);
 
-        // Write a small pre-existing fixture file.
         let fixtures = vec![ScrapeFixture {
             id: String::from("1"),
             url: String::from("https://example.com"),
@@ -258,7 +254,6 @@ mod tests {
         }];
         std::fs::write(&output_path, serde_json::to_string(&fixtures).unwrap()).unwrap();
 
-        // Should skip the network entirely and return 1.
         let count = download_scrape_evals(dir.path(), false).await.unwrap();
         assert_eq!(count, 1);
     }

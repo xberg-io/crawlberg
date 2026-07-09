@@ -2,9 +2,6 @@
 
 set -e
 
-# This script creates a php.ini file for CI testing that loads the built PHP extension.
-# This allows PHPUnit to find and load the locally-built extension without requiring
-# system-wide installation or sudo access.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../" && pwd)"
@@ -16,7 +13,6 @@ echo "Repo root: $REPO_ROOT"
 echo "Output file: $INI_FILE"
 echo ""
 
-# Determine the extension file based on OS
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
   EXT_FILE="libcrawlberg_php.so"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
@@ -28,9 +24,6 @@ else
   EXT_FILE="libcrawlberg_php.so"
 fi
 
-# Prefer release build, fall back to debug. task php:build:dev produces
-# target/debug/, task php:build:release produces target/release/. The generic
-# CI "Build language binding" step calls build:dev for all langs.
 BUILT_EXT=""
 TARGET_DIR=""
 for candidate_dir in "$REPO_ROOT/target/release" "$REPO_ROOT/target/debug"; do
@@ -57,18 +50,12 @@ echo "Found built extension: $BUILT_EXT"
 echo "Extension file size: $(du -h "$BUILT_EXT" | cut -f1)"
 echo ""
 
-# Convert paths to format acceptable by PHP on Windows (forward slashes)
 if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]]; then
-  # On Windows with MSYS, convert backslashes to forward slashes
   DISPLAY_DIR="${TARGET_DIR//\\/\/}"
 else
   DISPLAY_DIR="$TARGET_DIR"
 fi
 
-# Detect the active PHP's default extension_dir so we can preload bundled
-# extensions (dom, json, mbstring, tokenizer, xml, xmlwriter, ctype, libxml)
-# that PHPUnit requires. `php -c <ini>` REPLACES the default php.ini, so we
-# must re-declare extension_dir + every needed extension here.
 DEFAULT_EXT_DIR="$(php -r 'echo ini_get("extension_dir");' 2>/dev/null || true)"
 if [ -z "$DEFAULT_EXT_DIR" ]; then
   DEFAULT_EXT_DIR="$(php-config --extension-dir 2>/dev/null || true)"
@@ -80,9 +67,6 @@ fi
 
 echo "Detected PHP extension_dir: $DEFAULT_EXT_DIR"
 
-# Create the ini file with absolute path
-# We load the Crawlberg extension with its full path and set extension_dir to
-# the active PHP's own dir so PHPUnit's required extensions resolve.
 if cat >"$INI_FILE" <<EOF; then
 ; Crawlberg PHP Extension Configuration for CI Testing
 ; This file is generated automatically by create-ci-php-ini.sh

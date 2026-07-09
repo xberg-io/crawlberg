@@ -2,13 +2,12 @@ packages:
   - "crates/crawlberg-node"
   - "crates/crawlberg-wasm"
   - "e2e/node"
-  - "!e2e/wasm" # excluded: depends on wasm-pack build output (crates/crawlberg-wasm/pkg) which doesn't exist on fresh checkout
+  - "!e2e/wasm"
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
   - "@xberg-io/*"
 
-# pnpm settings migrated from .npmrc (npm warns on kebab-case keys it does not recognize)
 sharedWorkspaceLockfile: true
 autoInstallPeers: true
 hoist: true

@@ -1,56 +1,35 @@
 # =============================================================================
-# Alpine-based builder for musl CLI binary.
-#
-# This is the primary CLI image for crawlberg distribution:
-# - Multi-arch support (amd64, arm64)
-# - Minimal dependency footprint (Alpine 3.21)
-# - Single static binary, fully portable
-# - Optimized for container deployment
-#
-# Build: docker build -f docker/Dockerfile.alpine -t crawlberg:latest .
-# =============================================================================
 FROM alpine:3.21 AS builder
 
 WORKDIR /build
 
-# Install build dependencies: Rust + compile toolchain
 RUN apk add --no-cache \
     curl gcc g++ musl-dev cmake make pkgconf \
     openssl-dev openssl-libs-static \
     perl linux-headers git file
 
-# Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --component rust-src && \
     echo "Rust host: $(~/.cargo/bin/rustc -vV | grep host)" && \
     echo "Default target: $(~/.cargo/bin/rustc --print cfg | grep target)"
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Copy workspace manifests and required crates
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crawlberg/ crates/crawlberg/
 COPY crates/crawlberg-cli/ crates/crawlberg-cli/
 COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 
-# Rewrite workspace members to match copied crates only (must match the COPY directives above).
-# perl (installed above) is used instead of sed so the multiline `members = [ ... ]` array is
-# matched as a whole (-0777 slurp + /s); python3 is not present in this builder stage.
 RUN perl -0777 -i -pe 's/members = \[.*?\]/members = ["crates\/crawlberg", "crates\/crawlberg-cli", "crates\/crawlberg-bindings-common", "crates\/crawlberg-browser"]/s' Cargo.toml
 
-# Build release binary with selected features
 RUN . "$HOME/.cargo/env" && \
     cargo build --release --package crawlberg-cli --features "api,mcp" && \
     cp target/release/crawlberg /build/crawlberg && \
     strip /build/crawlberg
 
-# Verify the binary
 RUN file /build/crawlberg && \
     /build/crawlberg --version
 
-# =============================================================================
-# Runtime Stage — Alpine with non-root user
-# =============================================================================
 FROM alpine:3.21
 
 LABEL org.opencontainers.image.source="https://github.com/xberg-io/crawlberg"
@@ -58,26 +37,18 @@ LABEL org.opencontainers.image.description="Crawlberg — high-performance web c
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL io.modelcontextprotocol.server.name="io.github.xberg-io/crawlberg"
 
-# Minimal runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
     curl
 
 WORKDIR /app
 
-# Copy binary from builder
 COPY --from=builder /build/crawlberg /usr/local/bin/crawlberg
 
-# Create non-root user
 RUN addgroup -S crawlberg && \
     adduser -S -G crawlberg -h /app -s /sbin/nologin crawlberg && \
     chown -R crawlberg:crawlberg /app
 
 USER crawlberg
 
-# CLI entrypoint: crawlberg command
-# Examples:
-#   docker run crawlberg scrape https://example.com
-#   docker run crawlberg extract /data/file.pdf
-#   docker run crawlberg --help
 ENTRYPOINT ["crawlberg"]

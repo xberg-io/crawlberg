@@ -13,9 +13,6 @@ request:
   url_param:
     kind: body_field
 
-# cost_extraction is static because Bright Data does not surface per-request
-# cost in the response body or headers. The fallback matches current
-# production billing behaviour.
 response:
   kind:
     kind: raw_body

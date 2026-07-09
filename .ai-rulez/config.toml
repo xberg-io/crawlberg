@@ -1,5 +1,3 @@
-# AI-Rulez Configuration (migrated to V4 TOML format)
-# Documentation: https://github.com/Goldziher/ai-rulez
 
 version = '4.0'
 name = 'Crawlberg'

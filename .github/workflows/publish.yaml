@@ -1,17 +1,5 @@
 name: Publish Release
 
-# Action-first crawlberg release pipeline.
-#
-# Orchestrates 14 alef language targets:
-#   crates · python · node · wasm · ruby · php · cli · homebrew · go · c-ffi
-#   java · csharp · elixir · kotlin-android · dart · swift · zig
-#
-# Mirrors xberg's publish.yaml composition: every registry interaction,
-# every multi-platform build, and every release-asset upload routes through
-# a shared xberg-io/actions composite. Inline bash is reserved for
-# repo-quirky orchestration only (homebrew bottle assembly, Node platform
-# package staging, Maven resource bundling).
-
 on:
   workflow_dispatch:
     inputs:
@@ -150,8 +138,6 @@ jobs:
         with:
           version: ${{ needs.prepare.outputs.version }}
 
-  # ─── Registry existence checks ────────────────────────────────────────
-
   check-pypi:
     name: Check PyPI for existing version
     needs: prepare
@@ -281,8 +267,6 @@ jobs:
             bypass_exists=crawlberg-bypass
 
       - id: derive
-        # Inline: aggregate four check-registry outputs into a single boolean
-        # the publish-crates job can guard on. No shared action equivalent.
         run: |
           if [[ "${{ steps.check.outputs.exists }}" == "true" \
             && "${{ steps.check.outputs.crawlberg_exists }}" == "true" \
@@ -317,10 +301,6 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        # `registry: github-release` (not `registry: zig`) — alef check-registry's
-        # zig path only verifies the release tag exists. On a real release that's
-        # always true, so it short-circuits `publish-zig` to skipped. Verify the
-        # actual asset is present instead.
         uses: xberg-io/actions/check-registry@v1
         with:
           registry: github-release
@@ -436,8 +416,6 @@ jobs:
           tag: ${{ needs.prepare.outputs.tag }}
           asset-prefix: libcrawlberg_nif-
 
-  # ─── Build matrix jobs ────────────────────────────────────────────────
-
   python-wheels:
     name: Build Python wheels (${{ matrix.os }})
     needs: [prepare, check-pypi]
@@ -464,7 +442,6 @@ jobs:
         with:
           python-version: "3.13"
           package-dir: packages/python
-          # PyO3 abi3-py310 → one wheel per platform covers Python 3.10+.
           cibw-build: "cp310-*"
           upload-artifact: "false"
 
@@ -641,17 +618,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `dock_platform: ''` keeps the property declared on every entry so
-          # actionlint can type-check the `matrix.dock_platform == ''` guards
-          # below. Set it to a non-empty platform string (e.g. `x64-mingw-ucrt`)
-          # to opt that entry into the rb-sys-dock cross-compile branch.
           - { os: ubuntu-latest, label: linux, dock_platform: "" }
           - { os: ubuntu-24.04-arm, label: linux-aarch64, dock_platform: "" }
           - { os: macos-latest, label: macos-arm64, dock_platform: "" }
           - { os: macos-15-intel, label: macos-x86_64, dock_platform: "" }
-          # windows-x64: deferred — rb-sys 0.9.127 fails to compile against Ruby 4.0.2
-          # mingw headers on x86_64-pc-windows-gnu (`sys/select.h` not found). See #27.
-          # windows-11-arm: deferred until rb-sys + Magnus toolchain validated on aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v6
         with:
@@ -664,15 +634,11 @@ jobs:
         uses: xberg-io/actions/free-disk-space-linux@v1
 
       - name: Drop cached CLI binaries
-        # Inline: stale CLI artifacts under packages/ruby/exe/ confuse rake
-        # build's filtering. One-shot cleanup, no shared action equivalent.
         shell: bash
         run: rm -rf packages/ruby/exe/* packages/ruby/pkg
 
       - name: Install MSYS2 toolchain (Windows)
         if: runner.os == 'Windows'
-        # Inline: rb-sys requires the MSYS2 toolchain on Windows for clang +
-        # libffi headers. Magnus also needs ucrt64-prefixed binaries on PATH.
         shell: pwsh
         run: |
           ridk install 1 2 3
@@ -683,8 +649,6 @@ jobs:
 
       - name: Install Rust (GNU on Windows)
         if: runner.os == 'Windows'
-        # Inline: rb-sys/Magnus only build against the GNU ABI on Windows; the
-        # default MSVC toolchain produces incompatible artifacts.
         shell: pwsh
         run: |
           rustup install stable-x86_64-pc-windows-gnu
@@ -694,8 +658,6 @@ jobs:
 
       - name: Configure bindgen sysroot (Windows)
         if: runner.os == 'Windows'
-        # Inline: bindgen needs an explicit libclang sysroot pointing at the
-        # MSYS2 ucrt64 install — discovery fails on the GitHub runner image.
         shell: bash
         run: |
           UCRT="/c/msys64/ucrt64"
@@ -714,8 +676,6 @@ jobs:
           bundler-cache: false
 
       - name: Install Ruby dependencies
-        # Inline: bundle config + install in the package dir; trivially small
-        # and identical across crawlberg/xberg/html-to-markdown.
         shell: bash
         working-directory: packages/ruby
         run: |
@@ -729,13 +689,6 @@ jobs:
           package-dir: packages/ruby
 
       - name: Build platform gem
-        # Inline: each matrix runner builds the gem for its own native platform
-        # via `rake compile && rake build`. rake-compiler's compile step sets
-        # the gem's native platform tag from rb_config, so the produced gem is
-        # already platform-tagged (e.g. crawlberg-X.Y.Z-x86_64-linux.gem). This
-        # mirrors the html-to-markdown sibling's proven Ruby publish path. For
-        # Windows we cross-compile inside rb-sys-dock so the GNU toolchain
-        # produces a x64-mingw-ucrt gem.
         shell: bash
         run: |
           if [ -n "${{ matrix.dock_platform }}" ]; then
@@ -779,9 +732,6 @@ jobs:
 
       - name: Drop source gem on non-canonical builders
         if: ${{ matrix.label != 'linux' }}
-        # Inline: only the canonical `linux` builder ships the source gem; others
-        # would emit byte-different source gems that overwrite each other under
-        # merge-multiple and produce an invalid .gem at publish time.
         shell: bash
         run: |
           shopt -s nullglob
@@ -876,14 +826,6 @@ jobs:
     if: ${{ needs.prepare.outputs.release_cli == 'true' && (needs.check-cli.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     permissions:
       contents: write
-    # Centralized CLI build + release via the shared reusable workflow (mirrors h2m).
-    # Reliable matrix (x64+arm64 linux-gnu, arm64 macOS, x64 Windows) built with
-    # `--features all`; Intel macOS is a best-effort `extra-targets` leg so a queue-starved
-    # x64-macOS runner ships when it can but never blocks the release. `build-musl: false` —
-    # the custom Docker musl job (cli-musl-binaries) supplies the musl archives, picked up
-    # from the shared run artifact namespace (this job `needs:` it). The reusable upload
-    # un-drafts the release (`publish-github-release@v1 draft:false`) so CLI binaries are
-    # never stranded in a draft, and emits a `crawlberg-cli-SHA256SUMS` checksums file.
     uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@v1
     with:
       package-name: crawlberg-cli
@@ -901,10 +843,6 @@ jobs:
     name: Build CLI musl binary (${{ matrix.arch }})
     needs: [prepare, check-cli]
     if: ${{ needs.prepare.outputs.release_cli == 'true' && (needs.check-cli.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
-    # Best-effort: musl is a custom Docker build (bundles libonnxruntime + tesseract); a
-    # failure here must never block the CLI release. continue-on-error reports success to
-    # the `cli-release` reusable call (which `needs:` this job), so the reusable upload
-    # still ships the core matrix and merges whatever musl archives this job produced.
     continue-on-error: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -924,17 +862,12 @@ jobs:
       - uses: xberg-io/actions/free-disk-space-linux@v1
 
       - name: Build musl CLI via Docker
-        # Inline: crawlberg ships a musl CLI built via a custom Dockerfile that
-        # bundles libonnxruntime and tesseract for $ORIGIN/lib runtime loading.
-        # The shared build-rust-cli action targets host toolchains only.
         shell: bash
         run: |
           docker build -f docker/Dockerfile.musl-build --output type=local,dest=./dist .
           file dist/crawlberg
 
       - name: Package musl CLI archive
-        # Inline: musl artifacts include a sibling lib/ directory the binary
-        # dlopens at runtime. Pack into the same archive layout as cli-binaries.
         env:
           TARGET: ${{ matrix.target }}
         shell: bash
@@ -949,8 +882,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          # Name matches the reusable-cli-release `asset-prefix: crawlberg-cli-` so the
-          # reusable upload's `download-artifact pattern: crawlberg-cli-*` picks it up.
           name: crawlberg-cli-${{ matrix.target }}
           path: crawlberg-cli-${{ matrix.target }}.tar.gz
           retention-days: 14
@@ -1040,7 +971,6 @@ jobs:
 
       - name: Stage C FFI distribution
         # Inline: bundle library + header + LICENSE into a single tarball
-        # named to match the upload-c-ffi-release expected asset prefix.
         env:
           TARGET: ${{ matrix.target }}
           PLATFORM: ${{ matrix.platform }}
@@ -1145,9 +1075,6 @@ jobs:
       - uses: xberg-io/actions/free-disk-space-linux@v1
 
       - name: Build musl FFI via Docker
-        # Inline: building cdylib for musl on the host runner fails to link
-        # libgcc_s.so.1; crawlberg's Dockerfile.musl-ffi runs on Alpine
-        # (native musl) and produces a self-contained libcrawlberg_ffi.so.
         shell: bash
         run: |
           docker build -f docker/Dockerfile.musl-ffi --output type=local,dest=./dist .
@@ -1287,19 +1214,11 @@ jobs:
         uses: xberg-io/actions/free-disk-space-linux@v1
 
       - name: Override ImageOS on ARM Linux runners
-        # erlef/setup-beam@v1 maps ImageOS env to its package index. On
-        # `ubuntu-24.04-arm` the runner reports `ImageOS=ubuntu24-arm64`,
-        # which setup-beam does not recognize. Force it to `ubuntu24` —
-        # the OTP packages are arch-aware via setup-beam's separate logic.
         if: matrix.os == 'ubuntu-24.04-arm'
         shell: bash
         run: echo "ImageOS=ubuntu24" >> "$GITHUB_ENV"
 
       - name: Override ImageOS on Windows runners
-        # `windows-latest` now reports `ImageOS=win25-vs2026` which
-        # erlef/setup-beam@v1 does not yet recognise (supported set:
-        # win19, win22, win25). Force it to `win25` so the OTP/Elixir
-        # package index lookup succeeds.
         if: runner.os == 'Windows'
         shell: bash
         run: echo "ImageOS=win25" >> "$GITHUB_ENV"
@@ -1451,8 +1370,6 @@ jobs:
           ffi-crate: crawlberg-ffi
           package-dir: packages/zig
 
-  # ─── GitHub Release asset uploads ─────────────────────────────────────
-
   upload-go-release:
     name: Upload Go FFI archives to GitHub Release
     needs: [prepare, go-ffi-libraries]
@@ -1562,12 +1479,6 @@ jobs:
           assets: "*.zip"
           token: ${{ steps.app-token.outputs.token }}
 
-  # SwiftPM consumers pin the git TAG and read Package.swift at that tag, so the
-  # tag's `.binaryTarget(checksum:)` must hold the real artifactbundle SHA256 — not
-  # the `__ALEF_SWIFT_CHECKSUM__` placeholder. The artifactbundle only exists after
-  # build+upload, so compute the checksum here, commit it, and MOVE the release tag
-  # onto that commit. The release is still a draft (release-finalize promotes it only
-  # after this job, via needs), so no consumer ever sees the placeholder tag.
   publish-swift-checksums:
     name: Inject Swift artifactbundle checksum into the release tag
     needs: [prepare, upload-swift-release]
@@ -1686,8 +1597,6 @@ jobs:
             php_*.zip.sha256
           token: ${{ steps.app-token.outputs.token }}
 
-  # Verifies every expected release asset is present on the GitHub release
-  # before the publish-* fan-out depends on those URLs.
   verify-assets:
     name: Verify release assets
     needs:
@@ -1700,12 +1609,6 @@ jobs:
     if: ${{ always() && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     permissions:
-      # The verify step has to see the draft release that prepare creates;
-      # the default GITHUB_TOKEN scope of `contents: read` cannot enumerate
-      # drafts. Granting `contents: write` for this job alone lets the
-      # default token see the draft release without forcing the App-token
-      # plumbing through every caller. Action v1.8.52+ resolves drafts via
-      # `GET /repos/{owner}/{repo}/releases` (which requires this scope).
       contents: write
     steps:
       - uses: actions/create-github-app-token@v2
@@ -1717,8 +1620,6 @@ jobs:
       - uses: xberg-io/actions/verify-release-assets@v1
         with:
           tag: ${{ needs.prepare.outputs.tag }}
-          # App token guarantees draft visibility regardless of the
-          # workflow-level GITHUB_TOKEN permissions configuration.
           token: ${{ steps.app-token.outputs.token }}
           expected-assets: |
             # CLI
@@ -1730,8 +1631,6 @@ jobs:
             crawlberg-ffi-*.tar.gz
             # Elixir NIF
             libcrawlberg_nif-*.tar.gz
-
-  # ─── Publish jobs ─────────────────────────────────────────────────────
 
   publish-crates:
     name: Publish crates.io packages
@@ -1753,11 +1652,6 @@ jobs:
 
       - uses: xberg-io/actions/publish-crates@v1
         with:
-          # Order matters: crawlberg-browser is a hard dep of crawlberg
-          # (path-only deps are rejected by cargo publish), crawlberg is
-          # depended on by crawlberg-bypass, crawlberg-bindings-common,
-          # and crawlberg-cli, so each must land on the index before its
-          # dependents try to resolve.
           crates: crawlberg-browser crawlberg crawlberg-bypass crawlberg-bindings-common crawlberg-cli
           version: ${{ needs.prepare.outputs.version }}
           dry-run: ${{ needs.prepare.outputs.dry_run }}
@@ -1790,17 +1684,6 @@ jobs:
   publish-rubygems:
     name: Publish Ruby gems
     needs: [prepare, ruby-gem, check-rubygems]
-    # Allow partial-platform-success: if ruby-gem reports `success` we
-    # publish everything; if it reports `failure` (one matrix entry tripped
-    # the rb-sys-dock arg-passthrough bug — see task #94) we still publish
-    # the platforms that built. The publish-rubygems action just pushes
-    # whatever .gem files land in dist/; missing platforms cleanly degrade
-    # to "consumers on that platform can't install yet" rather than
-    # blocking every other platform's release.
-    # `!cancelled() &&` is required: without any status-check function in the
-    # expression, GitHub Actions enforces an implicit `success()` over `needs:`,
-    # so a single failure in the `ruby-gem` matrix would skip this job even
-    # though the explicit `(success || failure)` clause below allows it.
     if: ${{ !cancelled() && needs.prepare.outputs.release_ruby == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.ruby-gem.result == 'success' || needs.ruby-gem.result == 'failure') && (needs.check-rubygems.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     permissions:
@@ -1851,11 +1734,6 @@ jobs:
           registry-url: "https://registry.npmjs.org/"
 
       - name: Stage platform packages and main package
-        # Inline: crawlberg's per-platform Node artifact layout is bespoke
-        # (one tarball per target containing pre-staged npm/<platform>/) and the
-        # main package needs an injected optionalDependencies map listing every
-        # platform sub-package. Tightly coupled to napi-rs + repo conventions;
-        # the generic publish-npm action operates on a single package dir.
         shell: bash
         run: |
           rm -rf crates/crawlberg-node/npm
@@ -1887,13 +1765,6 @@ jobs:
           mv "$tmp_pkg_json" crates/crawlberg-node/package.json
 
       - name: Publish platform sub-packages
-        # Tolerate per-platform publish failures so the main package and
-        # other platforms still ship. RC.45–RC.48 each hit ENEEDAUTH on
-        # `@xberg-io/crawlberg-linux-x64-musl` (npm Trusted Publisher
-        # not configured for that specific sub-package — see task #93);
-        # without continue-on-error the failure aborted the whole job and
-        # blocked the main `@xberg-io/crawlberg` publish too, leaving
-        # consumers unable to install on any platform.
         continue-on-error: true
         uses: xberg-io/actions/publish-npm@v1
         with:
@@ -2000,9 +1871,6 @@ jobs:
           merge-multiple: true
 
       - name: Stage natives into resources
-        # Inline: copy classifier-bucketed libs from artifact tree into
-        # packages/java/src/main/resources/natives/<classifier>/. Tightly
-        # coupled to the Maven resource layout — no shared action covers it.
         shell: bash
         run: |
           mkdir -p packages/java/src/main/resources/natives
@@ -2061,8 +1929,6 @@ jobs:
           merge-multiple: true
 
       - name: Stage runtimes/<rid>/native into NuGet project
-        # Inline: NuGet expects native libs in runtimes/<rid>/native/ adjacent
-        # to the project. Copy from artifact tree into the C# project.
         shell: bash
         run: |
           mkdir -p packages/csharp/runtimes
@@ -2077,7 +1943,6 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Pack NuGet package
-        # Inline: dotnet pack with the version override against the .slnx; one-liner.
         shell: bash
         run: |
           dotnet pack packages/csharp/Crawlberg.slnx \
@@ -2095,13 +1960,6 @@ jobs:
   publish-hex:
     name: Publish Elixir Hex package
     needs: [prepare, upload-elixir-release, check-hex, publish-crates]
-    # The Hex package bundles the generated checksum file, which is built from
-    # the NIF assets on the GitHub release. Require upload-elixir-release to have
-    # SUCCEEDED (it needs both elixir-natives + elixir-natives-musl) so the
-    # checksum file always covers the full platform matrix. Without this, a
-    # single flaky NIF leg skips the upload while !cancelled() still lets this
-    # job run, publishing an immutable Hex package with an incomplete checksum
-    # file (the rc.79 failure mode).
     if: ${{ !cancelled() && needs.publish-crates.result != 'failure' && needs.upload-elixir-release.result == 'success' && needs.prepare.outputs.release_elixir == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-hex.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     environment: hex
@@ -2124,11 +1982,6 @@ jobs:
           persist-credentials: true
 
       - name: Generate checksums from GitHub release
-        # generate-elixir-checksums v1.8.52+ downloads NIF assets via
-        # authenticated `gh release download` (works against draft
-        # releases), so no pre-wait for public CDN propagation is needed.
-        # Pass the App token so the action can see the draft release that
-        # publish-finalize will promote at the end of the workflow.
         if: needs.prepare.outputs.dry_run != 'true'
         uses: xberg-io/actions/generate-elixir-checksums@v1
         with:
@@ -2277,8 +2130,6 @@ jobs:
 
   publish-zig:
     name: Publish Zig package metadata
-    # Depend on c-ffi-libraries so the per-target FFI artifacts are
-    # available for `multi-platform-ffi-dir` bundling.
     needs: [prepare, zig-package, check-zig, c-ffi-libraries]
     if: ${{ needs.prepare.outputs.release_zig == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-zig.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
@@ -2295,9 +2146,6 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           submodules: recursive
 
-      # Download per-target C FFI artifacts produced by c-ffi-libraries
-      # and lay them out as ffi-artifacts/<zig-rid>/<libfile> + a shared
-      # ffi-artifacts/include/ for publish-zig multi-platform bundling.
       - uses: actions/download-artifact@v8
         with:
           pattern: c-ffi-*
@@ -2345,16 +2193,8 @@ jobs:
         with:
           working-directory: packages/zig
           tag: ${{ needs.prepare.outputs.tag }}
-          # Override the auto-detected package-name (`crawlberg` from
-          # build.zig.zon) to match the alef-emitted test_app URL pattern
-          # `{crate-name}-zig-v{version}.tar.gz`. Without this, the asset
-          # uploads as `crawlberg-v{version}.tar.gz` while test_apps/zig
-          # fetches `crawlberg-zig-v{version}.tar.gz` → 404 + consumer
-          # build.zig.zon TODO hash.
+          # ~keep build.zig.zon TODO hash.
           package-name: crawlberg-zig
-          # Bundle per-target FFI libraries + header into the published
-          # tarball so consumers can `zig fetch --save` and link without
-          # downloading anything else.
           multi-platform-ffi-dir: ffi-artifacts
           module-name: crawlberg
           ffi-lib-name: crawlberg_ffi
@@ -2365,21 +2205,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # ─── Homebrew (real-brew bottles) ─────────────────────────────────────
-  #
-  # Three-job topology mirrors tslp/h2m: update formula source URL+SHA in
-  # the tap first so `brew install --build-bottle` has a buildable formula,
-  # then build real bottles per platform via `homebrew-build-bottles@v1`,
-  # then merge per-platform JSON manifests into the formula's `bottle do`
-  # block via `homebrew-merge-bottles@v1`.
-
   publish-homebrew-formula:
     name: Update Homebrew formula source
-    # publish-swift-checksums force-moves the release tag onto the Swift-checksum
-    # commit, which changes the `archive/${tag}.tar.gz` source archive. The formula
-    # source sha256 must be computed against the FINAL tag, so this job depends on
-    # swift-checksums for ordering only (its result is not required — `always()`
-    # lets a skipped/failed Swift job through; the tag is settled either way).
     needs: [prepare, check-homebrew, cli-release, publish-swift-checksums]
     if: |
       always() &&
@@ -2423,7 +2250,6 @@ jobs:
         working-directory: homebrew-tap
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
-        # Inline: tap-side commit/push — bot identity is repo-specific.
         run: |
           git config user.name "xberg-dev-publisher[bot]"
           git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
@@ -2460,10 +2286,6 @@ jobs:
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           owner: xberg-io
 
-      # actions/checkout@v6 regression on macos-15-intel: the includeIf-gated
-      # credential helper isn't honored by git 2.54 on that runner image, so
-      # the fetch falls back to interactive auth and fails. v5 writes the
-      # extraheader directly into .git/config and works on every runner.
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
@@ -2550,7 +2372,6 @@ jobs:
         working-directory: homebrew-tap
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
-        # Inline: tap-side commit/push — bot identity is repo-specific.
         run: |
           git config user.name "xberg-dev-publisher[bot]"
           git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
@@ -2561,12 +2382,6 @@ jobs:
           git add Formula/crawlberg.rb
           git commit -m "crawlberg ${{ needs.prepare.outputs.version }} bottles"
           git push origin HEAD
-
-  # ─── Finalization ─────────────────────────────────────────────────────
-  # Post-publish verification runs locally via `task test-apps:run` / `:smoke` /
-  # `:comprehensive` against the freshly-published artifacts. Mirrors the
-  # canonical sibling pattern (liter-llm, html-to-markdown, tslp). CI's job
-  # ends at publish + finalize; the operator runs test_apps locally.
 
   release-finalize:
     name: Finalize GitHub Release
@@ -2662,11 +2477,6 @@ jobs:
 
   cli-proxy:
     name: Publish CLI proxy package (npm)
-    # The npm trusted publisher is bound to this workflow file (publish.yaml). The publish
-    # runs inline here via the publish-npm composite action (which executes in this job's
-    # context) rather than delegating to a reusable workflow — otherwise npm's OIDC
-    # trusted-publishing check sees the reusable workflow's filename, not publish.yaml.
-    # Decoupled from the main release: fires only on its own `cli-proxy-v*` release tag.
     if: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'cli-proxy-v') }}
     runs-on: ubuntu-latest
     permissions:

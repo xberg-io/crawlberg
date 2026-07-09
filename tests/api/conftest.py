@@ -16,7 +16,7 @@ import requests
 import schemathesis
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-STARTUP_TIMEOUT = 60  # seconds (includes cargo build time)
+STARTUP_TIMEOUT = 60
 
 
 def _find_free_port() -> int:

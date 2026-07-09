@@ -1,11 +1,5 @@
 name: Publish pub.dev
 
-# pub.dev OIDC trusted publishing rejects tokens from `release` events.
-# This workflow fires on tag push instead, which produces an accepted token.
-#
-# One-time setup: on pub.dev → crawlberg package → Admin → Automated
-# publishing, set the workflow path to
-# `.github/workflows/publish-pubdev.yaml` and enable "publishing from
 # push events" with tag pattern `v{{version}}`.
 
 on:

@@ -89,23 +89,16 @@ impl BenchmarkRunner {
             "starting benchmark run"
         );
 
-        // Start continuous resource monitoring before the iteration loop.
         let mut monitor = ResourceMonitor::new();
         monitor.start(Duration::from_millis(10)).await;
 
-        // Per-fixture iteration records: indexed as [fixture_index][iteration_index].
         let mut iteration_records: Vec<Vec<IterationResult>> =
             vec![Vec::with_capacity(total_iterations); fixture_count];
 
-        // Final scraped outputs keyed by fixture index — taken from the last
-        // successful benchmark iteration so we have content for quality scoring.
         let mut last_outputs: Vec<Option<crate::adapter::ScrapeOutput>> = vec![None; fixture_count];
 
-        // Bug 3 fix: create semaphore once so concurrency limit spans all iterations.
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
 
-        // Bug 4 fix: pre-load cached HTML for all fixture URLs before the loop so
-        // we never do blocking file I/O on the async executor inside spawned tasks.
         let cached_html_map: AHashMap<String, String> = self
             .fixtures
             .iter()
@@ -137,8 +130,6 @@ impl BenchmarkRunner {
 
         let cached_html_map = Arc::new(cached_html_map);
 
-        // Bug 1 fix: start the clock before iterations, not after, so throughput
-        // reflects actual benchmark wall-clock time.
         let run_start = Instant::now();
 
         for iteration in 0..total_iterations {
@@ -151,7 +142,6 @@ impl BenchmarkRunner {
                 total_iterations
             );
 
-            // Build work items: (fixture_index, fixture_clone).
             let work: Vec<(usize, ScrapeFixture)> =
                 self.fixtures.iter().enumerate().map(|(i, f)| (i, f.clone())).collect();
 
@@ -161,7 +151,6 @@ impl BenchmarkRunner {
 
             for (fixture_idx, iteration_result, maybe_output) in results {
                 if !is_warmup {
-                    // Capture last successful output for quality scoring.
                     if iteration_result.success
                         && let Some(output) = maybe_output
                     {
@@ -171,7 +160,6 @@ impl BenchmarkRunner {
                 }
             }
 
-            // Rate-limit between iterations in live mode.
             if self.config.execution_mode == ExecutionMode::Live
                 && self.config.rate_limit_ms > 0
                 && iteration + 1 < total_iterations
@@ -180,7 +168,6 @@ impl BenchmarkRunner {
             }
         }
 
-        // Stop monitoring and aggregate resource metrics.
         monitor.stop();
         let resource_metrics = monitor.metrics().await;
 
@@ -204,7 +191,6 @@ impl BenchmarkRunner {
             results.push(result);
         }
 
-        // Optionally persist new responses to cache.
         if self.config.save_cache
             && let Some(ref mut cache) = self.cache
         {
@@ -262,14 +248,11 @@ impl BenchmarkRunner {
             } else {
                 0
             };
-            // Bug 4 fix: look up pre-loaded HTML instead of doing file I/O here.
             let cached_html = cached_html_map.get(&fixture.url).cloned();
 
-            // Bug 2 fix: capture the outer iteration counter, not the fixture index.
             let iteration_num = iteration_number;
 
             join_set.spawn(async move {
-                // Apply per-request rate limit in live mode before the scrape.
                 if rate_limit_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(rate_limit_ms)).await;
                 }
@@ -280,12 +263,8 @@ impl BenchmarkRunner {
                 let duration_ms = start.elapsed().as_secs_f64() * 1_000.0;
                 let post_snapshot = snapshot_resources();
 
-                // Drop the permit after scraping so the next task can proceed.
                 drop(permit);
 
-                // Use the post-scrape RSS as the peak for this iteration.
-                // The pre-snapshot is intentionally unused beyond its role as a
-                // reference point; the post-snapshot captures the high-water mark.
                 let _ = pre_snapshot;
                 let memory_bytes = post_snapshot.memory_bytes;
 
@@ -338,7 +317,6 @@ fn build_result(
         .map(str::to_owned);
     let error_kind = classify_error(error_message.as_deref());
 
-    // Collect successful durations for statistics.
     let mut durations: Vec<f64> = records.iter().filter(|r| r.success).map(|r| r.duration_ms).collect();
 
     let mean_duration_ms = if durations.is_empty() {
@@ -392,7 +370,6 @@ fn build_result(
                 reachability,
             )
         } else {
-            // No output — produce a failed reachability result when rules exist.
             let reachability = if !fixture.verify_selectors.is_empty() || !fixture.verify_text.is_empty() {
                 Some(ReachabilityResult {
                     verified: false,
@@ -414,10 +391,6 @@ fn build_result(
         0.0
     };
 
-    // Compute per-fixture memory statistics from per-iteration snapshots.
-    // This gives each fixture its own memory profile rather than the global aggregate.
-    // CPU still comes from the global monitor because accurate CPU accounting requires
-    // the background sampler's interval-based measurements.
     let peak_memory_bytes = records.iter().map(|r| r.memory_bytes).max().unwrap_or(0);
     let (p50_memory_bytes, p95_memory_bytes, p99_memory_bytes) = if records.is_empty() {
         (0, 0, 0)
@@ -554,10 +527,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // classify_error
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_classify_none_when_no_message() {
         assert_eq!(classify_error(None), ErrorKind::None);
@@ -588,10 +557,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // compute_duration_statistics
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_duration_stats_known_values() {
         let mut durations = vec![100.0_f64, 200.0, 300.0, 400.0, 500.0];
@@ -606,15 +571,10 @@ mod tests {
 
     #[test]
     fn test_duration_stats_std_dev() {
-        // Identical values: std_dev should be 0.
         let mut durations = vec![42.0_f64; 5];
         let stats = compute_duration_statistics(&mut durations);
         assert!(stats.std_dev_ms.abs() < 1e-9);
     }
-
-    // -----------------------------------------------------------------------
-    // build_result
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_build_result_no_records_is_not_successful() {

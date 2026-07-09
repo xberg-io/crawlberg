@@ -20,10 +20,6 @@ tasks:
     env:
       PATH: "{{.ROOT_DIR}}/target/release:{{.PATH}}"
     cmds:
-      # Delegates to scripts/task/brew-e2e-test.sh which spawns the alef-generated
-      # mock-server, exports MOCK_SERVER_URL + per-fixture MOCK_SERVER_<UPPER_ID>
-      # env vars from the server's `MOCK_SERVERS={...}` line, runs run_tests.sh,
-      # then tears the server down.
       - bash scripts/task/brew-e2e-test.sh
 
   e2e:verify:

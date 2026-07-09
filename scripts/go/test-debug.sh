@@ -14,7 +14,6 @@ setup_go_paths "$REPO_ROOT"
 
 cd "${REPO_ROOT}/packages/go/v4"
 
-# Usage information
 usage() {
   cat <<EOF
 Usage: $0 [OPTIONS]
@@ -46,13 +45,11 @@ EXAMPLES:
 EOF
 }
 
-# Set defaults
 test_pattern=""
 use_race=false
 coverage=false
 list_tests=false
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
   -t | --test)
@@ -83,14 +80,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# List available tests
 if [ "$list_tests" = true ]; then
   echo "Available Go tests:"
   grep -rn "^func Test" . --include="*_test.go" | awk -F: '{print "  " $3}' | sort | uniq
   exit 0
 fi
 
-# Build test flags
 go_test_flags=("-v" "-timeout" "10m")
 
 if [ "$use_race" = true ]; then
@@ -103,7 +98,6 @@ if [ "$coverage" = true ]; then
   echo "Running tests with coverage instrumentation..."
 fi
 
-# Set up environment
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 export RUST_LIB_BACKTRACE="${RUST_LIB_BACKTRACE:-1}"
 
@@ -116,7 +110,6 @@ echo "  CGO_ENABLED: ${CGO_ENABLED:-<not set>}"
 echo "  RUST_BACKTRACE: ${RUST_BACKTRACE:-<not set>}"
 echo ""
 
-# Run tests
 if [ -n "$test_pattern" ]; then
   echo "Running tests matching pattern: $test_pattern"
   go test "${go_test_flags[@]}" -run "$test_pattern" ./... || {
@@ -141,7 +134,6 @@ else
   }
 fi
 
-# Print coverage report if generated
 if [ "$coverage" = true ] && [ -f "coverage.out" ]; then
   echo ""
   echo "Coverage report generated: coverage.out"

@@ -10,9 +10,7 @@ includes:
 
 vars:
   RUST_LOG: info
-  # On Windows, prepend MSVC bin path to avoid Git Bash link.exe conflict
   CARGO_PATH_PREFIX: '{{if eq OS "windows"}}{{._cfg.MSVC_BIN_PATH}}{{if ._cfg.MSVC_BIN_PATH}}:{{end}}{{end}}'
-  # CMake path for Windows (needed for build scripts)
   CMAKE_PATH:
     sh: |
       if [ "{{OS}}" != "windows" ]; then
@@ -30,7 +28,6 @@ tasks:
     cmds:
       - echo "Rust toolchain is typically installed via rustup"
       - rustc --version
-      # Windows: install lld-link to avoid PATH conflicts with Git Bash's link.exe
       - cmd: rustup component add llvm-tools
         platforms: [windows]
       - task: install:cargo-deny
@@ -41,7 +38,6 @@ tasks:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
       - echo "Installing cargo-deny for license checking..."
-      # All platforms: use cargo install (Windows now works with MSVC PATH fix)
       - cmd: cargo-deny --version 2>/dev/null || cargo install cargo-deny
         ignore_error: true
 
@@ -180,8 +176,6 @@ tasks:
     cmds:
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
-      # `to_string(&self)` methods that conflict with Display::to_string. Upstream fix
-      # belongs in alef-backend-swift/src/gen_rust_crate/mod.rs allow block.
       - cargo clippy --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm -- -D warnings -A clippy::inherent_to_string
 
   format:
@@ -286,13 +280,6 @@ tasks:
     env:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
       RUST_TEST_THREADS: "1"
-    # cwd must be e2e/rust/ so cargo's config discovery picks up
-    # e2e/rust/.cargo/config.toml — that file's [env] block sets
-    # CRAWLBERG_ALLOW_PRIVATE_NETWORK=true, which the SSRF defense
-    # needs to honor loopback URLs in the suite. Cargo searches for
-    # .cargo/config.toml from cwd upward, NOT from the manifest path,
-    # so invoking `cargo test --manifest-path e2e/rust/Cargo.toml` from
-    # the workspace root silently skips the e2e config.
     dir: e2e/rust
     cmds:
       - cargo test --release

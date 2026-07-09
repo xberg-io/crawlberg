@@ -164,9 +164,6 @@ tasks:
         platforms: [linux, darwin, windows]
       - cmd: composer install --no-progress --prefer-dist
         platforms: [linux, darwin, windows]
-      # Relax failOnRisky: alef-e2e/php emits inline skip-comments that swallow trailing
-      # assertions in 3 browser fixtures (browser.browser_used field). Until alef ships the
-      # codegen fix, accept those as risky-not-failing.
       - cmd: sed -i.bak 's/failOnRisky="true"/failOnRisky="false"/' phpunit.xml && rm -f phpunit.xml.bak
         platforms: [linux, darwin, windows]
       - cmd: php -c php-crawlberg.ini vendor/bin/phpunit

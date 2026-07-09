@@ -84,10 +84,6 @@ jobs:
           binary-name: crawlberg
           extra-cargo-args: --features "api,mcp,warc,ai"
 
-      # mock-server is the alef-generated test fixture server that all language
-      # e2e conftests spawn. It lives in its own workspace (e2e/rust/Cargo.toml)
-      # and depends on the crawlberg core crate. Built only on linux-arm64
-      # since e2e-tests downloads ffi-aarch64-unknown-linux-gnu.
       - name: Build mock-server (linux-arm64 only)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         shell: bash
@@ -140,7 +136,6 @@ jobs:
             test-cmd: "task csharp:e2e:test"
           - lang: php
             php-version: "8.4"
-            # PHPUnit requires dom/json/libxml/mbstring/tokenizer/xml/xmlwriter/ctype
             php-extensions: "dom, json, libxml, mbstring, tokenizer, xml, xmlwriter, ctype"
             test-cmd: "task php:e2e:test"
           - lang: elixir
@@ -155,14 +150,12 @@ jobs:
           - lang: c
             test-cmd: "task c:e2e:test"
           - lang: dart
-            # packages/dart/pubspec depends on lints>=6.0.0 which requires Dart >=3.8.0
             dart-version: "3.11.6"
             test-cmd: "task dart:e2e:test"
           - lang: swift
             swift-version: "6.0"
             test-cmd: "task swift:e2e:test"
           - lang: zig
-            # e2e/zig/build.zig.zon declares minimum_zig_version "0.16.0"
             zig-version: "0.16.0"
             test-cmd: "task zig:e2e:test"
           - lang: brew
@@ -301,16 +294,12 @@ jobs:
 
       - name: Setup Swift
         if: matrix.swift-version
-        # xberg-io wrapper around SwiftyLab/setup-swift — supports
-        # ubuntu-24.04-arm; swift-actions/setup-swift@v2 returns a corrupt
-        # binary on that runner.
         uses: xberg-io/actions/setup-swift@v1
         with:
           swift-version: ${{ matrix.swift-version }}
 
       - name: Setup Zig
         if: matrix.zig-version
-        # Resolves the official ziglang.org download index directly.
         uses: xberg-io/actions/setup-zig@v1
         with:
           version: ${{ matrix.zig-version }}
@@ -320,9 +309,6 @@ jobs:
         uses: xberg-io/actions/setup-wasm-pack@v1
 
       - name: Setup Chrome
-        # Every binding has browser-using fixtures (chromiumoxide fallback,
-        # interact, etc.), so chromium has to be on PATH for the whole matrix
-        # — not only the brew formula test.
         uses: xberg-io/actions/setup-chrome@v1
 
       - name: Setup library paths for FFI bindings
@@ -349,10 +335,6 @@ jobs:
         working-directory: packages/ruby
         run: bundle install && bundle exec rake compile
 
-      # Languages whose e2e tests import a built binding need that binding
-      # compiled before tests run. Python and Elixir build via their own
-      # conftest paths; Rust/C/Zig/Brew use the FFI artifact directly.
-      # Swift needs setup-swift-bridge.sh to emit the SwiftBridgeCore module.
       - name: Build language binding
         if: |
           matrix.lang == 'node' || matrix.lang == 'java' ||
@@ -362,9 +344,6 @@ jobs:
         shell: bash
         run: task ${{ matrix.lang }}:build:dev
 
-      # Zig's build.zig searches target/debug/ for crawlberg_ffi by default.
-      # CI stages the prebuilt FFI artifact into target/release/, so mirror
-      # it into target/debug/ for the zig matrix entry.
       - name: Stage FFI for zig (target/debug shim)
         if: matrix.lang == 'zig'
         shell: bash
@@ -383,10 +362,3 @@ jobs:
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH || '' }}
           CRAWLBERG_BUILD: "1"
           # NOTE: do NOT set CRAWLBERG_ALLOW_PRIVATE_NETWORK here. Every
-          # e2e harness applies the setdefault from [crates.e2e.env] in
-          # alef.toml (python conftest.py, node tests/*.test.ts via ??=,
-          # rust e2e/rust/.cargo/config.toml [env], go main_test.go,
-          # zig build.zig, swift/dart/java/kotlin TestMain blocks, etc.).
-          # Forcing it at the workflow level breaks the hand-written SSRF
-          # rejection tests (e2e/{node,rust}/tests/ssrf*) that must
-          # observe deny_private=true.

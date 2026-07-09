@@ -94,8 +94,6 @@ impl ProfileGuard {
 #[cfg(feature = "profiling")]
 impl Drop for ProfileGuard {
     fn drop(&mut self) {
-        // Best-effort flamegraph write on drop; errors are logged but not
-        // propagated because Drop cannot return a Result.
         use std::fs::File;
 
         let report = match self.guard.report().build() {

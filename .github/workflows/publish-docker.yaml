@@ -125,9 +125,6 @@ jobs:
     needs:
       - prepare
       - check-docker
-    # Build natively per architecture — arm64 on a native ARM runner instead of QEMU
-    # emulation, which previously overran the job timeout. Each leg builds, tests, and
-    # pushes its image by digest; the publish-docker job merges them into a manifest list.
     if: ${{ needs.prepare.outputs.release_docker == 'true' && (needs.prepare.outputs.force_republish == 'true' || needs.check-docker.outputs.image_exists != 'true') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -241,8 +238,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    # Merge the per-arch images into a single multi-arch manifest list. Gated identically
-    # to build-docker-arch, and skipped for dry runs (no images were pushed).
     if: ${{ needs.prepare.outputs.release_docker == 'true' && needs.prepare.outputs.dry_run != 'true' && (needs.prepare.outputs.force_republish == 'true' || needs.check-docker.outputs.image_exists != 'true') }}
     steps:
       - name: Log in to GitHub Container Registry

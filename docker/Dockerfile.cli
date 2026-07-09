@@ -1,5 +1,4 @@
 # =============================================================================
-# Builder Stage - Build minimal CLI binary
 # =============================================================================
 FROM rust:1.91-bookworm AS builder
 
@@ -24,9 +23,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/crawlberg /build/crawlberg && \
     strip /build/crawlberg
 
-# =============================================================================
-# Runtime Stage - Chainguard minimal
-# =============================================================================
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/xberg-io/crawlberg"

@@ -80,7 +80,7 @@ impl ResourceMonitor {
     /// The background task runs until [`ResourceMonitor::stop`] is called.
     pub async fn start(&mut self, sample_interval: Duration) {
         if self.running.swap(true, Ordering::SeqCst) {
-            return; // Already running.
+            return;
         }
 
         let samples = Arc::clone(&self.samples);
@@ -88,19 +88,16 @@ impl ResourceMonitor {
         let pid = self.pid;
         let refresh_kind = ProcessRefreshKind::nothing().with_memory().with_cpu();
 
-        // Capture baseline RSS before the benchmark loop begins.
         let mut sys = System::new();
         sys.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
         self.baseline_memory = process_tree_memory(pid, &sys);
 
-        // Give sysinfo a first CPU measurement so subsequent deltas are meaningful.
         tokio::time::sleep(sample_interval).await;
 
         tokio::spawn(async move {
             let mut system = System::new();
             let start = Instant::now();
 
-            // Prime the CPU baseline.
             system.refresh_processes_specifics(ProcessesToUpdate::All, false, refresh_kind);
             tokio::time::sleep(sample_interval).await;
 
@@ -267,7 +264,6 @@ mod tests {
     #[test]
     fn resource_monitor_new_does_not_panic() {
         let monitor = ResourceMonitor::new();
-        // Not running yet; stop is a no-op.
         monitor.stop();
     }
 
@@ -287,7 +283,6 @@ mod tests {
     #[tokio::test]
     async fn reset_clears_samples() {
         let monitor = ResourceMonitor::new();
-        // Manually push a fake sample to simulate collected data.
         monitor.samples.lock().await.push(ResourceSample {
             memory_bytes: 1024,
             vm_bytes: 2048,
@@ -317,11 +312,8 @@ mod tests {
         let metrics = monitor.metrics().await;
         assert_eq!(metrics.sample_count, 5);
         assert_eq!(metrics.peak_memory_bytes, 5000);
-        // p50 of [1000,2000,3000,4000,5000] = 3000
         assert_eq!(metrics.p50_memory_bytes, 3000);
-        // avg cpu of [10,20,30,40,50] = 30
         assert!((metrics.avg_cpu_percent - 30.0).abs() < 1e-9);
-        // peak cpu = 50
         assert!((metrics.peak_cpu_percent - 50.0).abs() < 1e-9);
     }
 
@@ -331,11 +323,9 @@ mod tests {
         monitor.start(Duration::from_millis(50)).await;
         tokio::time::sleep(Duration::from_millis(250)).await;
         monitor.stop();
-        // Allow the last sleep in the background task to expire.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let metrics = monitor.metrics().await;
-        // We expect at least a couple of samples given 250ms / 50ms interval.
         assert!(
             metrics.sample_count >= 2,
             "expected >=2 samples, got {}",

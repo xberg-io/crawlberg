@@ -1,93 +1,61 @@
-# Configuration for the lychee link checker.
-# https://github.com/lycheeverse/lychee
 
-# The root directory for resolving root-relative links (e.g. /reference/…) is
-# passed on the command line as an absolute path (--root-dir "$PWD/docs-site/dist")
-# by the `docs:lint:links` task, since lychee requires an absolute root_dir.
 
-# Exclude common patterns that produce false positives
 exclude = [
-    # Favicon is served from the shared brand-asset CDN via @xberg-io/docs-theme;
-    # Starlight's default /favicon.svg reference has no local file in dist.
     "favicon\\.svg",
 
-    # Localhost / loopback addresses
     "localhost",
     "127\\.0\\.0\\.1",
     "0\\.0\\.0\\.0",
 
-    # Placeholder / example domains
     "example\\.com",
     "example\\.org",
 
-    # Template variables (e.g. ${var}, {{ var }}, URL-encoded %7B%7B)
     "\\$\\{",
     "\\{\\{",
     "%7B%7B",
 
-    # GitHub edit links (require auth)
     "github\\.com/.*/edit/",
 
-    # GitHub raw links for new/renamed files (404 until pushed)
     "github\\.com/.*/raw/",
 
-    # Docs site self-references (404 until deployed)
     "docs\\.crawlberg\\.xberg\\.io",
     "crawlberg\\.xberg\\.io",
 
-    # PyPI project pages (rate-limited)
     "pypi\\.org/project/",
 
-    # crates.io (rate-limited)
     "crates\\.io/crates/",
 
-    # npm (rate-limited)
     "npmjs\\.com/package/",
 
-    # RubyGems (rate-limited)
     "rubygems\\.org/gems/",
 
-    # Maven Central (rate-limited)
     "central\\.sonatype\\.com",
 
-    # NuGet (rate-limited)
     "nuget\\.org/packages/",
 
-    # Hex.pm (rate-limited)
     "hex\\.pm/packages/",
 
-    # Packagist (rate-limited)
     "packagist\\.org/packages/",
 
-    # pkg.go.dev (rate-limited)
     "pkg\\.go\\.dev/",
 
-    # GitHub Discussions (may not be enabled)
     "github\\.com/.*/discussions",
 
-    # Example/placeholder URLs in code samples
     "proxy:8080",
     "ws://localhost",
     "wss://localhost",
 ]
 
-# Accept these HTTP status codes as valid
 accept = [200, 204, 301, 302, 429]
 
-# Connection timeout in seconds
 timeout = 30
 
-# Max retries per link
 max_retries = 3
 
-# Max concurrent requests
 max_concurrency = 10
 
-# Do not check email addresses
 include_mail = false
 
-# Do not require HTTPS
 require_https = false
 
-# Cache results to speed up repeated runs
 cache = true

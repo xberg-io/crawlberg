@@ -71,14 +71,6 @@ includes:
 vars:
   RUST_LOG: info
 
-# Preconditions for task setup:
-# - Rust toolchain (rustup) — install via https://rustup.rs
-# - alef CLI — install via cargo install --git https://github.com/xberg-io/alef
-# - poly — install via cargo install --git https://github.com/Goldziher/polylint poly-cli
-# - Per-language tools auto-skipped via alef preconditions; install as needed:
-#   - Python: uv, Node: pnpm (corepack enable), Ruby: bundle, PHP: composer
-#   - Go: go, Java: mvn (use sdkman if needed), C#: dotnet, Elixir: mix
-
 tasks:
   setup:
     desc: "Install all dependencies and dev tools"
@@ -130,7 +122,6 @@ tasks:
         ignore_error: true
       - cmd: cd packages/ruby && bundle update --conservative
         ignore_error: true
-      # packages/php/composer.json is generated at build time; skip cleanly if absent.
       - cmd: '[ -f packages/php/composer.json ] && (cd packages/php && composer update --no-interaction) || echo "skip php: packages/php/composer.json not present (run task php:build first)"'
         ignore_error: true
       - cmd: cd packages/elixir && mix deps.update --all
@@ -157,7 +148,6 @@ tasks:
         ignore_error: true
       - cmd: cd packages/ruby && bundle update
         ignore_error: true
-      # packages/php/composer.json is generated at build time; skip cleanly if absent.
       - cmd: '[ -f packages/php/composer.json ] && (cd packages/php && composer update --with-all-dependencies --no-interaction) || echo "skip php: packages/php/composer.json not present (run task php:build first)"'
         ignore_error: true
       - cmd: cd packages/elixir && mix deps.update --all

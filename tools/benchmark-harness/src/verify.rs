@@ -16,7 +16,6 @@ pub fn verify_content(fixture: &ScrapeFixture, output: &ScrapeOutput) -> Reachab
     let selectors_total = fixture.verify_selectors.len();
     let text_total = fixture.verify_text.len();
 
-    // No verification defined — skip.
     if selectors_total == 0 && text_total == 0 {
         return ReachabilityResult {
             verified: true,
@@ -31,14 +30,12 @@ pub fn verify_content(fixture: &ScrapeFixture, output: &ScrapeOutput) -> Reachab
     let html_lower = output.html.to_lowercase();
     let content_lower = output.content.as_deref().unwrap_or("").to_lowercase();
 
-    // Check CSS selectors by looking for key patterns in HTML.
     let selectors_found = fixture
         .verify_selectors
         .iter()
         .filter(|sel| selector_matches(&html_lower, sel))
         .count();
 
-    // Check text presence (case-insensitive).
     let text_found = fixture
         .verify_text
         .iter()
@@ -48,7 +45,6 @@ pub fn verify_content(fixture: &ScrapeFixture, output: &ScrapeOutput) -> Reachab
         })
         .count();
 
-    // Allow 1 missing selector (pages change minor elements).
     let selector_ok = selectors_total == 0 || selectors_found >= selectors_total.saturating_sub(1);
     let text_ok = text_total == 0 || text_found > 0;
     let verified = selector_ok && text_ok;
@@ -76,20 +72,16 @@ fn selector_matches(html: &str, selector: &str) -> bool {
     let sel = selector.trim().to_lowercase();
 
     if let Some(class) = sel.strip_prefix('.') {
-        // Class selector: look for the class name inside a class attribute.
         html.contains(&format!("class=\"{class}"))
             || html.contains(&format!("class='{class}"))
             || html.contains(&format!(" {class}\""))
             || html.contains(&format!(" {class} "))
     } else if let Some(id) = sel.strip_prefix('#') {
-        // ID selector.
         html.contains(&format!("id=\"{id}\"")) || html.contains(&format!("id='{id}'"))
     } else if sel.starts_with('[') && sel.ends_with(']') {
-        // Attribute selector [attr] or [attr='value'].
         let inner = &sel[1..sel.len() - 1];
         html.contains(inner)
     } else {
-        // Tag name: look for <tagname or <tagname·.
         html.contains(&format!("<{sel}")) || html.contains(&format!("<{sel} "))
     }
 }
@@ -211,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_one_missing_selector_still_verified() {
-        // With 2 selectors defined, 1 found is still ok (saturating_sub(1) = 1).
         let fixture = make_fixture(vec![".exists", ".missing"], vec![]);
         let output = make_output(r#"<div class="exists">ok</div>"#, Some("ok"), 200);
         let result = verify_content(&fixture, &output);

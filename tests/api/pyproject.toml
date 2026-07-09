@@ -25,5 +25,4 @@ ini_options.testpaths = ["."]
 ini_options.python_files = "test_*.py"
 ini_options.python_functions = "test_*"
 ini_options.addopts = "-v --tb=short"
-# Schemathesis default hypothesis settings
 ini_options.markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]

@@ -15,7 +15,6 @@ def test_scrape_returns_structured_response(api_schema: schemathesis.schemas.Bas
     op = api_schema["/v1/scrape"]["POST"]
     case = op.Case(body={"url": "http://127.0.0.1:1/noop"})
     response = case.call()
-    # Connection failures should return 4xx, not 5xx
     data = response.json()
     assert "success" in data
 
@@ -74,17 +73,15 @@ def test_crawl_job_lifecycle(api_schema: schemathesis.schemas.BaseSchema) -> Non
     response = case.call()
     data = response.json()
     if not data.get("success"):
-        return  # Connection failure expected with non-routable URL
+        return
 
     job_id = data["id"]
 
-    # Poll status
     status_op = api_schema["/v1/crawl/{id}"]["GET"]
     status_case = status_op.Case(path_parameters={"id": job_id})
     status_response = status_case.call()
     assert status_response.status_code == 200
 
-    # Cancel
     cancel_op = api_schema["/v1/crawl/{id}"]["DELETE"]
     cancel_case = cancel_op.Case(path_parameters={"id": job_id})
     cancel_response = cancel_case.call()

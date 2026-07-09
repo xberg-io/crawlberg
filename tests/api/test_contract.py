@@ -38,7 +38,7 @@ def test_all_endpoints_no_server_errors(api_schema: schemathesis.schemas.BaseSch
                 checks=(schemathesis.checks.not_a_server_error,),
             )
         except schemathesis.core.errors.InvalidSchema:
-            continue  # Skip operations with schema errors (e.g. missing path params)
+            continue
 
 
 def test_all_endpoints_response_conformance(api_schema: schemathesis.schemas.BaseSchema) -> None:

@@ -73,14 +73,12 @@ pub fn write_fixture_outputs(
     let fixtures_dir = output_dir.join("fixtures");
     std::fs::create_dir_all(&fixtures_dir)?;
 
-    // Index results and fixtures by fixture_id for O(1) lookup.
     let result_map: AHashMap<&str, &ScrapeBenchmarkResult> =
         results.iter().map(|r| (r.fixture_id.as_str(), r)).collect();
     let fixture_map: AHashMap<&str, &ScrapeFixture> = fixtures.iter().map(|f| (f.id.as_str(), f)).collect();
 
     for (fixture_id, maybe_output) in outputs {
         let Some(output) = maybe_output else {
-            // Failed scrape — no output to save.
             continue;
         };
 
@@ -88,7 +86,6 @@ pub fn write_fixture_outputs(
         let result = result_map.get(fixture_id.as_str()).copied();
         let fixture = fixture_map.get(fixture_id.as_str()).copied();
 
-        // Write extracted content (format determined by CrawlConfig.content.output_format).
         let content_path = fixtures_dir.join(format!("{safe_id}.md"));
         let content_str = output
             .content
@@ -96,11 +93,9 @@ pub fn write_fixture_outputs(
             .unwrap_or("<!-- content extraction was not available for this fixture -->\n");
         std::fs::write(&content_path, content_str)?;
 
-        // Write raw HTML.
         let html_path = fixtures_dir.join(format!("{safe_id}.html"));
         std::fs::write(&html_path, &output.html)?;
 
-        // Build meta JSON.
         let url = result.map(|r| r.url.as_str()).unwrap_or("");
         let status_code = output.status_code;
         let browser_used = output.browser_used;
@@ -268,9 +263,6 @@ fn build_performance_report(results: &[ScrapeBenchmarkResult]) -> DatasetPerform
 
     let peak_memory_bytes = results.iter().map(|r| r.metrics.peak_memory_bytes).max().unwrap_or(0);
 
-    // Throughput: total successful requests / total elapsed time (sum of durations).
-    // Using sum-of-durations avoids the harmonic-mean mistake of averaging
-    // per-fixture 1/d_i values, which overstates throughput for slow outliers.
     let total_duration_secs: f64 = results
         .iter()
         .filter(|r| r.success && r.duration_ms > 0.0)
@@ -300,10 +292,8 @@ fn build_performance_report(results: &[ScrapeBenchmarkResult]) -> DatasetPerform
 /// don't penalise coverage. Results with a non-2xx status code or zero content
 /// size are also excluded from scoring.
 fn build_quality_report(results: &[ScrapeBenchmarkResult], fixtures: &[ScrapeFixture]) -> DatasetQualityReport {
-    // Build a lookup from fixture ID to fixture metadata when available.
     let fixture_map: AHashMap<&str, &ScrapeFixture> = fixtures.iter().map(|f| (f.id.as_str(), f)).collect();
 
-    // Count expected-failure fixtures so we can subtract them from total_urls.
     let expected_failure_count = if fixture_map.is_empty() {
         0
     } else {
@@ -324,7 +314,6 @@ fn build_quality_report(results: &[ScrapeBenchmarkResult], fixtures: &[ScrapeFix
     let scored: Vec<&crate::types::ScrapeQualityMetrics> = results
         .iter()
         .filter(|r| {
-            // Skip expected failures when fixture data is available.
             if !fixture_map.is_empty()
                 && fixture_map
                     .get(r.fixture_id.as_str())
@@ -332,7 +321,6 @@ fn build_quality_report(results: &[ScrapeBenchmarkResult], fixtures: &[ScrapeFix
             {
                 return false;
             }
-            // Skip non-2xx responses and empty content.
             let is_success_status = r.status_code.is_some_and(|code| (200..=299).contains(&code));
             if !is_success_status || r.content_size == 0 {
                 return false;
@@ -393,7 +381,6 @@ fn build_reachability_report(
     results: &[ScrapeBenchmarkResult],
     fixtures: &[ScrapeFixture],
 ) -> Option<ReachabilityReport> {
-    // Only consider results that have a reachability record.
     let reachable_results: Vec<&ScrapeBenchmarkResult> = results.iter().filter(|r| r.reachability.is_some()).collect();
 
     if reachable_results.is_empty() {
@@ -417,7 +404,6 @@ fn build_reachability_report(
         0.0
     };
 
-    // Build per-category breakdown using fixture metadata.
     let fixture_map: AHashMap<&str, &ScrapeFixture> = fixtures.iter().map(|f| (f.id.as_str(), f)).collect();
     let mut category_map: AHashMap<String, Vec<&ScrapeBenchmarkResult>> = AHashMap::new();
     for result in &reachable_results {
@@ -530,7 +516,6 @@ pub fn compare_results(
     baseline_name: &str,
     candidate_name: &str,
 ) -> ComparisonReport {
-    // Index baseline by fixture_id for O(1) lookup.
     let baseline_map: AHashMap<&str, &ScrapeBenchmarkResult> =
         baseline_results.iter().map(|r| (r.fixture_id.as_str(), r)).collect();
 
@@ -579,12 +564,9 @@ pub fn compare_results(
         });
     }
 
-    // Aggregate: median latency delta over matched fixtures.
     let latency_delta_pct = percentile_r7(&mut latency_deltas, 0.50).unwrap_or(0.0);
     let latency_delta_pct = sanitize_f64(latency_delta_pct);
 
-    // Aggregate quality delta: mean(candidate) - mean(baseline) if both sets
-    // are non-empty.
     let quality_delta = if !baseline_quality_scores.is_empty() && !candidate_quality_scores.is_empty() {
         let mean_baseline: f64 = baseline_quality_scores.iter().sum::<f64>() / baseline_quality_scores.len() as f64;
         let mean_candidate: f64 = candidate_quality_scores.iter().sum::<f64>() / candidate_quality_scores.len() as f64;
@@ -593,7 +575,6 @@ pub fn compare_results(
         None
     };
 
-    // Aggregate throughput delta.
     let baseline_perf = build_performance_report(baseline_results);
     let candidate_perf = build_performance_report(candidate_results);
 
@@ -678,7 +659,6 @@ pub fn print_comparison(report: &ComparisonReport) {
         eprintln!("Quality    : {:+.4} ({})", qd, quality_label);
     }
 
-    // Sort fixtures by latency delta: most-regressed first.
     let mut sorted: Vec<&FixtureComparison> = report.fixture_comparisons.iter().collect();
     sorted.sort_by(|a, b| {
         b.latency_delta_pct
@@ -733,7 +713,7 @@ mod tests {
             error_kind: ErrorKind::None,
             duration_ms,
             metrics: PerformanceMetrics {
-                peak_memory_bytes: 1024 * 1024 * 100, // 100 MB
+                peak_memory_bytes: 1024 * 1024 * 100,
                 avg_cpu_percent: 0.0,
                 throughput_pages_per_sec: if duration_ms > 0.0 { 1_000.0 / duration_ms } else { 0.0 },
                 p50_memory_bytes: 0,
@@ -771,10 +751,6 @@ mod tests {
             correct: quality_score >= 0.95,
         }
     }
-
-    // -----------------------------------------------------------------------
-    // build_quality_report
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_quality_report_empty_results() {
@@ -847,7 +823,6 @@ mod tests {
         ];
 
         let report = build_quality_report(&[result_ok, result_err], &fixtures);
-        // expected_fail is excluded from scoreable pool
         assert_eq!(report.total_urls, 1);
         assert_eq!(report.scored_urls, 1);
         assert!((report.coverage - 1.0).abs() < 1e-9);
@@ -868,13 +843,8 @@ mod tests {
         result_ok.content_size = 512;
 
         let report = build_quality_report(&[result_404, result_empty, result_ok], &[]);
-        // Only result_ok passes the status + content filters
         assert_eq!(report.scored_urls, 1);
     }
-
-    // -----------------------------------------------------------------------
-    // build_performance_report
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_performance_report_empty_results() {
@@ -904,10 +874,6 @@ mod tests {
         assert_eq!(report.peak_memory_bytes, 200 * 1024 * 1024);
     }
 
-    // -----------------------------------------------------------------------
-    // write_results
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_write_results_creates_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -933,10 +899,6 @@ mod tests {
         assert!(parsed.get("performance_report").is_some());
     }
 
-    // -----------------------------------------------------------------------
-    // aggregate_results
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_aggregate_results_quality_present_when_enabled() {
         let config = BenchmarkConfig {
@@ -958,10 +920,6 @@ mod tests {
         let output = aggregate_results(&results, &[], &config, "test");
         assert!(output.quality_report.is_none());
     }
-
-    // -----------------------------------------------------------------------
-    // compare_results
-    // -----------------------------------------------------------------------
 
     /// Build a result with an explicit fixture_id, framework, and memory.
     fn make_result_named(
@@ -991,7 +949,6 @@ mod tests {
 
     #[test]
     fn test_compare_results_candidate_faster() {
-        // baseline: 200 ms, candidate: 100 ms → -50%
         let baseline = vec![make_result_named("f1", "base", 200.0, None, 0)];
         let candidate = vec![make_result_named("f1", "cand", 100.0, None, 0)];
         let report = compare_results(&baseline, &candidate, "base", "cand");
@@ -1000,13 +957,11 @@ mod tests {
         let fc = &report.fixture_comparisons[0];
         assert_eq!(fc.fixture_id, "f1");
         assert!((fc.latency_delta_pct - (-50.0)).abs() < 1e-9);
-        // aggregate median == single fixture delta
         assert!((report.latency_delta_pct - (-50.0)).abs() < 1e-9);
     }
 
     #[test]
     fn test_compare_results_candidate_slower() {
-        // baseline: 100 ms, candidate: 150 ms → +50%
         let baseline = vec![make_result_named("f1", "base", 100.0, None, 0)];
         let candidate = vec![make_result_named("f1", "cand", 150.0, None, 0)];
         let report = compare_results(&baseline, &candidate, "base", "cand");
@@ -1016,7 +971,6 @@ mod tests {
 
     #[test]
     fn test_compare_results_unmatched_fixtures_skipped() {
-        // candidate has f1 and f2; baseline only has f1 → f2 is skipped
         let baseline = vec![make_result_named("f1", "base", 100.0, None, 0)];
         let candidate = vec![
             make_result_named("f1", "cand", 100.0, None, 0),
@@ -1043,15 +997,12 @@ mod tests {
 
     #[test]
     fn test_compare_results_quality_delta_none_when_missing() {
-        // baseline has no quality metrics
         let baseline = vec![make_result_named("f1", "base", 100.0, None, 0)];
         let cq = make_quality(0.9, 0.9, 0.9);
         let candidate = vec![make_result_named("f1", "cand", 100.0, Some(cq), 0)];
         let report = compare_results(&baseline, &candidate, "base", "cand");
 
-        // aggregate quality_delta: baseline_quality_scores is empty → None
         assert!(report.quality_delta.is_none());
-        // per-fixture: baseline_quality is None → quality_delta is None
         assert!(report.fixture_comparisons[0].quality_delta.is_none());
     }
 
@@ -1061,26 +1012,23 @@ mod tests {
         let baseline = vec![make_result_named("f1", "base", 100.0, None, 100 * mb)];
         let candidate = vec![make_result_named("f1", "cand", 100.0, None, 80 * mb)];
         let report = compare_results(&baseline, &candidate, "base", "cand");
-        // (80 - 100) / 100 * 100 = -20%
         assert!((report.memory_delta_pct - (-20.0)).abs() < 1e-9);
     }
 
     #[test]
     fn test_compare_results_median_latency_delta() {
-        // Three fixtures: -50%, 0%, +50% → median = 0%
         let baseline = vec![
             make_result_named("f1", "base", 100.0, None, 0),
             make_result_named("f2", "base", 100.0, None, 0),
             make_result_named("f3", "base", 100.0, None, 0),
         ];
         let candidate = vec![
-            make_result_named("f1", "cand", 50.0, None, 0),  // -50%
-            make_result_named("f2", "cand", 100.0, None, 0), //   0%
-            make_result_named("f3", "cand", 150.0, None, 0), // +50%
+            make_result_named("f1", "cand", 50.0, None, 0),
+            make_result_named("f2", "cand", 100.0, None, 0),
+            make_result_named("f3", "cand", 150.0, None, 0),
         ];
         let report = compare_results(&baseline, &candidate, "base", "cand");
         assert_eq!(report.fixture_comparisons.len(), 3);
-        // median of [-50, 0, 50] = 0
         assert!((report.latency_delta_pct - 0.0).abs() < 1e-9);
     }
 }

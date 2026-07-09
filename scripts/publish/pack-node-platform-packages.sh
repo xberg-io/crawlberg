@@ -43,16 +43,6 @@ for dir in */; do
   shopt -s nullglob
   node_bins=("${dir}"*.node)
 
-  # NAPI-RS pre-stages a directory for every platform listed in
-  # `napi.targets` even when the build matrix only covers a subset. Skip
-  # platforms that were not built rather than hard-failing the publish:
-  # those platforms simply don't get published this release, and the
-  # parent package's `optionalDependencies` entry resolves to a 404 at
-  # install time, which is the documented graceful-fallback behaviour
-  # for napi optional platform packages. Hard-failing here aborts the
-  # entire publish — including platforms that DID build — and forces a
-  # whole-matrix re-run for a missing platform that we explicitly chose
-  # not to build (e.g. musl variants not in the publish matrix).
   if [ "${#node_bins[@]}" -eq 0 ]; then
     echo "⚠ Skipping ${dir} — no .node binary (platform not built this release)"
     echo ""

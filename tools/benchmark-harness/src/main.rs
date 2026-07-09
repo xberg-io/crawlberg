@@ -451,7 +451,7 @@ fn cmd_profile(
     let config = BenchmarkConfig {
         output_dir: output.clone(),
         execution_mode,
-        max_concurrent: 1, // sequential for profiling
+        max_concurrent: 1,
         warmup_iterations: 0,
         benchmark_iterations: 1,
         measure_quality: false,
@@ -465,7 +465,6 @@ fn cmd_profile(
         fm.load(&fixtures)?;
     }
 
-    // Limit to sample_size fixtures
     let fixture_entries: Vec<_> = fm.entries().iter().take(sample_size).cloned().collect();
     if fixture_entries.is_empty() {
         return Err(benchmark_harness::Error::Fixture(
@@ -499,7 +498,6 @@ fn cmd_profile(
 fn cmd_report(inputs: Vec<PathBuf>, output: PathBuf, baseline: String) -> benchmark_harness::Result<()> {
     eprintln!("Loading results from {} file(s)...", inputs.len());
 
-    // Load every input file, keeping per-framework groupings intact.
     let mut outputs: Vec<benchmark_harness::BenchmarkOutput> = Vec::with_capacity(inputs.len());
     for path in &inputs {
         let content = std::fs::read_to_string(path)?;
@@ -509,7 +507,6 @@ fn cmd_report(inputs: Vec<PathBuf>, output: PathBuf, baseline: String) -> benchm
 
     std::fs::create_dir_all(&output)?;
 
-    // Collect all results for the merged aggregate report.
     let all_results: Vec<_> = outputs.iter().flat_map(|o| o.results.clone()).collect();
     let config = BenchmarkConfig {
         output_dir: output.clone(),
@@ -519,9 +516,7 @@ fn cmd_report(inputs: Vec<PathBuf>, output: PathBuf, baseline: String) -> benchm
     benchmark_harness::output::write_results(&output, &merged)?;
     benchmark_harness::output::print_summary(&merged);
 
-    // If 2+ files are provided, generate per-candidate comparison reports.
     if outputs.len() >= 2 {
-        // Find the baseline run by framework name.
         let baseline_output = outputs.iter().find(|o| o.metadata.framework == baseline);
 
         match baseline_output {
@@ -541,7 +536,6 @@ fn cmd_report(inputs: Vec<PathBuf>, output: PathBuf, baseline: String) -> benchm
                     );
                     benchmark_harness::output::print_comparison(&report);
 
-                    // Write the comparison JSON alongside the aggregate.
                     let cand_name = candidate.metadata.framework.replace(['/', '\\', ' '], "_");
                     let comparison_path = output.join(format!("comparison_{cand_name}.json"));
                     let json = serde_json::to_string_pretty(&report)?;

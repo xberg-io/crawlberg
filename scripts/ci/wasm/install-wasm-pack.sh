@@ -15,7 +15,6 @@ MINGW* | MSYS* | CYGWIN*)
   ;;
 esac
 
-# Ensure ~/.cargo/bin is in PATH for subsequent steps (wasm-pack installs here)
 if [[ -n "${GITHUB_PATH:-}" && -d "$HOME/.cargo/bin" ]]; then
   echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
 fi

@@ -84,7 +84,6 @@ vars:
           ;;
       esac
 
-  # CMake path for Windows (used to set CMAKE env var for build scripts)
   CMAKE_PATH:
     sh: |
       if [ "{{.OS}}" != "windows" ]; then
@@ -99,8 +98,6 @@ vars:
         }
       ' 2>/dev/null || echo ""
 
-  # Windows build tools paths (MSVC link.exe and CMake)
-  # Used to fix link.exe PATH conflicts with Git Bash
   MSVC_BIN_PATH:
     sh: |
       # Only needed on Windows

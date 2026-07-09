@@ -51,7 +51,6 @@ tasks:
     env:
       CFLAGS: "-O3 -g"
     cmds:
-      # Clean stale cargo cache from rb_sys tmp directory to prevent fingerprint errors
       - cmd: rm -rf tmp && echo "Cleaned stale tmp directory"
         platforms: [linux, darwin, windows]
       - "{{.BUNDLE}} exec rake compile"

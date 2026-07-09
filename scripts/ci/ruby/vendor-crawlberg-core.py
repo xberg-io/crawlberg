@@ -126,13 +126,11 @@ def replace_workspace_deps_in_toml(toml_path: Path, workspace_deps: dict[str, ob
             other_fields_str = match.group(1).strip()
             base_spec = format_dependency(name, dep_spec)
             if " = { " not in base_spec:
-                # Simple string dep like `ctor = "0.6"` - wrap it
                 version_val = base_spec.split(" = ", 1)[1].strip('"')
                 spec_part = f'version = "{version_val}"'
             else:
                 spec_part = base_spec.split(" = { ", 1)[1].rstrip("} ").rstrip("}")
 
-            # Extract existing keys and values from workspace spec, handling nested brackets
             workspace_fields: dict[str, str] = {}
             bracket_depth = 0
             current_field = ""
@@ -144,7 +142,6 @@ def replace_workspace_deps_in_toml(toml_path: Path, workspace_deps: dict[str, ob
                     bracket_depth -= 1
                     current_field += char
                 elif char == "," and bracket_depth == 0:
-                    # End of field
                     field = current_field.strip()
                     if field and "=" in field:
                         key, val = field.split("=", 1)
@@ -153,14 +150,12 @@ def replace_workspace_deps_in_toml(toml_path: Path, workspace_deps: dict[str, ob
                 else:
                     current_field += char
 
-            # Don't forget the last field
             if current_field.strip():
                 field = current_field.strip()
                 if field and "=" in field:
                     key, val = field.split("=", 1)
                     workspace_fields[key.strip()] = val.strip()
 
-            # Extract crate-specific keys using bracket-aware parsing
             crate_fields: dict[str, str] = {}
             bracket_depth = 0
             current_field = ""
@@ -172,7 +167,6 @@ def replace_workspace_deps_in_toml(toml_path: Path, workspace_deps: dict[str, ob
                     bracket_depth -= 1
                     current_field += char
                 elif char == "," and bracket_depth == 0:
-                    # End of field
                     field = current_field.strip()
                     if field and "=" in field:
                         key, val = field.split("=", 1)
@@ -181,17 +175,14 @@ def replace_workspace_deps_in_toml(toml_path: Path, workspace_deps: dict[str, ob
                 else:
                     current_field += char
 
-            # Don't forget the last field
             if current_field.strip():
                 field = current_field.strip()
                 if field and "=" in field:
                     key, val = field.split("=", 1)
                     crate_fields[key.strip()] = val.strip()
 
-            # Merge: crate-specific fields override workspace fields
             merged_fields = {**workspace_fields, **crate_fields}
 
-            # Build result from merged fields
             merged_parts = [f"{k} = {v}" for k, v in merged_fields.items()]
             merged_spec = ", ".join(merged_parts)
 
@@ -221,7 +212,6 @@ def generate_vendor_cargo_toml(
 
     deps_str = "\n".join(deps_lines)
 
-    # Build members list based on actually copied crates
     members = [
         name
         for name in [
@@ -274,7 +264,6 @@ def main() -> None:
 
     vendor_base: Path = repo_root / "packages" / "ruby" / "vendor"
 
-    # Clean only crate directories, preserving vendor/bundle/ (Bundler gems)
     crate_names = [
         "crawlberg",
         "crawlberg-ffi",
@@ -287,7 +276,6 @@ def main() -> None:
         crate_path = vendor_base / name
         if crate_path.exists():
             shutil.rmtree(crate_path)
-    # Also clean the vendor Cargo.toml (will be regenerated)
     vendor_cargo = vendor_base / "Cargo.toml"
     if vendor_cargo.exists():
         vendor_cargo.unlink()
@@ -335,7 +323,6 @@ def main() -> None:
 
     print("Cleaned build artifacts")
 
-    # Update workspace inheritance in Cargo.toml files
     for crate_dir in copied_crates:
         crate_toml = vendor_base / crate_dir / "Cargo.toml"
         if crate_toml.exists():
@@ -359,15 +346,12 @@ def main() -> None:
             replace_workspace_deps_in_toml(crate_toml, workspace_deps)
             print(f"Updated {crate_dir}/Cargo.toml")
 
-    # Update path dependencies in crawlberg-ffi crate
     if "crawlberg-ffi" in copied_crates and "crawlberg" in copied_crates:
         ffi_toml = vendor_base / "crawlberg-ffi" / "Cargo.toml"
         if ffi_toml.exists():
             with open(ffi_toml) as f:
                 content = f.read()
 
-            # Replace crawlberg workspace references with path dependency
-            # Handle cases with path, version, or neither
             content = re.sub(
                 r'(crawlberg = \{) (?:(?:path|version) = "[^"]*", )?', r'\1 path = "../crawlberg", ', content
             )
@@ -375,28 +359,24 @@ def main() -> None:
             with open(ffi_toml, "w") as f:
                 f.write(content)
 
-    # Update path dependencies in crawlberg crate if tesseract was copied
     if "crawlberg" in copied_crates:
         crawlberg_toml = vendor_base / "crawlberg" / "Cargo.toml"
         if crawlberg_toml.exists():
             with open(crawlberg_toml) as f:
                 content = f.read()
 
-            # Only update tesseract path if it was actually copied
             if "crawlberg-tesseract" in copied_crates:
                 content = re.sub(
                     r'crawlberg-tesseract = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
                     'crawlberg-tesseract = { path = "../crawlberg-tesseract", optional = true }',
                     content,
                 )
-            # Only update paddle-ocr path if it was actually copied
             if "crawlberg-paddle-ocr" in copied_crates:
                 content = re.sub(
                     r'crawlberg-paddle-ocr = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
                     'crawlberg-paddle-ocr = { path = "../crawlberg-paddle-ocr", optional = true }',
                     content,
                 )
-            # Only update pdfium-render path if it was actually copied
             if "crawlberg-pdfium-render" in copied_crates:
                 content = re.sub(
                     r'pdfium-render = \{ package = "crawlberg-pdfium-render", (?:path = "[^"]*", )?version = "[^"]*"',
@@ -410,15 +390,11 @@ def main() -> None:
     generate_vendor_cargo_toml(repo_root, workspace_deps, core_version, copied_crates)
     print("Generated vendor/Cargo.toml")
 
-    # Update native extension Cargo.toml to use vendored crates
     native_toml = repo_root / "packages" / "ruby" / "ext" / "crawlberg_rb" / "native" / "Cargo.toml"
     if native_toml.exists():
         with open(native_toml) as f:
             content = f.read()
 
-        # Replace path dependencies to point to vendored crates
-        # From: path = "../../../../../crates/crawlberg"
-        # To: path = "../../../vendor/crawlberg"
         content = re.sub(
             r'path = "\.\./\.\./\.\./\.\./\.\./crates/crawlberg"', 'path = "../../../vendor/crawlberg"', content
         )

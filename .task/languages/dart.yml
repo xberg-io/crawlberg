@@ -154,7 +154,6 @@ tasks:
     env:
       DYLD_FALLBACK_LIBRARY_PATH: "{{.ROOT_DIR}}/target/release"
       LD_LIBRARY_PATH: "{{.ROOT_DIR}}/target/release"
-      # FRB rejects relative paths under macOS hardened-runtime — must be absolute.
       FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR: "{{.ROOT_DIR}}/target/release"
     cmds:
       - cd e2e/dart && dart pub get

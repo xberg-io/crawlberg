@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# Crawlberg CLI installer
-# Usage: curl -fsSL https://crawlberg.dev/install.sh | bash
-#
-# Environment variables:
 #   CRAWLBERG_VERSION  - Specific version to install (default: latest)
-#   CRAWLBERG_INSTALL  - Installation directory (default: ~/.crawlberg/bin or /usr/local/bin)
 
 set -euo pipefail
 
 REPO="xberg-io/crawlberg"
 BINARY_NAME="crawlberg"
 
-# --- Helpers ---
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
@@ -26,7 +20,6 @@ need_cmd() {
   fi
 }
 
-# --- Detect platform ---
 
 detect_os() {
   local os
@@ -56,18 +49,16 @@ detect_target() {
   case "${os}-${arch}" in
   linux-x86_64) echo "x86_64-unknown-linux-musl" ;;
   linux-aarch64) echo "aarch64-unknown-linux-musl" ;;
-  darwin-x86_64) echo "aarch64-apple-darwin" ;; # Rosetta compatible
+  darwin-x86_64) echo "aarch64-apple-darwin" ;;
   darwin-aarch64) echo "aarch64-apple-darwin" ;;
   *) error "unsupported platform: ${os}-${arch}" ;;
   esac
 }
 
-# --- Version resolution ---
 
 get_latest_version() {
   need_cmd curl
 
-  # List recent releases and pick the first tag starting with "v" (skip benchmark runs etc.)
   local url="https://api.github.com/repos/${REPO}/releases?per_page=20"
   local tag
   tag="$(curl -fsSL "$url" | grep '"tag_name"' | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/' | grep '^v' | head -1 || true)"
@@ -78,7 +69,6 @@ get_latest_version() {
   echo "$tag"
 }
 
-# --- Download and install ---
 
 install() {
   need_cmd curl
@@ -92,7 +82,6 @@ install() {
 
   if [ -n "${CRAWLBERG_VERSION:-}" ]; then
     version="${CRAWLBERG_VERSION}"
-    # Ensure 'v' prefix
     case "$version" in
     v*) ;;
     *) version="v${version}" ;;
@@ -104,7 +93,6 @@ install() {
 
   info "Installing crawlberg ${version} for ${target}"
 
-  # Determine install directory
   if [ -n "${CRAWLBERG_INSTALL:-}" ]; then
     install_dir="${CRAWLBERG_INSTALL}"
   elif [ "$(id -u)" -eq 0 ]; then
@@ -115,7 +103,6 @@ install() {
 
   mkdir -p "$install_dir"
 
-  # Download
   local artifact="crawlberg-cli-${target}.tar.gz"
   local url="https://github.com/${REPO}/releases/download/${version}/${artifact}"
 
@@ -126,10 +113,8 @@ install() {
 
   curl -fsSL "$url" -o "${tmpdir}/${artifact}"
 
-  # Extract
   tar -xzf "${tmpdir}/${artifact}" -C "$tmpdir"
 
-  # Install binary
   local stage_dir="${tmpdir}/crawlberg-cli-${target}"
   local binary_path="${stage_dir}/${BINARY_NAME}"
   if [ ! -f "$binary_path" ]; then
@@ -139,13 +124,11 @@ install() {
   cp "$binary_path" "${install_dir}/${BINARY_NAME}"
   chmod +x "${install_dir}/${BINARY_NAME}"
 
-  # Install the actual binary (musl builds use wrapper + .bin)
   if [ -f "${stage_dir}/${BINARY_NAME}.bin" ]; then
     cp "${stage_dir}/${BINARY_NAME}.bin" "${install_dir}/${BINARY_NAME}.bin"
     chmod +x "${install_dir}/${BINARY_NAME}.bin"
   fi
 
-  # Install bundled runtime libraries (musl builds only)
   if [ -d "${stage_dir}/lib" ] && [ "$(ls -A "${stage_dir}/lib" 2>/dev/null)" ]; then
     mkdir -p "${install_dir}/lib"
     cp "${stage_dir}/lib/"* "${install_dir}/lib/"
@@ -154,14 +137,12 @@ install() {
 
   info "Installed ${BINARY_NAME} to ${install_dir}/${BINARY_NAME}"
 
-  # Verify
   if "${install_dir}/${BINARY_NAME}" --version >/dev/null 2>&1; then
     info "Verified: $("${install_dir}/${BINARY_NAME}" --version)"
   else
     warn "Binary installed but --version check failed"
   fi
 
-  # PATH hint
   case ":${PATH}:" in
   *":${install_dir}:"*) ;;
   *)

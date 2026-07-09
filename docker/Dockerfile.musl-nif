@@ -1,55 +1,38 @@
 # =============================================================================
-# Alpine-based builder for musl-linked Elixir Rustler NIF.
-#
-# Usage:
-#   docker build -f docker/Dockerfile.musl-nif \
-#     --output type=local,dest=./dist .
-#
-# Produces libcrawlberg_nif.so at dist/libcrawlberg_nif.so
 # =============================================================================
 FROM alpine:3.21 AS builder
 
 WORKDIR /build
 
-# Install build dependencies
 RUN apk add --no-cache \
     curl gcc g++ musl-dev cmake make pkgconf \
     openssl-dev openssl-libs-static \
     perl linux-headers git file
 
-# Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --component rust-src && \
     echo "Rust host: $(~/.cargo/bin/rustc -vV | grep host)" && \
     echo "Default target: $(~/.cargo/bin/rustc --print cfg | grep target)"
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Allow cdylib output on musl targets (default is +crt-static which blocks shared libs)
 ENV RUSTFLAGS="-C target-feature=-crt-static"
 
-# Copy workspace manifests and only the required crates
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crawlberg/ crates/crawlberg/
 COPY crates/crawlberg-bindings-common/ crates/crawlberg-bindings-common/
 COPY crates/crawlberg-browser/ crates/crawlberg-browser/
 COPY packages/elixir/native/crawlberg_nif/ packages/elixir/native/crawlberg_nif/
 
-# Replace workspace members with only the crates we have
 RUN sed -i 's|members = \[.*\]|members = ["crates/crawlberg", "crates/crawlberg-bindings-common", "crates/crawlberg-browser", "packages/elixir/native/crawlberg_nif"]|' Cargo.toml
 
-# Build the Rustler NIF shared library
 RUN . "$HOME/.cargo/env" && \
     cargo build --release --package crawlberg_nif && \
     cp target/release/libcrawlberg_nif.so /build/libcrawlberg_nif.so && \
     strip /build/libcrawlberg_nif.so
 
-# Verify the library
 RUN file /build/libcrawlberg_nif.so && \
     echo "=== Dynamic dependencies ===" && \
     readelf -d /build/libcrawlberg_nif.so 2>/dev/null | grep NEEDED || echo "No dynamic dependencies (fully static)"
 
-# =============================================================================
-# Output stage — just the shared library
-# =============================================================================
 FROM scratch
 COPY --from=builder /build/libcrawlberg_nif.so /libcrawlberg_nif.so

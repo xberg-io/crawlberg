@@ -1,21 +1,6 @@
 version: "3"
 
-# Development cycle workflows: cleanup, alef generate, binding rebuild, e2e cycles.
-#
-# These tasks codify the iteration loops we run when changing the crawlberg
-# core or alef codegen. They handle the awkward bits that bite repeatedly:
-#   - The alef-generated mock-server lives at e2e/rust/target/, NOT the
-#     workspace target/ (the legacy tools/mock-server is unrelated).
-#   - The Python e2e venv (e2e/python/.venv) caches a stale .so after a
-#     crawlberg-py rebuild — needs `uv sync --reinstall` to refresh.
-#   - The Elixir e2e suite respects CRAWLBERG_BUILD=1 (set per-task in
-#     .task/languages/elixir.yml) to force NIF rebuild instead of pulling
-#     a stale precompiled binary from the package's tagged release.
-
 tasks:
-  # ============================================================
-  # ALEF lifecycle
-  # ============================================================
   alef:install:
     desc: Install the alef CLI from the sibling repo (../alef) at HEAD
     cmds:
@@ -46,24 +31,11 @@ tasks:
       - task: alef:install
       - task: alef:generate
 
-  # ============================================================
-  # MOCK-SERVER (alef-generated; the binary bindings actually spawn)
-  # ============================================================
-  #
-  # Note: there are two mock-server binaries in this repo —
-  #   - target/release/mock-server         from tools/mock-server (legacy, unused)
-  #   - e2e/rust/target/release/mock-server from e2e/rust (alef-generated)
-  # All language conftests spawn the latter; this task builds it.
-
   mock-server:rebuild:
     desc: Rebuild the alef-generated e2e mock-server binary
     dir: e2e/rust
     cmds:
       - cargo build --release --bin mock-server
-
-  # ============================================================
-  # CLEANUP
-  # ============================================================
 
   clean:e2e:
     desc: Remove per-language e2e test dependencies (venvs, lockfiles, build dirs)
@@ -94,10 +66,6 @@ tasks:
       - task: clean:workspace
       - task: clean:e2e
 
-  # ============================================================
-  # REBUILD (after crawlberg-core or binding-source changes)
-  # ============================================================
-
   rebuild:bindings:
     desc: Rebuild all language bindings + the alef-generated mock-server
     cmds:
@@ -121,20 +89,12 @@ tasks:
       - task: :node:build:dev
       - task: mock-server:rebuild
 
-  # ============================================================
-  # PYTHON-SPECIFIC CYCLE (handles stale .so in e2e venv)
-  # ============================================================
-
   python:cycle:
     desc: "Python: rebuild binding + force-refresh e2e venv + run e2e"
     cmds:
       - task: :python:build:dev
       - cmd: cd e2e/python && uv sync --reinstall --quiet
       - task: :python:e2e:test
-
-  # ============================================================
-  # END-TO-END CYCLES
-  # ============================================================
 
   e2e:reset:
     desc: "Full reset: clean + alef generate + rebuild all bindings + run all e2e"

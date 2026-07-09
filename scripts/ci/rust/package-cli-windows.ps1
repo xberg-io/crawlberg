@@ -1,7 +1,4 @@
 #!/usr/bin/env pwsh
-# Package CLI binary as zip archive (Windows)
-# Used by: ci-rust.yaml - Package CLI (Windows) step
-# Arguments: TARGET (e.g., x86_64-pc-windows-msvc)
 
 param(
     [Parameter(Mandatory=$true)]

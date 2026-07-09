@@ -17,9 +17,6 @@ request:
     kind: query_param
     name: url
 
-# cost_extraction is static because ScrapingBee does not surface per-request
-# cost in a response header/field by default. The fallback matches current
-# production billing behaviour.
 response:
   kind:
     kind: raw_body

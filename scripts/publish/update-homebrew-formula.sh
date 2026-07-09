@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Update the crawlberg Homebrew formula's source URL + sha256 to the new
-# release tag. The bottle DSL is rewritten separately by
-# homebrew-merge-bottles@v1 after the matrix bottle builds complete.
-#
-# Required env:
-#   TAG     — git tag, e.g. v0.3.0-rc.25
 #   VERSION — semver without v prefix, e.g. 0.3.0-rc.25
-#   TAP_DIR — path to a checked-out xberg-io/homebrew-tap
 
 tag="${TAG:?TAG is required (e.g. v0.3.0-rc.25)}"
 version="${VERSION:?VERSION is required (e.g. 0.3.0-rc.25)}"
@@ -36,8 +29,6 @@ fi
 
 echo "Source tarball sha256: $source_sha" >&2
 
-# Update `url '...'` (single or double quoted) — the regex tolerates either
-# quoting style since homebrew formulae in the wild use both.
 python3 - "$formula" "$source_url" "$source_sha" "$version" <<'PY'
 import re
 import sys

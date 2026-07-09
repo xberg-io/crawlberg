@@ -42,9 +42,6 @@ impl ScrapeAdapter for NativeAdapter {
     }
 
     fn supports_batch(&self) -> bool {
-        // Batch mode cannot honour `cached_html` entries, so we fall back to
-        // the sequential `scrape` path which the runner drives correctly in
-        // cached mode.
         false
     }
 
@@ -86,10 +83,6 @@ impl ScrapeAdapter for NativeAdapter {
 
         let urls: Vec<String> = entries.iter().map(|e| e.url.clone()).collect();
 
-        // `crawlberg::batch_scrape` rejects empty input but is otherwise
-        // infallible at the batch level — each entry carries its own
-        // `Option<error>`. The internal CrawlConfig timeout applies per-request,
-        // so no outer timeout wrapper is needed.
         let batch_results = crawlberg::batch_scrape(&self.engine, urls)
             .await
             .map_err(|e| crate::error::Error::Adapter(format!("batch_scrape failed: {e}")))?;

@@ -4,7 +4,6 @@ set -euo pipefail
 mode="${1:-check}"
 root="$(git rev-parse --show-toplevel)"
 
-# Source SDKMAN if available
 if [ -f ~/.sdkman/bin/sdkman-init.sh ]; then
   set +u
   # shellcheck source=/dev/null

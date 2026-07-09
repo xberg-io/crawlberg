@@ -13,10 +13,8 @@ echo "=========================================="
 echo "Setting library paths for test execution"
 echo "=========================================="
 
-# Setup FFI paths first (adds DLL directory to PATH on Windows)
 setup_rust_ffi_paths "$REPO_ROOT"
 
-# Setup Go CGO environment
 setup_go_paths "$REPO_ROOT"
 
 if [[ "${RUNNER_OS:-}" == "Windows" ]]; then

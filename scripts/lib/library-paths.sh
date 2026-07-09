@@ -79,18 +79,15 @@ setup_rust_ffi_paths() {
     echo "✓ Set DYLD_LIBRARY_PATH for Rust FFI on macOS"
     ;;
   Windows | MINGW* | MSYS* | CYGWIN*)
-    # Check for short path CI directories first
     local cargo_target="${CARGO_TARGET_DIR:-}"
     if [ -n "$cargo_target" ] && [ -d "$cargo_target/release" ]; then
       export PATH="${cargo_target}/release;${PATH:-}"
       echo "✓ Set PATH for Rust FFI (using CARGO_TARGET_DIR=$cargo_target)"
     fi
-    # Add GNU target path if it exists
     if [ -d "$ffi_lib_gnu" ]; then
       export PATH="${ffi_lib_gnu};${PATH:-}"
       echo "✓ Set PATH for Rust FFI GNU target"
     fi
-    # Add standard target path if it exists
     if [ -d "$ffi_lib" ]; then
       export PATH="${ffi_lib};${PATH:-}"
       echo "✓ Set PATH for Rust FFI on Windows"
@@ -190,8 +187,6 @@ EOF
     ;;
   Windows | MINGW* | MSYS* | CYGWIN*)
     if [ -z "${CGO_LDFLAGS:-}" ] && [ -z "${GITHUB_ENV:-}" ]; then
-      # Only set library search path; ffi.go CGO directives handle -l flags
-      # This matches the approach in setup-go-cgo-env/windows.ps1
       export CGO_LDFLAGS="-L${repo_root}/target/x86_64-pc-windows-gnu/release -L${repo_root}/target/release"
     fi
     ;;
