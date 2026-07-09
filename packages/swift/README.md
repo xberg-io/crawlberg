@@ -90,7 +90,7 @@ Via swift-bridge for macOS, iOS, and Linux with native Swift types and async/awa
 ## Installation
 
 ```bash
-.package(url: "https://github.com/xberg-io/crawlberg", exact: "1.0.4")
+.package(url: "https://github.com/xberg-io/crawlberg", exact: "1.0.5")
 ```
 
 ## Agent plugin

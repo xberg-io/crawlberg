@@ -14,7 +14,7 @@ keywords = ["crawl", "scrape", "bindings", "web", "ffi"]
 categories = ["api-bindings"]
 
 [dependencies]
-crawlberg = { path = "../crawlberg", version = "1.0.4", features = ["native-runtime"] }
+crawlberg = { path = "../crawlberg", version = "1.0.5", features = ["native-runtime"] }
 
 [lints]
 workspace = true

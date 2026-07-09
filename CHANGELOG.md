@@ -2,6 +2,29 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.5] - 2026-07-09
+
+### Security
+
+- **Per-hop SSRF re-validation on the headless-browser tier.** Closes the known
+  limitation noted in 1.0.4: real headless Chrome follows 3xx redirects and
+  client-side navigations internally, so only the seed URL was checked. Browser
+  fetches now enable CDP Fetch interception for the duration of each navigation
+  and validate every request URL (initial navigation, redirects, and
+  subresources) against the SSRF policy before Chrome connects. Blocked requests
+  are failed with `BlockedByClient`; a blocked main-frame request surfaces as a
+  precise `CrawlError::SsrfPolicyViolation` rather than a generic navigation
+  error. This brings the chromiumoxide backend to parity with the native
+  backend, which already re-validates each redirect hop.
+  (`crates/crawlberg/src/browser.rs`)
+
+### Build
+
+- Bindings, stubs, READMEs, docs, and e2e suites regenerated with alef 0.34.4
+  (up from 0.31.1). The 0.34.4 scaffold formats generated files in place instead
+  of excluding them from poly, and refreshes the `.gitattributes`/`.pubignore`
+  scaffolding.
+
 ## [1.0.4] - 2026-07-09
 
 ### Security

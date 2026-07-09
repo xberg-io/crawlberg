@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	moduleVersion = "1.0.4"
+	moduleVersion = "1.0.5"
 	repoURL       = "https://github.com/xberg-io/crawlberg"
 	assetPrefix   = "crawlberg"
 )
