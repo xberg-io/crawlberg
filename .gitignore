@@ -305,8 +305,5 @@ docs-site/dist/
 docs-site/.astro/
 
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
-.cursor/
-.github/agents/
-.github/commands/
-.github/copilot-instructions.md
+.ai-rulez/.generated-manifest.json
 # END ai-rulez

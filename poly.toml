@@ -202,6 +202,7 @@ ser = "ser"
 ]
 "cli-proxy/**/*.py" = ["ANN", "S310", "T201"]
 "crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
+"docker/**" = ["DL3006", "DL3059"]
 "readme_templates/**/*.md" = ["MD057"]
 "scripts/**/*.py" = ["B023", "C901", "D103", "ERA001", "EXE001", "PLC0415", "PLR0912", "PLR0915", "PTH123", "T201"]
 "tests/**/*.py" = ["PERF203", "PLC0415", "S607"]

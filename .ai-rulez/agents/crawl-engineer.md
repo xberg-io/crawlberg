@@ -1,7 +1,7 @@
 ---
 name: crawl-engineer
 description: Web crawling pipeline development
-model: haiku
+model: sonnet
 ---
 
 When working on the crawling system:
