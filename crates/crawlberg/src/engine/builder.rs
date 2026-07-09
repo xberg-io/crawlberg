@@ -218,14 +218,9 @@ impl CrawlEngineBuilder {
     /// Config validation is deferred to the first operation (scrape, crawl, etc.) so that
     /// the engine can always be constructed and individual operations report validation errors.
     pub fn build(self) -> Result<CrawlEngine, CrawlError> {
-        // `config` needs to be mutable only when the `browser` feature is active
-        // (to inject `browser_pool`); suppress the warning on other feature combinations.
         #[allow(unused_mut)]
         let mut config = self.config.unwrap_or_default();
 
-        // Apply the injected browser pool to the config so the engine's fetch paths
-        // pick it up from `config.browser_pool`. The builder field takes precedence
-        // over any pool that was already embedded in the config.
         #[cfg(feature = "browser")]
         if let Some(pool) = self.browser_pool {
             config.browser_pool = Some(pool);
@@ -235,14 +230,8 @@ impl CrawlEngineBuilder {
             config.proxy_provider = Some(provider);
         }
 
-        // CRAWLBERG_ALLOW_PRIVATE_NETWORK is an operator-side override that must
-        // win regardless of how the caller built `config.ssrf`. Several
-        // alef-generated bindings (Elixir NIF, PHP, WASM, Ruby) fall back to
-        // `SsrfPolicy::default()` when their host-side `ssrf` field is absent,
-        // hardcoding `deny_private: true` and silently overriding the env var
-        // set by e2e harnesses / docker-compose. Applying the override at
-        // engine-construction time keeps `SsrfPolicy::default()` clean and
-        // makes the env var the single source of truth.
+        // ~keep Apply this operator override at engine construction so binding defaults cannot hide the env var.
+        // ~keep `SsrfPolicy::default()` stays deny-by-default; this env var remains the single explicit override.
         if std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
             .map(|v| v.to_lowercase())
             .ok()
@@ -251,13 +240,8 @@ impl CrawlEngineBuilder {
             config.ssrf.deny_private = false;
         }
 
-        // An empty scheme_allowlist is never meaningful caller intent through any
-        // binding: `scheme_allowlist` is `#[serde(skip)]` / `#[alef(skip)]`, so no
-        // binding can populate it deliberately. Empty universally means the
-        // construction path (e.g. `Default::default()` in generated FFI glue) did
-        // not fill it. Treat empty as "use the default allowlist" — symmetric with
-        // the deny_private env override above. Without this, every HTTP/HTTPS
-        // request fails with `disallowed scheme: http`.
+        // ~keep Empty `scheme_allowlist` cannot be binding caller intent because the field is serde/alef skipped.
+        // ~keep Treat empty as the default allowlist; otherwise HTTP/HTTPS requests fail as disallowed schemes.
         if config.ssrf.scheme_allowlist.is_empty() {
             config.ssrf.scheme_allowlist = crate::net::ssrf::default_scheme_allowlist();
         }
@@ -266,11 +250,8 @@ impl CrawlEngineBuilder {
         #[cfg(not(target_arch = "wasm32"))]
         let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());
 
-        // Native executor: use the injected one when present; otherwise build from config.
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
         let native_browser_executor = if let Some(executor) = self.native_executor {
-            // Backend may not be Native in config yet, but the caller explicitly provided
-            // an executor — honour it regardless so callers can pre-build and inject.
             Some(executor)
         } else {
             build_native_browser_executor(&config)?

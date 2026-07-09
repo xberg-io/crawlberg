@@ -57,8 +57,6 @@ impl ModuleLoader for BrowserModuleLoader {
         _options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
         let url = module_specifier.to_string();
-        // Capture the loader's proxy here so the async closure below owns a
-        // plain Option<String> rather than borrowing &self across an `await`.
         let proxy_url = self.proxy_url.clone();
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {

@@ -55,7 +55,7 @@ impl DiskCache {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(".crawlberg")
             .join("cache");
-        Self::new(dir, 3600, 10000) // 1 hour TTL, 10k entries
+        Self::new(dir, 3600, 10000)
     }
 
     fn cache_key(url: &str) -> String {
@@ -93,20 +93,17 @@ impl CrawlCache for DiskCache {
             let page: CachedPage = match serde_json::from_str(&data) {
                 Ok(p) => p,
                 Err(_) => {
-                    // Corrupt cache entry — treat as miss, delete the file
                     let _ = std::fs::remove_file(&path);
                     return Ok(None);
                 }
             };
 
-            // Check TTL
             if ttl_secs > 0 {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
                 if now.saturating_sub(page.cached_at) > ttl_secs {
-                    // Expired -- remove the file
                     let _ = std::fs::remove_file(&path);
                     return Ok(None);
                 }
@@ -126,7 +123,6 @@ impl CrawlCache for DiskCache {
         let cache_dir = self.cache_dir.clone();
 
         tokio::task::spawn_blocking(move || {
-            // Evict inside spawn_blocking to avoid blocking the async runtime
             if max_entries > 0 {
                 let entries: Vec<_> = match std::fs::read_dir(&cache_dir) {
                     Ok(dir) => dir
@@ -137,7 +133,6 @@ impl CrawlCache for DiskCache {
                 };
 
                 if entries.len() >= max_entries {
-                    // Sort by modification time (oldest first)
                     let mut with_times: Vec<_> = entries
                         .into_iter()
                         .filter_map(|e| {
@@ -147,7 +142,6 @@ impl CrawlCache for DiskCache {
                         .collect();
                     with_times.sort_by_key(|(_, t)| *t);
 
-                    // Remove oldest entries until we're under the limit
                     let to_remove = with_times.len().saturating_sub(max_entries - 1);
                     for (path, _) in with_times.into_iter().take(to_remove) {
                         let _ = std::fs::remove_file(path);
@@ -155,7 +149,6 @@ impl CrawlCache for DiskCache {
                 }
             }
 
-            // Atomic write with temp file
             let tmp_path = path.with_extension("tmp");
             std::fs::write(&tmp_path, data).map_err(|e| CrawlError::Other(format!("cache write error: {e}")))?;
             std::fs::rename(&tmp_path, &path).map_err(|e| CrawlError::Other(format!("cache rename error: {e}")))
@@ -244,9 +237,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = DiskCache::new(dir.path(), 60, 0).unwrap();
 
-        // Store a page with cached_at far in the past
         let mut page = make_page("http://example.com/old");
-        page.cached_at = now_secs() - 120; // 2 minutes ago, TTL is 60s
+        page.cached_at = now_secs() - 120;
 
         cache.set("http://example.com/old", &page).await.unwrap();
 
@@ -257,10 +249,10 @@ mod tests {
     #[tokio::test]
     async fn test_disk_cache_no_ttl() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = DiskCache::new(dir.path(), 0, 0).unwrap(); // ttl=0 means no expiry
+        let cache = DiskCache::new(dir.path(), 0, 0).unwrap();
 
         let mut page = make_page("http://example.com/forever");
-        page.cached_at = 0; // Epoch -- very old
+        page.cached_at = 0;
 
         cache.set("http://example.com/forever", &page).await.unwrap();
 
@@ -271,18 +263,15 @@ mod tests {
     #[tokio::test]
     async fn test_disk_cache_eviction() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = DiskCache::new(dir.path(), 3600, 2).unwrap(); // max 2 entries
+        let cache = DiskCache::new(dir.path(), 3600, 2).unwrap();
 
-        // Add 3 entries -- first should be evicted
         for i in 0..3 {
             let url = format!("http://example.com/{i}");
             let page = make_page(&url);
             cache.set(&url, &page).await.unwrap();
-            // Small delay so file modification times differ
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
-        // Count remaining JSON files
         let count = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
@@ -350,7 +339,6 @@ mod tests {
         let cache = NoopCache;
         assert!(cache.get("any-key").await.unwrap().is_none());
         assert!(!cache.has("any-key").await.unwrap());
-        // set should succeed but do nothing
         let page = make_page("http://example.com");
         cache.set("http://example.com", &page).await.unwrap();
         assert!(cache.get("http://example.com").await.unwrap().is_none());

@@ -34,8 +34,6 @@ impl BypassProvider for TestProvider {
 
 #[test]
 fn bypass_provider_can_be_attached_to_crawl_config() {
-    // Verify that the BypassProvider trait can be implemented, wrapped in
-    // Arc<dyn ...>, and attached to CrawlConfig via DispatchProfile.
     let provider: DynBypassProvider = Arc::new(TestProvider);
 
     let config = CrawlConfig {

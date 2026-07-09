@@ -14,10 +14,6 @@ fn engine_with(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     create_engine(Some(config)).expect("engine build must not fail")
 }
 
-// ---------------------------------------------------------------------------
-// 1. BrowserOnly + BrowserMode::Never + 403 → Err(Forbidden), not Ok
-// ---------------------------------------------------------------------------
-
 /// `BrowserOnly` strategy with `BrowserMode::Never`: the policy wants to escalate
 /// to Browser, but no browser is available. The engine must surface the 403 as
 /// `Err(CrawlError::Forbidden)` rather than returning `Ok` or using browser.
@@ -52,10 +48,6 @@ async fn browser_only_strategy_browser_never_returns_forbidden_error() {
         "expected Forbidden or WafBlocked, got: {err:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 2. BrowserOnly + BrowserMode::Never + WAF-blocked 403 → Err(WafBlocked), not Ok
-// ---------------------------------------------------------------------------
 
 /// Same constraint with a Cloudflare-fingerprinted 403. Engine must return
 /// `Err(CrawlError::WafBlocked { .. })` rather than escalating to browser.
@@ -95,10 +87,6 @@ async fn browser_only_strategy_browser_never_returns_waf_blocked_error() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 3. EscalationStrategy::None + 403 → Err, no escalation at all
-// ---------------------------------------------------------------------------
-
 /// `None` strategy must surface errors unconditionally — even without `BrowserMode::Never`.
 #[tokio::test]
 async fn none_strategy_browser_auto_returns_forbidden_error() {
@@ -133,10 +121,6 @@ async fn none_strategy_browser_auto_returns_forbidden_error() {
         "expected Forbidden or WafBlocked"
     );
 }
-
-// ---------------------------------------------------------------------------
-// 4. EscalationStrategy::None + WAF Cloudflare body → Err(WafBlocked), not Ok
-// ---------------------------------------------------------------------------
 
 /// None strategy + WAF-fingerprinted 403 must return the original WAF error.
 #[tokio::test]

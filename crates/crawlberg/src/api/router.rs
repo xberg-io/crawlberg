@@ -42,8 +42,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 ///
 /// * `engine` - A shared [`CrawlEngine`] that powers scrape, crawl, and map operations.
 pub fn create_router(engine: Arc<CrawlEngine>) -> Router {
-    // Capture the crawl config before the engine is moved into the API state so
-    // the MCP transport can build sessions backed by the same configuration.
+    // ~keep Capture config before moving the engine so MCP sessions use the same crawl settings.
     #[cfg(feature = "mcp")]
     let mcp_config = engine.config.clone();
 
@@ -52,7 +51,6 @@ pub fn create_router(engine: Arc<CrawlEngine>) -> Router {
     let cors_layer = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
     let router = Router::new()
-        // Firecrawl v1 endpoints
         .route("/v1/scrape", post(handlers::scrape_handler))
         .route("/v1/crawl", post(handlers::crawl_handler))
         .route(
@@ -63,11 +61,9 @@ pub fn create_router(engine: Arc<CrawlEngine>) -> Router {
         .route("/v1/batch/scrape", post(handlers::batch_scrape_handler))
         .route("/v1/batch/scrape/{id}", get(handlers::batch_status_handler))
         .route("/v1/download", post(handlers::download_handler))
-        // Operational endpoints
         .route("/health", get(handlers::health_handler))
         .route("/version", get(handlers::version_handler))
         .route("/openapi.json", get(openapi_handler))
-        // Middleware stack (outermost first)
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(SetSensitiveHeadersLayer::new([AUTHORIZATION]))
@@ -79,9 +75,7 @@ pub fn create_router(engine: Arc<CrawlEngine>) -> Router {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    // Mount the Streamable HTTP MCP transport at `/mcp`. It is nested outside the
-    // REST middleware stack on purpose: the request-timeout and compression layers
-    // would otherwise break long-lived MCP SSE sessions.
+    // ~keep Keep MCP outside timeout/compression middleware because long-lived SSE sessions break under them.
     #[cfg(feature = "mcp")]
     let router = router.nest_service("/mcp", crate::mcp::streamable_http_service(mcp_config));
 

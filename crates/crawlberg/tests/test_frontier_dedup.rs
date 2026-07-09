@@ -64,7 +64,6 @@ async fn test_max_depth_one_returns_root_plus_children() {
 async fn test_duplicate_links_deduplicated() {
     let mock = MockServer::start().await;
 
-    // Root links to /b and /c; /b also links to /c.
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(
@@ -90,7 +89,7 @@ async fn test_duplicate_links_deduplicated() {
                 .set_body_string("<html><body>Page C</body></html>")
                 .append_header("content-type", "text/html"),
         )
-        .expect(1) // C should only be fetched ONCE.
+        .expect(1)
         .mount(&mock)
         .await;
 

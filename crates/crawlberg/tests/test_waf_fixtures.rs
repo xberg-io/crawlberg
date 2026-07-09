@@ -31,11 +31,9 @@ use crawlberg::http::HttpResponse;
 /// Filename: `aws_waf_*` → vendor `aws-waf`
 /// Filename: `generic_*` → vendor `generic`
 fn expected_vendor(filename_stem: &str) -> &'static str {
-    // Try two-word prefixes first.
     if filename_stem.starts_with("aws_waf_") {
         return "aws-waf";
     }
-    // Single-word prefixes.
     let prefix = filename_stem.split('_').next().unwrap_or("");
     match prefix {
         "cloudflare" => "cloudflare",
@@ -47,14 +45,9 @@ fn expected_vendor(filename_stem: &str) -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------------------
-// HTTP fixture parser
-// ---------------------------------------------------------------------------
-
 fn parse_http_fixture(content: &str) -> HttpResponse {
     let mut lines = content.lines();
 
-    // Status line: "HTTP/1.1 <code> <reason>"
     let status_line = lines.next().expect("fixture must have a status line");
     let parts: Vec<&str> = status_line.splitn(3, ' ').collect();
     assert!(parts.len() >= 2, "malformed status line: '{status_line}'");
@@ -62,7 +55,6 @@ fn parse_http_fixture(content: &str) -> HttpResponse {
         .parse()
         .unwrap_or_else(|_| panic!("bad status code in '{status_line}'"));
 
-    // Headers until blank line.
     let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
     for line in lines.by_ref() {
         if line.trim().is_empty() {
@@ -76,7 +68,6 @@ fn parse_http_fixture(content: &str) -> HttpResponse {
         }
     }
 
-    // Body: everything remaining.
     let body: String = lines.collect::<Vec<_>>().join("\n");
     let body_bytes = body.as_bytes().to_vec();
 
@@ -94,10 +85,6 @@ fn parse_http_fixture(content: &str) -> HttpResponse {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Fixture replay test
-// ---------------------------------------------------------------------------
-
 #[test]
 fn waf_fixtures_all_match() {
     let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/waf");
@@ -112,7 +99,6 @@ fn waf_fixtures_all_match() {
         .filter(|e| e.path().extension().map(|ext| ext == "http").unwrap_or(false))
         .collect();
 
-    // Sort for deterministic output.
     entries.sort_by_key(|e| e.path());
 
     for entry in entries {
@@ -135,7 +121,7 @@ fn waf_fixtures_all_match() {
             Some(s) if s.vendor != vendor => {
                 failures.push(format!("{stem}: wrong vendor (expected={vendor}, got={})", s.vendor));
             }
-            Some(_) => {} // pass
+            Some(_) => {}
         }
     }
 

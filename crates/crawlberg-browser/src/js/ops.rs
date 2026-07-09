@@ -347,20 +347,10 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
     }
 }
 
-// op_fetch_url backs JS-level `fetch()` and XHR. Pre-#139 it used a
-// process-wide `OnceLock<reqwest::Client>` initialised with no proxy, so
-// every JS network call bypassed the configured upstream proxy. We now
-// build a client per request, threading whatever `proxy_url` the page's
-// HttpClient was configured with.
-//
-// The per-request build cost is negligible (≪1ms) compared with the actual
-// network round-trip; the simplification is worth not having to invalidate
-// a cache when the proxy is reconfigured between fetches.
+// ~keep JS fetch/XHR must build with the page proxy each request.
+// ~keep A cached client can otherwise bypass a changed proxy setting.
 fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
-    // Redirects are followed manually below so each hop can be re-validated
-    // against the same SSRF policy as the initial URL (GHSA-8v6v-g4rh-jmcm).
-    // With reqwest's default auto-follow, an attacker-controlled origin can
-    // 302 to http://127.0.0.1 and read the internal-service body.
+    // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
         let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
@@ -420,9 +410,6 @@ async fn op_fetch_url(
         }
         let jar = gs.cookie_jar.clone();
         let in_flight = gs.http_client.as_ref().map(|c| c.in_flight.clone());
-        // #139: thread the configured proxy through to the per-request
-        // reqwest::Client. Without this, op_fetch_url silently bypasses
-        // BrowserContext.proxy_url for every JS fetch() / XHR call.
         let proxy_url = gs
             .http_client
             .as_ref()
@@ -555,10 +542,7 @@ async fn op_fetch_url(
         }
     }
 
-    // Follow redirects manually so the SSRF policy applies to every hop.
-    // reqwest's auto-follow would bypass validate_fetch_url on the redirect
-    // target and let an attacker-allowed origin 302 to http://127.0.0.1
-    // (GHSA-8v6v-g4rh-jmcm).
+    // ~keep Follow redirects manually so the SSRF policy applies to every hop.
     let mut current_url = url.clone();
     let mut current_method = req_method;
     let mut current_body = body;
@@ -623,7 +607,6 @@ async fn op_fetch_url(
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let Some(location) = location_header else {
-            // 3xx without a Location header is not actually a redirect.
             break resp;
         };
 
@@ -636,7 +619,7 @@ async fn op_fetch_url(
             Err(_) => break resp,
         };
 
-        // Re-validate every redirect target against the SSRF policy.
+        // ~keep Re-validate every redirect target against the SSRF policy.
         if let Err(reason) = validate_fetch_url(&next_url) {
             return Ok(serde_json::json!({
                 "status": 0,
@@ -662,8 +645,6 @@ async fn op_fetch_url(
             .to_string());
         }
 
-        // Browser semantics: 301/302/303 downgrade to GET with no body.
-        // 307/308 preserve method and body.
         let status_code = resp.status().as_u16();
         if status_code == 301 || status_code == 302 || status_code == 303 {
             current_method = reqwest::Method::GET;

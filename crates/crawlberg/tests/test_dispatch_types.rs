@@ -3,10 +3,6 @@
 
 use crawlberg::{EscalationReason, Tier};
 
-// ---------------------------------------------------------------------------
-// B7: Tier serde round-trips
-// ---------------------------------------------------------------------------
-
 #[test]
 fn tier_http_round_trips_through_serde() {
     let t = Tier::Http;
@@ -33,10 +29,6 @@ fn tier_browser_round_trips_through_serde() {
     let back: Tier = serde_json::from_str(&json).unwrap();
     assert_eq!(back, t);
 }
-
-// ---------------------------------------------------------------------------
-// B7: EscalationReason serde round-trips
-// ---------------------------------------------------------------------------
 
 #[test]
 fn escalation_reason_waf_blocked_round_trips_through_serde() {

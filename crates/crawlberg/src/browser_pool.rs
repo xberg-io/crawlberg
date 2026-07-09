@@ -55,11 +55,9 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
         "--lang=en_US",
     ];
 
-    // Check if running snap chromium by testing the common executable location.
     let is_snap = std::path::Path::new("/snap/chromium/current/usr/bin/chromium").exists();
 
     if is_snap {
-        // Filter out snap-incompatible flags
         all_args
             .into_iter()
             .filter(|&arg| {
@@ -167,7 +165,6 @@ impl BrowserPool {
             return Err(CrawlError::BrowserError("pool is shut down".into()));
         }
 
-        // Acquire a semaphore permit (blocks if at max_pages).
         let permit = self
             .page_semaphore
             .clone()
@@ -175,19 +172,16 @@ impl BrowserPool {
             .await
             .map_err(|_| CrawlError::BrowserError("page semaphore closed".into()))?;
 
-        // Re-check shutdown after potentially blocking on the semaphore.
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(CrawlError::BrowserError("pool is shut down".into()));
         }
 
-        // Try to open a page, relaunching Chrome if needed.
         match self.try_new_page().await {
             Ok(page) => Ok(PooledPage {
                 page: Some(page),
                 _permit: Some(permit),
             }),
             Err(first_err) => {
-                // Chrome may have crashed — relaunch and retry once.
                 self.relaunch_browser().await?;
                 let page = self.try_new_page().await.map_err(|e| {
                     CrawlError::BrowserError(format!(
@@ -215,7 +209,6 @@ impl BrowserPool {
         self.shutdown.store(true, Ordering::SeqCst);
         self.healthy.store(false, Ordering::Release);
 
-        // Close the semaphore so any pending acquire_owned() calls return Err immediately.
         self.page_semaphore.close();
 
         let mut guard = self.state.lock().await;
@@ -236,7 +229,6 @@ impl BrowserPool {
     async fn try_new_page(&self) -> Result<chromiumoxide::Page, CrawlError> {
         let mut guard = self.state.lock().await;
 
-        // Ensure browser exists.
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
@@ -265,12 +257,10 @@ impl BrowserPool {
             return Err(CrawlError::BrowserError("pool is shut down".into()));
         }
 
-        // Check if another caller already relaunched successfully.
         if guard.as_ref().is_some_and(|bs| !bs.handler_handle.is_finished()) {
             return Ok(());
         }
 
-        // Tear down old state and relaunch.
         self.healthy.store(false, Ordering::Release);
         if let Some(old) = guard.take() {
             let mut browser = old.browser;
@@ -298,8 +288,6 @@ impl BrowserPool {
                 .map_err(|e| CrawlError::BrowserError(format!("failed to connect to browser: {e}")))?;
             (browser, handler, None)
         } else {
-            // Use a unique temp dir per launch to avoid SingletonLock
-            // conflicts when multiple Chrome processes run concurrently.
             use std::sync::atomic::AtomicU64;
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let user_data_dir = std::env::temp_dir().join(format!(
@@ -312,14 +300,8 @@ impl BrowserPool {
                 .new_headless_mode()
                 .user_data_dir(&user_data_dir)
                 .disable_default_args();
-            // macOS 26 + Chrome 148+ trip Apple's fork-safety check (libsystem_c
-            // detects a multi-threaded fork-then-exec and SIGTRAPs the child
-            // pre-exec, producing `*** multi-threaded process forked *** /
-            // crashed on child side of fork pre-exec`). Chrome forks
-            // internally to launch renderer/GPU/utility helpers; the launch
-            // path predates macOS 26's stricter runtime check. Silence the
-            // ObjC fork-safety abort so Chrome's helper subprocesses can
-            // exec(). Harmless on older macOS / Linux.
+            // ~keep Chrome helper forks can trip macOS fork-safety checks; disable the ObjC abort so helpers exec.
+            // ~keep The env vars are harmless on older macOS and Linux and keep pooled launches consistent.
             builder = builder
                 .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
                 .env("OS_ACTIVITY_MODE", "disable");
@@ -381,7 +363,6 @@ impl PooledPage {
     /// released when `self` is dropped at the end of this call.
     pub async fn close(mut self) {
         if let Some(page) = self.page.take() {
-            // Send CDP close command. Ignore errors — page may already be gone.
             let _ = page.close().await;
         }
     }

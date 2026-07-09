@@ -640,9 +640,7 @@ impl Default for DispatchProfile {
     }
 }
 
-// `DispatchProfile` contains `Arc<dyn Trait>` fields which are `Send + Sync`.
-// The `Option<DynXxx>` fields are all `Arc`-wrapped, so the struct is `Send + Sync`.
-// Manual assertion to catch future regressions if a non-Send field is added.
+// ~keep DispatchProfile must stay Send + Sync; this assertion catches non-Send fields at compile time.
 const _: () = {
     fn _assert_send_sync<T: Send + Sync>() {}
     fn _check() {

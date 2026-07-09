@@ -63,7 +63,6 @@ where
         let url = req.url.clone();
 
         Box::pin(async move {
-            // Check cache
             if let Ok(Some(cached)) = cache.get(&url).await {
                 let mut headers = HashMap::new();
                 if let Some(ref etag) = cached.etag {
@@ -82,10 +81,8 @@ where
                 });
             }
 
-            // Cache miss -- forward to inner service
             let resp = inner.call(req).await?;
 
-            // Store in cache on success
             if resp.status >= 200 && resp.status < 300 {
                 let _ = cache
                     .set(

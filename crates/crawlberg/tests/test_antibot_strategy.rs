@@ -17,10 +17,6 @@ use crawlberg::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn engine_with(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     create_engine(Some(config)).expect("engine build must not fail")
 }
@@ -59,8 +55,6 @@ impl AntibotStrategy for RecordingStrategy {
     }
 }
 
-// A strategy that returns `Accept` for responses without a WAF signal, and
-// configures a custom decision for all responses.
 #[derive(Debug)]
 struct FixedDecisionStrategy {
     decision: Decision,
@@ -76,10 +70,6 @@ impl AntibotStrategy for FixedDecisionStrategy {
         self.decision.clone()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Decision::Accept — scrape should succeed normally
-// ---------------------------------------------------------------------------
 
 /// When `Decision::Accept` is returned the engine passes through to the retry
 /// policy and the scrape completes successfully.
@@ -114,14 +104,9 @@ async fn decision_accept_scrape_succeeds() {
     let result = scrape(&handle, &format!("{}/ok", mock.uri())).await;
     assert!(result.is_ok(), "expected Ok, got {result:?}");
 
-    // Both hooks must have fired exactly once.
     assert_eq!(pre.load(Ordering::SeqCst), 1, "pre_request should fire once");
     assert_eq!(post.load(Ordering::SeqCst), 1, "post_response should fire once");
 }
-
-// ---------------------------------------------------------------------------
-// Decision::Retry — engine retries then accepts on second attempt
-// ---------------------------------------------------------------------------
 
 /// A strategy that returns `Retry` on the first attempt and `Accept` on
 /// subsequent ones. The engine must retry and ultimately succeed.
@@ -158,7 +143,7 @@ async fn decision_retry_causes_second_attempt() {
                 .set_body_string("<html><body>content</body></html>")
                 .append_header("content-type", "text/html"),
         )
-        .expect(2) // must be fetched exactly twice
+        .expect(2)
         .mount(&mock)
         .await;
 
@@ -181,13 +166,7 @@ async fn decision_retry_causes_second_attempt() {
 
     let result = scrape(&handle, &format!("{}/retry", mock.uri())).await;
     assert!(result.is_ok(), "expected Ok after retry, got {result:?}");
-
-    // wiremock verifies the expected(2) count on drop.
 }
-
-// ---------------------------------------------------------------------------
-// Decision::RotateProxy — no-op warning, scrape still succeeds
-// ---------------------------------------------------------------------------
 
 /// `RotateProxy` is not yet implemented. The engine should log a warning and
 /// fall through to `Accept` semantics — the scrape must still succeed.
@@ -225,10 +204,6 @@ async fn decision_rotate_proxy_falls_through_to_accept() {
     assert!(result.is_ok(), "RotateProxy should fall through to Accept: {result:?}");
 }
 
-// ---------------------------------------------------------------------------
-// Decision::EscalateBrowser — when BrowserMode::Never, returns an error
-// ---------------------------------------------------------------------------
-
 /// `EscalateBrowser` with `BrowserMode::Never` and `EscalationStrategy::None`
 /// means there is no browser tier to escalate to. The engine must surface an
 /// error rather than returning the response body.
@@ -252,7 +227,6 @@ async fn decision_escalate_browser_with_no_browser_returns_error() {
     let handle = engine_with(CrawlConfig {
         dispatch: Some(DispatchProfile {
             antibot_strategy: Some(Arc::new(strategy)),
-            // EscalationStrategy::None means no next tier is available.
             strategy: EscalationStrategy::None,
             max_total_attempts: 2,
             ..DispatchProfile::default()
@@ -270,10 +244,6 @@ async fn decision_escalate_browser_with_no_browser_returns_error() {
         "expected Err when escalation impossible, got Ok: {result:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// No strategy — existing behaviour is preserved
-// ---------------------------------------------------------------------------
 
 /// When `antibot_strategy` is `None`, the engine behaves exactly as before:
 /// a clean 200 response is returned as Ok.

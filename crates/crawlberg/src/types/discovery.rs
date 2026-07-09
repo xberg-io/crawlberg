@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-// CrawlPageResult is only referenced inside CrawlEvent, which is not compiled on wasm32.
+// ~keep CrawlPageResult is only referenced inside CrawlEvent, which is not compiled on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 use super::CrawlPageResult;
 

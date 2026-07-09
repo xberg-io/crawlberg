@@ -28,7 +28,6 @@ static NOSCRIPT_WARNING: LazyLock<Regex> = LazyLock::new(|| {
 /// Returns `true` when the page appears to be a client-side rendered SPA shell
 /// with no substantial server-rendered content.
 pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
-    // Pages with substantial text content are not empty shells.
     if word_count >= MIN_CONTENT_WORD_COUNT {
         return false;
     }
@@ -38,17 +37,14 @@ pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
     };
     let parser = dom.parser();
 
-    // Check for SPA mount points with empty or near-empty content.
     if has_empty_spa_mount(&dom) {
         return true;
     }
 
-    // Check for noscript warnings about JS being required.
     if has_noscript_js_warning(&dom, parser) {
         return true;
     }
 
-    // Low text content combined with script tags suggests client-side rendering.
     if word_count < SPARSE_CONTENT_WORD_COUNT && has_script_tags(&dom) {
         return true;
     }

@@ -7,8 +7,6 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-// --- LazyLock regex patterns for metadata extraction ---
-
 pub(super) static META_RE_NAME_CONTENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<meta\s+[^>]*name\s*=\s*["']([^"']+)["'][^>]*content\s*=\s*["']([^"']+)["'][^>]*>"#)
         .expect("valid regex: META_RE_NAME_CONTENT")
@@ -17,8 +15,6 @@ pub(super) static META_RE_CONTENT_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<meta\s+[^>]*content\s*=\s*["']([^"']+)["'][^>]*name\s*=\s*["']([^"']+)["'][^>]*>"#)
         .expect("valid regex: META_RE_CONTENT_NAME")
 });
-
-// --- CSS selector strings ---
 
 pub(super) const SEL_META: &str = "meta";
 pub(super) const SEL_TITLE: &str = "title";

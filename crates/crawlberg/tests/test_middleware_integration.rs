@@ -28,7 +28,6 @@ async fn test_ua_rotation_reaches_server() {
     let result = scrape(&handle, &mock.uri()).await;
     assert!(result.is_ok(), "should succeed: {:?}", result.err());
 
-    // Verify the User-Agent header the server actually received.
     let received = mock.received_requests().await.unwrap();
     assert!(!received.is_empty());
     let ua_values: Vec<_> = received[0]
@@ -74,7 +73,6 @@ async fn test_ua_rotation_cycles_through_agents() {
     let received = mock.received_requests().await.unwrap();
     assert_eq!(received.len(), 3);
 
-    // Collect the UA from each request.
     let uas: Vec<String> = received
         .iter()
         .map(|r| {
@@ -87,7 +85,6 @@ async fn test_ua_rotation_cycles_through_agents() {
         })
         .collect();
 
-    // The Tower UaRotationLayer should cycle: AgentA, AgentB, AgentA.
     assert!(
         uas[0].contains("AgentA/1.0"),
         "first request should use AgentA, got: {}",
@@ -117,18 +114,16 @@ async fn test_cache_layer_avoids_duplicate_fetches() {
                 .append_header("content-type", "text/html")
                 .append_header("etag", "\"abc123\""),
         )
-        .expect(1..=2) // Tower CrawlCacheLayer caches 2xx, so second call may come from cache
+        .expect(1..=2)
         .mount(&mock)
         .await;
 
     let handle = create_engine(Some(CrawlConfig::default())).unwrap();
 
-    // First scrape populates the Tower cache layer.
     let result1 = scrape(&handle, &mock.uri()).await.unwrap();
     assert_eq!(result1.status_code, 200);
     assert!(result1.html.contains("Cached"));
 
-    // Second scrape should be served from the cache layer (no second HTTP request).
     let result2 = scrape(&handle, &mock.uri()).await.unwrap();
     assert_eq!(result2.status_code, 200);
     assert!(result2.html.contains("Cached"));

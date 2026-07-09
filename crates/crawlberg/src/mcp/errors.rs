@@ -127,7 +127,6 @@ mod tests {
         let config_mcp = map_crawl_error(config_err);
         let network_mcp = map_crawl_error(network_err);
 
-        // InvalidConfig -> INVALID_PARAMS, others -> INTERNAL_ERROR
         assert_eq!(config_mcp.code.0, -32602);
         assert_eq!(network_mcp.code.0, -32603);
         assert_ne!(config_mcp.code.0, network_mcp.code.0);

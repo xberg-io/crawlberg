@@ -12,15 +12,9 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn engine_with_config(mut config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
-    // These tests assert direct HTTP error semantics. BrowserMode::Auto may
-    // intentionally retry 403 responses through a browser when all features are enabled.
     config.browser.mode = BrowserMode::Never;
     create_engine(Some(config)).expect("engine build must not fail")
 }
-
-// ---------------------------------------------------------------------------
-// Test 1 — direct 404 raises when soft_http_errors is disabled (default)
-// ---------------------------------------------------------------------------
 
 /// With the default config (`soft_http_errors = false`), a bare 404 response
 /// must propagate as `Err(CrawlError::NotFound)`.
@@ -44,10 +38,6 @@ async fn direct_404_raises_when_soft_errors_disabled() {
         "expected CrawlError::NotFound"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test 2 — direct 404 returns Ok when soft_http_errors is enabled
-// ---------------------------------------------------------------------------
 
 /// With `soft_http_errors = true`, a bare 404 must be returned as
 /// `Ok(ScrapeResult { status_code: 404, .. })` rather than an error.
@@ -74,10 +64,6 @@ async fn direct_404_returns_result_when_soft_errors_enabled() {
     assert!(page.html.is_empty(), "body must be empty for synthesised 404");
 }
 
-// ---------------------------------------------------------------------------
-// Test 3 — redirected 404 returns Ok regardless of soft_http_errors
-// ---------------------------------------------------------------------------
-
 /// A 302→404 chain must always surface as `Ok(ScrapeResult { status_code: 404 })`
 /// regardless of the `soft_http_errors` setting, because the caller opted into
 /// redirect-following.
@@ -101,7 +87,6 @@ async fn redirected_404_returns_result_regardless_of_soft_errors() {
         .mount(&mock)
         .await;
 
-    // Use the default config — soft_http_errors is false.
     let handle = engine_with_config(CrawlConfig::default());
     let url = format!("{}/start", mock.uri());
     let result = scrape(&handle, &url).await;
@@ -114,10 +99,6 @@ async fn redirected_404_returns_result_regardless_of_soft_errors() {
     let page = result.unwrap();
     assert_eq!(page.status_code, 404, "status_code must be 404 after redirect chain");
 }
-
-// ---------------------------------------------------------------------------
-// Test 4 — direct 403 raises when soft_http_errors is disabled (default)
-// ---------------------------------------------------------------------------
 
 /// With the default config (`soft_http_errors = false`), a bare 403 response
 /// must propagate as `Err(CrawlError::Forbidden)`.
@@ -141,10 +122,6 @@ async fn direct_403_raises_when_soft_errors_disabled() {
         "expected CrawlError::Forbidden"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test 5 — direct 403 returns Ok when soft_http_errors is enabled
-// ---------------------------------------------------------------------------
 
 /// With `soft_http_errors = true`, a bare 403 must be returned as
 /// `Ok(ScrapeResult { status_code: 403, .. })` rather than an error.

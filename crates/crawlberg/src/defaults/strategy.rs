@@ -131,7 +131,6 @@ impl CrawlStrategy for AdaptiveStrategy {
         if candidates.is_empty() {
             return None;
         }
-        // BFS-like: pick first candidate (can be enhanced with scoring)
         Some(0)
     }
 
@@ -141,7 +140,7 @@ impl CrawlStrategy for AdaptiveStrategy {
 
     fn should_continue(&self, stats: &CrawlStats) -> bool {
         if stats.pages_crawled < self.window_size {
-            return true; // Need enough data
+            return true;
         }
 
         let state = self.term_history.lock().expect("lock poisoned");
@@ -154,7 +153,7 @@ impl CrawlStrategy for AdaptiveStrategy {
         let saturation_ratio = if avg_total_per_page > 0.0 {
             avg_new_terms / avg_total_per_page
         } else {
-            1.0 // No data yet, continue
+            1.0
         };
 
         saturation_ratio > self.saturation_threshold
@@ -219,7 +218,6 @@ mod adaptive_tests {
     #[test]
     fn test_adaptive_stops_on_saturation() {
         let s = AdaptiveStrategy::new(3, 0.05);
-        // Feed same content repeatedly to saturate
         for _ in 0..10 {
             s.record_page("the same content repeated over and over again");
         }
@@ -228,7 +226,6 @@ mod adaptive_tests {
             elapsed: Duration::from_secs(1),
             ..Default::default()
         };
-        // After many pages of identical content, should_continue should return false
         assert!(!s.should_continue(&stats), "should stop on saturated content");
     }
 

@@ -36,7 +36,7 @@ impl RateLimiter for NoopRateLimiter {
 struct DomainState {
     last_request: Instant,
     crawl_delay: Option<Duration>,
-    robots_delay: Option<Duration>, // floor from robots.txt
+    robots_delay: Option<Duration>,
     consecutive_success: u32,
 }
 
@@ -85,8 +85,6 @@ impl RateLimiter for PerDomainThrottle {
 
             if elapsed < effective {
                 let duration = effective - elapsed;
-                // Set last_request optimistically BEFORE sleeping.
-                // This prevents other tasks from seeing stale state.
                 domain_state.last_request = now + duration;
                 Some(duration)
             } else {
@@ -97,7 +95,6 @@ impl RateLimiter for PerDomainThrottle {
 
         if let Some(duration) = sleep_duration {
             tokio::time::sleep(duration).await;
-            // No need to re-lock — the optimistic update already claimed this time slot
         }
 
         Ok(())
@@ -107,20 +104,18 @@ impl RateLimiter for PerDomainThrottle {
         let mut state = self.state.lock().expect("lock poisoned");
         if let Some(domain_state) = state.get_mut(domain) {
             if status == 429 {
-                // Reset consecutive success on rate limit
                 domain_state.consecutive_success = 0;
                 let current = domain_state.crawl_delay.unwrap_or(self.default_delay);
                 let new_delay = (current * 2).min(MAX_BACKOFF);
                 domain_state.crawl_delay = Some(new_delay);
             } else if status < 400 {
-                // Decay backoff on successful responses
                 domain_state.consecutive_success += 1;
                 if domain_state.consecutive_success >= 5 {
                     if let Some(ref mut cd) = domain_state.crawl_delay {
                         let floor = domain_state.robots_delay.unwrap_or(self.default_delay);
                         let halved = *cd / 2;
                         if halved <= floor {
-                            domain_state.crawl_delay = None; // Reset to default/robots
+                            domain_state.crawl_delay = None;
                         } else {
                             *cd = halved;
                         }

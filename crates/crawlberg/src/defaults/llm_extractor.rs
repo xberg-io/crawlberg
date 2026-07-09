@@ -82,13 +82,10 @@ Content:
         async fn filter(&self, mut page: CrawlPageResult) -> Result<Option<CrawlPageResult>, CrawlError> {
             use liter_llm::LlmClient;
 
-            // Use markdown if available, fall back to HTML.
             let content = page.markdown.as_ref().map(|m| m.content.as_str()).unwrap_or(&page.html);
 
-            // Truncate content to avoid exceeding LLM context windows.
             let content = truncate_to_char_boundary(content, MAX_CONTENT_CHARS);
 
-            // Build prompt via template.
             let mut env = minijinja::Environment::new();
             let template_str = self.prompt_template.as_deref().unwrap_or(DEFAULT_EXTRACTION_TEMPLATE);
             env.add_template("prompt", template_str)
@@ -105,7 +102,6 @@ Content:
                 })
                 .map_err(|e| CrawlError::Other(format!("template render error: {e}")))?;
 
-            // Build request.
             let request = liter_llm::ChatCompletionRequest {
                 model: self.model.clone(),
                 messages: vec![
@@ -129,14 +125,12 @@ Content:
                 ..Default::default()
             };
 
-            // Call LLM.
             let response = self
                 .client
                 .chat(request)
                 .await
                 .map_err(|e| CrawlError::Other(format!("LLM extraction failed: {e}")))?;
 
-            // Extract cost and token usage.
             let cost = response.estimated_cost();
             let usage = response.usage.as_ref();
 
@@ -148,7 +142,6 @@ Content:
                 chunks_processed: 1,
             });
 
-            // Parse response.
             if let Some(choice) = response.choices.first()
                 && let Some(text) = choice.message.content.as_ref().and_then(|content| content.as_text())
             {

@@ -281,9 +281,6 @@ pub async fn batch_crawl(engine: &CrawlEngineHandle, urls: Vec<String>) -> Resul
         .into_iter()
         .map(|(url, result)| match result {
             Ok(r) => {
-                // Surface crawl-level errors (e.g. HTTP 404 on the seed URL) as
-                // batch failures so `failed_count` reflects seeds that could not
-                // be crawled rather than only hard network errors.
                 if let Some(ref err) = r.error {
                     BatchCrawlResult {
                         url,

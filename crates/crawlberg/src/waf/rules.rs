@@ -28,10 +28,6 @@ pub(crate) const MAX_PATTERN_LEN: usize = 4_096;
 /// Maximum number of signals per fingerprint.
 pub(crate) const MAX_SIGNALS_PER_FINGERPRINT: usize = 16;
 
-// ---------------------------------------------------------------------------
-// TOML schema types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Deserialize)]
 struct TomlRules {
     fingerprint: Vec<TomlFingerprint>,
@@ -52,10 +48,6 @@ struct TomlSignal {
     value_contains: Option<String>,
     pattern: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// Compiled types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub(crate) enum Signal {
@@ -92,10 +84,6 @@ pub struct Rules {
     pub(crate) pattern_to_fp: Vec<usize>,
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 /// Error returned when loading or validating a rules file.
 #[derive(Debug, Error)]
 pub enum RulesError {
@@ -114,10 +102,6 @@ pub enum RulesError {
     #[error("failed to build Aho-Corasick automaton: {0}")]
     MatcherBuild(String),
 }
-
-// ---------------------------------------------------------------------------
-// Loading
-// ---------------------------------------------------------------------------
 
 /// Load and compile rules from a TOML file on disk.
 ///
@@ -152,12 +136,7 @@ impl Rules {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compilation
-// ---------------------------------------------------------------------------
-
 fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
-    // --- Input validation: enforce corpus size limits before any allocation ---
     if raw.fingerprint.len() > MAX_FINGERPRINTS {
         return Err(RulesError::Validation {
             fingerprint_id: String::new(),
@@ -172,18 +151,15 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
     let mut ac_patterns: Vec<String> = Vec::new();
     let mut pattern_to_fp: Vec<usize> = Vec::new();
 
-    // Track ids for uniqueness validation.
     let mut seen_ids: HashMap<String, ()> = HashMap::new();
 
     for (fp_idx, raw_fp) in raw.fingerprint.iter().enumerate() {
-        // Validate uniqueness.
         if seen_ids.contains_key(&raw_fp.id) {
             return Err(RulesError::Validation {
                 fingerprint_id: raw_fp.id.clone(),
                 reason: "duplicate fingerprint id".into(),
             });
         }
-        // Validate id format: snake_case, no dots.
         if raw_fp.id.contains('.') {
             return Err(RulesError::Validation {
                 fingerprint_id: raw_fp.id.clone(),
@@ -192,7 +168,6 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
         }
         seen_ids.insert(raw_fp.id.clone(), ());
 
-        // Validate per-fingerprint signal count.
         if raw_fp.signals.len() > MAX_SIGNALS_PER_FINGERPRINT {
             return Err(RulesError::Validation {
                 fingerprint_id: raw_fp.id.clone(),
@@ -216,7 +191,6 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
                             reason: "response_header signal requires 'name'".into(),
                         })?
                         .to_lowercase();
-                    // Validate optional value_contains pattern length.
                     if raw_sig
                         .value_contains
                         .as_deref()
@@ -244,7 +218,6 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
                             reason: "body_substring signal requires 'pattern'".into(),
                         })?
                         .to_lowercase();
-                    // Validate pattern length before adding to AC builder.
                     if pattern.len() > MAX_PATTERN_LEN {
                         return Err(RulesError::Validation {
                             fingerprint_id: raw_fp.id.clone(),
@@ -275,8 +248,6 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
         });
     }
 
-    // Build Aho-Corasick over all body_substring patterns in one pass.
-    // Use leftmost-first match kind so the first pattern hit per position is returned.
     let automaton = AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
@@ -289,10 +260,6 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
         pattern_to_fp,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Classification
-// ---------------------------------------------------------------------------
 
 impl Rules {
     /// Inspect `response` and return the first matching [`WafSignal`], if any.
@@ -319,10 +286,7 @@ impl Rules {
         let is_2xx = (200..300).contains(&response.status);
         let body_too_large = response.body_bytes.len() > CHALLENGE_BODY_LIMIT;
 
-        // --- Pass 1: header-only fingerprints (short-circuit before body scan) ---
-        // Any fingerprint whose every signal is a response_header is eligible.
-        // This replicates the old headers_only_waf_match behaviour using the
-        // TOML corpus as the single source of truth.
+        // ~keep Header-only fingerprints short-circuit before body scans; the TOML corpus stays authoritative.
         for fingerprint in &self.fingerprints {
             if fingerprint
                 .signals
@@ -347,12 +311,9 @@ impl Rules {
             }
         }
 
-        // --- Pass 2: full body scan (skip on large 2xx bodies) ---
-
-        // Skip body matching on large 2xx responses (would be legitimate content).
+        // ~keep Skip body matching on large 2xx responses because they are likely legitimate content.
         let check_body = !is_2xx || !body_too_large;
 
-        // Run Aho-Corasick once over the body to collect matched fingerprint indices.
         let mut matched_fp_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if check_body {
             for mat in self.automaton.find_iter(&response.body) {
@@ -361,9 +322,6 @@ impl Rules {
             }
         }
 
-        // Evaluate each fingerprint; return the first whose signals all satisfy.
-        // Pure header-only fingerprints were already evaluated in Pass 1 and did
-        // not match, so they will simply not match here again (no double-fire).
         for (fp_idx, fingerprint) in self.fingerprints.iter().enumerate() {
             if self.fingerprint_matches(fingerprint, fp_idx, &matched_fp_indices, response, is_2xx) {
                 let signal = WafSignal {
@@ -395,7 +353,7 @@ impl Rules {
             match signal {
                 Signal::BodySubstring => {
                     if !check_body {
-                        // Body is over the limit; body signals cannot fire.
+                        // ~keep Body signals cannot fire when the body is over the scan limit.
                         return false;
                     }
                     if !matched_body_fps.contains(&fp_idx) {
@@ -413,14 +371,9 @@ impl Rules {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Header matching helpers
-// ---------------------------------------------------------------------------
-
 /// Returns true if the header `name` is present and (optionally) any of its
 /// values contain `value_contains` (case-insensitive).
 fn header_matches(headers: &HashMap<String, Vec<String>>, name: &str, value_contains: Option<&str>) -> bool {
-    // Handle x-px-* prefix match: any header starting with "x-px-" signals PX.
     if name == "x-px-" {
         return headers.keys().any(|k| k.starts_with("x-px-"));
     }
@@ -433,10 +386,6 @@ fn header_matches(headers: &HashMap<String, Vec<String>>, name: &str, value_cont
         },
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -517,7 +466,7 @@ kind = "magic_beam"
     #[test]
     fn classify_returns_ok_some_for_matching_response() {
         let rules = Rules::builtin();
-        // x-datadome is a header-only fingerprint — fires without needing a body token.
+        // ~keep `x-datadome` is header-only, so this must match without a body token.
         let resp = make_response(200, vec![("x-datadome", "blocked")], "<html>ok</html>");
         assert!(
             matches!(rules.classify(&resp), Ok(Some(_))),

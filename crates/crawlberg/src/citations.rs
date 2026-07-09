@@ -30,22 +30,6 @@ pub struct CitationReference {
     pub text: String,
 }
 
-// Matches both images ![alt](url) and links [text](url).
-// We distinguish them by checking the first character of the full match.
-// Allows one level of balanced parentheses in URLs (e.g. Wikipedia-style URLs).
-//
-// Pattern breakdown for group 2 (URL):
-//   [^)(]*               — chars that are neither ')' nor '(' (prefix before any inner parens)
-//   (?:\([^)]*\)[^)(]*)?  — optionally: one balanced (...) pair followed by more
-//                          chars that are neither ')' nor '(' (suffix after inner parens)
-//
-// This replaces the original two-branch alternation
-//   [^)]*\([^)]*\)[^)]*|[^)]*
-// whose branches overlap (branch 2 is a prefix of branch 1), forcing
-// regex_automata into the BoundedBacktracker strategy on every match.
-// Using [^)(]* (excludes both ')' and '(') in each segment ensures that '(' is
-// only consumed by the explicit \( in the optional group, removing the NFA
-// ambiguity and allowing the linear PikeVM/onepass engine to be selected.
 static LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"!?\[([^\]]*)\]\(([^)(]*(?:\([^)]*\)[^)(]*)?)\)").expect("hardcoded regex is valid"));
 
@@ -60,7 +44,6 @@ pub fn generate_citations(markdown: &str) -> CitationResult {
 
     let content = LINK_RE.replace_all(markdown, |caps: &regex::Captures| {
         let full_match = caps.get(0).expect("capture group 0 always exists").as_str();
-        // Skip images (start with !)
         if full_match.starts_with('!') {
             return full_match.to_owned();
         }

@@ -51,27 +51,21 @@ async fn toml_classifier_watch_swaps_rules_on_file_change() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rules.toml");
 
-    // Write initial rules.
     std::fs::write(&path, OLD_RULES_TOML).unwrap();
 
-    // Load initial rules and construct classifier.
     let initial_rules = waf_rules_from_str(OLD_RULES_TOML).unwrap();
     let classifier = Arc::new(TomlClassifier::from_rules(initial_rules));
 
-    // Sanity-check: old marker is detected before watch is armed.
     let old_resp = make_response(403, vec![], "oldmarker is present here");
     assert!(
         matches!(classifier.classify(&old_resp), Ok(Some(ref sig)) if sig.vendor == "oldvendor"),
         "initial classify must detect oldvendor"
     );
 
-    // Arm the file watcher.
     let _handle = classifier.watch(&path).unwrap();
 
-    // Overwrite the file with new rules (in-place modify; notify picks this up).
     std::fs::write(&path, NEW_RULES_TOML).unwrap();
 
-    // Poll until the new rules are active (up to 10 seconds for slow CI / macOS FSEvents).
     let new_resp = make_response(403, vec![], "newmarker is present here");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -90,13 +84,11 @@ async fn toml_classifier_watch_swaps_rules_on_file_change() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Old marker must no longer match after the swap.
     assert!(
         matches!(classifier.classify(&old_resp), Ok(None)),
         "after swap, oldvendor must no longer match"
     );
 
-    // Drop the handle explicitly — verify no hang.
     drop(_handle);
 }
 
@@ -111,7 +103,6 @@ async fn toml_classifier_watch_handle_drop_does_not_hang() {
     let classifier = Arc::new(TomlClassifier::from_rules(rules));
     let handle = classifier.watch(&path).unwrap();
 
-    // Small sleep to let the watcher settle; then drop immediately.
     tokio::time::sleep(Duration::from_millis(50)).await;
     drop(handle);
 }

@@ -2,8 +2,6 @@
 
 use std::collections::HashMap;
 
-// CrawlRequest is only used by the native Tower service stack; on wasm32 the
-// Tower stack is not compiled so the type would be dead code.
 #[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 

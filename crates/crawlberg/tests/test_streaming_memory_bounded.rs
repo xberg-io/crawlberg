@@ -13,7 +13,6 @@ fn engine_with_config(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
 }
 
 fn default_engine() -> crawlberg::CrawlEngineHandle {
-    // Allow loopback so MockServer is reachable under the default SSRF policy.
     engine_with_config(CrawlConfig::builder().allow_private_networks(true).build())
 }
 
@@ -153,12 +152,7 @@ async fn non_streaming_crawl_respects_max_pages() {
 async fn streaming_crawl_with_depth_limit() {
     let (_mock, url) = setup_mock_chain(5).await;
 
-    let engine = engine_with_config(
-        CrawlConfig::builder()
-            .allow_private_networks(true)
-            .max_depth(1) // Only crawl seed + 1 level
-            .build(),
-    );
+    let engine = engine_with_config(CrawlConfig::builder().allow_private_networks(true).max_depth(1).build());
     let stream_result = crawl_stream(&engine, &url).await;
     assert!(stream_result.is_ok(), "crawl_stream must not fail");
 
@@ -211,7 +205,6 @@ async fn streaming_crawl_emits_exactly_one_complete_event() {
             }
             CrawlEvent::Complete { pages_crawled } => {
                 complete_count += 1;
-                // Verify the count matches the number of Page events
                 assert_eq!(
                     pages_crawled, page_count,
                     "Complete event pages_crawled must equal number of Page events emitted"
@@ -234,7 +227,6 @@ async fn streaming_crawl_emits_exactly_one_complete_event() {
 /// the canonical end-of-stream marker on seed/redirect failure.
 #[tokio::test]
 async fn streaming_crawl_seed_error_still_emits_complete() {
-    // Bind then drop a listener to obtain a port that is (almost certainly) closed.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe socket");
     let port = listener.local_addr().expect("probe addr").port();
     drop(listener);

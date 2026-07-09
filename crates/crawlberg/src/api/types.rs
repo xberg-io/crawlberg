@@ -3,10 +3,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-// ---------------------------------------------------------------------------
-// Request types
-// ---------------------------------------------------------------------------
-
 /// Request body for `POST /v1/scrape`.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -108,10 +104,6 @@ pub struct DownloadRequest {
     #[serde(default)]
     pub max_size: Option<usize>,
 }
-
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
 
 /// Structured error body with a machine-readable code and human-readable message.
 #[derive(Debug, Clone, Serialize, ToSchema)]

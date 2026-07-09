@@ -72,7 +72,6 @@ impl ResearchAgent {
 
             match &action {
                 StepAction::Crawl { url, depth } => {
-                    // Build a per-step crawl config with depth and max_pages applied.
                     let mut step_config = self.crawl_config.clone();
                     step_config.max_depth = Some(*depth);
                     step_config.max_pages = Some(self.config.max_pages_per_step);
@@ -181,7 +180,6 @@ mod tests {
     #[test]
     fn test_simple_relevance_score_partial_match() {
         let score = simple_relevance_score("rust async patterns", "Rust has many useful patterns");
-        // "rust" and "patterns" match, "async" does not => 2/3 ≈ 0.667
         assert!(score > 0.6 && score < 0.7, "expected ~0.667, got {score}");
     }
 }

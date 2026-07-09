@@ -18,22 +18,13 @@ ignored = ["base64", "getrandom", "getrandom03", "memchr"]
 
 [features]
 default = ["native-runtime"]
-# native-runtime marks that the crate is running on a real OS (not wasm32).
-# The actual OS-specific tokio sub-features (net, fs, signal, process, io-util,
-# rt-multi-thread) are activated via the [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# section below, so they are never compiled for wasm32 targets regardless of which
-# features are enabled.  This keeps the feature flag meaningful for optional
-# native-only deps (chromiumoxide, axum, …) while avoiding the mio compile
-# error that occurs when tokio's net/fs/signal/process features are requested
-# on wasm32-unknown-unknown.
+# ~keep `native-runtime` must not activate Tokio OS features because Cargo features are not target-conditional.
+# ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
 browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 ai = ["dep:liter-llm", "dep:minijinja"]
-# Opt-in one-call OTLP wiring (TracerProvider + MeterProvider + W3C TraceContext
-# propagator + tracing bridge). Cloud consumers wire their own SDK and skip
-# this feature. See `crawlberg::telemetry::init_otlp`.
 telemetry-init = [
     "dep:opentelemetry-otlp",
     "dep:opentelemetry_sdk",
@@ -95,18 +86,12 @@ url = { workspace = true }
 utoipa = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
-# On non-wasm targets, activate the OS-specific tokio features that pull in mio.
-# These cannot be listed inside the `native-runtime` feature because Cargo feature
-# activations are not target-conditional; putting them here ensures they are never
-# requested on wasm32-unknown-unknown.
+# ~keep Tokio OS features stay target-scoped here because Cargo feature activations are global.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "signal", "process", "io-util"] }
 
-# wasm32: getrandom must use the JS backend for both the v0.3 and v0.4 API
-# surfaces that appear in the dependency tree.
-# - getrandom v0.4 is declared directly (also listed in cargo-machete ignore).
-# - getrandom v0.3 is pulled transitively by ahash; we force the wasm_js feature
-#   here using a package-rename alias so Cargo merges it into the resolved v0.3.x.
+# ~keep wasm32 needs JS getrandom backends for both the direct v0.4 API and transitive v0.3 API.
+# ~keep The `getrandom03` alias forces `wasm_js` into the v0.3 line pulled transitively by `ahash`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }

@@ -82,7 +82,6 @@ impl WarcWriter {
         let record_id = make_record_id();
         let date = format_warc_date(fetch_time);
 
-        // Build the HTTP response block: status line + headers + blank line + body.
         let http_block = build_http_block(status, headers, body)?;
 
         let mut warc_headers: Vec<(&str, Cow<'_, str>)> = vec![
@@ -147,7 +146,6 @@ fn build_http_block(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Resul
 
     let reason = http_reason_phrase(status);
 
-    // Estimate capacity: status line + headers + separator + body.
     let estimated_size = 32 + headers.iter().map(|(n, v)| n.len() + v.len() + 4).sum::<usize>() + 2 + body.len();
 
     let mut bytes = Vec::with_capacity(estimated_size);
@@ -177,7 +175,6 @@ fn write_record(w: &mut BufWriter<File>, headers: &[(&str, Cow<'_, str>)], paylo
 
     w.write_all(b"\r\n").map_err(&map_io)?;
     w.write_all(payload).map_err(&map_io)?;
-    // Two CRLFs terminate the record (one blank line after the payload block).
     w.write_all(b"\r\n\r\n").map_err(&map_io)?;
 
     Ok(())

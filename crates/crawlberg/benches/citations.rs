@@ -3,9 +3,6 @@ use std::hint::black_box;
 use crawlberg::generate_citations;
 use criterion::{Criterion, criterion_group, criterion_main};
 
-// The bench calls generate_citations directly on markdown input.
-// generate_citations operates on markdown strings; we pass anchor text
-// in markdown link syntax so the regex fires correctly.
 fn build_short_md(target_bytes: usize) -> String {
     let fragment = "Visit [example](https://example.com) here.\n";
     let reps = target_bytes.div_ceil(fragment.len()).max(1);

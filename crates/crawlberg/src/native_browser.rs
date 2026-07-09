@@ -33,7 +33,6 @@ pub(crate) async fn native_browser_fetch(
     );
 
     registry().browser_sessions_active.add(1, &[]);
-    // Guard: decrement the active-session counter when this scope exits.
     struct SessionGuard;
     impl Drop for SessionGuard {
         fn drop(&mut self) {
@@ -76,12 +75,10 @@ async fn native_browser_fetch_inner(
         BrowserWait::Fixed => crawlberg_browser::adapter::NativeBrowserWait::Load,
     };
 
-    // Resolve proxy: browser.proxy overrides the top-level config.proxy.
     let resolved_proxy = config.browser.proxy.as_ref().or(config.proxy.as_ref()).map(|p| {
         if p.username.is_some() || p.password.is_some() {
             let user = p.username.as_deref().unwrap_or("");
             let pass = p.password.as_deref().unwrap_or("");
-            // Insert credentials into the URL: scheme://user:pass@host:port
             if let Some(rest) = p.url.strip_prefix("http://") {
                 format!("http://{user}:{pass}@{rest}")
             } else if let Some(rest) = p.url.strip_prefix("https://") {
@@ -147,7 +144,6 @@ async fn native_browser_fetch_inner(
         .unwrap_or_else(|| "text/html".to_owned());
     let body_bytes = rendered.html.as_bytes().to_vec();
 
-    // Map NativeNetworkEvent → ResponseMeta (best available fields).
     let net_events: Vec<ResponseMeta> = rendered
         .network_events
         .into_iter()
@@ -162,7 +158,6 @@ async fn native_browser_fetch_inner(
         })
         .collect();
 
-    // Map NativeCookie → CookieInfo.
     let cookies: Vec<CookieInfo> = rendered
         .cookies
         .into_iter()
@@ -187,10 +182,6 @@ async fn native_browser_fetch_inner(
         body_bytes,
         headers: rendered.headers.into_iter().map(|(k, v)| (k, vec![v])).collect(),
         browser_extras: Some(extras),
-        // Browser navigation resolves the URL internally; use the input URL as
-        // the final URL. The native scrape path tracks final_url via
-        // follow_redirects / RedirectOutcome — this field is only used by the
-        // wasm path which does not go through browser backends.
         final_url: url.to_owned(),
     })
 }

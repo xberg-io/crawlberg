@@ -36,10 +36,6 @@ response:
     )
 }
 
-// ---------------------------------------------------------------------------
-// Happy-path tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn load_parses_bearer_auth_and_resolves_env_var() {
     let yaml = minimal_yaml_with_auth(
@@ -135,10 +131,6 @@ status_mapping:
     assert_eq!(config.status_mapping[1].message.as_deref(), Some("custom message"));
 }
 
-// ---------------------------------------------------------------------------
-// Error-path tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn error_on_missing_env_var() {
     let yaml = minimal_yaml_with_auth(
@@ -158,7 +150,6 @@ fn error_on_missing_env_var() {
 
 #[test]
 fn error_on_missing_required_field() {
-    // Drop the endpoint field.
     let yaml = r#"
 vendor_name: test_vendor
 method: GET

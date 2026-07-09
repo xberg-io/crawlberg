@@ -139,7 +139,6 @@ mod tests {
 
     #[test]
     fn deserialize_wait_with_only_required_fields() {
-        // Both optional fields absent — must not fail deserialization.
         let json = r#"{"type":"wait"}"#;
         let action: PageAction = serde_json::from_str(json).unwrap();
         assert_eq!(
@@ -179,7 +178,6 @@ mod tests {
 
     #[test]
     fn deserialize_scroll_direction_only() {
-        // selector and amount absent — must default to None.
         let json = r#"{"type":"scroll","direction":"down"}"#;
         let action: PageAction = serde_json::from_str(json).unwrap();
         assert_eq!(
@@ -208,7 +206,6 @@ mod tests {
 
     #[test]
     fn deserialize_screenshot_no_fields() {
-        // full_page absent — must default to None.
         let json = r#"{"type":"screenshot"}"#;
         let action: PageAction = serde_json::from_str(json).unwrap();
         assert_eq!(action, PageAction::Screenshot { full_page: None });
@@ -223,7 +220,6 @@ mod tests {
 
     #[test]
     fn deserialize_screenshot_full_page_alias() {
-        // snake_case alias must also work.
         let json = r#"{"type":"screenshot","full_page":false}"#;
         let action: PageAction = serde_json::from_str(json).unwrap();
         assert_eq!(action, PageAction::Screenshot { full_page: Some(false) });

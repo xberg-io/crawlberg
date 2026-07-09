@@ -42,10 +42,7 @@ impl CrawlEngine {
 
         tokio::spawn(async move {
             match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                Ok(_result) => {
-                    // Complete event is emitted by crawl_with_sender with the exact post-filter count.
-                    // Nothing more to do here.
-                }
+                Ok(_result) => {}
                 Err(e) => {
                     let error_event = CrawlEvent::Error {
                         url: url.clone(),
@@ -82,7 +79,6 @@ impl CrawlEngine {
             let permit = match semaphore.clone().acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => {
-                    // Semaphore closed — should not happen in normal operation
                     break;
                 }
             };
@@ -168,10 +164,7 @@ impl CrawlEngine {
                 join_set.spawn(async move {
                     let _permit = permit;
                     match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                        Ok(_result) => {
-                            // Complete event is emitted by crawl_with_sender with the exact post-filter count.
-                            // Nothing more to do here.
-                        }
+                        Ok(_result) => {}
                         Err(e) => {
                             let error_event = CrawlEvent::Error {
                                 url: url.clone(),

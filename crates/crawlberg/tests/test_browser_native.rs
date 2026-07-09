@@ -19,8 +19,7 @@ static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 
 fn allow_private_network() {
     ALLOW_PRIVATE.get_or_init(|| {
-        // SAFETY: tests run in a single process; the env var is written once
-        // from `OnceLock::get_or_init` before any network call is made.
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
@@ -46,10 +45,6 @@ fn engine_with(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     create_engine(Some(config)).expect("engine must build")
 }
 
-// ---------------------------------------------------------------------------
-// 1. simple HTML render
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn native_renders_simple_html() {
     let mock = MockServer::start().await;
@@ -68,10 +63,6 @@ async fn native_renders_simple_html() {
     assert!(result.is_ok(), "should succeed: {:?}", result.err());
     assert!(result.unwrap().html.contains("Hello"));
 }
-
-// ---------------------------------------------------------------------------
-// 2. follows HTTP 302 redirect
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_follows_redirect() {
@@ -102,18 +93,9 @@ async fn native_follows_redirect() {
     assert!(page.html.contains("Redirected"), "final body expected");
 }
 
-// ---------------------------------------------------------------------------
-// 3. browser timeout
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn native_respects_timeout() {
-    // Point at a port that refuses connections — guarantees an error without
-    // relying on mock server delays (which don't always interact well with the
-    // inner tokio runtime inside spawn_blocking).
     allow_private_network();
-    // Use a non-routable IP so the connect times out rather than refusing.
-    // RFC 5737 TEST-NET-1: 192.0.2.0/24 — not routable on LAN.
     let url = "http://192.0.2.1:80/timeout-target";
     let config = native_config(|mut c| {
         c.timeout = Duration::from_millis(500);
@@ -122,7 +104,6 @@ async fn native_respects_timeout() {
     let start = std::time::Instant::now();
     let result = scrape(&engine_with(config), url).await;
     let elapsed = start.elapsed();
-    // Must finish in under 5s (the timeout is 500ms; give generous headroom).
     assert!(
         elapsed < Duration::from_secs(5),
         "should have timed out well before 5s, took {:?}",
@@ -130,10 +111,6 @@ async fn native_respects_timeout() {
     );
     assert!(result.is_err(), "should return an error on timeout/connection failure");
 }
-
-// ---------------------------------------------------------------------------
-// 4. forwards extra headers
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_forwards_extra_headers() {
@@ -169,10 +146,6 @@ async fn native_forwards_extra_headers() {
     assert!(result.is_ok(), "should succeed with custom header: {:?}", result.err());
 }
 
-// ---------------------------------------------------------------------------
-// 5. connection refused
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn native_errors_on_connection_refused() {
     allow_private_network();
@@ -181,15 +154,10 @@ async fn native_errors_on_connection_refused() {
     assert!(result.is_err(), "should return error, not panic");
 }
 
-// ---------------------------------------------------------------------------
-// 6. block URL patterns
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn native_block_url_patterns_blocks_match() {
     let mock = MockServer::start().await;
 
-    // Main page that references /track.js
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(
@@ -200,11 +168,10 @@ async fn native_block_url_patterns_blocks_match() {
         .mount(&mock)
         .await;
 
-    // track.js — should be blocked, but register so we can verify
     Mock::given(method("GET"))
         .and(path("/track.js"))
         .respond_with(ResponseTemplate::new(200).set_body_string("// tracker"))
-        .expect(0) // assert it is NEVER requested
+        .expect(0)
         .mount(&mock)
         .await;
 
@@ -215,12 +182,7 @@ async fn native_block_url_patterns_blocks_match() {
     });
     let result = scrape(&engine_with(config), &url).await;
     assert!(result.is_ok(), "page should still render: {:?}", result.err());
-    // wiremock verifies the 0-times expectation on drop
 }
-
-// ---------------------------------------------------------------------------
-// 7. eval_script returns value
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_eval_script_returns_value() {
@@ -247,10 +209,6 @@ async fn native_eval_script_returns_value() {
     let eval = browser.eval_result.expect("eval_result must be set");
     assert_eq!(eval.as_str(), Some("Example"), "eval result should be page title");
 }
-
-// ---------------------------------------------------------------------------
-// 8. capture network events includes document
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_capture_network_events_includes_document() {
@@ -280,10 +238,6 @@ async fn native_capture_network_events_includes_document() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// 9. prior cookies sent on request
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn native_prior_cookies_sent_on_request() {
     let mock = MockServer::start().await;
@@ -299,9 +253,6 @@ async fn native_prior_cookies_sent_on_request() {
         .await;
 
     let url = mock.uri();
-    // Pass prior_cookies via custom_headers for this integration test.
-    // The engine's public `scrape()` API doesn't expose prior_cookies yet;
-    // using custom_headers is the simplest way to validate cookie forwarding.
     let config = {
         allow_private_network();
         let mut headers = std::collections::HashMap::new();
@@ -320,10 +271,6 @@ async fn native_prior_cookies_sent_on_request() {
     let result = scrape(&engine_with(config), &url).await;
     assert!(result.is_ok(), "should succeed with cookie: {:?}", result.err());
 }
-
-// ---------------------------------------------------------------------------
-// 10. post-render cookies captured from Set-Cookie
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_post_render_cookies_capture_set_cookie() {
@@ -354,10 +301,6 @@ async fn native_post_render_cookies_capture_set_cookie() {
         browser.cookies
     );
 }
-
-// ---------------------------------------------------------------------------
-// 11. wait_selector succeeds when element is present
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn native_wait_selector_succeeds() {

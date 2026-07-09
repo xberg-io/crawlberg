@@ -24,8 +24,6 @@ use crawlberg::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ─── Mock bypass provider ────────────────────────────────────────────────────
-
 /// Bypass provider that counts calls, used to assert whether escalation fired.
 #[derive(Debug)]
 struct CountingMockProvider {
@@ -68,8 +66,6 @@ impl BypassProvider for CountingMockProvider {
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 /// Build a `CrawlEngine` with `BypassThenBrowser` strategy, the given bypass
 /// provider, and the given `soft_http_errors` flag. `BrowserMode::Never` is
 /// set to keep these tests focused on the HTTP→Bypass escalation edge; browser
@@ -91,8 +87,6 @@ fn build_engine(provider: Arc<CountingMockProvider>, soft_http_errors: bool) -> 
     CrawlEngine::builder().config(config).build().unwrap()
 }
 
-// ─── T11 / M8 — soft_http_errors × BypassThenBrowser ───────────────────────
-
 /// When `soft_http_errors = true`, a plain 403 (no WAF signal, no challenge
 /// body) must be short-circuited to `Ok(ScrapeResult { status_code: 403 })`
 /// **before** the retry policy runs. The bypass provider must NOT be called.
@@ -103,8 +97,6 @@ fn build_engine(provider: Arc<CountingMockProvider>, soft_http_errors: bool) -> 
 #[tokio::test]
 async fn soft_http_403_does_not_escalate_when_soft_errors_enabled() {
     let mock = MockServer::start().await;
-    // Plain 403 — no `server: cloudflare` header, no challenge body.
-    // This produces `CrawlError::Forbidden`, not `CrawlError::WafBlocked`.
     Mock::given(method("GET"))
         .and(path("/forbidden"))
         .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
@@ -112,11 +104,10 @@ async fn soft_http_403_does_not_escalate_when_soft_errors_enabled() {
         .await;
 
     let provider = CountingMockProvider::new("bypass content");
-    let engine = build_engine(provider.clone(), /* soft_http_errors = */ true);
+    let engine = build_engine(provider.clone(), true);
 
     let result = engine.scrape(&format!("{}/forbidden", mock.uri())).await;
 
-    // soft_http_errors = true: must return Ok with the 403 surfaced as status_code.
     assert!(
         result.is_ok(),
         "soft_http_errors = true must convert 403 to Ok; got Err: {:?}",
@@ -148,12 +139,10 @@ async fn soft_http_403_does_escalate_when_soft_errors_disabled() {
         .await;
 
     let provider = CountingMockProvider::new("bypass content");
-    let engine = build_engine(provider.clone(), /* soft_http_errors = */ false);
+    let engine = build_engine(provider.clone(), false);
 
     let result = engine.scrape(&format!("{}/forbidden", mock.uri())).await;
 
-    // soft_http_errors = false: 403 must escalate. Bypass provider returns 200,
-    // so the overall scrape must succeed.
     assert!(
         result.is_ok(),
         "soft_http_errors = false + BypassThenBrowser: bypass success must propagate as Ok; \

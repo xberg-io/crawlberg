@@ -188,7 +188,6 @@ pub(crate) async fn process_sitemap_response(
     config: &CrawlConfig,
     client: &reqwest::Client,
 ) -> Vec<SitemapUrl> {
-    // Handle gzip
     let decompressed;
     let xml_body = if content_type.contains("gzip") || content_type.contains("x-gzip") {
         match decompress_gzip(body_bytes) {
@@ -206,7 +205,6 @@ pub(crate) async fn process_sitemap_response(
         let child_urls = parse_sitemap_index(xml_body);
         let base = Url::parse(sitemap_url).ok();
         let mut all_urls = Vec::new();
-        // Limit the number of child sitemaps to prevent unbounded recursion
         let max_children = 100;
         for child_url in child_urls.iter().take(max_children) {
             let resolved = if let Some(ref base_parsed) = base {
@@ -250,7 +248,7 @@ pub(crate) fn decompress_gzip(data: &[u8]) -> Result<String, std::io::Error> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
-    const MAX_DECOMPRESSED_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+    const MAX_DECOMPRESSED_SIZE: u64 = 50 * 1024 * 1024;
 
     let decoder = GzDecoder::new(data);
     let mut limited = decoder.take(MAX_DECOMPRESSED_SIZE);

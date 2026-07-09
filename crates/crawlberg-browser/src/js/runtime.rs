@@ -133,9 +133,6 @@ impl BrowserJsRuntime {
         self.object_counter += 1;
         let oid = self.make_oid(self.object_counter);
 
-        // Same trailing-semicolon trim as wrap_expression — Playwright's
-        // utility-script eval ends with `})();`, and `({expr})` would
-        // otherwise become `(...;)` which is a parse-time SyntaxError.
         let cleaned_expr = expression
             .trim()
             .trim_end_matches(|c: char| c == ';' || c.is_whitespace());
@@ -478,12 +475,7 @@ impl BrowserJsRuntime {
     }
 
     pub fn execute_script_guarded(&mut self, _name: &str, source: &str) -> Result<(), String> {
-        // Every script gets a hard wall-clock execution bound. The previous
-        // `source.len() < 10_000` fast-path skipped the watchdog for "small"
-        // scripts on the assumption they could not run long — but a 13-byte
-        // `while(true){}` spins V8 forever, pinning the worker thread at
-        // 100% CPU with no recovery. Source length is not a proxy for
-        // runtime, so the watchdog must cover every script.
+        // ~keep Source length is not a runtime bound; even tiny infinite loops must run under the watchdog.
         self.execute_script_with_timeout(source, std::time::Duration::from_secs(5))
     }
 
@@ -530,10 +522,6 @@ impl BrowserJsRuntime {
         }
         let _ = watchdog.join();
 
-        // The watchdog may have called terminate_execution(). V8's termination
-        // flag is sticky: left set, it aborts the *next* script on this isolate
-        // too — so one timed-out script silently poisons every script after it.
-        // Clear it unconditionally (a no-op when no termination is pending).
         self.runtime.v8_isolate().cancel_terminate_execution();
 
         match result {
@@ -599,13 +587,6 @@ impl BrowserJsRuntime {
         if is_multi_statement {
             format!("(function() {{ {} }})()", expression)
         } else {
-            // Strip trailing semicolons + whitespace before wrapping in
-            // `return (...);`. Playwright's utility-script expression is
-            // an IIFE that ends with `})();` — leaving the `;` in place
-            // produces `return (...;);`, a SyntaxError. The script fails
-            // to parse, the catch never fires (parse errors are not
-            // catchable), and the function silently returns `undefined`.
-            // Stripping makes the wrapped expression syntactically valid.
             let cleaned = trimmed.trim_end_matches(|c: char| c == ';' || c.is_whitespace());
             format!("(function() {{ return ({}); }})()", cleaned)
         }
@@ -913,18 +894,13 @@ mod tests {
     fn execute_script_guarded_kills_small_infinite_loop() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let start = std::time::Instant::now();
-        // `while(true){}` is 13 bytes — far under the old 10_000-byte cutoff.
         let result = rt.execute_script_guarded("evil", "while(true){}");
         let elapsed = start.elapsed();
-        // The watchdog terminates execution; a killed script is swallowed
-        // (same as the large-script path) rather than hanging the caller.
         assert!(result.is_ok(), "guarded execution should recover, got {result:?}");
         assert!(
             elapsed < std::time::Duration::from_secs(15),
             "infinite loop must be killed by the watchdog, ran for {elapsed:?}"
         );
-        // The runtime is still usable after the kill — V8's sticky
-        // termination flag must have been cleared.
         rt.execute_script("after", "globalThis.__alive = 1;").unwrap();
         let alive = rt.evaluate("globalThis.__alive").unwrap();
         assert_eq!(alive.as_f64().unwrap() as i64, 1);
@@ -938,8 +914,6 @@ mod tests {
     fn script_typeerror_does_not_poison_subsequent_execution() {
         let mut rt = setup_runtime("<html><body><p id=hit>BODY_TEXT</p></body></html>");
 
-        // 1. First script throws the same flavor of error offside.js produced
-        //    (`Cannot read properties of undefined (reading 'classList')`).
         let err = rt.execute_script("buggy", "var x; x.classList.add('y');").unwrap_err();
         assert!(
             err.contains("classList") || err.contains("undefined"),
@@ -947,13 +921,11 @@ mod tests {
             err
         );
 
-        // 2. The runtime must still be usable: a follow-up script runs.
         rt.execute_script("ok", "globalThis.__after_error = 'still alive';")
             .unwrap();
         let result = rt.evaluate("globalThis.__after_error").unwrap();
         assert_eq!(result, serde_json::json!("still alive"));
 
-        // 3. DOM queries still work after the script error.
         let text = rt.evaluate("document.querySelector('#hit').textContent").unwrap();
         assert_eq!(text, serde_json::json!("BODY_TEXT"));
     }
@@ -1812,16 +1784,7 @@ mod tests {
         assert_eq!(inf, serde_json::Value::Null);
     }
 
-    // Issue #139 — proxy_url must thread through to both the ES-module
-    // loader (module_loader.rs) and op_fetch_url's reqwest client
-    // (ops.rs::build_request_client). Pre-fix both built clients with
-    // `Client::builder().build()` — no proxy — so JS fetch/XHR and
-    // dynamic imports silently bypassed BrowserContext.proxy_url.
-    //
-    // Phase 5.5 RED check: each test references a symbol that does NOT
-    // exist on main (proxy_url() accessor, with_proxy ctor,
-    // with_base_url_and_proxy ctor), so the tests fail to compile without
-    // the prod fix.
+    // ~keep `proxy_url` must thread through ES-module loading and JS fetch/XHR, or page JS bypasses the proxy.
     #[test]
     fn http_client_round_trips_proxy_url() {
         use crate::net::{CookieJar, HttpClient};
@@ -1849,16 +1812,12 @@ mod tests {
         assert_eq!(loader.proxy_url.as_deref(), Some("http://proxy.test:8080"));
         assert_eq!(loader.base_url, "https://example.com/");
 
-        // Default constructor must keep the historical "no proxy" behaviour.
         let direct = BrowserModuleLoader::new("https://example.com/");
         assert_eq!(direct.proxy_url, None);
     }
 
     #[test]
     fn runtime_with_base_url_and_proxy_constructs_successfully() {
-        // Sanity-check the public ctor that page.rs uses to thread proxy
-        // through to the module loader. Direct (None) and proxied paths
-        // must both initialise the JS environment.
         let _direct = BrowserJsRuntime::with_base_url_and_proxy("https://example.com/", None);
         let _proxied = BrowserJsRuntime::with_base_url_and_proxy(
             "https://example.com/",

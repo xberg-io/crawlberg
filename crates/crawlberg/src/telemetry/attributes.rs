@@ -10,25 +10,15 @@
 //! re-export module.  We import them directly from `attribute` to avoid
 //! requiring that Cargo feature flag.
 
-// Stable re-exports from the semconv trace module.
 pub use opentelemetry_semantic_conventions::trace::{
     HTTP_REQUEST_METHOD, HTTP_RESPONSE_STATUS_CODE, NETWORK_PROTOCOL_NAME, SERVER_ADDRESS, URL_FULL,
 };
-
-// The following two constants are defined in the semconv attribute registry but
-// gated behind the `semconv_experimental` Cargo feature in
-// opentelemetry-semantic-conventions 0.32.  We pin the stable string values
-// here to avoid pulling in that feature flag.
 
 /// `http.response.body.size` — size of the HTTP response body in bytes.
 pub const HTTP_RESPONSE_BODY_SIZE: &str = "http.response.body.size";
 
 /// `url.domain` — domain part of the request URL.
 pub const URL_DOMAIN: &str = "url.domain";
-
-// ---------------------------------------------------------------------------
-// crawlberg extension constants (crawl.* namespace)
-// ---------------------------------------------------------------------------
 
 /// Number of seed URLs in the crawl job.
 pub const CRAWL_SEED_COUNT: &str = "crawl.seed_count";

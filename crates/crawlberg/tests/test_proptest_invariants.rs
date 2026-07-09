@@ -22,10 +22,6 @@ fn rt() -> &'static Runtime {
     RT.get_or_init(|| Runtime::new().unwrap())
 }
 
-// ===========================================================================
-// A. EWMA invariants — exercises crawlberg::EwmaTracker::update directly.
-// ===========================================================================
-
 proptest! {
     /// A1: update output is always in [0.0, 1.0] for any valid prev and blocked flag.
     #[test]
@@ -70,10 +66,6 @@ proptest! {
         );
     }
 }
-
-// ===========================================================================
-// B. FixedBudget invariants — exercises crawlberg::FixedBudget::try_consume.
-// ===========================================================================
 
 proptest! {
     /// B1: sum of approved demands never exceeds the initial budget.
@@ -134,10 +126,6 @@ fn fixed_budget_concurrent_never_overdraws() {
     });
 }
 
-// ===========================================================================
-// C. Backoff invariants — exercises crawlberg::compute_backoff_ms directly.
-// ===========================================================================
-
 proptest! {
     /// C1: compute_backoff_ms is always <= max_backoff_ms.
     #[test]
@@ -164,8 +152,6 @@ proptest! {
         let this_backoff = compute_backoff_ms(attempt, max_backoff_ms);
         let next_backoff = compute_backoff_ms(attempt + 1, max_backoff_ms);
 
-        // Once we hit the cap, both values equal max_backoff_ms — that is fine.
-        // Before the cap, next must be strictly greater (doubles each step).
         prop_assert!(
             next_backoff >= this_backoff,
             "compute_backoff_ms({attempt}) = {this_backoff} > compute_backoff_ms({}) = {next_backoff}",

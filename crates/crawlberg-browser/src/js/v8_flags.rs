@@ -29,7 +29,6 @@ mod tests {
 
     #[test]
     fn empty_is_noop() {
-        // Must not panic and must not consume the Once guard.
         set_v8_flags("");
         set_v8_flags("   ");
         set_v8_flags("\t\n");

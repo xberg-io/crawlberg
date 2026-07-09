@@ -34,8 +34,7 @@ static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 #[cfg(feature = "browser-native")]
 fn allow_private_network() {
     ALLOW_PRIVATE.get_or_init(|| {
-        // SAFETY: tests run in a single process; the env var is written once
-        // from `OnceLock::get_or_init` before any network call is made.
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");

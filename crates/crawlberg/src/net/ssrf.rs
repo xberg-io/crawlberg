@@ -12,17 +12,17 @@ use std::sync::LazyLock;
 /// Private / metadata / loopback CIDRs that are denied by default.
 static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
     vec![
-        "127.0.0.0/8".parse().unwrap(),    // loopback
-        "10.0.0.0/8".parse().unwrap(),     // private
-        "172.16.0.0/12".parse().unwrap(),  // private
-        "192.168.0.0/16".parse().unwrap(), // private
-        "169.254.0.0/16".parse().unwrap(), // link-local
-        "0.0.0.0/8".parse().unwrap(),      // unspecified
-        "224.0.0.0/4".parse().unwrap(),    // multicast
-        "::1/128".parse().unwrap(),        // ipv6 loopback
-        "fe80::/10".parse().unwrap(),      // ipv6 link-local
-        "fc00::/7".parse().unwrap(),       // ipv6 unique-local
-        "ff00::/8".parse().unwrap(),       // ipv6 multicast
+        "127.0.0.0/8".parse().unwrap(),
+        "10.0.0.0/8".parse().unwrap(),
+        "172.16.0.0/12".parse().unwrap(),
+        "192.168.0.0/16".parse().unwrap(),
+        "169.254.0.0/16".parse().unwrap(),
+        "0.0.0.0/8".parse().unwrap(),
+        "224.0.0.0/4".parse().unwrap(),
+        "::1/128".parse().unwrap(),
+        "fe80::/10".parse().unwrap(),
+        "fc00::/7".parse().unwrap(),
+        "ff00::/8".parse().unwrap(),
     ]
 });
 
@@ -50,10 +50,9 @@ impl HostMatcher {
             HostMatcher::Suffix(s) => {
                 let suffix_clean = s.trim_start_matches('.').to_ascii_lowercase();
                 let host_lower = host.to_ascii_lowercase();
-                // Match if host is exactly the suffix, or if it ends with .{suffix}
                 host_lower == suffix_clean || host_lower.ends_with(&format!(".{suffix_clean}"))
             }
-            HostMatcher::Cidr(_) => false, // Cidr only matches IPs, not hostnames
+            HostMatcher::Cidr(_) => false,
         }
     }
 
@@ -126,10 +125,7 @@ pub struct SsrfPolicy {
 }
 
 fn default_deny_private() -> bool {
-    // Deny-by-default. `CrawlEngineBuilder::build` applies
-    // `CRAWLBERG_ALLOW_PRIVATE_NETWORK` as a top-level override so callers
-    // who construct a policy through any of the JSON deserialize paths still
-    // honour the env var without baking it into the per-field default.
+    // ~keep Deny by default; CrawlEngineBuilder applies the env override after JSON/binding construction.
     true
 }
 
@@ -178,7 +174,7 @@ impl SsrfPolicy {
     /// - For testing and localhost access, the host's network sandbox is the enforcing boundary.
     pub fn from_env() -> Self {
         #[cfg(target_arch = "wasm32")]
-        let allow_private = true; // Wasm has no env var access; allow private networks by default.
+        let allow_private = true;
 
         #[cfg(not(target_arch = "wasm32"))]
         let allow_private = std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
@@ -219,13 +215,11 @@ impl SsrfPolicy {
 /// DNS rebinding mitigation: all resolved IPs are validated; if ANY resolved IP violates
 /// the policy, the URL is rejected.
 pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
-    // Validate scheme
     let scheme = url.scheme();
     if !policy.scheme_allowlist.contains(scheme) {
         return Err(SsrfError::DisallowedScheme(scheme.to_string()));
     }
 
-    // Extract hostname
     let host = url
         .host()
         .ok_or_else(|| SsrfError::InvalidUrl(format!("missing hostname: {url}")))?;
@@ -252,7 +246,6 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
         }
     };
 
-    // Check if hostname is on allowlist (short-circuit before DNS).
     for matcher in &policy.allowlist {
         if matcher.matches_host(host_str) {
             return Ok(());
@@ -261,10 +254,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 
     #[cfg(target_arch = "wasm32")]
     {
-        // No tokio::net on wasm32. The browser/edge runtime enforces its own
-        // same-origin and CORS policy on outbound requests, so non-allowlisted
-        // domain hosts are validated by the host platform rather than by
-        // pre-resolving and inspecting IPs here.
+        // ~keep wasm32 has no tokio::net; browser/edge same-origin and CORS policy gate non-allowlisted domains.
         let _ = port_for_url(scheme, url);
         Ok(())
     }
@@ -285,7 +275,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
             )));
         }
 
-        // Validate each resolved IP — DNS rebinding mitigation: ALL IPs must pass.
+        // ~keep DNS rebinding mitigation: every resolved IP must satisfy policy.
         for ip in &addresses {
             if !is_ip_permitted(*ip, policy) {
                 let reason = classify_private_ip(*ip);
@@ -308,17 +298,14 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
 fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
-    // If deny_private is false, allow any IP
     if !policy.deny_private {
         return true;
     }
 
-    // Check if IP matches any Cidr allowlist entry
     if policy.allowlist.iter().any(|m| m.matches_ip(&ip)) {
         return true;
     }
 
-    // Check if IP is in the default deny list
     !DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
 }
 
@@ -400,7 +387,6 @@ mod tests {
 
     #[test]
     fn test_default_policy_deny_private_true() {
-        // Default policy has deny_private = true
         let policy = SsrfPolicy::default();
         assert!(policy.deny_private);
         assert_eq!(policy.max_redirects, 5);
@@ -408,7 +394,6 @@ mod tests {
 
     #[test]
     fn test_default_policy_scheme_allowlist() {
-        // Default scheme allowlist includes http and https only
         let policy = SsrfPolicy::default();
         assert!(policy.scheme_allowlist.contains("http"));
         assert!(policy.scheme_allowlist.contains("https"));
@@ -480,8 +465,6 @@ mod tests {
     fn test_classify_ipv6_multicast() {
         assert_eq!(classify_private_ip(IpAddr::V6("ff00::1".parse().unwrap())), "multicast");
     }
-
-    // ── validate_url: literal-IP fast-path (no DNS required) ────────────────
 
     #[tokio::test]
     async fn validate_url_rejects_loopback_v4() {
@@ -671,8 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_url_exact_allowlist_does_not_match_literal_ip() {
-        // Exact matchers match hostnames only; they cannot allowlist literal IPs.
-        // Cidr is the correct way to allowlist IP addresses.
+        // ~keep Exact matchers are hostname-only; CIDR is required for literal IP allowlisting.
         let mut policy = SsrfPolicy::default();
         policy.allowlist.push(HostMatcher::Exact("10.0.0.1".to_string()));
         let url = "http://10.0.0.1/".parse::<url::Url>().unwrap();
@@ -690,8 +672,6 @@ mod tests {
 
     #[test]
     fn validate_url_suffix_no_leading_dot_does_not_match_substring() {
-        // Suffix("example.com") must not match "notexample.com" as a substring.
-        // This is a unit test on HostMatcher directly — no network call needed.
         let matcher = HostMatcher::Suffix("example.com".to_string());
         assert!(
             !matcher.matches_host("notexample.com"),
@@ -715,8 +695,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn from_env_honors_crawlberg_allow_private_network() {
-        // SAFETY: #[serial] serialises all tests carrying this attribute, so no
-        // other thread reads the environment variable concurrently.
+        // ~keep SAFETY: #[serial] prevents concurrent environment access in this test process.
         unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
         let policy = SsrfPolicy::from_env();
         unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
@@ -730,7 +709,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn from_env_default_denies() {
-        // SAFETY: #[serial] serialises all tests carrying this attribute.
+        // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test process.
         unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
         let policy = SsrfPolicy::from_env();
         let url = "http://10.0.0.1/".parse::<url::Url>().unwrap();
@@ -759,7 +738,7 @@ mod tests {
     fn crawl_config_json_deserialize_honors_env_var() {
         use crate::types::CrawlConfig;
 
-        // SAFETY: #[serial] serialises all tests carrying this attribute.
+        // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test process.
         unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
         let cfg: CrawlConfig = serde_json::from_str("{}").expect("empty object must deserialize");
         unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };

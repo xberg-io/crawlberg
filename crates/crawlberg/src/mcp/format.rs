@@ -12,12 +12,10 @@ use crate::types::{CrawlResult, MapResult, ScrapeResult};
 pub(super) fn format_as_markdown(result: &ScrapeResult) -> String {
     let mut out = String::new();
 
-    // Title
     if let Some(ref title) = result.metadata.title {
         out.push_str(&format!("# {title}\n\n"));
     }
 
-    // Metadata summary
     out.push_str(&format!("**Status:** {}\n", result.status_code));
     out.push_str(&format!("**Content-Type:** {}\n", result.content_type));
     out.push_str(&format!("**Size:** {} bytes\n", result.body_size));
@@ -28,11 +26,9 @@ pub(super) fn format_as_markdown(result: &ScrapeResult) -> String {
 
     out.push('\n');
 
-    // Main content: prefer markdown conversion, fall back to HTML
     if let Some(ref md) = result.markdown {
         out.push_str(&md.content);
     } else if !result.html.is_empty() {
-        // Truncate large HTML for readability
         let preview_len = result.html.len().min(5000);
         out.push_str("```html\n");
         out.push_str(&result.html[..preview_len]);
@@ -74,7 +70,6 @@ pub(super) fn format_crawl_as_markdown(result: &CrawlResult) -> String {
         ));
 
         if let Some(ref md) = page.markdown {
-            // Include a reasonable preview of each page
             let content_preview = if md.content.len() > 2000 {
                 format!("{}...\n\n*(truncated)*", &md.content[..2000])
             } else {

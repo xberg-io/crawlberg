@@ -15,10 +15,6 @@ use crate::config::{
 };
 use crate::error::ConfigError;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// Load a `ProviderConfig` from a YAML file, substituting `${VAR}` placeholders
 /// with values from `env_vars`.
 ///
@@ -38,10 +34,6 @@ pub fn load_with_process_env(path: &Path) -> Result<ProviderConfig, ConfigError>
     let env_vars: HashMap<String, String> = std::env::vars().collect();
     load_with_env(path, &env_vars)
 }
-
-// ---------------------------------------------------------------------------
-// Internal parse helpers
-// ---------------------------------------------------------------------------
 
 fn parse_yaml(raw: &str, env_vars: &HashMap<String, String>) -> Result<ProviderConfig, ConfigError> {
     let docs = YamlOwned::load_from_str(raw).map_err(|e| ConfigError::Parse(format!("{e}")))?;
@@ -305,10 +297,6 @@ fn parse_status_mapping(node: &YamlOwned) -> Result<Vec<StatusOverride>, ConfigE
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// Node accessor helpers
-// ---------------------------------------------------------------------------
-
 /// Get a required mapping child by key, returning `MissingField` if absent.
 fn req_child<'a>(node: &'a YamlOwned, key: &str) -> Result<&'a YamlOwned, ConfigError> {
     node.as_mapping_get(key)
@@ -347,10 +335,6 @@ pub(crate) fn interp(s: &str, env_vars: &HashMap<String, String>) -> Result<Stri
     result.push_str(remaining);
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -416,7 +400,6 @@ status_mapping:
 
     #[test]
     fn parse_error_on_missing_required_field() {
-        // Drop the endpoint field.
         let yaml = r#"
 vendor_name: test
 method: GET

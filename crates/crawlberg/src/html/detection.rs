@@ -7,21 +7,13 @@
 /// are intentionally absent: they survive lossy UTF-8 decoding and are handled via
 /// the regular page path.
 static BINARY_EXTENSIONS: &[&str] = &[
-    // Images
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".tif", ".avif", ".heic", ".heics",
-    ".heif", ".j2c", ".j2k", ".jp2", ".jpm", ".jpx", ".mj2", ".jb2", ".jbig2", ".pbm", ".pgm", ".ppm", ".pnm",
-    // Audio / video
-    ".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm", ".mp3", ".wav", ".ogg", ".flac", ".aac", ".wma", ".m4a",
-    ".mpeg", ".mpga", // Office Open XML + legacy MS Office
-    ".docx", ".docm", ".dotx", ".dot", ".dotm", ".doc", ".xlsx", ".xlsm", ".xlsb", ".xls", ".xla", ".xlam", ".xlt",
-    ".xltx", ".pptx", ".pptm", ".potx", ".pot", ".potm", ".ppsx", ".ppt",
-    // OpenDocument, Apple iWork, Hancom, e-book, rich text
-    ".odt", ".ods", ".odp", ".odg", ".key", ".numbers", ".pages", ".hwpx", ".hwp", ".epub", ".rtf", ".fb2",
-    // Mail
-    ".msg", ".pst", ".eml", // Databases
-    ".dbf", // Archives (extracted as documents downstream)
-    ".zip", ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", // Other binary
-    ".exe", ".dll", ".so", ".bin",
+    ".heif", ".j2c", ".j2k", ".jp2", ".jpm", ".jpx", ".mj2", ".jb2", ".jbig2", ".pbm", ".pgm", ".ppm", ".pnm", ".mp4",
+    ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm", ".mp3", ".wav", ".ogg", ".flac", ".aac", ".wma", ".m4a", ".mpeg",
+    ".mpga", ".docx", ".docm", ".dotx", ".dot", ".dotm", ".doc", ".xlsx", ".xlsm", ".xlsb", ".xls", ".xla", ".xlam",
+    ".xlt", ".xltx", ".pptx", ".pptm", ".potx", ".pot", ".potm", ".ppsx", ".ppt", ".odt", ".ods", ".odp", ".odg",
+    ".key", ".numbers", ".pages", ".hwpx", ".hwp", ".epub", ".rtf", ".fb2", ".msg", ".pst", ".eml", ".dbf", ".zip",
+    ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", ".exe", ".dll", ".so", ".bin",
 ];
 
 /// Check whether content appears to be HTML based on Content-Type header or body content.
@@ -34,11 +26,9 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
         return false;
     }
     let lower = trimmed.to_lowercase();
-    // Reject XML/SVG that isn't HTML
     if lower.starts_with("<?xml") && !lower.contains("<html") {
         return false;
     }
-    // Accept common HTML markers
     lower.starts_with("<!doctype")
         || lower.starts_with("<html")
         || lower.starts_with("<head")
@@ -55,7 +45,6 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
 /// Check whether a Content-Type header indicates binary content.
 pub(crate) fn is_binary_content_type(ct: &str) -> bool {
     let lower = ct.to_lowercase();
-    // Media + e-mail (attachments may be binary).
     if lower.starts_with("image/")
         || lower.starts_with("video/")
         || lower.starts_with("audio/")
@@ -63,29 +52,25 @@ pub(crate) fn is_binary_content_type(ct: &str) -> bool {
     {
         return true;
     }
-    // Document + archive families. Matched loosely (`contains`) so vendor-specific
-    // and macro-enabled variants — `…macroEnabled.12`, `application/vnd.epub+zip`,
-    // `application/x-zip-compressed`, `application/x-gtar` — are all covered.
     lower.starts_with("application/octet-stream")
         || lower.starts_with("application/pdf")
         || lower.starts_with("application/msword")
         || lower.starts_with("application/rtf")
         || lower.starts_with("text/rtf")
-        || lower.contains("openxmlformats") // docx/xlsx/pptx (+ template/slideshow)
-        || lower.contains("opendocument") // odt/ods/odp/odg
+        || lower.contains("openxmlformats")
+        || lower.contains("opendocument")
         || lower.contains("ms-excel")
         || lower.contains("ms-powerpoint")
         || lower.contains("ms-word")
-        || lower.contains("ms-outlook") // msg/pst
-        || lower.contains("iwork") // keynote/numbers/pages
-        || lower.contains("hwp") // hwp/hwpx
+        || lower.contains("ms-outlook")
+        || lower.contains("iwork")
+        || lower.contains("hwp")
         || lower.contains("epub")
         || lower.contains("fictionbook")
         || lower.contains("dbase")
         || lower.contains("x-dbf")
-        // Archives.
-        || lower.contains("zip") // zip / x-zip-compressed / +zip / gzip
-        || lower.contains("tar") // tar / x-gtar / x-ustar
+        || lower.contains("zip")
+        || lower.contains("tar")
         || lower.contains("7z-compressed")
         || lower.contains("x-rar")
         || lower.contains("bzip")

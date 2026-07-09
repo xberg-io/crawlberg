@@ -217,8 +217,8 @@ mod tests {
     #[test]
     fn test_profile_name_validation_rejects_unicode() {
         assert!(BrowserProfile::new("calf\u{00e9}").is_err());
-        assert!(BrowserProfile::new("\u{0430}dmin").is_err()); // Cyrillic 'a'
-        assert!(BrowserProfile::new("profile\u{200b}name").is_err()); // zero-width space
+        assert!(BrowserProfile::new("\u{0430}dmin").is_err());
+        assert!(BrowserProfile::new("profile\u{200b}name").is_err());
     }
 
     #[test]
@@ -275,7 +275,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("alpha")).unwrap();
         std::fs::create_dir(dir.path().join("beta")).unwrap();
-        // Create a file (should be excluded — only directories count).
         std::fs::write(dir.path().join("not-a-dir"), b"").unwrap();
 
         let names = list_profiles_in(dir.path()).unwrap();

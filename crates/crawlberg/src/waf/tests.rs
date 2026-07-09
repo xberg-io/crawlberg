@@ -26,10 +26,6 @@ fn make_response(status: u16, headers: Vec<(&str, &str)>, body: &str) -> HttpRes
     }
 }
 
-// ---------------------------------------------------------------------------
-// Builtin corpus sanity checks
-// ---------------------------------------------------------------------------
-
 #[test]
 fn classifier_cloudflare_challenge_detected() {
     let c = TomlClassifier::builtin();
@@ -57,9 +53,6 @@ fn classifier_perimeterx_header_detected() {
     let c = TomlClassifier::builtin();
     let resp = make_response(200, vec![("x-px-block", "1")], "<html>ok</html>");
     let signal = c.classify(&resp).expect("classify must not fail");
-    // x-px-block header → perimeterx_header fingerprint via headers_only check
-    // The TOML fingerprint checks for name="x-px-block" specifically;
-    // the prefix-match for x-px-* is handled in header_matches via the "x-px-" sentinel.
     assert!(signal.is_some(), "perimeterx x-px-* header must be detected");
     assert_eq!(signal.expect("signal is Some — asserted above").vendor, "perimeterx");
 }
@@ -94,7 +87,6 @@ fn classifier_akamai_server_header() {
 #[test]
 fn classifier_large_2xx_not_flagged() {
     let c = TomlClassifier::builtin();
-    // Build body > 100KB mentioning cloudflare but no JS challenge tokens.
     let mut body = String::from("<html><body><h1>About Cloudflare</h1>");
     body.push_str(&"<p>Lorem ipsum dolor sit amet.</p>".repeat(5000));
     body.push_str("</body></html>");
@@ -129,10 +121,6 @@ fn classifier_datadome_captcha_delivery() {
     assert_eq!(signal.expect("signal is Some — asserted above").vendor, "datadome");
 }
 
-// ---------------------------------------------------------------------------
-// Rules loader validation
-// ---------------------------------------------------------------------------
-
 #[test]
 fn custom_rules_single_signal_matches() {
     let toml_src = r#"
@@ -157,8 +145,6 @@ pattern = "custom-challenge-token"
 
 #[test]
 fn all_signals_must_match() {
-    // Fingerprint requires BOTH server=cloudflare AND body pattern.
-    // Only supplying the header without the body pattern must not fire.
     let toml_src = r#"
 [[fingerprint]]
 id = "multi_signal_test"
@@ -175,24 +161,18 @@ pattern = "tv-challenge-token"
     let rules = load_from_str(toml_src).expect("static test TOML is valid");
     let c = TomlClassifier::from_rules(rules);
 
-    // Missing body pattern — must not match.
     let resp = make_response(403, vec![("server", "testvendor")], "<html>no token here</html>");
     assert!(
         c.classify(&resp).expect("classify must not fail").is_none(),
         "must not match without body pattern"
     );
 
-    // Both signals present — must match.
     let resp2 = make_response(403, vec![("server", "testvendor")], "<html>tv-challenge-token</html>");
     assert!(
         c.classify(&resp2).expect("classify must not fail").is_some(),
         "must match when all signals present"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Input validation (B8, B9)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn load_from_str_rejects_too_many_fingerprints() {
@@ -278,9 +258,6 @@ weight = 1.0
 
 #[test]
 fn load_from_str_accepts_corpus_at_limit() {
-    // The builtin corpus must remain BELOW MAX_FINGERPRINTS. If this test
-    // breaks because the canonical corpus has grown past 1000 fingerprints,
-    // raise the limit deliberately rather than masking the warning.
     let builtin = Rules::builtin();
     assert!(
         builtin.fingerprint_count() < MAX_FINGERPRINTS,
@@ -300,7 +277,6 @@ fn load_from_str_accepts_corpus_at_limit() {
 #[test]
 #[ignore = "intentional broken-fingerprint gate — un-ignore to verify corpus is load-bearing"]
 fn broken_fingerprint_correctly_fails() {
-    // Deliberately use wrong pattern to prove test fails.
     let toml_src = r#"
 [[fingerprint]]
 id = "cloudflare_cf_chl_intentionally_broken"
@@ -313,7 +289,6 @@ pattern = "THIS_PATTERN_WILL_NEVER_MATCH_ANYTHING_xyzzy_12345"
     let rules = load_from_str(toml_src).expect("static test TOML is valid");
     let c = TomlClassifier::from_rules(rules);
     let resp = make_response(403, vec![], "<html>cf-chl-widget-abc</html>");
-    // This must fail to detect — proving that if we break the pattern the test breaks.
     assert!(
         c.classify(&resp).expect("classify must not fail").is_none(),
         "broken fingerprint correctly produces no match"

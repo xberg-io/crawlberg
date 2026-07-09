@@ -19,17 +19,17 @@ use url::Url;
 /// Must be kept in sync with `crawlberg::net::ssrf::DEFAULT_DENY_NETS`.
 static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
     vec![
-        "127.0.0.0/8".parse().unwrap(),    // loopback
-        "10.0.0.0/8".parse().unwrap(),     // private
-        "172.16.0.0/12".parse().unwrap(),  // private
-        "192.168.0.0/16".parse().unwrap(), // private
-        "169.254.0.0/16".parse().unwrap(), // link-local
-        "0.0.0.0/8".parse().unwrap(),      // unspecified
-        "224.0.0.0/4".parse().unwrap(),    // multicast
-        "::1/128".parse().unwrap(),        // ipv6 loopback
-        "fe80::/10".parse().unwrap(),      // ipv6 link-local
-        "fc00::/7".parse().unwrap(),       // ipv6 unique-local
-        "ff00::/8".parse().unwrap(),       // ipv6 multicast
+        "127.0.0.0/8".parse().unwrap(),
+        "10.0.0.0/8".parse().unwrap(),
+        "172.16.0.0/12".parse().unwrap(),
+        "192.168.0.0/16".parse().unwrap(),
+        "169.254.0.0/16".parse().unwrap(),
+        "0.0.0.0/8".parse().unwrap(),
+        "224.0.0.0/4".parse().unwrap(),
+        "::1/128".parse().unwrap(),
+        "fe80::/10".parse().unwrap(),
+        "fc00::/7".parse().unwrap(),
+        "ff00::/8".parse().unwrap(),
     ]
 });
 
@@ -57,18 +57,15 @@ fn is_ip_denied(ip: IpAddr) -> bool {
 pub fn validate_url(url: &Url) -> Result<(), String> {
     let scheme = url.scheme();
 
-    // File-scheme bypass: allowed unconditionally in the browser for test support.
     if scheme == "file" {
         return Ok(());
     }
 
-    // Respect env-var bypass.
     let allow_private_network = std::env::var_os("CRAWLBERG_ALLOW_PRIVATE_NETWORK").is_some();
     if allow_private_network {
         return Ok(());
     }
 
-    // Scheme check.
     if scheme != "http" && scheme != "https" {
         return Err(format!(
             "Forbidden URL scheme '{}' - only http, https, and file are allowed",
@@ -76,7 +73,6 @@ pub fn validate_url(url: &Url) -> Result<(), String> {
         ));
     }
 
-    // Check host.
     if let Some(host) = url.host() {
         match host {
             url::Host::Ipv4(ip) => {
@@ -94,17 +90,12 @@ pub fn validate_url(url: &Url) -> Result<(), String> {
             url::Host::Domain(domain) => {
                 let lower_domain = domain.to_lowercase();
 
-                // DNS-rebinding mitigation: block localhost variants before any DNS
-                // resolution. The core module performs DNS resolution; an attacker can
-                // exploit timing to change resolution results between the check and
-                // the actual request. This string match blocks rebinding attempts.
+                // ~keep Block localhost names before DNS to close rebinding gaps between validation and request time.
                 if lower_domain == "localhost" || lower_domain.ends_with(".localhost") {
                     return Err(format!("Localhost rebinding attack blocked: {}", domain));
                 }
 
-                // Note: String matches for literal IPs (`127.0.0.1`, `::1`) are omitted
-                // here because they are redundant with the IP range checks above.
-                // If a domain somehow resolves to these IPs, the range check will catch it.
+                // ~keep Literal IP string checks are redundant here because typed IP hosts hit the range checks above.
             }
         }
     }

@@ -23,7 +23,6 @@ async fn attempt_outcome_is_send_for_spawning() {
     };
 
     let handle = tokio::spawn(async move {
-        // Captures `outcome` by move; would not compile under the old `<'a>` shape.
         assert_eq!(outcome.attempt, 0);
         outcome
     });

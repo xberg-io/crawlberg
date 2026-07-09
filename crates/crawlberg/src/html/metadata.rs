@@ -46,7 +46,6 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
         ..Default::default()
     };
 
-    // Extract html lang and dir attributes
     if let Some(mut iter) = dom.query_selector(SEL_HTML)
         && let Some(tag) = iter.next().and_then(|h| h.get(parser)).and_then(|n| n.as_tag())
     {
@@ -134,7 +133,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
         md.og_locale_alternates = Some(og_locale_alternates);
     }
 
-    // Regex-based fallback for malformed HTML where DOM parsing misses meta tags
+    // ~keep Regex fallback handles malformed HTML where DOM parsing misses meta tags.
     if !raw_body.is_empty() {
         let raw_meta = extract_metadata_from_raw(raw_body);
         for (name, content) in raw_meta {
@@ -193,8 +192,7 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(content) = get_attr(tag, "content")
             {
-                // Format: "N;url=TARGET" or "N; url=TARGET"
-                // Case-insensitive search on original bytes to preserve correct offset
+                // ~keep Search original bytes case-insensitively so the extracted URL offset remains correct.
                 let bytes = content.as_bytes();
                 let needle = b"url=";
                 let pos = bytes

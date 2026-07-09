@@ -73,7 +73,6 @@ mod tests {
     use super::*;
     use tower::Service;
 
-    // Simple mock service
     #[derive(Clone)]
     struct EchoService;
     impl Service<CrawlRequest> for EchoService {
@@ -108,7 +107,6 @@ mod tests {
         let resp2 = svc.call(CrawlRequest::new("http://b.com")).await.unwrap();
         assert_eq!(resp2.body, "Bot/2.0");
 
-        // Wraps around
         let resp3 = svc.call(CrawlRequest::new("http://c.com")).await.unwrap();
         assert_eq!(resp3.body, "Bot/1.0");
     }
@@ -118,6 +116,6 @@ mod tests {
         let layer = UaRotationLayer::new(vec![]);
         let mut svc = layer.layer(EchoService);
         let resp = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
-        assert_eq!(resp.body, ""); // No UA injected
+        assert_eq!(resp.body, "");
     }
 }

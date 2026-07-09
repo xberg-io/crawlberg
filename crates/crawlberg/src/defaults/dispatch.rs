@@ -82,8 +82,6 @@ impl RetryPolicy for SimpleRetryPolicy {
             | CrawlError::ServerError(_)
             | CrawlError::BadGateway(_)
             | CrawlError::Timeout(_) => {
-                // `attempt` is zero-based: 0 = first try failed. With max_retries=3,
-                // attempts 0, 1, 2 should retry; attempt 3 should stop (3 retries consumed).
                 if outcome.attempt >= self.max_retries {
                     RetryDirective::Stop
                 } else {
@@ -91,9 +89,6 @@ impl RetryPolicy for SimpleRetryPolicy {
                     RetryDirective::Retry { backoff_ms: backoff }
                 }
             }
-            // Permanent errors short-circuit the retry loop — the spider-rs
-            // `needs_retry()` gate equivalent. Never consult the policy more
-            // than once on these.
             CrawlError::Dns(_)
             | CrawlError::Ssl(_)
             | CrawlError::Connection(_)
@@ -167,7 +162,6 @@ impl FixedBudget {
 #[async_trait]
 impl EscalationBudget for FixedBudget {
     async fn try_consume(&self, cost_cents: u32) -> Result<(), BudgetExhausted> {
-        // CAS loop — never go negative.
         let mut current = self.remaining_cents.load(Ordering::Acquire);
         loop {
             if current < cost_cents {
@@ -270,7 +264,6 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limited_stops_after_max_retries() {
-        // max_retries=2: attempts 0 and 1 retry; attempt 2 stops.
         let policy = SimpleRetryPolicy::new().with_max_retries(2);
         let err = CrawlError::RateLimited("429".into());
         let directive = policy.decide(&outcome_with_error(err, 2)).await;

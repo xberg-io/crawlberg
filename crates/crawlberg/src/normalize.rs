@@ -19,7 +19,6 @@ fn clean_url_path(u: &mut Url) {
 pub(crate) fn normalize_url(raw: &str) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
-        // Sort query params
         let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
         if !pairs.is_empty() {
             let mut sorted = pairs;

@@ -103,20 +103,11 @@ pub struct Page {
 impl Page {
     pub fn new(id: String, context: Arc<BrowserContext>) -> Self {
         let http_client = context.http_client.clone();
-        // Chromium convention: the main frame's frameId == the targetId.
-        // Playwright's frame manager looks up the main frame by targetId
-        // (via target._targetInfo.targetId), so any divergence here makes
-        // Page.getFrameTree return a frame the client cannot match,
-        // triggering a Target.closeTarget and "Frame has been detached".
+        // ~keep Playwright expects the main frame id to equal target id; diverging detaches the frame.
         let frame_id = id.clone();
         #[cfg(feature = "stealth")]
         let stealth_client = if context.stealth {
-            // The wreq client backing StealthHttpClient does not speak SOCKS5.
-            // Callers must validate the proxy scheme up front and fail loudly
-            // rather than silently rewriting socks5:// to
-            // http://, which only works when the upstream happens to be a
-            // Clash-style mixed-mode proxy and breaks plain SOCKS5 servers
-            // like `ssh -ND` (#160).
+            // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
             Some(Arc::new(StealthHttpClient::with_proxy(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
@@ -180,21 +171,12 @@ impl Page {
         self.http_client.fetch(url).await
     }
     fn init_js(&mut self) {
-        // Drop any existing runtime so the JS realm starts clean on
-        // every navigation. The old code reused the V8 isolate and
-        // only re-bound `globalThis.document`, leaving window.onload,
-        // custom window properties and event handlers from the prior
-        // page in place. That made it possible for a page to set
-        // attacker-controlled state, trigger a navigation, and then
-        // run code in the next document's context.
+        // ~keep Recreate the JS realm every navigation so prior-page handlers cannot run in the next document.
         if self.js.is_some() {
             let _ = self.js.take();
         }
 
-        // Thread the BrowserContext's proxy through to the ES-module loader
-        // and op_fetch_url so dynamic imports and JS fetch() honour the
-        // configured upstream proxy (#139). When proxy_url is None this is
-        // equivalent to with_base_url() (direct connection).
+        // ~keep Thread the context proxy into ES modules and JS fetch/XHR so page JS honors upstream proxy settings.
         let mut rt = BrowserJsRuntime::with_base_url_and_proxy(&self.url_string(), self.context.proxy_url.clone());
         rt.set_url(&self.url_string());
         rt.set_title(&self.title);
@@ -327,11 +309,7 @@ impl Page {
                 };
 
                 if !subresource_allowed(self.url.as_ref(), &full_url) {
-                    // Block file://, data:, javascript:, and other
-                    // off-origin schemes from being injected as a
-                    // <script src>. Without this an http page can
-                    // include <script src="file:///etc/passwd"> and
-                    // see the body parsed as JS source.
+                    // ~keep Block off-origin script schemes so an HTTP page cannot read local files as JS source.
                     tracing::warn!(
                         "blocking cross-scheme <script src>: page={} src={}",
                         self.url_string(),
@@ -504,12 +482,7 @@ impl Page {
                 .await?;
             if let Some((next_url, next_method, next_body)) = self.take_pending_navigation() {
                 if cross_scheme_to_file(&current_url, &next_url) {
-                    // SOP gate. A web page must not be able to drive
-                    // a navigation to file:// and then read the loaded
-                    // document. Without this an http(s) page sets
-                    // window.onload, calls location.href = "file:..."
-                    // and harvests document.body from a local file
-                    // once the new document loads.
+                    // ~keep SOP gate: HTTP(S) pages must not navigate to `file:` and then read the loaded document.
                     tracing::warn!(
                         "blocking JS-initiated cross-scheme navigation to file: {} -> {}",
                         current_url,
@@ -527,10 +500,7 @@ impl Page {
                 current_method = next_method;
                 current_body = next_body;
                 if chain + 1 == REDIRECT_LIMIT {
-                    // Hit the cap and the page still wants to keep
-                    // chaining. Surface that as an error instead of
-                    // returning Ok(()) so callers can distinguish a
-                    // successful load from a redirect storm.
+                    // ~keep Exceeding the JS navigation cap is an error so redirect storms are not reported as loads.
                     return Err(PageError::TooManyRedirects(REDIRECT_LIMIT));
                 }
                 continue;
@@ -694,12 +664,7 @@ impl Page {
             && let Some(js) = &mut self.js
         {
             let combined_css = css_sources.join("\n");
-            // Use the thorough template-literal escape that
-            // covers U+2028 / U+2029 and other control chars.
-            // The previous escaper only handled `, \, and ${,
-            // letting attacker-controlled CSS containing a raw
-            // U+2028 break out of the template literal and run
-            // arbitrary JS in the page's V8 realm.
+            // ~keep Escape JS template literals fully so attacker-controlled CSS cannot break into executable JS.
             let escaped = escape_for_js_template_literal(&combined_css);
             let code = format!("globalThis.__crawlberg_css = `{}`;", escaped);
             let _ = js.execute_script("<css>", &code);

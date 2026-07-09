@@ -33,8 +33,6 @@ fn generate_clean_html(target_bytes: usize) -> String {
 }
 
 fn bench_ac_build(c: &mut Criterion) {
-    // Benchmark the construction of the Aho-Corasick automaton.
-    // This measures the upfront cost of loading the builtin corpus.
     c.bench_function("waf_ac_build_builtin", |b| {
         b.iter(|| {
             let classifier = TomlClassifier::builtin();
@@ -44,8 +42,6 @@ fn bench_ac_build(c: &mut Criterion) {
 }
 
 fn bench_classify_clean(c: &mut Criterion) {
-    // 100KB of clean HTML — no fingerprint matches.
-    // Exercises the full Aho-Corasick walk on a non-matching body.
     let body = generate_clean_html(100_000);
     let response = make_test_response(200, body);
     let classifier = TomlClassifier::builtin();
@@ -58,9 +54,6 @@ fn bench_classify_clean(c: &mut Criterion) {
 }
 
 fn bench_classify_match_early(c: &mut Criterion) {
-    // Body containing a known Cloudflare fingerprint near the start.
-    // The "cf-chl-" pattern is a simple single-signal Cloudflare fingerprint.
-    // This tests the case where the automaton matches early in the walk.
     let body = format!("<html><body>cf-chl-{}</body></html>", "x".repeat(99_000));
     let response = make_test_response(200, body);
     let classifier = TomlClassifier::builtin();
@@ -73,9 +66,6 @@ fn bench_classify_match_early(c: &mut Criterion) {
 }
 
 fn bench_classify_match_late(c: &mut Criterion) {
-    // Same Cloudflare fingerprint placed at the END of a 100KB body.
-    // This exercises the full Aho-Corasick walk before a match is found,
-    // establishing a baseline for worst-case body scanning.
     let body = format!("{}cf-chl-</html>", "x".repeat(99_000));
     let response = make_test_response(200, body);
     let classifier = TomlClassifier::builtin();

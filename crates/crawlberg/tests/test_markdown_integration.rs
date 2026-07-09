@@ -32,7 +32,6 @@ async fn test_markdown_output_is_populated() {
     let result = scrape(&handle, &mock.uri()).await.unwrap();
     let md = result.markdown.expect("markdown should be present");
 
-    // Markdown content should contain the title and text.
     assert!(
         md.content.contains("Title"),
         "markdown content should contain the heading"
@@ -42,10 +41,8 @@ async fn test_markdown_output_is_populated() {
         "markdown content should contain link text"
     );
 
-    // Citations should be present for pages with inline links.
     assert!(md.citations, "citations flag should be true for pages with links");
 
-    // Fit markdown should exist.
     assert!(md.fit_content.is_some(), "fit content should be populated");
 }
 

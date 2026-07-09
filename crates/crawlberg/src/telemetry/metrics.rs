@@ -39,9 +39,6 @@ use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
 ///
 /// Obtain the global instance via [`registry()`].
 pub struct MetricRegistry {
-    // -----------------------------------------------------------------------
-    // Counters
-    // -----------------------------------------------------------------------
     /// Pages fetched by the crawl engine, partitioned by terminal status.
     ///
     /// Labels: `status` ∈ `ok | http_error | timeout | blocked`
@@ -75,9 +72,6 @@ pub struct MetricRegistry {
     /// Labels: `vendor`, `reason`
     pub bypass_failures_total: Counter<u64>,
 
-    // -----------------------------------------------------------------------
-    // Histograms
-    // -----------------------------------------------------------------------
     /// End-to-end crawl duration in seconds.
     ///
     /// Labels: `output_mode`, `status`
@@ -88,9 +82,6 @@ pub struct MetricRegistry {
     /// Labels: `host`
     pub pages_duration_seconds: Histogram<f64>,
 
-    // -----------------------------------------------------------------------
-    // Up-down counters
-    // -----------------------------------------------------------------------
     /// Active headless-browser sessions.
     pub browser_sessions_active: UpDownCounter<i64>,
 }

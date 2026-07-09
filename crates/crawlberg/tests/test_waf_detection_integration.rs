@@ -166,8 +166,6 @@ async fn test_perimeterx_2xx_header_detected() {
 #[tokio::test]
 async fn test_2xx_legitimate_long_page_not_flagged() {
     let mock = MockServer::start().await;
-    // Build a body well over 100 KB that mentions vendor names in prose
-    // but contains no JS challenge markers.
     let mut body = String::from("<html><body><h1>How Cloudflare and DataDome work</h1>");
     body.push_str(&"<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. </p>".repeat(4000));
     body.push_str("</body></html>");

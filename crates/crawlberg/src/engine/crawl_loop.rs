@@ -106,12 +106,8 @@ pub(crate) async fn follow_redirects(
     loop {
         let (resp, hop_browser_used) = match engine.fetch_response(&current_url).await {
             Ok(pair) => pair,
-            // A 404 reached after at least one redirect is always soft-failed regardless
-            // of `soft_http_errors`. The caller opted into redirect-following, so receiving
-            // a 404 at the end of a chain is part of normal redirect flow. Surface it as a
-            // synthetic 404 response so callers can inspect `final_url` and `status_code`
-            // without catching an exception. For the first hop (no redirects yet), the
-            // original `NotFound` error propagates unless `soft_http_errors` is set.
+            // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
+            // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
             Err(CrawlError::NotFound(_)) if redirect_count > 0 => {
                 let synthetic = crate::tower::CrawlResponse {
                     status: 404,
@@ -133,16 +129,12 @@ pub(crate) async fn follow_redirects(
         browser_used = hop_browser_used;
         let status = resp.status;
 
-        // HTTP 3xx redirect via Location header
         if matches!(status, 301 | 302 | 303 | 307 | 308)
             && redirect_count < max_redirects
             && let Some(location) = resp.headers.get("location").and_then(|v| v.first())
         {
             let target = resolve_redirect(&current_url, location);
             if !seen.contains(&target) {
-                // Validate the redirect target against SSRF policy before following.
-                // `do_fetch` re-validates on each call, but checking here keeps the
-                // error surface consistent with the pre-SSRF redirect implementation.
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
@@ -159,7 +151,6 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        // Refresh header redirect
         if redirect_count < max_redirects
             && let Some(refresh) = resp.headers.get("refresh").and_then(|v| v.first())
             && let Some(pos) = find_ascii_case_insensitive(refresh, "url=")
@@ -183,9 +174,6 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        // Meta-refresh redirect
-        // Parse the meta-refresh target in a separate block so `doc` (VDom, not Send)
-        // is dropped before the async validate_url call below.
         let meta_refresh_target: Option<String> =
             if redirect_count < max_redirects && is_html_content(&resp.content_type, &resp.body) {
                 tl::parse(&resp.body, ParserOptions::default())
@@ -213,9 +201,6 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        // No more redirects (or we've reached our budget / detected a cycle) — return
-        // the most recent response. The caller can inspect status to determine whether
-        // the chain terminated naturally or was cut short.
         return Ok(RedirectOutcome {
             final_url: current_url,
             final_response: resp,
@@ -267,8 +252,8 @@ struct CrawlState {
     pages_failed: usize,
     urls_discovered: usize,
     urls_filtered: usize,
-    pages_count: usize, // Separate count for streaming mode (when pages are not accumulated)
-    is_streaming: bool, // True if we're in streaming mode (tx is Some)
+    pages_count: usize,
+    is_streaming: bool,
 }
 
 impl CrawlState {
@@ -289,8 +274,6 @@ impl CrawlState {
     }
 
     fn into_result(self, final_url: String) -> CrawlResult {
-        // In streaming mode, pages are not accumulated — use empty vec.
-        // In non-streaming mode, pages are accumulated and used as-is.
         let (pages_to_return, stayed_on_domain) = if self.is_streaming {
             (Vec::new(), true)
         } else {
@@ -358,12 +341,7 @@ impl CrawlEngine {
         let max_pages = self.config.max_pages.unwrap_or(usize::MAX);
         let max_redirects = self.config.max_redirects;
 
-        // crawl.engine.start — emitted once per crawl invocation with job-level config.
-        // seed_count is always 1 for crawl_with_sender (batch_crawl calls it per-seed).
-        //
-        // EnteredSpan is !Send so it must be dropped before any `.await`.  We emit this
-        // span as a synchronous "job-start" event: enter it immediately, record attributes,
-        // then drop it before the first async call.
+        // ~keep EnteredSpan is !Send, so job-start spans must be entered and dropped before any `.await`.
         {
             let strategy = self.config.dispatch.as_ref().map(|d| d.strategy).unwrap_or_default();
             let _engine_span = tracing::info_span!(
@@ -375,7 +353,6 @@ impl CrawlEngine {
                 { CRAWL_BROWSER_MODE } = browser_mode_label(&self.config.browser.mode),
             )
             .entered();
-            // _engine_span is dropped here — before any await point.
         }
 
         let capacity = max_pages.min(1024);
@@ -383,11 +360,8 @@ impl CrawlEngine {
         let mut state = CrawlState::new(capacity, is_streaming);
         let start_time = Instant::now();
 
-        // ── Phase 1: resolve initial redirects ──────────────────────────
         let final_url = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
 
-        // If we have an error already (from redirects or seed fetch failure), emit a
-        // CrawlEvent::Error so streaming consumers observe the failure, then return early.
         if let Some(ref error_msg) = state.error {
             let error_event = CrawlEvent::Error {
                 url: final_url.clone(),
@@ -399,11 +373,6 @@ impl CrawlEngine {
             if let Some(ref sink) = self.event_sink {
                 sink.emit(error_event).await;
             }
-            // Emit a terminal Complete after the Error so streaming consumers still
-            // observe the canonical end-of-stream marker on seed/redirect failure.
-            // `batch.rs` previously emitted this on every Ok return; now that the
-            // authoritative Complete lives in the crawl loop, this early-return path
-            // must emit it too (no pages were crawled, so the count is 0).
             let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
             if let Some(sender) = &tx {
                 let _ = sender.send(complete_event.clone()).await;
@@ -414,7 +383,6 @@ impl CrawlEngine {
             return Ok(state.into_result(final_url));
         }
 
-        // ── Phase 2: prepare filters and robots rules ───────────────────
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
@@ -424,7 +392,6 @@ impl CrawlEngine {
             None
         };
 
-        // Pass robots.txt crawl-delay to RateLimiter
         if let Some(rules) = &robots_rules
             && let Some(delay) = rules.crawl_delay
             && let Ok(parsed) = Url::parse(&final_url)
@@ -435,11 +402,7 @@ impl CrawlEngine {
                 .await?;
         }
 
-        // ── Phase 3: seed the working set and mark as seen via Frontier ─
-        // We maintain a local working_set (Vec) rather than popping from frontier because:
-        // 1. The CrawlStrategy needs random access to all candidates via select_next(&[...])
-        // 2. The frontier is shared across potential concurrent batch_crawl operations
-        // 3. This design keeps the hot path lock-free (no frontier mutex per iteration)
+        // ~keep `working_set` stays local: strategies need slices, frontier is shared, and the hot path avoids locks.
         let mut working_set: Vec<FrontierEntry> = Vec::new();
 
         let dedup_key = normalize_url_for_dedup(&final_url);
@@ -451,7 +414,6 @@ impl CrawlEngine {
             priority: 1.0,
         });
 
-        // ── Phase 4: main crawl loop ────────────────────────────────────
         self.run_crawl_loop(
             &mut state,
             &mut working_set,
@@ -467,12 +429,10 @@ impl CrawlEngine {
         )
         .await?;
 
-        // Safety: ensure we never return more than max_pages
         if state.pages.len() > max_pages {
             state.pages.truncate(max_pages);
         }
 
-        // Build final stats and notify store/emitter
         let pages_processed = if state.is_streaming {
             state.pages_count
         } else {
@@ -492,9 +452,6 @@ impl CrawlEngine {
             })
             .await;
 
-        // Emit CrawlEvent::Complete with the exact post-filter page count.
-        // In streaming mode, this happens via tx and event_sink.
-        // In non-streaming mode, this is only emitted via event_sink if present.
         if let Some(sender) = tx {
             let complete_event = CrawlEvent::Complete {
                 pages_crawled: pages_processed,
@@ -510,7 +467,6 @@ impl CrawlEngine {
             .await;
         }
 
-        // Deduplicate cookies by (name, domain, path)
         let mut seen_cookies: HashSet<(String, Option<String>, Option<String>)> = HashSet::new();
         state
             .all_cookies
@@ -535,7 +491,6 @@ impl CrawlEngine {
                         .extend(extract_cookies_from_hashmap(&outcome.final_response.headers));
                 }
                 state.redirect_count = outcome.redirect_count;
-                // Propagate any error status reached after redirect(s).
                 if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
                     state.error = Some(format!("HTTP {}", outcome.final_response.status));
                 }
@@ -570,7 +525,6 @@ impl CrawlEngine {
         let mut cancelled = false;
 
         while !cancelled && (!working_set.is_empty() || !join_set.is_empty()) {
-            // 1. Fill JoinSet from working_set, up to max_concurrent
             while join_set.len() < max_concurrent && !working_set.is_empty() {
                 let pages_processed = if state.is_streaming {
                     state.pages_count
@@ -597,15 +551,7 @@ impl CrawlEngine {
                 };
                 let entry = working_set.swap_remove(idx);
 
-                // crawl.loop.iteration — one span per dequeued entry.  Entered synchronously
-                // before spawning the async fetch so the span captures dispatch state at
-                // queue-time.  `pages_completed` is the count of pages already finished,
-                // not including this one.  `frontier_size` is the working_set length AFTER
-                // the swap_remove that produced `entry`.
-                //
-                // EnteredSpan is !Send so it must be dropped before any `.await`.  We emit
-                // it as a synchronous "dequeue" event and close it before acquiring the
-                // semaphore permit.
+                // ~keep EnteredSpan is !Send, so dequeue spans must be entered and dropped before any `.await`.
                 {
                     let _iter_span = tracing::info_span!(
                         "crawl.loop.iteration",
@@ -614,7 +560,6 @@ impl CrawlEngine {
                         { CRAWL_PAGES_COMPLETED } = state.pages.len() as i64,
                     )
                     .entered();
-                    // _iter_span dropped here — before semaphore.acquire_owned().await.
                 }
 
                 if !self.should_fetch_url(
@@ -633,8 +578,6 @@ impl CrawlEngine {
                     .await
                     .map_err(|_| CrawlError::Other("semaphore closed".into()))?;
 
-                // Clone the engine so the spawned task owns its own copy. This is
-                // cheap: all heavy state (frontier, store, cache, …) is behind Arc.
                 let engine = self.clone();
 
                 join_set.spawn(async move {
@@ -677,7 +620,6 @@ impl CrawlEngine {
                 });
             }
 
-            // 2. Collect one completed result (or break if nothing in-flight)
             if join_set.is_empty() {
                 break;
             }
@@ -714,8 +656,6 @@ impl CrawlEngine {
                         })
                         .await;
                     let _ = self.store.store_error(&entry.url, &error).await;
-                    // Forward the error to the streaming channel so consumers of
-                    // crawl_stream / batch_crawl_stream observe CrawlEvent::Error.
                     let error_event = CrawlEvent::Error {
                         url: entry.url.clone(),
                         error: error.to_string(),
@@ -732,7 +672,6 @@ impl CrawlEngine {
                 }
             }
 
-            // 3. Check stopping condition
             let pages_processed = if state.is_streaming {
                 state.pages_count
             } else {
@@ -772,7 +711,6 @@ impl CrawlEngine {
             *urls_filtered += 1;
             return false;
         }
-        // Depth-0 seed URL is always included regardless of include_paths filter
         if !include_regexes.is_empty() && entry.depth > 0 && !include_regexes.iter().any(|re| re.is_match(path)) {
             *urls_filtered += 1;
             return false;
@@ -781,7 +719,6 @@ impl CrawlEngine {
             let host = page_parsed.host_str().unwrap_or("");
             let allowed = is_path_allowed(path, rules);
 
-            // crawl.robots.check span — synchronous (non-async method), entered directly.
             let _span = tracing::info_span!(
                 "crawl.robots.check",
                 { URL_DOMAIN } = host,
@@ -821,7 +758,6 @@ impl CrawlEngine {
         let page_url = fetch.entry.url.clone();
         let depth = fetch.entry.depth;
 
-        // Treat 5xx responses as errors: emit CrawlEvent::Error and skip page processing.
         if fetch.status_code >= 500 {
             state.pages_failed += 1;
             let error_msg = format!("server_error: HTTP {}", fetch.status_code);
@@ -873,16 +809,6 @@ impl CrawlEngine {
 
         state.normalized_urls.push(norm_url.clone());
 
-        // Link discovery.
-        //
-        // Plain HTML pages (entry.doc_depth == 0, page_was_skipped == false) always run
-        // discovery — pre-existing behaviour.
-        //
-        // Pages reached via a document-link chain (entry.doc_depth > 0) run discovery
-        // only when `follow_document_urls` is enabled.
-        //
-        // Binary/PDF pages that are NOT in a document-URL chain (unlikely, but theoretically
-        // a binary URL could appear as a seed) are not worth discovering.
         let in_document_context = fetch.entry.doc_depth > 0;
         let should_discover = (!page_was_skipped || in_document_context)
             && (self.config.follow_document_urls || !in_document_context)
@@ -901,9 +827,6 @@ impl CrawlEngine {
             .await?;
         }
 
-        // Materialize the raw document bytes for non-HTML responses (PDF,
-        // DOCX, …) so the caller can hand them to a document-extraction
-        // pipeline. HTML pages leave this `None`.
         let downloaded_document = crate::document::build_downloaded_document(
             &page_url,
             &page_parsed,
@@ -913,8 +836,6 @@ impl CrawlEngine {
             &self.config,
         );
 
-        // A skipped page is a binary document — its lossy-UTF-8 `body` is not
-        // meaningful HTML, so don't spend CPU converting it to markdown.
         let markdown = if page_was_skipped {
             None
         } else {
@@ -945,7 +866,6 @@ impl CrawlEngine {
             browser_used: fetch.browser_used,
         };
 
-        // Apply content filter — filtered pages still contribute to link discovery above
         let page = match self.content_filter.filter(page).await? {
             Some(filtered_page) => filtered_page,
             None => {
@@ -965,27 +885,20 @@ impl CrawlEngine {
             })
             .await;
 
-        // In streaming mode (tx is Some), move the page into the event and avoid accumulation.
-        // In non-streaming mode, clone the page for compatibility with event_sink, then accumulate.
         if let Some(sender) = tx {
-            // Streaming path: move page into the event (zero-copy), no accumulation.
-            // If both tx and event_sink are present, we must clone for the sink; otherwise, zero clones.
             let page_event = CrawlEvent::Page { result: Box::new(page) };
             if sender.send(page_event.clone()).await.is_err() {
-                // Receiver dropped; signal cancellation
                 return Ok(true);
             }
             if let Some(ref sink) = self.event_sink {
                 sink.emit(page_event).await;
             }
-            // Increment streaming page count instead of accumulating
             state.pages_count += 1;
             if state.pages_count >= max_pages {
                 join_set.abort_all();
                 return Ok(true);
             }
         } else {
-            // Non-streaming path: clone for event_sink (if present), then accumulate for full result.
             let page_event = CrawlEvent::Page {
                 result: Box::new(page.clone()),
             };
@@ -1031,19 +944,16 @@ impl CrawlEngine {
         working_set: &mut Vec<FrontierEntry>,
         urls_discovered: &mut usize,
     ) -> Result<(), CrawlError> {
-        // Collect candidates that pass all pre-SSRF filters
         let mut candidates = Vec::new();
 
         for link in links {
             let is_doc_link = link.link_type == LinkType::Document;
 
-            // Non-internal, non-document links (External, Anchor, …) are skipped.
             if link.link_type != LinkType::Internal && !is_doc_link {
                 continue;
             }
 
-            // When the parent page was itself reached via a document link, document links
-            // it discovers must be gated on `follow_document_urls` and `document_url_depth`.
+            // ~keep Document pages can discover more documents only within follow_document_urls/depth policy.
             if is_doc_link && parent_doc_depth > 0 {
                 if !self.config.follow_document_urls {
                     continue;
@@ -1058,7 +968,6 @@ impl CrawlEngine {
 
             let link_url = strip_fragment(&link.url);
 
-            // Check stay_on_domain
             if self.config.stay_on_domain
                 && let Ok(lu) = Url::parse(&link_url)
             {
@@ -1070,18 +979,13 @@ impl CrawlEngine {
 
             let child_depth = depth + 1;
             let dedup_key = normalize_url_for_dedup(&link_url);
-            // Mark seen at candidate push time, not after SSRF validation, so the next
-            // iteration of this loop (and later discover_and_enqueue_links calls running
-            // concurrently) skip URLs that dedup to the same key. Without this,
-            // fragment/query variants of the same target all pass !is_seen() in one
-            // batch and get enqueued.
+            // ~keep Mark seen before SSRF validation so concurrent discovery cannot enqueue dedup-equivalent URLs.
             if !self.frontier.is_seen(&dedup_key).await? {
                 self.frontier.mark_seen(&dedup_key).await?;
                 candidates.push((link_url, is_doc_link, child_depth));
             }
         }
 
-        // SSRF validation with bounded concurrency (16 concurrent DNS lookups)
         const SSRF_VALIDATION_CONCURRENCY: usize = 16;
         let semaphore = Arc::new(Semaphore::new(SSRF_VALIDATION_CONCURRENCY));
         let mut join_set = JoinSet::new();
@@ -1093,7 +997,6 @@ impl CrawlEngine {
 
             join_set.spawn(async move {
                 let _permit = permit.acquire().await.ok();
-                // Validate URL against SSRF policy
                 let url_obj = match url::Url::parse(&link_url) {
                     Ok(u) => u,
                     Err(_) => return Err((link_url.clone(), "invalid URL format".to_string())),
@@ -1106,15 +1009,12 @@ impl CrawlEngine {
             });
         }
 
-        // Consume results and enqueue valid URLs
         while let Some(result) = join_set.join_next().await {
             match result {
                 Ok(Ok((link_url, _dedup_key, is_doc_link, child_depth))) => {
-                    // dedup_key already marked seen at candidate push time; nothing to do here.
                     let child_doc_depth: u32 = if is_doc_link { parent_doc_depth + 1 } else { 0 };
                     let priority = self.strategy.score_url(&link_url, child_depth);
 
-                    // crawl.page.discover — one span per successfully enqueued link.
                     {
                         let link_host = Url::parse(&link_url)
                             .ok()
@@ -1141,7 +1041,6 @@ impl CrawlEngine {
                     self.event_emitter.on_discovered(&link_url, child_depth).await;
                 }
                 Ok(Err((link_url, reason))) => {
-                    // SSRF policy violation — log as warning and skip
                     tracing::warn!(
                         url = %link_url,
                         reason = %reason,
@@ -1149,7 +1048,6 @@ impl CrawlEngine {
                     );
                 }
                 Err(e) => {
-                    // Task join error
                     tracing::error!("error validating link during enqueue: {}", e);
                 }
             }

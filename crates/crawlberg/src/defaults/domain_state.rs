@@ -127,9 +127,6 @@ impl DomainStatePort for EwmaDomainState {
             Tier::Http
         };
 
-        // Confidence: scales with sample count (capped at 50), weighted by
-        // how decisive the EWMA is (distance from 0.5 doubled). Zero samples
-        // already returned Default above, so sample_count >= 1 here.
         let sample_weight = (snapshot.sample_count as f32 / 50.0).min(1.0);
         let decisiveness = snapshot.block_ewma.max(1.0 - snapshot.block_ewma);
         let confidence = Some(sample_weight * decisiveness);
@@ -141,8 +138,7 @@ impl DomainStatePort for EwmaDomainState {
     }
 
     async fn observe(&self, domain: &str, observation: &DomainObservation) {
-        // Permanent errors carry no bot-protection signal — skip them entirely
-        // to avoid deflating the EWMA on dead/unreachable hosts.
+        // ~keep Permanent errors carry no bot-protection signal; keep them out of the EWMA.
         if matches!(observation.outcome, ObservedOutcome::Permanent) {
             return;
         }
@@ -152,13 +148,11 @@ impl DomainStatePort for EwmaDomainState {
             ObservedOutcome::WafBlocked { .. } | ObservedOutcome::Transient
         );
 
-        // Extract vendor from WAF signal, if present.
         let vendor = match &observation.outcome {
             ObservedOutcome::WafBlocked { vendor } => Some(vendor.clone()),
             _ => None,
         };
 
-        // Snapshot current state under a short read — releases the shard lock immediately.
         let prev = self.inner.get(domain).map(|s| s.clone()).unwrap_or(DomainSnapshot {
             block_ewma: 0.0,
             sample_count: 0,
@@ -166,10 +160,8 @@ impl DomainStatePort for EwmaDomainState {
             starting_tier: Tier::Http,
         });
 
-        // Compute next state off-lock. All operations are pure math.
         let next_ewma = self.ewma.update(prev.block_ewma, blocked);
         let next_sample_count = prev.sample_count + 1;
-        // Propagate the vendor into the classifier field if currently None.
         let next_classifier = vendor.or(prev.classifier);
         let next_starting_tier = if self.ewma.should_promote(next_ewma, next_sample_count) {
             Tier::Bypass
@@ -179,10 +171,7 @@ impl DomainStatePort for EwmaDomainState {
             prev.starting_tier
         };
 
-        // Single critical section: write.
-        // Trade-off: last-writer-wins under concurrent writers on the same domain —
-        // a single observation may be lost. The EWMA settles acceptably regardless;
-        // avoiding a shard-level lock across the math is worth the occasional lost sample.
+        // ~keep Last-writer-wins can lose one sample, but avoids holding a shard lock across EWMA math.
         self.inner.insert(
             domain.to_string(),
             DomainSnapshot {
@@ -250,7 +239,6 @@ impl RetryPolicy for LearningRetryPolicy {
 /// - Other errors (5xx, timeout, rate-limited, transient) → `Transient`
 /// - Success (no error) → `Success`
 fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
-    // WAF signal takes priority — it is the most specific classification.
     if let Some(ref signal) = outcome.waf_signal {
         return ObservedOutcome::WafBlocked {
             vendor: signal.vendor.clone(),
@@ -261,8 +249,6 @@ fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
         Some(crate::error::CrawlError::WafBlocked { vendor, .. }) => {
             ObservedOutcome::WafBlocked { vendor: vendor.clone() }
         }
-        // Permanent host-level errors: say nothing about bot protection.
-        // observe() will skip Permanent outcomes — preserves M3 selective-recording semantic.
         Some(
             crate::error::CrawlError::Dns(_)
             | crate::error::CrawlError::Ssl(_)
@@ -277,7 +263,6 @@ fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
             | crate::error::CrawlError::BrowserTimeout(_)
             | crate::error::CrawlError::SsrfPolicyViolation { .. },
         ) => ObservedOutcome::Permanent,
-        // Transient: 5xx, timeouts, rate-limiting, generic.
         Some(
             crate::error::CrawlError::Forbidden(_)
             | crate::error::CrawlError::RateLimited(_)
@@ -355,7 +340,6 @@ mod tests {
         );
         state.observe("example.com", &observation).await;
         let rec = state.recommend("example.com").await;
-        // After one blocked observation the EWMA is above zero.
         assert!(
             rec.confidence.unwrap_or(0.0) > 0.0,
             "confidence should be non-zero after a block"
@@ -508,8 +492,7 @@ mod tests {
             h.await.unwrap();
         }
 
-        // Under last-writer-wins some observations may be lost — that is acceptable.
-        // The invariant: state is consistent, sample_count is in [1, 50].
+        // ~keep Last-writer-wins may lose observations; the invariant is consistent state with sample_count in [1, 50].
         let snapshot = state
             .inner
             .get("contended.example")
@@ -575,8 +558,6 @@ mod tests {
 
         let rec = state.recommend("not a url").await;
         assert_eq!(rec.starting_tier, Tier::Http);
-        // No observations recorded for this domain (the URL failed to parse),
-        // so the backend has no opinion to express.
         assert_eq!(rec.confidence, None);
     }
 }

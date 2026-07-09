@@ -17,20 +17,17 @@ pub fn generate_fit_markdown(markdown: &str) -> String {
     for line in markdown.lines() {
         let trimmed = line.trim();
 
-        // Track code block boundaries
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_code_block = !in_code_block;
             fit_lines.push(trimmed);
             continue;
         }
 
-        // Inside code blocks, keep everything
         if in_code_block {
             fit_lines.push(trimmed);
             continue;
         }
 
-        // Skip empty lines (keep one between paragraphs)
         if trimmed.is_empty() {
             if fit_lines.last().map(|l: &&str| !l.is_empty()).unwrap_or(true) {
                 fit_lines.push("");
@@ -38,19 +35,15 @@ pub fn generate_fit_markdown(markdown: &str) -> String {
             continue;
         }
 
-        // Skip lines that are mostly links (navigation)
         let link_ratio = count_link_chars(trimmed) as f64 / trimmed.len().max(1) as f64;
         if link_ratio > 0.7 && trimmed.len() > 20 {
             continue;
         }
 
-        // Skip very short non-heading lines (breadcrumbs, copyright notices)
-        // Reduced threshold from 15 to 5 characters
         if trimmed.len() < 5 && !trimmed.starts_with('#') {
             continue;
         }
 
-        // Skip common footer/nav patterns
         let lower = trimmed.to_lowercase();
         if is_boilerplate(&lower) {
             continue;
@@ -59,7 +52,6 @@ pub fn generate_fit_markdown(markdown: &str) -> String {
         fit_lines.push(trimmed);
     }
 
-    // Trim trailing empty lines
     while fit_lines.last() == Some(&"") {
         fit_lines.pop();
     }

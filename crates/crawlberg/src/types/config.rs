@@ -478,7 +478,7 @@ impl Default for CrawlConfig {
             follow_document_urls: false,
             document_url_depth: None,
             download_documents: true,
-            document_max_size: Some(50 * 1024 * 1024), // 50 MB
+            document_max_size: Some(50 * 1024 * 1024),
             document_mime_types: Vec::new(),
             warc_output: None,
             browser_profile: None,

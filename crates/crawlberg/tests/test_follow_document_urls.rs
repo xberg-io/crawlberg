@@ -16,17 +16,6 @@ use crawlberg::{CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ---------------------------------------------------------------------------
-// Scenario 1 — follow_document_urls=false (default)
-//
-// Layout:
-//   /index.html  ->  /paper.txt   (LinkType::Document, enqueued, doc_depth=1)
-//   /paper.txt   ->  /page2.html  (Internal link from within document context)
-//
-// Expected: /paper.txt is fetched (it was discovered from HTML).  Discovery
-// does NOT run on /paper.txt (doc_depth=1, follow_document_urls=false), so
-// /page2.html is NEVER crawled.
-// ---------------------------------------------------------------------------
 #[tokio::test]
 async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
     let mock = MockServer::start().await;
@@ -41,8 +30,6 @@ async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
         .mount(&mock)
         .await;
 
-    // The document page contains an internal link — must NOT be followed when
-    // follow_document_urls is false.
     Mock::given(method("GET"))
         .and(path("/paper.txt"))
         .respond_with(
@@ -90,17 +77,6 @@ async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Scenario 2 — follow_document_urls=true, document_url_depth=None, max_depth=3
-//
-// Layout (chain via .txt links):
-//   /index.html  ->  /doc1.txt  (doc_depth=1, depth=1)
-//   /doc1.txt    ->  /doc2.txt  (doc_depth=2, depth=2)
-//   /doc2.txt    ->  /doc3.txt  (doc_depth=3, depth=3)
-//
-// Expected: all three documents are crawled (max_depth=3 permits depth=3,
-// no document_url_depth cap).
-// ---------------------------------------------------------------------------
 #[tokio::test]
 async fn follow_document_urls_true_no_depth_cap_traverses_until_max_depth() {
     let mock = MockServer::start().await;
@@ -171,15 +147,6 @@ async fn follow_document_urls_true_no_depth_cap_traverses_until_max_depth() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scenario 3 — follow_document_urls=true, document_url_depth=Some(1), max_depth=5
-//
-// Layout:
-//   /index.html  ->  /doc1.txt  (doc_depth=1, allowed)
-//   /doc1.txt    ->  /doc2.txt  (doc_depth=2, BLOCKED by document_url_depth=Some(1))
-//
-// Expected: /doc1.txt is crawled; /doc2.txt is NOT, even though max_depth=5 permits it.
-// ---------------------------------------------------------------------------
 #[tokio::test]
 async fn follow_document_urls_document_depth_cap_stops_at_configured_limit() {
     let mock = MockServer::start().await;
@@ -204,7 +171,6 @@ async fn follow_document_urls_document_depth_cap_stops_at_configured_limit() {
         .mount(&mock)
         .await;
 
-    // This endpoint must NOT be reached.
     Mock::given(method("GET"))
         .and(path("/doc2.txt"))
         .respond_with(

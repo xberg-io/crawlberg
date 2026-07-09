@@ -50,7 +50,6 @@ fn build_browser_config(
 /// Merge a JSON config string (or @file.json reference) into a CrawlConfig.
 /// JSON values override defaults but do not override CLI flags that were explicitly set.
 fn merge_json_config(config: &mut CrawlConfig, config_str: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Handle @file.json syntax
     let json_text = if let Some(path) = config_str.strip_prefix('@') {
         std::fs::read_to_string(path)?
     } else {
@@ -59,12 +58,8 @@ fn merge_json_config(config: &mut CrawlConfig, config_str: &str) -> Result<(), B
 
     let json: serde_json::Value = serde_json::from_str(&json_text)?;
 
-    // Deserialize the JSON into a temporary CrawlConfig, then merge.
-    // This validates the JSON structure against the config schema.
     let partial: CrawlConfig = serde_json::from_value(json)?;
 
-    // Merge: apply non-default fields from partial into config.
-    // For simplicity, use serde_json to merge objects.
     let mut config_json = serde_json::to_value(config.clone())?;
     let partial_json = serde_json::to_value(partial)?;
 
@@ -417,7 +412,6 @@ async fn main() {
                 ..Default::default()
             };
 
-            // Apply JSON config if provided.
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
@@ -482,7 +476,6 @@ async fn main() {
                 ..Default::default()
             };
 
-            // Apply JSON config if provided.
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
@@ -544,7 +537,6 @@ async fn main() {
                 ..Default::default()
             };
 
-            // Apply JSON config if provided.
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
@@ -588,7 +580,6 @@ async fn main() {
                 ..Default::default()
             };
 
-            // Apply JSON config if provided.
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
@@ -610,8 +601,6 @@ async fn main() {
                     if format == "markdown" {
                         println!("{}", result.final_html);
                     } else {
-                        // Wrap under `interaction` to match the assertion path used by
-                        // fixture-driven brew tests (`interaction.action_results[...]`).
                         let wrapped = serde_json::json!({ "interaction": result });
                         println!(
                             "{}",
@@ -746,8 +735,6 @@ async fn main() {
             let handle = create_engine(Some(config)).expect("failed to create crawl engine");
             match scrape(&handle, &url).await {
                 Ok(result) => {
-                    // Mirror the MCP `download` tool output: prefer the downloaded
-                    // document metadata, falling back to page metadata for HTML.
                     let output = if let Some(ref doc) = result.downloaded_document {
                         serde_json::json!({
                             "url": doc.url,

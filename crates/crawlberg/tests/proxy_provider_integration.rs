@@ -56,9 +56,6 @@ async fn engine_invokes_provider_per_fetch() {
         .mount(&mock)
         .await;
 
-    // Empty pool → provider returns None → direct connection. The point is to
-    // observe the engine actually calling the provider per request without
-    // wiring up an upstream proxy fixture.
     let provider = Arc::new(CountingProvider {
         inner: StaticProxyProvider::empty(),
         calls: AtomicUsize::new(0),

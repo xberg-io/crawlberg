@@ -12,13 +12,8 @@ fn engine_with_config(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
 }
 
 fn default_engine() -> crawlberg::CrawlEngineHandle {
-    // Allow loopback so MockServer (127.0.0.1) is reachable under the default SSRF policy.
     engine_with_config(CrawlConfig::builder().allow_private_networks(true).build())
 }
-
-// ---------------------------------------------------------------------------
-// HTTP 3xx tests
-// ---------------------------------------------------------------------------
 
 /// scrape() on a 302-redirecting URL must transparently follow to the final
 /// page and return its content with status 200.
@@ -267,7 +262,6 @@ async fn scrape_final_url_matches_request_url_when_no_redirect() {
 async fn scrape_propagates_network_error_through_redirect() {
     let mock = MockServer::start().await;
 
-    // Redirect to a port that refuses connections.
     Mock::given(method("GET"))
         .and(path("/"))
         .respond_with(
@@ -278,8 +272,6 @@ async fn scrape_propagates_network_error_through_redirect() {
         .mount(&mock)
         .await;
 
-    // allow_private_networks so the SSRF check doesn't fire before we can observe the
-    // connection refusal from port 1 (which is the actual network error under test).
     let config = CrawlConfig::builder().allow_private_networks(true).build();
     let config = CrawlConfig {
         request_timeout: std::time::Duration::from_millis(500),

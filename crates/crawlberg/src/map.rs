@@ -28,7 +28,6 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
     let parsed_url = Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
 
-    // Try robots.txt for sitemap directives
     if config.respect_robots_txt {
         let robots = robots_url(&parsed_url);
         if let Ok(robots_resp) = http_fetch(&robots, config, &std::collections::HashMap::new(), &client).await {
@@ -48,12 +47,10 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
         }
     }
 
-    // Try /sitemap.xml as fallback
     let sitemap_url = format!("{}://{}/sitemap.xml", parsed_url.scheme(), parsed_url.authority());
     if let Ok(sitemap_resp) = http_fetch(&sitemap_url, config, &std::collections::HashMap::new(), &client).await
         && (sitemap_resp.body.contains("<urlset") || sitemap_resp.body.contains("<sitemapindex"))
     {
-        // Use the already-fetched response to avoid a redundant second fetch
         let urls = process_sitemap_response(
             &sitemap_url,
             &sitemap_resp.body,
@@ -68,12 +65,10 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
         }
     }
 
-    // Fetch the page directly and try to parse as sitemap or extract links
     let resp = fetch_with_retry(url, config, &std::collections::HashMap::new(), &client).await?;
 
     let is_xml = resp.content_type.contains("xml") || resp.body.trim_start().starts_with("<?xml");
 
-    // Check for gzip content (by header, URL extension, or magic bytes)
     let is_gzip = resp.content_type.contains("gzip")
         || resp.content_type.contains("x-gzip")
         || url.to_lowercase().ends_with(".gz")
@@ -87,18 +82,15 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
 
     if is_xml {
         if is_sitemap_index(&resp.body) {
-            // It's a sitemap index -- delegate
             let urls = fetch_sitemap_tree(url, config, &client).await;
             return filter_map_result(urls, config);
         }
-        // Try as regular sitemap
         let urls = parse_sitemap_xml(&resp.body);
         if !urls.is_empty() {
             return filter_map_result(urls, config);
         }
     }
 
-    // Fall back to link extraction from HTML
     if is_html_content(&resp.content_type, &resp.body)
         && let Ok(doc) = tl::parse(&resp.body, ParserOptions::default())
     {
@@ -139,7 +131,6 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
 ///
 /// Returns an error if any `exclude_paths` pattern is not a valid regex.
 pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-    // Apply exclude paths with pre-compiled regexes
     if !config.exclude_paths.is_empty() {
         let mut regexes = Vec::with_capacity(config.exclude_paths.len());
         for pat in &config.exclude_paths {
@@ -157,13 +148,11 @@ pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, config: &CrawlConfig)
         });
     }
 
-    // Apply search filter
     if let Some(ref search) = config.map_search {
         let lower = search.to_lowercase();
         urls.retain(|su| su.url.to_lowercase().contains(&lower));
     }
 
-    // Apply limit
     if let Some(limit) = config.map_limit {
         urls.truncate(limit);
     }

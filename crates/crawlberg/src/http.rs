@@ -55,8 +55,6 @@ pub struct HttpResponse {
     /// On wasm targets the browser's `fetch` follows redirects transparently
     /// and `reqwest::Response::url()` returns the post-redirect URL — which is
     /// what the wasm scrape path needs to populate `ScrapeResult::final_url`.
-    // `dead_code` fires on native because the wasm scrape path (the only
-    // consumer) is gated on `#[cfg(target_arch = "wasm32")]`.
     #[allow(dead_code)]
     pub final_url: String,
 }
@@ -74,7 +72,6 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
-    // Parse and validate the initial URL against SSRF policy
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::SsrfPolicyViolation {
         url: url.to_string(),
         reason: format!("invalid URL: {e}"),
@@ -87,7 +84,6 @@ pub(crate) async fn http_fetch(
             reason: e.to_string(),
         })?;
 
-    // Manual redirect loop with per-hop SSRF validation
     let mut current_url = initial_url.clone();
     let mut final_url_str: String;
     let mut redirects_followed = 0u8;
@@ -95,14 +91,12 @@ pub(crate) async fn http_fetch(
     loop {
         let mut req = client.get(current_url.to_string());
 
-        // Set user-agent
         if let Some(ref ua) = config.user_agent {
             req = req.header(USER_AGENT, ua.as_str());
         } else {
             req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
         }
 
-        // Auth
         match config.auth {
             Some(AuthConfig::Basic {
                 ref username,
@@ -119,12 +113,10 @@ pub(crate) async fn http_fetch(
             None => {}
         }
 
-        // Custom headers
         for (k, v) in &config.custom_headers {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        // Apply middleware-provided headers (override config headers)
         for (k, v) in extra_headers {
             req = req.header(k.as_str(), v.as_str());
         }
@@ -134,7 +126,6 @@ pub(crate) async fn http_fetch(
         let status = resp.status().as_u16();
         final_url_str = resp.url().to_string();
 
-        // Get content type from the last value (wiremock appends headers)
         let content_type = resp
             .headers()
             .get_all(CONTENT_TYPE)
@@ -146,7 +137,6 @@ pub(crate) async fn http_fetch(
 
         let headers = resp.headers().clone();
 
-        // Handle redirects: parse Location header if 3xx
         if (300..400).contains(&status) {
             let location_header = headers
                 .get(reqwest::header::LOCATION)
@@ -154,11 +144,9 @@ pub(crate) async fn http_fetch(
                 .map(str::to_string);
 
             if let Some(location) = location_header {
-                // Parse the redirect target relative to the current URL
                 let next_url = match current_url.join(&location) {
                     Ok(u) => u,
                     Err(_) => {
-                        // If relative URL join fails, break and return the redirect response
                         let body_bytes_vec = resp.bytes().await.unwrap_or_default().to_vec();
                         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
                         let mut headers_map: std::collections::HashMap<String, Vec<String>> =
@@ -183,7 +171,6 @@ pub(crate) async fn http_fetch(
                     }
                 };
 
-                // Validate the redirect target against SSRF policy
                 if let Err(e) = validate_url(&next_url, &config.ssrf).await {
                     return Err(CrawlError::SsrfPolicyViolation {
                         url: next_url.to_string(),
@@ -191,7 +178,6 @@ pub(crate) async fn http_fetch(
                     });
                 }
 
-                // Check redirect limit
                 redirects_followed += 1;
                 if redirects_followed > config.ssrf.max_redirects {
                     return Err(CrawlError::SsrfPolicyViolation {
@@ -205,8 +191,6 @@ pub(crate) async fn http_fetch(
             }
         }
 
-        // Not a redirect or no Location header: process the response body and return
-        // Check for error status codes
         match status {
             401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
             403 => {
@@ -233,22 +217,12 @@ pub(crate) async fn http_fetch(
             _ => {}
         }
 
-        // 2xx interstitial detection (header-only): modern Cloudflare /
-        // DataDome / PerimeterX serve their JS challenge with 200 OK, not 403.
-        // Without this check the challenge page body is fed downstream as if
-        // it were real content.
-        //
-        // `Rules::classify` runs a header-first short-circuit (Pass 1) over all
-        // header-only TOML fingerprints before the AC body scan, so passing a
-        // zero-length body here is sufficient to trigger any header-stamp match
-        // (`x-datadome`, `x-amzn-waf-action`, `x-px-*`, `x-sucuri-id`).  The
-        // TOML corpus is the single source of truth — no hardcoded header list.
+        // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
+        // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
         if (200..300).contains(&status) {
             let headers_only_response = build_partial_response(status, "", &headers);
             let classifier = TomlClassifier::builtin();
             if let Ok(Some(signal)) = classifier.classify(&headers_only_response) {
-                // We need the body to identify the vendor precisely; read it now
-                // (the body-fingerprint check below would re-read anyway).
                 let body = resp.text().await.unwrap_or_default();
                 let partial_response = build_partial_response(status, &body, &headers);
                 let vendor = classifier
@@ -264,15 +238,12 @@ pub(crate) async fn http_fetch(
             }
         }
 
-        // Check content-length mismatch (data_loss)
         let expected_len = headers
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<usize>().ok());
 
         let body_bytes = resp.bytes().await.map_err(|e| {
-            // Walk the error source chain to detect body/data-loss errors that
-            // reqwest wraps in generic errors.
             let chain = error_chain_string(&e);
             let is_body_error = chain.contains("content-length")
                 || chain.contains("truncate")
@@ -304,11 +275,7 @@ pub(crate) async fn http_fetch(
         let body_bytes_vec = body_bytes.to_vec();
         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
 
-        // 2xx interstitial detection (body-fingerprint): if a 2xx response has
-        // a small body containing a high-confidence vendor JS fingerprint,
-        // it's almost certainly a challenge page rather than real content.
-        // Real content pages are overwhelmingly larger than CHALLENGE_BODY_LIMIT
-        // and don't contain these specific markers in a script src or inline.
+        // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
         if (200..300).contains(&status) {
             let partial_response = build_partial_response_with_bytes(status, &body_bytes_vec, &body, &headers);
             let classifier = TomlClassifier::builtin();
@@ -320,7 +287,6 @@ pub(crate) async fn http_fetch(
             }
         }
 
-        // Extract headers into HashMap<String, Vec<String>>
         let mut headers_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
         for (name, value) in headers.iter() {
             if let Ok(v) = value.to_str() {
@@ -360,9 +326,7 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
         builder = builder.cookie_store(true);
     }
 
-    // Proxy support (not available on wasm). A `proxy_provider` takes precedence
-    // over the static `proxy` value: reqwest calls into the provider per-request
-    // via `Proxy::custom`, enabling per-host rotation.
+    // ~keep `proxy_provider` takes precedence over static proxy so reqwest can rotate per request.
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(provider) = config.proxy_provider.clone() {
         let proxy = reqwest::Proxy::custom(move |url| {
@@ -408,14 +372,12 @@ pub(crate) async fn fetch_with_retry(
         match http_fetch(url, config, extra_headers, client).await {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                // Check if we should retry this error
                 let should_retry = match &e {
                     CrawlError::ServerError(_) => retry_codes.contains(&503) || retry_codes.contains(&500),
                     CrawlError::RateLimited(_) => retry_codes.contains(&429),
                     _ => false,
                 };
                 if should_retry && attempt < retries {
-                    // Exponential backoff
                     let delay = Duration::from_millis(100 * (1 << attempt));
                     tokio::time::sleep(delay).await;
                     last_err = Some(e);
@@ -556,7 +518,6 @@ pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String,
     for (k, values) in headers {
         headers_map.insert(k.to_lowercase(), values.clone());
     }
-    // Inject the server header so the classifier can match server-based fingerprints.
     if !server.is_empty() {
         headers_map
             .entry("server".to_string())
@@ -611,7 +572,6 @@ mod tests {
 
         let url = format!("{}/page", mock.uri());
         let mut config = CrawlConfig::default();
-        // Allow loopback for this test (MockServer runs on 127.0.0.1)
         config.ssrf.deny_private = false;
         let client = build_client(&config).expect("client must build");
         let resp = http_fetch(&url, &config, &std::collections::HashMap::new(), &client)

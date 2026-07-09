@@ -28,7 +28,6 @@ pub(crate) async fn scrape_from_crawl_response(
     let client = build_client(config)?;
     let auth_header_sent = config.auth.is_some();
 
-    // Check robots.txt
     let mut is_allowed = true;
     let mut crawl_delay = None;
     if config.respect_robots_txt {
@@ -49,10 +48,6 @@ pub(crate) async fn scrape_from_crawl_response(
 
     let detected_charset = detect_charset(&content_type, &body);
 
-    // Re-decode from raw bytes when a non-UTF-8 charset is detected.
-    // `resp.body` was produced via `String::from_utf8_lossy`, which garbles
-    // Shift_JIS, EUC-JP, and other non-UTF-8 encodings. Re-decode from the
-    // preserved raw bytes using encoding_rs to produce correct text.
     if let Some(ref charset) = detected_charset {
         let charset_lower = charset.as_str();
         if charset_lower != "utf-8"
@@ -67,7 +62,6 @@ pub(crate) async fn scrape_from_crawl_response(
     }
     let is_pdf = is_pdf_content(&content_type, &body);
 
-    // Handle max body size
     let mut body_size = body.len();
     if let Some(max_size) = config.max_body_size
         && body.len() > max_size
@@ -76,7 +70,6 @@ pub(crate) async fn scrape_from_crawl_response(
         body_size = max_size;
     }
 
-    // Check for X-Robots-Tag
     let x_robots_tag = resp.headers.get("x-robots-tag").and_then(|v| v.first().cloned());
 
     let mut noindex_detected = false;
@@ -94,8 +87,6 @@ pub(crate) async fn scrape_from_crawl_response(
 
     let was_skipped = is_binary_content_type(&content_type) || is_binary_url(parsed_url.as_str()) || is_pdf;
 
-    // Populate downloaded_document when download_documents is enabled and the
-    // response is a non-HTML document (PDF, DOCX, image, …).
     let downloaded_document = crate::document::build_downloaded_document(
         url,
         &parsed_url,
@@ -138,9 +129,6 @@ pub(crate) async fn scrape_from_crawl_response(
         Vec::new()
     };
 
-    // Merge CrawlConfig.remove_tags into ContentConfig.exclude_selectors for h2m.
-    // This replaces the old apply_remove_tags() pre-processing step — h2m now
-    // handles all element exclusion during its DOM walk.
     let content_config = if config.remove_tags.is_empty() {
         std::borrow::Cow::Borrowed(&config.content)
     } else {

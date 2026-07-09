@@ -14,10 +14,6 @@ use crawlberg::{CrawlConfig, CrawlError, HostMatcher, SsrfError, SsrfPolicy, cre
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn engine(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     create_engine(Some(config)).expect("engine build must not fail")
 }
@@ -30,10 +26,6 @@ fn url(s: &str) -> url::Url {
     s.parse().expect("valid URL")
 }
 
-// ---------------------------------------------------------------------------
-// Test 1: loopback refused by default policy
-// ---------------------------------------------------------------------------
-
 /// validate_url must refuse loopback (127.x.x.x) URLs under the default policy.
 ///
 /// wiremock starts on 127.0.0.1 so the URL is realistic, but no connection
@@ -41,7 +33,6 @@ fn url(s: &str) -> url::Url {
 #[tokio::test]
 async fn crawl_refuses_loopback_by_default() {
     let mock = MockServer::start().await;
-    // mock.uri() is http://127.0.0.1:<port>
     let target = url(&mock.uri());
     let err = validate_url(&target, &default_policy())
         .await
@@ -58,10 +49,6 @@ async fn crawl_refuses_loopback_by_default() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Test 2: metadata IP refused (no server needed)
-// ---------------------------------------------------------------------------
-
 /// validate_url must reject the EC2 metadata IP 169.254.169.254.
 ///
 /// The literal IP triggers the fast path in validate_url — no DNS involved.
@@ -76,10 +63,6 @@ async fn scrape_refuses_metadata_ip() {
         "expected DeniedByPolicy, got {err:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test 3: private IP refused (10.0.0.0/8)
-// ---------------------------------------------------------------------------
 
 /// validate_url must reject 10.0.0.1 with reason "private_network".
 #[tokio::test]
@@ -98,10 +81,6 @@ async fn crawl_refuses_private_ip() {
         other => panic!("expected DeniedByPolicy(private_network), got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Test 4: allow_private_networks(true) permits loopback in scrape()
-// ---------------------------------------------------------------------------
 
 /// When allow_private_networks(true) is set, scrape() must succeed against a
 /// server listening on 127.0.0.1 (the wiremock default bind address).
@@ -129,10 +108,6 @@ async fn crawl_succeeds_when_allow_private_set() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 5: CIDR allowlist permits loopback in validate_url
-// ---------------------------------------------------------------------------
-
 /// When 127.0.0.0/8 is on the SSRF allowlist, validate_url must permit a
 /// 127.x.x.x address even though deny_private remains true.
 #[tokio::test]
@@ -157,10 +132,6 @@ async fn crawl_succeeds_with_cidr_allowlist() {
         .expect("127.0.0.0/8 on allowlist must permit loopback");
 }
 
-// ---------------------------------------------------------------------------
-// Test 6: env-var bypass CRAWLBERG_ALLOW_PRIVATE_NETWORK=1
-// ---------------------------------------------------------------------------
-
 /// When CRAWLBERG_ALLOW_PRIVATE_NETWORK=1 is set, SsrfPolicy::from_env()
 /// must produce a policy that permits loopback IPs.
 ///
@@ -181,9 +152,7 @@ async fn crawl_succeeds_when_env_bypass_set() {
         .mount(&mock)
         .await;
 
-    // SAFETY: #[serial] serialises all tests in this process that carry the
-    // attribute, so no concurrent thread reads or writes this environment
-    // variable while this block executes.
+    // ~keep SAFETY: #[serial] prevents concurrent environment access in this test process.
     unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1") };
 
     let ssrf = SsrfPolicy::from_env();
@@ -224,7 +193,7 @@ async fn engine_env_bypass_overrides_explicit_deny_private() {
         .mount(&mock)
         .await;
 
-    // SAFETY: #[serial] serialises env-mutating tests in this binary.
+    // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test binary.
     unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
 
     let config = CrawlConfig {
@@ -247,10 +216,6 @@ async fn engine_env_bypass_overrides_explicit_deny_private() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 7: redirect target outside CIDR allowlist is refused
-// ---------------------------------------------------------------------------
-
 /// A redirect from an allowlisted range (127.0.0.0/8) to 10.0.0.1 (a
 /// different /8 not on the allowlist) must be refused.
 ///
@@ -271,16 +236,13 @@ async fn redirect_to_private_outside_allowlist_refused() {
         .mount(&mock)
         .await;
 
-    // Only the loopback /8 is on the allowlist — first hop is permitted.
     let mut policy = SsrfPolicy::default();
     policy.allowlist.push(HostMatcher::Cidr("127.0.0.0/8".to_string()));
 
-    // First hop: permitted by CIDR allowlist.
     validate_url(&url(&mock.uri()), &policy)
         .await
         .expect("first hop (127.0.0.1) must pass when 127.0.0.0/8 is allowlisted");
 
-    // Redirect target: NOT in the CIDR allowlist, deny_private=true → denied.
     let redirect_target = url("http://10.0.0.1/target");
     let err = validate_url(&redirect_target, &policy)
         .await
@@ -296,10 +258,6 @@ async fn redirect_to_private_outside_allowlist_refused() {
         other => panic!("expected DeniedByPolicy(private_network), got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Test 8: disallowed scheme `file://` refused
-// ---------------------------------------------------------------------------
 
 /// validate_url must refuse `file:///etc/passwd` with DisallowedScheme("file").
 #[tokio::test]
@@ -319,10 +277,6 @@ async fn disallowed_scheme_file_refused() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Test 9: disallowed scheme `gopher://` refused
-// ---------------------------------------------------------------------------
-
 /// validate_url must refuse `gopher://example.com/` with DisallowedScheme("gopher").
 #[tokio::test]
 async fn disallowed_scheme_gopher_refused() {
@@ -340,10 +294,6 @@ async fn disallowed_scheme_gopher_refused() {
         other => panic!("expected DisallowedScheme, got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Test 10 (regression): empty scheme_allowlist normalized to {http, https} by builder
-// ---------------------------------------------------------------------------
 
 /// Regression test: when a binding constructs `SsrfPolicy` via `Default::default()`
 /// in generated FFI glue and does not set `scheme_allowlist` (because the field is
@@ -370,12 +320,11 @@ async fn engine_normalizes_empty_scheme_allowlist() {
         .mount(&mock)
         .await;
 
-    // Simulate the binding construction path: ssrf policy with empty scheme_allowlist.
     let mut ssrf = SsrfPolicy {
-        deny_private: false, // allow loopback so only scheme checking is exercised
+        deny_private: false,
         ..SsrfPolicy::default()
     };
-    ssrf.scheme_allowlist.clear(); // explicitly empty — mirrors Default::default() in FFI glue
+    ssrf.scheme_allowlist.clear();
     assert!(
         ssrf.scheme_allowlist.is_empty(),
         "precondition: scheme_allowlist must be empty before build"
@@ -386,8 +335,6 @@ async fn engine_normalizes_empty_scheme_allowlist() {
         ..CrawlConfig::default()
     };
 
-    // create_engine calls CrawlEngineBuilder::build, which must normalize the
-    // empty allowlist to {http, https}.
     let eng = create_engine(Some(config)).expect("engine build must not fail");
     let result = scrape(&eng, &mock.uri()).await;
 
@@ -397,10 +344,6 @@ async fn engine_normalizes_empty_scheme_allowlist() {
         result.err()
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test 11: too-many-redirects check in http_fetch via scrape()
-// ---------------------------------------------------------------------------
 
 /// When a redirect chain cycles and the ssrf.max_redirects counter is
 /// exhausted inside http_fetch, scrape() must return
@@ -423,7 +366,6 @@ async fn engine_normalizes_empty_scheme_allowlist() {
 async fn too_many_redirects_refused() {
     let mock = MockServer::start().await;
 
-    // /r1 → /r2 → /r1 → … an infinite cycle
     Mock::given(method("GET"))
         .and(path("/r1"))
         .respond_with(
@@ -444,8 +386,6 @@ async fn too_many_redirects_refused() {
         .mount(&mock)
         .await;
 
-    // allow_private_networks so loopback hops are not blocked by SSRF before
-    // the redirect counter fires; ssrf.max_redirects = 1 so the cycle ends fast.
     let base = CrawlConfig::builder().allow_private_networks(true).build();
     let mut ssrf = base.ssrf.clone();
     ssrf.max_redirects = 1;
@@ -454,12 +394,6 @@ async fn too_many_redirects_refused() {
     let url_str = format!("{}/r1", mock.uri());
     let result = scrape(&engine(config), &url_str).await;
 
-    // The scrape() path follows redirects through follow_redirects (which uses
-    // http_fetch internally).  A cyclic chain that exceeds ssrf.max_redirects
-    // produces CrawlError::SsrfPolicyViolation { reason: "too many redirects" }.
-    // If the engine's redirect handling stops the cycle before the SSRF counter
-    // fires (e.g. cycle dedup), the result may be Ok(page_with_302) — in that
-    // case we assert the error is NOT a panic and accept the cycle-detection path.
     match result {
         Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
             assert!(
@@ -467,9 +401,6 @@ async fn too_many_redirects_refused() {
                 "SsrfPolicyViolation reason must contain 'too many redirects', got: '{reason}'"
             );
         }
-        // Cycle was detected before the SSRF counter fired: the engine surfaced
-        // the last 302 as a soft result rather than an error.  This is also
-        // acceptable — the important thing is no panic or infinite loop.
         Ok(ref page) if page.status_code == 302 => {}
         other => {
             panic!("expected SsrfPolicyViolation(too many redirects) or Ok(302), got: {other:?}");

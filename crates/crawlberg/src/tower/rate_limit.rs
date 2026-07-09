@@ -57,19 +57,15 @@ where
         let domain = req.domain().unwrap_or_default();
         let rate_limiter = self.rate_limiter.clone();
         let mut inner = self.inner.clone();
-        // Swap to preserve readiness (standard Tower pattern)
         std::mem::swap(&mut self.inner, &mut inner);
 
         Box::pin(async move {
-            // Acquire rate limit permit
             if !domain.is_empty() {
                 rate_limiter.acquire(&domain).await?;
             }
 
-            // Forward to inner service
             let resp = inner.call(req).await?;
 
-            // Record response for adaptive backoff
             if !domain.is_empty() {
                 rate_limiter.record_response(&domain, resp.status).await?;
             }

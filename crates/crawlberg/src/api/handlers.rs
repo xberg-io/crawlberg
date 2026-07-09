@@ -22,10 +22,6 @@ use super::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Health / version
-// ---------------------------------------------------------------------------
-
 /// `GET /health`
 #[utoipa::path(
     get,
@@ -57,10 +53,6 @@ pub async fn version_handler() -> Json<VersionResponse> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// URL validation
-// ---------------------------------------------------------------------------
-
 /// Validate that a URL is non-empty, uses an allowed scheme, and is within length limits.
 fn validate_url(url: &str) -> Result<(), ApiError> {
     if url.is_empty() {
@@ -74,10 +66,6 @@ fn validate_url(url: &str) -> Result<(), ApiError> {
     }
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Scrape (synchronous)
-// ---------------------------------------------------------------------------
 
 /// `POST /v1/scrape`
 #[utoipa::path(
@@ -103,10 +91,6 @@ pub async fn scrape_handler(
     Ok(Json(ApiResponse::ok(value)))
 }
 
-// ---------------------------------------------------------------------------
-// Crawl (asynchronous)
-// ---------------------------------------------------------------------------
-
 /// `POST /v1/crawl`
 #[utoipa::path(
     post,
@@ -129,7 +113,6 @@ pub async fn crawl_handler(
     let engine = state.engine.clone();
     let url = req.url.clone();
 
-    // Apply request-specific config overrides.
     let mut config = engine.config.clone();
     if let Some(depth) = req.max_depth {
         config.max_depth = Some(depth);
@@ -147,7 +130,6 @@ pub async fn crawl_handler(
         config.exclude_paths = excludes.clone();
     }
 
-    // Build a new engine with the overridden config.
     let crawl_engine = rebuild_engine_with_config(&engine, config)?;
 
     let created_at = std::time::Instant::now();
@@ -247,10 +229,6 @@ pub async fn crawl_cancel_handler(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Map (synchronous)
-// ---------------------------------------------------------------------------
-
 /// `POST /v1/map`
 #[utoipa::path(
     post,
@@ -271,13 +249,11 @@ pub async fn map_handler(
 
     let mut result = state.engine.map(&req.url).await?;
 
-    // Apply optional search filter.
     if let Some(ref search) = req.search {
         let term = search.to_lowercase();
         result.urls.retain(|u| u.url.to_lowercase().contains(&term));
     }
 
-    // Apply optional limit.
     if let Some(limit) = req.limit {
         result.urls.truncate(limit);
     }
@@ -286,10 +262,6 @@ pub async fn map_handler(
 
     Ok(Json(ApiResponse::ok(value)))
 }
-
-// ---------------------------------------------------------------------------
-// Batch scrape (asynchronous)
-// ---------------------------------------------------------------------------
 
 /// `POST /v1/batch/scrape`
 #[utoipa::path(
@@ -379,10 +351,6 @@ pub async fn batch_status_handler(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Download (synchronous)
-// ---------------------------------------------------------------------------
-
 /// `POST /v1/download`
 #[utoipa::path(
     post,
@@ -401,17 +369,12 @@ pub async fn download_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    // Use the scrape pipeline which already handles document downloads.
     let result = state.engine.scrape(&req.url).await?;
 
     let value = serde_json::to_value(&result).map_err(|e| ApiError::internal(format!("serialization error: {e}")))?;
 
     Ok(Json(ApiResponse::ok(value)))
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Convert a [`JobState`] into a [`JobStatusResponse`].
 fn job_state_to_response(state: &JobState) -> JobStatusResponse {
@@ -491,8 +454,6 @@ fn rebuild_engine_with_config(
     _engine: &crate::engine::CrawlEngine,
     config: CrawlConfig,
 ) -> Result<crate::engine::CrawlEngine, ApiError> {
-    // The engine's trait objects are behind Arc, so cloning is cheap.
-    // We reconstruct via the builder to honour config validation.
     crate::engine::CrawlEngine::builder()
         .config(config)
         .build()

@@ -94,7 +94,6 @@ impl BrowserSessionPool {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
         let entry = sessions.remove(key)?;
-        // Refresh: update last_used so it won't be evicted immediately.
         Some(entry.page)
     }
 
@@ -104,7 +103,6 @@ impl BrowserSessionPool {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
 
-        // Cap at max_sessions — evict the oldest if over limit.
         if sessions.len() >= self.max_sessions
             && let Some((k, _)) = sessions
                 .iter()
@@ -138,7 +136,6 @@ impl BrowserSessionPool {
     /// in closing individual pages are silently ignored.
     pub async fn shutdown(&self) {
         let mut sessions = self.sessions.lock().await;
-        // Close all pages asynchronously without blocking.
         for (_, session) in sessions.drain() {
             tokio::spawn(async move {
                 let _ = session.page.close().await;
@@ -170,30 +167,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_and_acquire_same_key() {
-        // Note: This test doesn't actually create a real Page because
-        // chromiumoxide::Page is hard to mock. We test the logic path
-        // with a minimal integration. In real usage, the pool holds actual Pages.
         let pool = BrowserSessionPool::new();
         let _key = SessionKey {
             domain: "example.com".to_string(),
             proxy: None,
         };
 
-        // After inserting, size should be 1.
-        assert_eq!(pool.size().await, 0); // empty at start
-        // (We can't test acquire/insert without a real Page, so we verify the
-        // size tracking and eviction logic via other tests.)
+        assert_eq!(pool.size().await, 0);
     }
 
     #[tokio::test]
     async fn test_evict_expired_sessions() {
         let pool = BrowserSessionPool::with_config(Duration::from_millis(10), 100);
-        // Sleep longer than the timeout.
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        // The pool should evict expired sessions on the next operation.
-        // Without inserting a real Page, we just verify that the eviction
-        // logic runs without panicking.
         let _ = pool.size().await;
     }
 

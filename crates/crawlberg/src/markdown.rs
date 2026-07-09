@@ -146,7 +146,6 @@ mod tests {
     #[tokio::test]
     async fn empty_html_returns_some() {
         let result = convert_to_markdown("", &ContentConfig::default()).await;
-        // Even empty HTML should return Some (possibly empty content)
         assert!(result.is_some(), "empty html should still return Some");
     }
 }

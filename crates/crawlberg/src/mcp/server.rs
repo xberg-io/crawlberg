@@ -75,9 +75,7 @@ impl CrawlbergMcp {
         }
     }
 
-    // Engine is built per-request because each tool call may have different config
-    // overrides (max_depth, max_pages, etc.). For shared state across calls,
-    // consider caching engines by config hash in future iterations.
+    // ~keep Build engines per request because each tool call can apply different crawl config overrides.
 
     /// Build a CrawlEngine from the stored config with parameter overrides applied.
     fn build_engine(&self, config: CrawlConfig) -> Result<crate::engine::CrawlEngine, rmcp::ErrorData> {
@@ -383,7 +381,6 @@ impl CrawlbergMcp {
             })
             .to_string()
         } else {
-            // Fell back to HTML scrape — return the page metadata instead
             serde_json::json!({
                 "url": params.url,
                 "content_type": result.content_type,
@@ -586,7 +583,6 @@ mod tests {
         let tools = CrawlbergMcp::new().tool_router.list_all();
         let by_name: HashMap<&str, &Tool> = tools.iter().map(|t| (t.name.as_ref(), t)).collect();
 
-        // Expected (read_only_hint, destructive_hint, open_world_hint) per tool.
         let expected: &[ToolHintExpectation] = &[
             ("scrape", Some(true), None, Some(true)),
             ("crawl", Some(true), None, Some(true)),

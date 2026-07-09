@@ -66,13 +66,11 @@ where
         let span = tracing::info_span!(
             "crawl.page.fetch",
             otel.kind = "client",
-            // W3C HTTP semconv constants — no string literals.
             { HTTP_REQUEST_METHOD } = "GET",
             { URL_FULL } = %url,
             { SERVER_ADDRESS } = %host,
             { HTTP_RESPONSE_STATUS_CODE } = tracing::field::Empty,
             { HTTP_RESPONSE_BODY_SIZE } = tracing::field::Empty,
-            // crawl.tier is recorded by the engine in run_tier before the tower call.
             { CRAWL_TIER } = tracing::field::Empty,
         );
 
@@ -81,7 +79,6 @@ where
 
         Box::pin(
             async move {
-                // Record crawl.tier early so it appears even if the fetch errors out.
                 if let Some(t) = tier {
                     tracing::Span::current().record(CRAWL_TIER, t);
                 }

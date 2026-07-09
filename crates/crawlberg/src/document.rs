@@ -60,7 +60,6 @@ pub(crate) fn build_downloaded_document(
 
     let size = content.len();
 
-    // crawl.document.download span (synchronous function — entered directly).
     let _span = tracing::info_span!(
         "crawl.document.download",
         { URL_FULL } = url,

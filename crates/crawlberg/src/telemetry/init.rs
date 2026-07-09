@@ -16,10 +16,6 @@ use std::collections::HashMap;
 
 use opentelemetry::propagation::{Extractor, Injector};
 
-// ---------------------------------------------------------------------------
-// W3C TraceContext propagation bridges (unconditional)
-// ---------------------------------------------------------------------------
-
 struct SingleHeaderMap(HashMap<String, String>);
 
 impl Extractor for SingleHeaderMap {
@@ -80,10 +76,6 @@ pub fn current_traceparent() -> Option<String> {
     opentelemetry::global::get_text_map_propagator(|p| p.inject_context(&cx, &mut carrier));
     carrier.0.remove("traceparent")
 }
-
-// ---------------------------------------------------------------------------
-// Full OTLP initialisation (telemetry-init feature only)
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "telemetry-init")]
 mod otlp {
@@ -150,7 +142,6 @@ mod otlp {
     /// Returns [`InitError`] if the OTLP exporter cannot be built or if a
     /// `tracing` subscriber is already registered.
     pub fn init_otlp(config: TelemetryConfig) -> Result<TelemetryGuard, InitError> {
-        // ---- resource -------------------------------------------------------
         let mut resource_builder = Resource::builder().with_service_name(config.service_name);
         if let Some(version) = config.service_version {
             resource_builder = resource_builder.with_attribute(KeyValue::new("service.version", version));
@@ -160,7 +151,6 @@ mod otlp {
         }
         let resource = resource_builder.build();
 
-        // ---- tracer provider ------------------------------------------------
         let span_exporter = SpanExporter::builder()
             .with_tonic()
             .with_endpoint(&config.otlp_endpoint)
@@ -172,7 +162,6 @@ mod otlp {
         let tracer = tracer_provider.tracer("crawlberg");
         opentelemetry::global::set_tracer_provider(tracer_provider.clone());
 
-        // ---- meter provider -------------------------------------------------
         let metric_exporter = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
             .with_endpoint(&config.otlp_endpoint)
@@ -187,10 +176,8 @@ mod otlp {
             .build();
         opentelemetry::global::set_meter_provider(meter_provider.clone());
 
-        // ---- W3C TraceContext propagator ------------------------------------
         opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
-        // ---- tracing bridge (no-op if already initialised) ------------------
         let fmt_layer = tracing_subscriber::fmt::layer().json();
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
         tracing_subscriber::registry()

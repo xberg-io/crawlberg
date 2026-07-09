@@ -18,8 +18,6 @@ use crawlberg::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ─── Mock bypass provider ────────────────────────────────────────────────────
-
 /// Bypass provider that returns a canned response and counts calls.
 #[derive(Debug)]
 struct CountingMockProvider {
@@ -61,8 +59,6 @@ impl BypassProvider for CountingMockProvider {
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 fn build_engine(config: CrawlConfig) -> CrawlEngine {
     CrawlEngine::builder().config(config).build().unwrap()
 }
@@ -83,8 +79,6 @@ fn config_with(strategy: EscalationStrategy, provider: Option<Arc<CountingMockPr
         ..CrawlConfig::default()
     }
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 /// HTTP success with `BypassThenBrowser` does not call bypass.
 #[tokio::test]
@@ -167,7 +161,6 @@ async fn bypass_first_explicit_strategy_routes_through_bypass() {
 
     let provider = CountingMockProvider::new("bypass response");
 
-    // Explicitly set BypassFirst strategy — no auto-promotion from the engine.
     let config = CrawlConfig {
         dispatch: Some(DispatchProfile {
             strategy: EscalationStrategy::BypassFirst,
@@ -248,7 +241,6 @@ async fn bypass_only_without_provider_returns_error() {
         .mount(&mock)
         .await;
 
-    // No bypass provider — HTTP tier fails, escalation to Bypass tier returns InvalidConfig.
     let engine = build_engine(config_with(EscalationStrategy::BypassOnly, None));
     let err = engine.scrape(&format!("{}/any", mock.uri())).await.unwrap_err();
     assert!(
@@ -353,8 +345,6 @@ async fn unlimited_budget_allows_escalation() {
     assert_eq!(provider.calls(), 1);
 }
 
-// ─── B6 regression — max_total_attempts cap ──────────────────────────────────
-
 /// Custom `RetryPolicy` that always returns `Retry { backoff_ms: 0 }`.
 /// Used to prove the engine's global cap (`max_total_attempts`) terminates
 /// the dispatch loop rather than spinning forever.
@@ -387,7 +377,6 @@ async fn buggy_policy_returning_retry_forever_does_not_spin() {
         dispatch: Some(DispatchProfile {
             strategy: EscalationStrategy::BrowserOnly,
             retry_policy: Some(Arc::new(AlwaysRetryPolicy)),
-            // Small cap so the test completes quickly.
             max_total_attempts: 5,
             ..DispatchProfile::default()
         }),
@@ -396,7 +385,6 @@ async fn buggy_policy_returning_retry_forever_does_not_spin() {
 
     let engine = build_engine(config);
 
-    // Use a wall-clock timeout to fail loudly if the engine spins past the cap.
     let start = std::time::Instant::now();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -405,14 +393,11 @@ async fn buggy_policy_returning_retry_forever_does_not_spin() {
     .await;
     let elapsed = start.elapsed();
 
-    // Must complete (either Ok or Err — both are acceptable), NOT timeout.
     assert!(
         result.is_ok(),
         "engine spun past 5s — max_total_attempts cap did not fire; elapsed = {elapsed:?}"
     );
 }
-
-// ─── B1 regression — WafClassifier wired into dispatch ───────────────────────
 
 /// Wiremock returns HTTP 200 with a Cloudflare Turnstile challenge HTML body.
 /// With `waf_classifier` wired, the dispatcher must detect the block-page and
@@ -457,8 +442,6 @@ async fn turnstile_challenge_html_triggers_escalation() {
     assert_eq!(provider.calls(), 1, "bypass must be called exactly once");
 }
 
-// ─── M6 regression — content_density populated from response body ─────────────
-
 /// Wiremock returns an HTML body with meaningful text content.
 /// The retry policy records the `content_density` from `AttemptOutcome` and the
 /// test asserts that it is in the expected range (> 0.2) rather than being the
@@ -475,7 +458,6 @@ async fn content_density_populated_for_html_response() {
         .mount(&mock)
         .await;
 
-    // Custom RetryPolicy that records the content_density it observes and returns Stop.
     #[derive(Debug)]
     struct RecordingPolicy(Arc<Mutex<f32>>);
 
@@ -503,8 +485,6 @@ async fn content_density_populated_for_html_response() {
     let _ = engine.scrape(&format!("{}/dense", mock.uri())).await.unwrap();
 
     let observed = *recorded.lock().unwrap();
-    // "Hello worldMore content here" is 28 chars; total body is 65 chars.
-    // Density should be in roughly (0.3, 0.6) — well above the hardcoded 0.0.
     assert!(
         observed > 0.2 && observed < 0.8,
         "expected content_density in (0.2, 0.8) for an HTML body with real text, got {observed}"

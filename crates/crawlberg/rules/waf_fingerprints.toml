@@ -1,25 +1,6 @@
-# Canonical WAF detection corpus for crawlberg. Each fingerprint is
-# a (vendor, weight, signals) tuple. ALL signals on a fingerprint must
-# match for the fingerprint to fire. ANY fingerprint match returns a
-# WafSignal for that vendor.
-#
-# Signal kinds:
-#   response_header { name, value_contains? }
-#     - name: lowercase header name
-#     - value_contains: optional substring match; if absent, matches on header presence
-#   body_substring { pattern }
-#     - pattern: case-insensitive substring searched via Aho-Corasick
-#
-# Adding a fingerprint:
-# 1. Capture a real response that should match
-#    (anonymize: strip cookies + auth + identifying URLs).
-# 2. Place it under tests/fixtures/waf/<vendor>_<scenario>_<n>.http.
-# 3. Add the fingerprint block below.
-# 4. Run `cargo test -p crawlberg --test test_waf_fixtures` — must pass.
+# ~keep A fingerprint fires only when all signals match; any match returns that fingerprint's vendor.
+# ~keep `response_header` checks lowercase header names; `body_substring` patterns use Aho-Corasick.
 
-# ---------------------------------------------------------------------------
-# Cloudflare
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "cloudflare_challenge_v1"
@@ -57,12 +38,7 @@ weight = 1.0
 kind = "body_substring"
 pattern = "_cf_chl_opt"
 
-# Generic Cloudflare 403 block page: server header identifies the WAF and the
-# body contains a generic block phrase. Only fires when both signals are
-# present so a normal Cloudflare-fronted response with `server: cloudflare`
-# does not trip the classifier — the body must explicitly mention being
-# blocked. Captures custom WAF rule blocks that don't render the standard
-# `/cdn-cgi/challenge-platform/` shell.
+# ~keep Require both `server: cloudflare` and a block phrase so normal Cloudflare-fronted pages do not match.
 [[fingerprint]]
 id = "cloudflare_server_blocked_body"
 vendor = "cloudflare"
@@ -127,9 +103,6 @@ kind = "response_header"
 name = "server"
 value_contains = "cloudflare"
 
-# ---------------------------------------------------------------------------
-# DataDome
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "datadome_header"
@@ -182,9 +155,6 @@ weight = 0.9
 kind = "body_substring"
 pattern = "datadome"
 
-# ---------------------------------------------------------------------------
-# PerimeterX (HUMAN Security)
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "perimeterx_header"
@@ -218,9 +188,6 @@ weight = 0.9
 kind = "body_substring"
 pattern = "perimeterx"
 
-# ---------------------------------------------------------------------------
-# Imperva / Incapsula
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "imperva_sucuri_header"
@@ -263,9 +230,6 @@ kind = "response_header"
 name = "server"
 value_contains = "incapsula"
 
-# ---------------------------------------------------------------------------
-# AWS WAF / CloudFront
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "aws_waf_action_header"
@@ -299,9 +263,6 @@ weight = 0.8
 kind = "body_substring"
 pattern = "awselb"
 
-# ---------------------------------------------------------------------------
-# Akamai
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "akamai_server_ghost"
@@ -312,9 +273,6 @@ kind = "response_header"
 name = "server"
 value_contains = "akamaighost"
 
-# ---------------------------------------------------------------------------
-# F5 BIG-IP
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "f5_bigip_server"
@@ -333,9 +291,6 @@ weight = 0.9
 kind = "body_substring"
 pattern = "bigipserver"
 
-# ---------------------------------------------------------------------------
-# Generic / multi-vendor corroborating patterns
-# ---------------------------------------------------------------------------
 
 [[fingerprint]]
 id = "generic_request_blocked"

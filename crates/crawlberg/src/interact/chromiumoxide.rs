@@ -108,7 +108,6 @@ async fn run_with_browser(
 }
 
 async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
-    // Inject stealth patches only when BrowserMode::Stealth is active.
     if matches!(config.browser.mode, crate::types::BrowserMode::Stealth) {
         crate::stealth::apply_stealth_patches(page).await;
     }
@@ -284,9 +283,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
 }
 
 async fn evaluate_json(page: &chromiumoxide::Page, script: &str) -> Result<serde_json::Value, CrawlError> {
-    // Chrome's Runtime.evaluate does not support top-level `return` statements.
-    // Wrap scripts that contain a `return` keyword in an IIFE so callers can
-    // write natural function-body expressions like "return document.title".
+    // ~keep Chrome Runtime.evaluate rejects top-level `return`; wrap function-body snippets in an IIFE.
     let wrapped;
     let effective_script = if script.contains("return ") || script.trim_start().starts_with("return") {
         wrapped = format!("(function() {{ {script} }})()");

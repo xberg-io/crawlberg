@@ -11,16 +11,9 @@ use std::collections::HashMap;
 use crawlberg::http::HttpResponse;
 use crawlberg::{TomlClassifier, WafClassifier, WafRulesError, waf_rules_from_str};
 
-// ---------------------------------------------------------------------------
-// Mirror constants — must match src/waf/rules.rs (pub(crate) there).
-// ---------------------------------------------------------------------------
 const MAX_FINGERPRINTS: usize = 1_000;
 const MAX_PATTERN_LEN: usize = 4_096;
 const MAX_SIGNALS_PER_FINGERPRINT: usize = 16;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn make_response(status: u16, body: &str, body_bytes: Vec<u8>) -> HttpResponse {
     HttpResponse {
@@ -63,10 +56,6 @@ fn build_many_signals_toml(n: usize) -> String {
     }
     out
 }
-
-// ---------------------------------------------------------------------------
-// A. TOML validation gates
-// ---------------------------------------------------------------------------
 
 #[test]
 fn load_from_str_rejects_more_than_max_fingerprints() {
@@ -121,10 +110,6 @@ fn load_from_str_rejects_more_than_max_signals_per_fingerprint() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// B. classify edge cases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn classify_returns_ok_none_for_empty_body() {
     let classifier = TomlClassifier::builtin();
@@ -142,7 +127,6 @@ fn classify_does_not_panic_on_non_utf8_body_bytes() {
     let body_bytes: Vec<u8> = vec![0xFF, 0xFE, 0x80, 0x81, 0x82, 0x83, 0xC0, 0xC1, 0xFF];
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let response = make_response(200, &body, body_bytes);
-    // Must not panic; result may be Ok(Some(_)) or Ok(None).
     let result = classifier.classify(&response);
     assert!(
         result.is_ok(),

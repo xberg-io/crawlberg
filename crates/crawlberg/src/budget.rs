@@ -94,10 +94,10 @@ mod tests {
     #[tokio::test]
     async fn consume_n_budget_exhausts() {
         let budget = ConsumeN::new(3);
-        assert!(budget.check().await.is_ok()); // 1st call
-        assert!(budget.check().await.is_ok()); // 2nd call
-        assert!(budget.check().await.is_ok()); // 3rd call
-        assert!(matches!(budget.check().await, Err(BudgetError::Exhausted))); // 4th call exhausted
+        assert!(budget.check().await.is_ok());
+        assert!(budget.check().await.is_ok());
+        assert!(budget.check().await.is_ok());
+        assert!(matches!(budget.check().await, Err(BudgetError::Exhausted)));
     }
 
     /// Test budget that returns a backend error.

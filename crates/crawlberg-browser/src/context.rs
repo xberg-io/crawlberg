@@ -48,9 +48,7 @@ impl BrowserContext {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
                 .to_string()
         });
-        // Sync the http client's UA at construction so navigation requests pick it
-        // up before any async setup runs. The lock has no other holders here, so
-        // try_write always succeeds; we fall back silently if it ever fails.
+        // ~keep Set the HTTP user agent before async setup; no other task holds this lock during construction.
         if let Ok(mut guard) = client.user_agent.try_write() {
             *guard = resolved_ua.clone();
         }

@@ -124,8 +124,6 @@ impl CrawlEngine {
     /// has its own simpler inline path inside `scrape`.
     #[cfg(not(target_arch = "wasm32"))]
     async fn fetch_response(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
-        // BrowserMode::Always | BrowserMode::Stealth — short-circuit, skip dispatch entirely.
-        // Stealth behaves like Always for routing purposes; JS patches are gated at page_fetch.
         #[cfg(feature = "browser")]
         if matches!(
             self.config.browser.mode,
@@ -142,13 +140,6 @@ impl CrawlEngine {
             return Ok((crawl_resp, true));
         }
 
-        // Bind dispatch components from `config.dispatch` once for the entire request.
-        // When `dispatch` is `None`, all fields fall back to built-in defaults.
-        //
-        // Migration note (Commit 1.5.12): the pre-1.5.12 auto-promotion of
-        // (BrowserOnly + bypass.is_some()) to BypassFirst has been REMOVED.
-        // Callers that relied on it must now set
-        //   `DispatchProfile { strategy: EscalationStrategy::BypassFirst, bypass: Some(...), .. }`.
         let dispatch = self.config.dispatch.as_ref();
         let bypass = dispatch.and_then(|d| d.bypass.as_ref());
         let strategy = dispatch.map(|d| d.strategy).unwrap_or_default();
@@ -162,11 +153,7 @@ impl CrawlEngine {
         let antibot_strategy: Option<crate::types::antibot::DynAntibotStrategy> =
             dispatch.and_then(|d| d.antibot_strategy.clone());
 
-        // Derive the effective strategy.
-        // When the effective strategy routes to the Browser tier (`BrowserOnly`)
-        // but `BrowserMode::Never` is set, demote to `None` so no escalation
-        // target exists. Without this, the dispatch loop escalates to the Browser
-        // tier and returns `Err(Unsupported)` instead of the original 403 / WAF error.
+        // ~keep Demote BrowserOnly when BrowserMode::Never so the original HTTP/WAF error survives.
         let effective_strategy = if strategy == crate::types::EscalationStrategy::BrowserOnly
             && self.config.browser.mode == crate::types::BrowserMode::Never
         {
@@ -175,7 +162,6 @@ impl CrawlEngine {
             strategy
         };
 
-        // BypassFirst — route through bypass, skip HTTP entirely.
         if matches!(effective_strategy, crate::types::EscalationStrategy::BypassFirst)
             && let Some(provider) = bypass
         {
@@ -194,14 +180,10 @@ impl CrawlEngine {
 
         let mut current_tier = crate::types::Tier::Http;
         let mut attempt: u32 = 0;
-        // Global attempt cap — guards against buggy RetryPolicy impls that
-        // never return Stop (B6). Tracks every loop iteration regardless of
-        // tier or directive.
+        // ~keep The global attempt cap guards against RetryPolicy implementations that never return Stop.
         let mut total_attempts: u32 = 0;
-        // Last known good result and last error, used for cap-exceeded fallback.
         let mut last_ok: Option<(crate::tower::CrawlResponse, bool)> = None;
         let mut last_err: Option<CrawlError> = None;
-        // Telemetry accumulators consumed by emit_dispatch_span.
         let mut tiers_attempted: Vec<&'static str> = Vec::new();
         let mut last_escalation_reason: Option<&'static str> = None;
         let policy_name = retry_policy.name();
@@ -209,9 +191,7 @@ impl CrawlEngine {
 
         loop {
             total_attempts += 1;
-            // `max_total_attempts` is inclusive: attempts 1..=max_total are allowed.
-            // Strict `>` means attempt max_total passes through and attempt max_total+1
-            // is rejected here. Guards against a buggy RetryPolicy that never returns Stop.
+            // ~keep `max_total_attempts` is inclusive; reject only attempt max_total + 1.
             if total_attempts > max_total {
                 tracing::warn!(
                     target: "crawlberg::dispatch",
@@ -228,9 +208,6 @@ impl CrawlEngine {
             }
             tiers_attempted.push(Self::tier_name(current_tier));
 
-            // Antibot pre-request hook: fires before the tower-stack fetch.
-            // A hook error is treated as a transient attempt failure so the retry
-            // policy can decide what to do next.
             if let Some(strategy) = &antibot_strategy
                 && let Err(e) = strategy.pre_request(url).await
             {
@@ -278,20 +255,8 @@ impl CrawlEngine {
 
             match tier_result {
                 Ok((resp, browser_used)) => {
-                    // Success path: build outcome and consult the policy.
-                    // The policy may still signal Escalate (e.g. soft-block detection
-                    // via content density). If no next tier is available, return now.
-
-                    // B1: classify the response body to detect 200-with-block-page
-                    // (Cloudflare Turnstile, DataDome interstitials, etc.).
-                    // We construct HttpResponse inline from CrawlResponse fields — both
-                    // types share the same essential fields (status, content_type, body,
-                    // body_bytes, headers); HttpResponse adds final_url and
-                    // browser_extras which are not available at this dispatch layer.
-                    // Inline construction avoids a trait-surface change on WafClassifier
-                    // and is cheap since the body was already cloned into CrawlResponse.
+                    // ~keep Build a minimal HttpResponse here so WAF classification does not widen its trait surface.
                     let waf_classifier = dispatch.and_then(|d| d.waf_classifier.as_ref());
-                    // Build HttpResponse once so both WAF classifier and antibot hook share it.
                     let http_resp_for_hooks = crate::http::HttpResponse {
                         status: resp.status,
                         content_type: resp.content_type.clone(),
@@ -313,14 +278,9 @@ impl CrawlEngine {
                         }
                     });
 
-                    // Antibot post-response hook: fires after WAF classification,
-                    // before the retry policy. The hook's Decision overrides the policy
-                    // for this attempt when it returns anything other than Accept.
                     if let Some(strategy) = &antibot_strategy {
                         match strategy.post_response(&http_resp_for_hooks, waf_signal.as_ref()).await {
-                            crate::types::Decision::Accept => {
-                                // Fall through to retry policy below.
-                            }
+                            crate::types::Decision::Accept => {}
                             crate::types::Decision::Retry { backoff } => {
                                 tokio::time::sleep(backoff).await;
                                 attempt += 1;
@@ -333,7 +293,6 @@ impl CrawlEngine {
                                     "RotateProxy decision received but proxy pool is not yet implemented; \
                                      treating as Accept"
                                 );
-                                // No-op fallthrough — proxy pool is a future follow-up.
                             }
                             crate::types::Decision::EscalateBrowser => {
                                 let reason = crate::types::EscalationReason::AntibotEscalate;
@@ -353,7 +312,6 @@ impl CrawlEngine {
                                     attempt = 0;
                                     continue;
                                 }
-                                // No next tier or budget exhausted.
                                 Self::emit_dispatch_span(
                                     url,
                                     &tiers_attempted,
@@ -367,7 +325,6 @@ impl CrawlEngine {
                         }
                     }
 
-                    // Track last successful response for the cap-exceeded fallback path.
                     last_ok = Some((resp.clone(), browser_used));
 
                     let density = content_density(&resp.body);
@@ -418,10 +375,6 @@ impl CrawlEngine {
                                 attempt = 0;
                                 continue;
                             }
-                            // No next tier or budget exhausted on a success-path Escalate.
-                            // The policy signalled a soft-block or WAF interstitial even though
-                            // the HTTP layer returned 2xx. Synthesise an error from the reason
-                            // rather than returning the challenge body as Ok.
                             Self::emit_dispatch_span(
                                 url,
                                 &tiers_attempted,
@@ -435,7 +388,6 @@ impl CrawlEngine {
                     }
                 }
                 Err(err) => {
-                    // soft_http_errors: synthesise a response for HTTP-level variants.
                     if self.config.soft_http_errors {
                         if matches!(err, CrawlError::NotFound(_)) {
                             return Ok((Self::synthesise_status(404), false));
@@ -445,16 +397,10 @@ impl CrawlEngine {
                         }
                     }
 
-                    // Track last error for the cap-exceeded fallback path.
                     last_err = Some(err.clone());
 
-                    // B1 (error arm): the WAF detection in http.rs already consumed the
-                    // response body and encoded the vendor into CrawlError::WafBlocked.
-                    // Thread that vendor through into WafSignal so the policy can see it.
-                    // fingerprint_id is empty on this synthesized signal — the vendor field
-                    // carries attribution; there is no classifier fingerprint on the error path.
-                    // An empty string is safe to emit as a Prometheus label without creating
-                    // phantom cardinality from a sentinel value.
+                    // ~keep Error-arm WAF classification has vendor attribution but no classifier fingerprint.
+                    // ~keep Use an empty fingerprint label instead of a sentinel to avoid extra Prometheus cardinality.
                     let waf_signal = match &err {
                         CrawlError::WafBlocked { vendor, .. } => Some(crate::types::WafSignal {
                             vendor: vendor.clone(),
@@ -509,7 +455,6 @@ impl CrawlEngine {
                                 attempt = 0;
                                 continue;
                             }
-                            // No next tier or budget exhausted — surface the error.
                             Self::emit_dispatch_span(
                                 url,
                                 &tiers_attempted,
@@ -670,25 +615,15 @@ impl CrawlEngine {
     ) -> Option<crate::types::Tier> {
         use crate::types::{EscalationStrategy, Tier};
         match (current, strategy) {
-            // Http → Browser
             (Tier::Http, EscalationStrategy::BrowserOnly) => Some(Tier::Browser),
-            // Http → Bypass
             (Tier::Http, EscalationStrategy::BypassOnly) => Some(Tier::Bypass),
             (Tier::Http, EscalationStrategy::BypassThenBrowser) => Some(Tier::Bypass),
-            // Bypass → Browser (only for BypassThenBrowser)
             (Tier::Bypass, EscalationStrategy::BypassThenBrowser) => Some(Tier::Browser),
-            // BypassFirst is terminal here — the legacy short-circuit in fetch_response
-            // handles it before the dispatch loop even runs. Reaching these arms means
-            // bypass failed under legacy semantic and there is no fallback by design.
-            // Explicit arms rather than catch-all so future strategies produce a
-            // compile error rather than silent truncation. Fixes B2.
+            // ~keep Keep explicit arms so new escalation strategies cause compile errors instead of silent truncation.
             (Tier::Bypass, EscalationStrategy::BypassFirst) => None,
-            (Tier::Http, EscalationStrategy::BypassFirst) => None, // unreachable in practice
-            // Browser is always terminal across all strategies.
+            (Tier::Http, EscalationStrategy::BypassFirst) => None,
             (Tier::Browser, _) => None,
-            // None strategy: never escalate.
             (_, EscalationStrategy::None) => None,
-            // Remaining combinations have no escalation target.
             (Tier::Bypass, EscalationStrategy::BrowserOnly) => None,
             (Tier::Bypass, EscalationStrategy::BypassOnly) => None,
         }
@@ -771,10 +706,7 @@ impl CrawlEngine {
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         self.config.validate()?;
 
-        // Short-circuit for BrowserMode::Always so we can preserve browser_extras
-        // rather than losing them in the fetch_response indirection.
-        // Gated on browser-native (not just browser) so it also fires when only
-        // the native backend is active without chromiumoxide.
+        // ~keep Short-circuit native BrowserMode::Always so browser_extras survive fetch_response conversion.
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
         if self.config.browser.mode == crate::types::BrowserMode::Always
             && self.config.browser.backend == crate::types::BrowserBackend::Native
@@ -811,10 +743,7 @@ impl CrawlEngine {
             let max_redirects = self.config.max_redirects;
             let outcome = follow_redirects(self, url, max_redirects).await?;
 
-            // When soft_http_errors is enabled, a synthesised 4xx response should
-            // short-circuit extraction and return a minimal result rather than attempting
-            // to parse an empty body as HTML. The redirect-chain synth (302→404) fires
-            // regardless of soft_http_errors (handled in follow_redirects).
+            // ~keep Synthesized empty 4xx responses return minimal results instead of parsing an empty body as HTML.
             let status = outcome.final_response.status;
             if matches!(status, 404 | 403) && outcome.final_response.body.is_empty() && self.config.soft_http_errors {
                 return Ok(ScrapeResult {
@@ -849,8 +778,6 @@ impl CrawlEngine {
                     browser: None,
                 });
             }
-            // Also short-circuit for redirected-chain 404s (redirect_count > 0) —
-            // these come from follow_redirects regardless of soft_http_errors.
             if outcome.final_response.status == 404
                 && outcome.final_response.body.is_empty()
                 && outcome.redirect_count > 0
@@ -895,11 +822,8 @@ impl CrawlEngine {
             let client = crate::http::build_client(&self.config)?;
             let resp =
                 crate::http::fetch_with_retry(url, &self.config, &std::collections::HashMap::new(), &client).await?;
-            // Use the URL from the response: on wasm the browser follows redirects
-            // transparently, so `resp.final_url` is the post-redirect URL — not
-            // necessarily equal to the original `url` that was requested.
+            // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
             let post_redirect_url = resp.final_url.clone();
-            // fetch_with_retry returns HttpResponse; convert to CrawlResponse
             let crawl_resp = crate::tower::CrawlResponse {
                 status: resp.status,
                 content_type: resp.content_type,
@@ -913,9 +837,7 @@ impl CrawlEngine {
         let mut result = crate::scrape::scrape_from_crawl_response(&final_url, &response, &self.config).await?;
         result.browser_used = browser_used_for_fetch;
 
-        // When the `browser` feature is not compiled in, BrowserMode::Always means the
-        // caller explicitly opted into browser — mark browser_used true so bindings
-        // that check it see the expected value (HTTP fallback was still used).
+        // ~keep Without the browser feature, BrowserMode::Always still reports browser_used for binding parity.
         #[cfg(not(feature = "browser"))]
         if self.config.browser.mode == crate::types::BrowserMode::Always {
             result.browser_used = true;
@@ -1033,16 +955,12 @@ impl CrawlEngine {
         let exclude_regexes = Self::compile_path_regexes(&self.config.exclude_paths)?;
         let include_regexes = Self::compile_path_regexes(&self.config.include_paths)?;
 
-        // Local dedup set — mirrors the native frontier's `seen` set. The
-        // engine's `frontier` trait object is also updated so that
-        // `batch_crawl` across multiple seeds shares state correctly.
         let mut seen: HashSet<String> = HashSet::new();
 
         let seed_dedup = Self::wasm_dedup_key(url);
         seen.insert(seed_dedup.clone());
         let _ = self.frontier.mark_seen(&seed_dedup).await;
 
-        // Working set: strategy selects from this Vec each iteration.
         let mut working_set: Vec<FrontierEntry> = vec![FrontierEntry {
             url: url.to_owned(),
             depth: 0,
@@ -1058,14 +976,9 @@ impl CrawlEngine {
         let mut urls_discovered: usize = 0;
         let mut urls_filtered: usize = 0;
         let mut crawl_error: Option<String> = None;
-        // The final URL for CrawlResult is the post-redirect URL of the seed.
-        // Wasm's `scrape()` follows redirects transparently, so we capture it
-        // from the first page's ScrapeResult.
         let mut final_url = url.to_owned();
 
-        // Sequential crawl loop — no spawn, no JoinSet.
         while !working_set.is_empty() {
-            // Check stopping conditions before selecting next entry.
             let stats = CrawlStats {
                 pages_crawled: pages.len(),
                 pages_failed,
@@ -1085,14 +998,12 @@ impl CrawlEngine {
             };
             let entry = working_set.swap_remove(idx);
 
-            // Apply path filters (include/exclude regexes).
             if let Ok(parsed) = url::Url::parse(&entry.url) {
                 let path = parsed.path();
                 if !exclude_regexes.is_empty() && exclude_regexes.iter().any(|re| re.is_match(path)) {
                     urls_filtered += 1;
                     continue;
                 }
-                // Depth-0 seed is always included regardless of include_paths.
                 if !include_regexes.is_empty() && entry.depth > 0 && !include_regexes.iter().any(|re| re.is_match(path))
                 {
                     urls_filtered += 1;
@@ -1100,11 +1011,8 @@ impl CrawlEngine {
                 }
             }
 
-            // Check page budget before fetching.
             match self.page_budget.check().await {
-                Ok(()) => {
-                    // Budget permits; continue to page fetch.
-                }
+                Ok(()) => {}
                 Err(crate::budget::BudgetError::Exhausted) => {
                     tracing::info!(target: "crawlberg.budget", "page budget exhausted");
                     break;
@@ -1115,7 +1023,6 @@ impl CrawlEngine {
                 }
             }
 
-            // Fetch + extract the page.
             let scrape = match self.scrape(&entry.url).await {
                 Ok(s) => s,
                 Err(e) => {
@@ -1128,8 +1035,6 @@ impl CrawlEngine {
                         })
                         .await;
                     let _ = self.store.store_error(&entry.url, &e).await;
-                    // Seed failure is propagated as a crawl-level error so that
-                    // the batch_crawl wrapper can classify this seed as failed.
                     if entry.depth == 0 {
                         crawl_error = Some(error_msg);
                     }
@@ -1137,9 +1042,6 @@ impl CrawlEngine {
                 }
             };
 
-            // Track seed redirect count from final_url divergence.
-            // Wasm's scrape() follows redirects transparently via the browser;
-            // final_url is the post-redirect URL.
             if entry.depth == 0 {
                 final_url = scrape.final_url.clone();
                 if scrape.final_url != entry.url {
@@ -1151,14 +1053,6 @@ impl CrawlEngine {
                 was_skipped = true;
             }
 
-            // Discover and enqueue links before building the page result so
-            // that `links` in the page result is the full extracted set.
-            //
-            // Pages reached via a document link chain (entry.doc_depth > 0) only run
-            // discovery when `follow_document_urls` is enabled.  Plain HTML pages
-            // (entry.doc_depth == 0) always run discovery — pre-existing behaviour.
-            // Binary/PDF pages (was_skipped || is_pdf) have empty extracted links, but
-            // we block discovery on them explicitly regardless of doc_depth.
             let in_doc_context = entry.doc_depth > 0;
             let page_is_skipped_wasm = scrape.was_skipped || scrape.is_pdf;
             let should_discover_wasm = entry.depth < max_depth
@@ -1168,20 +1062,14 @@ impl CrawlEngine {
                 for link in &scrape.links {
                     let is_doc_link = link.link_type == LinkType::Document;
 
-                    // Non-internal, non-document links (External, Anchor, …) are skipped.
                     if link.link_type != LinkType::Internal && !is_doc_link {
                         continue;
                     }
 
-                    // Document links from a page reached via a document link
-                    // (entry.doc_depth > 0) require `follow_document_urls`.
-                    // Document links from ordinary HTML pages (doc_depth == 0) are always
-                    // enqueued for materialisation — pre-existing behaviour preserved.
                     if is_doc_link && entry.doc_depth > 0 {
                         if !self.config.follow_document_urls {
                             continue;
                         }
-                        // Document-depth gate: child doc_depth = parent + 1.
                         let child_doc_depth = entry.doc_depth + 1;
                         if let Some(max_doc_depth) = self.config.document_url_depth
                             && child_doc_depth > max_doc_depth
@@ -1192,7 +1080,6 @@ impl CrawlEngine {
 
                     let link_url = crate::normalize::strip_fragment(&link.url);
 
-                    // stay_on_domain filter.
                     if self.config.stay_on_domain
                         && let Ok(lu) = url::Url::parse(&link_url)
                     {
@@ -1209,7 +1096,6 @@ impl CrawlEngine {
                         seen.insert(dedup_key.clone());
                         let _ = self.frontier.mark_seen(&dedup_key).await;
                         let child_depth = entry.depth + 1;
-                        // Document links increment the doc counter; internal links reset it.
                         let child_doc_depth: u32 = if is_doc_link { entry.doc_depth + 1 } else { 0 };
                         let priority = self.strategy.score_url(&link_url, child_depth);
                         working_set.push(FrontierEntry {
@@ -1224,13 +1110,9 @@ impl CrawlEngine {
                 }
             }
 
-            // Build and store the page result. Use the post-redirect URL as
-            // the canonical page URL, matching native crawl behavior where
-            // the final response URL (not the queued URL) is recorded.
             let page_url = scrape.final_url.clone();
             let page = Self::scrape_to_crawl_page(scrape, &page_url, entry.depth, &base_host);
 
-            // Apply content filter — filtered pages still contribute to link discovery.
             let page = match self.content_filter.filter(page).await? {
                 Some(filtered) => filtered,
                 None => {
@@ -1253,7 +1135,6 @@ impl CrawlEngine {
             pages.push(page);
         }
 
-        // Emit completion event.
         let _ = self
             .store
             .on_complete(&CrawlStats {
@@ -1270,7 +1151,6 @@ impl CrawlEngine {
             })
             .await;
 
-        // Safety truncation.
         if pages.len() > max_pages {
             pages.truncate(max_pages);
         }
@@ -1326,7 +1206,6 @@ mod tests {
             .build()
             .expect("client build must not fail");
 
-        // Port 1 is universally closed; this reliably produces a connection error.
         let raw_err = client
             .get("http://127.0.0.1:1/")
             .send()

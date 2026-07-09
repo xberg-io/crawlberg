@@ -27,7 +27,6 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
     let parser = dom.parser();
     let mut assets = Vec::new();
 
-    // CSS stylesheets
     if let Some(iter) = dom.query_selector(SEL_LINK_CSS) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
@@ -43,7 +42,6 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         }
     }
 
-    // JavaScript files
     if let Some(iter) = dom.query_selector(SEL_SCRIPT_SRC) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
@@ -59,7 +57,6 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         }
     }
 
-    // Images
     if let Some(iter) = dom.query_selector(SEL_IMG_SRC) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
@@ -86,7 +83,6 @@ async fn download_single_asset(
     max_asset_size: Option<usize>,
     config: &CrawlConfig,
 ) -> Option<DownloadedAsset> {
-    // Use http_fetch to apply SSRF validation to asset URLs
     let resp = match http_fetch(&asset_ref.url, config, &std::collections::HashMap::new(), client).await {
         Ok(r) => r,
         Err(_) => return None,
@@ -123,15 +119,12 @@ pub(crate) async fn download_assets(
 ) -> Vec<DownloadedAsset> {
     let mut seen_urls: HashSet<String> = HashSet::new();
 
-    // Dedup and filter first, then download concurrently
     let unique_refs: Vec<AssetRef> = refs
         .into_iter()
         .filter(|asset_ref| {
-            // Dedup by URL
             if !seen_urls.insert(asset_ref.url.clone()) {
                 return false;
             }
-            // Filter by asset type
             if !config.asset_types.is_empty() && !config.asset_types.contains(&asset_ref.category) {
                 return false;
             }
@@ -141,7 +134,6 @@ pub(crate) async fn download_assets(
 
     let max_asset_size = config.max_asset_size;
 
-    // On native targets, download concurrently with tokio::spawn
     #[cfg(not(target_arch = "wasm32"))]
     {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent.unwrap_or(8)));
@@ -169,7 +161,6 @@ pub(crate) async fn download_assets(
         downloaded
     }
 
-    // On wasm, download sequentially (no tokio::spawn)
     #[cfg(target_arch = "wasm32")]
     {
         let mut downloaded = Vec::new();

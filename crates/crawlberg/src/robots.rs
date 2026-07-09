@@ -44,7 +44,6 @@ struct RulesBlock {
 pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
     let ua_lower = user_agent.to_lowercase();
 
-    // First pass: collect all blocks with their user-agents and rules
     let mut blocks: Vec<(Vec<String>, RulesBlock)> = Vec::new();
     let mut current_agents: Vec<String> = Vec::new();
     let mut current_rules = RulesBlock::default();
@@ -52,7 +51,6 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
     let mut sitemaps: Vec<String> = Vec::new();
 
     for raw_line in body.lines() {
-        // Strip comments
         let line = raw_line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -70,8 +68,6 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
             }
             "user-agent" => {
                 if in_rules {
-                    // We were collecting rules; this user-agent starts a new block.
-                    // Save the previous block.
                     if !current_agents.is_empty() {
                         blocks.push((std::mem::take(&mut current_agents), std::mem::take(&mut current_rules)));
                     }
@@ -110,13 +106,10 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
         }
     }
 
-    // Save last block
     if !current_agents.is_empty() {
         blocks.push((current_agents, current_rules));
     }
 
-    // Second pass: find the best matching block
-    // Priority: specific agent match > wildcard
     let mut wildcard_block: Option<&RulesBlock> = None;
     let mut specific_block: Option<&RulesBlock> = None;
 
@@ -141,7 +134,6 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
         }
     }
 
-    // Use specific rules if found, otherwise wildcard
     let using_wildcard = specific_block.is_none() && wildcard_block.is_some();
     let chosen = specific_block.or(wildcard_block);
 
@@ -167,7 +159,6 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
 ///
 /// Supports `*` wildcards and `$` end-of-string anchors.
 fn robots_path_matches(path: &str, rule: &str) -> bool {
-    // Handle end-of-string anchor
     let (rule_body, exact_end) = if let Some(stripped) = rule.strip_suffix('$') {
         (stripped, true)
     } else {
@@ -181,7 +172,6 @@ fn robots_path_matches(path: &str, rule: &str) -> bool {
         return path.starts_with(rule_body);
     }
 
-    // Wildcard matching
     let parts: Vec<&str> = rule_body.split('*').collect();
     let mut remaining = path;
     for (i, segment) in parts.iter().enumerate() {
@@ -207,14 +197,11 @@ fn robots_path_matches(path: &str, rule: &str) -> bool {
 pub fn is_path_allowed(path: &str, rules: &RobotsRules) -> bool {
     let has_disallow_rules = !rules.disallow.is_empty();
 
-    // Special case: in wildcard blocks, if "Allow: /" coexists with Disallow
-    // rules, the block is restrictive and is_allowed should be false for the
-    // root path since Allow: / is treated as a baseline, not a specific override.
+    // ~keep In wildcard blocks, `Allow: /` is a baseline, not a root-specific override over Disallow rules.
     if rules.is_wildcard_block && has_disallow_rules && rules.allow.iter().any(|r| r == "/") {
         return false;
     }
 
-    // Standard longest-match semantics
     let mut best_allow: Option<usize> = None;
     let mut best_disallow: Option<usize> = None;
 

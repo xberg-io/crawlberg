@@ -44,8 +44,6 @@ fn apply_headers(
     config: &CrawlConfig,
     crawl_req: &CrawlRequest,
 ) -> reqwest::RequestBuilder {
-    // Set user-agent (skip if request-level headers already provide one,
-    // e.g. from the UaRotationLayer)
     if !crawl_req.headers.contains_key("user-agent") {
         if let Some(ref ua) = config.user_agent {
             req = req.header(reqwest::header::USER_AGENT, ua.as_str());
@@ -57,7 +55,6 @@ fn apply_headers(
         }
     }
 
-    // Auth
     if let Some(ref auth) = config.auth {
         match auth {
             crate::types::AuthConfig::Basic { username, password } => {
@@ -72,12 +69,10 @@ fn apply_headers(
         }
     }
 
-    // Config custom headers
     for (k, v) in &config.custom_headers {
         req = req.header(k.as_str(), v.as_str());
     }
 
-    // Request-level headers (from middleware layers)
     for (k, v) in &crawl_req.headers {
         req = req.header(k.as_str(), v.as_str());
     }
@@ -101,7 +96,6 @@ async fn do_fetch(
     config: &CrawlConfig,
     req: &CrawlRequest,
 ) -> Result<CrawlResponse, CrawlError> {
-    // Parse and validate the requested URL against SSRF policy.
     let url = url::Url::parse(&req.url).map_err(|e| CrawlError::SsrfPolicyViolation {
         url: req.url.clone(),
         reason: format!("invalid URL: {e}"),
@@ -116,7 +110,7 @@ async fn do_fetch(
 
     let http_req = apply_headers(client.get(url.to_string()), config, req);
 
-    // Send — reqwest uses Policy::none() so no transparent redirect following occurs.
+    // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(|e| classify_reqwest_error(&e))?;
 
     let status = resp.status().as_u16();
@@ -129,7 +123,6 @@ async fn do_fetch(
         .unwrap_or("")
         .to_owned();
 
-    // Extract headers into HashMap<String, Vec<String>>
     let mut headers: HashMap<String, Vec<String>> = HashMap::new();
     for (name, value) in resp.headers().iter() {
         if let Ok(v) = value.to_str() {
@@ -140,7 +133,7 @@ async fn do_fetch(
         }
     }
 
-    // Return 3xx responses as-is — redirect following is the caller's responsibility.
+    // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if (300..400).contains(&status) {
         let body_bytes = resp.bytes().await.unwrap_or_default().to_vec();
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
@@ -153,7 +146,6 @@ async fn do_fetch(
         });
     }
 
-    // Non-redirect: check error status codes
     match status {
         401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
         403 => {
@@ -185,8 +177,6 @@ async fn do_fetch(
     }
 
     let body_bytes = resp.bytes().await.map_err(|e| {
-        // Walk the error source chain to detect body/data-loss errors that
-        // reqwest wraps in generic errors.
         let chain = crate::error::error_chain_string(&e);
         let is_body_error = chain.contains("content-length")
             || chain.contains("truncate")
@@ -207,7 +197,6 @@ async fn do_fetch(
 
     let body_vec = body_bytes.to_vec();
 
-    // Content-length validation
     if let Some(expected) = headers
         .get("content-length")
         .and_then(|v| v.first())
@@ -224,9 +213,7 @@ async fn do_fetch(
 
     let body = String::from_utf8_lossy(&body_vec).into_owned();
 
-    // WAF challenge detection on 200 responses.
-    // Some WAFs (AWS WAF, Akamai) return 200 with a challenge page instead of 403.
-    // Check short bodies for WAF patterns to catch these false positives.
+    // ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
     #[cfg(not(target_arch = "wasm32"))]
     {
         let server = headers
@@ -286,7 +273,6 @@ impl Service<CrawlRequest> for HttpFetchService {
                 }
             }
 
-            // Should not reach here, but just in case
             Err(CrawlError::Other("retry exhausted".into()))
         })
     }

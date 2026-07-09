@@ -32,15 +32,11 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
             .await;
     }
 
-    // Construct the pool once — Chrome is NOT launched at this point.
     let pool = BrowserPool::new(BrowserPoolConfig::default());
 
-    // Before injection: only the caller holds the Arc.
     let initial_count = Arc::strong_count(&pool);
     assert_eq!(initial_count, 1, "only the caller should hold the pool initially");
 
-    // Inject the pool via CrawlConfig (the field-level injection path used by
-    // downstream callers that don't use the builder directly).
     let config = CrawlConfig {
         max_depth: Some(0),
         browser_pool: Some(Arc::clone(&pool)),
@@ -48,7 +44,6 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
     };
     let engine_handle = create_engine(Some(config)).expect("engine build must not fail");
 
-    // After injection: caller (1) + engine's config (1) = 2.
     let post_injection_count = Arc::strong_count(&pool);
     assert_eq!(
         post_injection_count, 2,
@@ -58,20 +53,16 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
     let urls1: Vec<String> = vec![format!("{}/page1", mock.uri())];
     let urls2: Vec<String> = vec![format!("{}/page2", mock.uri())];
 
-    // First batch_crawl call — BrowserMode defaults to Auto, no JS detected,
-    // so Chrome is never launched; all fetches go through the HTTP stack.
     let results1 = batch_crawl(&engine_handle, urls1)
         .await
         .expect("first batch_crawl must succeed");
     assert_eq!(results1.completed_count, 1, "first call: all URLs should succeed");
 
-    // Second batch_crawl call — same engine, same pool arc.
     let results2 = batch_crawl(&engine_handle, urls2)
         .await
         .expect("second batch_crawl must succeed");
     assert_eq!(results2.completed_count, 1, "second call: all URLs should succeed");
 
-    // Pool ref-count must still be 2 (no new Arc was created by either call).
     let after_crawl_count = Arc::strong_count(&pool);
     assert_eq!(
         after_crawl_count, 2,
@@ -88,13 +79,11 @@ async fn with_browser_pool_builder_method_injects_pool() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     assert_eq!(Arc::strong_count(&pool), 1, "only caller before builder");
 
-    // Build via the new builder method — should compile and clone the Arc once.
     let _engine = CrawlEngine::builder()
         .with_browser_pool(Arc::clone(&pool))
         .build()
         .expect("builder with pool must not fail");
 
-    // After build: caller (1) + engine's config (1) = 2.
     assert_eq!(
         Arc::strong_count(&pool),
         2,

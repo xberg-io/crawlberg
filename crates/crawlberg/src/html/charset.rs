@@ -2,7 +2,6 @@
 
 /// Detect the character encoding from the Content-Type header or HTML meta tags.
 pub(crate) fn detect_charset(content_type: &str, body: &str) -> Option<String> {
-    // From Content-Type header (ASCII search, case-insensitive)
     if let Some(pos) = ascii_find_case_insensitive(content_type.as_bytes(), b"charset=") {
         let charset = content_type[pos + 8..]
             .split(';')
@@ -16,9 +15,7 @@ pub(crate) fn detect_charset(content_type: &str, body: &str) -> Option<String> {
         }
     }
 
-    // From <meta charset="..."> in HTML body — search only first 2048 bytes
     let search_len = body.len().min(2048);
-    // Find a char boundary at or before the limit
     let search_end = (0..=search_len).rev().find(|&i| body.is_char_boundary(i)).unwrap_or(0);
     let head = &body[..search_end];
     if let Some(pos) = ascii_find_case_insensitive(head.as_bytes(), b"charset=") {
@@ -35,7 +32,6 @@ pub(crate) fn detect_charset(content_type: &str, body: &str) -> Option<String> {
         }
     }
 
-    // Check for UTF-8 BOM
     if body.starts_with('\u{FEFF}') {
         return Some("utf-8".to_owned());
     }

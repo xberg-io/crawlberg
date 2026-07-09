@@ -65,9 +65,7 @@ impl fmt::Debug for SimpleHttpProvider {
 #[async_trait]
 impl BypassProvider for SimpleHttpProvider {
     fn vendor_name(&self) -> &'static str {
-        // The vendor name is dynamic (from YAML), so we can't return `&'static str`
-        // directly. Leak the string once per provider instance — providers are
-        // long-lived singletons, so the memory is effectively static.
+        // ~keep BypassProvider requires `&'static str`; leak one vendor string per long-lived provider instance.
         Box::leak(self.config.vendor_name.clone().into_boxed_str())
     }
 
@@ -91,12 +89,10 @@ impl BypassProvider for SimpleHttpProvider {
             let final_url = resp.url().to_string();
             let resp_headers = resp.headers().clone();
 
-            // Check status overrides first.
             if let Some(err) = self.map_status(status_u16, &vendor) {
                 return Err(err);
             }
 
-            // Default status handling.
             match status_u16 {
                 200..=299 => {}
                 401..=403 => {
@@ -157,8 +153,7 @@ impl SimpleHttpProvider {
     fn build_request(&self, url: &str) -> Result<reqwest::RequestBuilder, CrawlError> {
         let endpoint = self.effective_endpoint();
 
-        // Assemble the full URL with any static query parameters.
-        // We do this manually to avoid requiring reqwest's optional `query` feature.
+        // ~keep Build query strings manually so this crate does not require reqwest's optional `query` feature.
         let full_url = self.build_url(endpoint, url);
 
         let mut req = match self.config.method {
@@ -173,13 +168,11 @@ impl SimpleHttpProvider {
             }
         };
 
-        // Apply auth.
         req = match &self.config.auth {
             AuthScheme::None => req,
             AuthScheme::Bearer { token } => req.bearer_auth(token),
             AuthScheme::BasicUsername { username } => req.basic_auth(username, Option::<&str>::None),
             AuthScheme::Header { name, value } => req.header(name.as_str(), value.as_str()),
-            // QueryParam auth was already embedded into the URL in build_url.
             AuthScheme::QueryParam { .. } => req,
         };
 
@@ -192,7 +185,6 @@ impl SimpleHttpProvider {
         let mut full = endpoint.to_owned();
         let mut sep = if full.contains('?') { '&' } else { '?' };
 
-        // Fixed query params from config.request.query.
         for (k, v) in &self.config.request.query {
             full.push(sep);
             full.push_str(k);
@@ -201,7 +193,6 @@ impl SimpleHttpProvider {
             sep = '&';
         }
 
-        // Append url_param for GET requests.
         if self.config.method == HttpMethod::Get
             && let UrlParamLocation::QueryParam { name } = &self.config.request.url_param
         {
@@ -212,7 +203,6 @@ impl SimpleHttpProvider {
             sep = '&';
         }
 
-        // Append any auth query param.
         if let AuthScheme::QueryParam { name, value } = &self.config.auth {
             full.push(sep);
             full.push_str(name);

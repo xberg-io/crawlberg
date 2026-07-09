@@ -126,11 +126,6 @@ pub enum CrawlError {
 
 impl From<crate::net::ssrf::SsrfError> for CrawlError {
     fn from(err: crate::net::ssrf::SsrfError) -> Self {
-        // `SsrfError` is already formatted by its Display impl,
-        // so we extract the reason from it. For simplicity,
-        // we use a generic "unknown" URL since the conversion doesn't
-        // have the original URL. Call sites should catch and re-wrap
-        // with the actual URL.
         CrawlError::SsrfPolicyViolation {
             url: "unknown".to_string(),
             reason: err.to_string(),
@@ -269,10 +264,6 @@ pub(crate) fn classify_reqwest_error(e: &reqwest::Error) -> CrawlError {
 mod tests {
     use super::*;
 
-    // -------------------------------------------------------------------------
-    // NetworkErrorKind::tag() unit tests (pure, no network)
-    // -------------------------------------------------------------------------
-
     #[test]
     fn network_error_kind_tag_connection() {
         assert_eq!(NetworkErrorKind::Connection.tag(), "connection");
@@ -303,10 +294,6 @@ mod tests {
         assert_eq!(NetworkErrorKind::Other.tag(), "network");
     }
 
-    // -------------------------------------------------------------------------
-    // Network integration tests — each triggers a real reqwest error
-    // -------------------------------------------------------------------------
-
     #[cfg(not(target_arch = "wasm32"))]
     mod network_integration {
         use super::*;
@@ -324,7 +311,6 @@ mod tests {
 
         #[tokio::test]
         async fn connection_refused_produces_connection_tag() {
-            // Port 1 is almost universally not listening.
             let err = scrape_url("http://127.0.0.1:1/").await;
             let msg = err.to_string();
             assert!(
@@ -344,15 +330,10 @@ mod tests {
 
         #[tokio::test]
         async fn timeout_produces_timeout_tag() {
-            // Start a TCP listener that accepts but never writes — causes a
-            // read/response timeout for the HTTP client.
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind failed");
             let addr = listener.local_addr().expect("addr");
-            // Accept in background and keep the socket open so the connect succeeds
-            // but the response never arrives.
             tokio::spawn(async move {
                 if let Ok((_socket, _)) = listener.accept().await {
-                    // Hold socket open until dropped at task end.
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             });
@@ -368,7 +349,6 @@ mod tests {
 
         #[tokio::test]
         async fn invalid_proxy_produces_connection_tag() {
-            // Configure a proxy pointing at a port that refuses connections.
             let client = reqwest::Client::builder()
                 .proxy(reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy parse"))
                 .timeout(Duration::from_millis(500))
@@ -381,8 +361,6 @@ mod tests {
                 .expect_err("expected proxy error");
             let err = classify_reqwest_error(&raw_err);
             let msg = err.to_string();
-            // A proxy error surfaces as connection-refused to the proxy address.
-            // The [network:connection] or [network:proxy] tag must be present.
             assert!(
                 msg.contains("[network:connection]") || msg.contains("[network:proxy]"),
                 "expected [network:connection] or [network:proxy] in '{msg}'"

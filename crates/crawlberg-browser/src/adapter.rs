@@ -524,7 +524,6 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         .set_extra_headers(config.extra_headers.clone())
         .await;
 
-    // Pre-populate the cookie jar from prior_cookies.
     for cookie in &config.prior_cookies {
         context.cookie_jar.set_parsed_cookie(
             &cookie.name,
@@ -563,7 +562,6 @@ async fn render_with_context(
         .map(|event| (*event.response_headers).clone())
         .unwrap_or_default();
 
-    // Optional eval_script.
     let eval_result = if let Some(ref script) = config.eval_script {
         let val = page.evaluate(script);
         if val.is_null() { None } else { Some(val) }
@@ -571,7 +569,6 @@ async fn render_with_context(
         None
     };
 
-    // Network events snapshot.
     let network_events = if config.capture_network_events {
         page.network_events
             .iter()
@@ -590,7 +587,6 @@ async fn render_with_context(
         Vec::new()
     };
 
-    // Cookie snapshot.
     let cookies = context
         .cookie_jar
         .snapshot()
@@ -636,9 +632,7 @@ async fn navigate_configured(page: &mut Page, url: &str, config: &NativeBrowserC
         .await
         .map_err(|_| PageError::NetworkError(format!("browser timed out after {:?}", config.timeout)))??;
 
-    // Selector wait: poll document.querySelector every 100 ms within the
-    // remaining timeout budget. We use the already-elapsed time to avoid
-    // re-starting the full timeout.
+    // ~keep Selector waits use the remaining timeout budget so navigation time counts against the same deadline.
     if config.wait_until == NativeBrowserWait::Selector
         && let Some(ref selector) = config.wait_selector
     {
@@ -1161,7 +1155,7 @@ mod tests {
 
     fn allow_private_network() {
         ALLOW_PRIVATE.get_or_init(|| {
-            // SAFETY: tests write this process env var once before network work starts.
+            // ~keep SAFETY: tests write this process env var once before network work starts.
             #[allow(unsafe_code)]
             unsafe {
                 std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");

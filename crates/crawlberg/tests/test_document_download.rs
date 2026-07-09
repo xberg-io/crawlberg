@@ -13,7 +13,6 @@ const PDF_BYTES: &[u8] = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF";
 async fn crawl_loop_downloads_linked_pdf_document() {
     let mock = MockServer::start().await;
 
-    // Seed HTML page links to a PDF one hop away.
     Mock::given(method("GET"))
         .and(path("/index.html"))
         .respond_with(
@@ -24,7 +23,6 @@ async fn crawl_loop_downloads_linked_pdf_document() {
         .mount(&mock)
         .await;
 
-    // The linked PDF itself, served as application/pdf.
     Mock::given(method("GET"))
         .and(path("/paper.pdf"))
         .respond_with(

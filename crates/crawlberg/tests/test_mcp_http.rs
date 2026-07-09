@@ -1,5 +1,3 @@
-#![cfg(all(feature = "api", feature = "mcp"))]
-
 //! Integration tests for the Streamable HTTP MCP transport.
 //!
 //! Regression guard: the MCP [`ServerHandler`] must delegate `tools/list` and
@@ -8,11 +6,13 @@
 //! tests drive the real JSON-RPC protocol over the mounted HTTP service rather
 //! than inspecting the router directly.
 
+#![cfg(all(feature = "api", feature = "mcp"))]
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use crawlberg::CrawlConfig;
-use tower::ServiceExt; // for `oneshot`
+use tower::ServiceExt;
 
 const ACCEPT: &str = "application/json, text/event-stream";
 
@@ -24,8 +24,6 @@ async fn post(app: &Router, session: Option<&str>, body: &str) -> (StatusCode, H
     let mut builder = Request::builder()
         .method("POST")
         .uri("/mcp")
-        // The transport's DNS-rebinding guard validates the Host header against
-        // its allowed-hosts list (localhost/127.0.0.1/::1 by default).
         .header("host", "localhost")
         .header("content-type", "application/json")
         .header("accept", ACCEPT);
@@ -121,18 +119,15 @@ async fn http_mcp_serves_safety_annotations() {
             .clone()
     };
 
-    // `interact` is the one state-mutating tool: not read-only, destructive, open-world.
     let interact = find("interact");
     assert_eq!(interact["annotations"]["readOnlyHint"], serde_json::json!(false));
     assert_eq!(interact["annotations"]["destructiveHint"], serde_json::json!(true));
     assert_eq!(interact["annotations"]["openWorldHint"], serde_json::json!(true));
 
-    // Web-fetching tools are read-only but open-world.
     let scrape = find("scrape");
     assert_eq!(scrape["annotations"]["readOnlyHint"], serde_json::json!(true));
     assert_eq!(scrape["annotations"]["openWorldHint"], serde_json::json!(true));
 
-    // Pure-local transforms are closed-world.
     let citations = find("generate_citations");
     assert_eq!(citations["annotations"]["openWorldHint"], serde_json::json!(false));
 }

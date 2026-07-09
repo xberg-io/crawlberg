@@ -20,7 +20,6 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
         return LinkType::Anchor;
     }
 
-    // Check for document extensions
     let lower = href.to_lowercase();
     for ext in DOCUMENT_EXTENSIONS {
         if lower.ends_with(ext) {
@@ -28,7 +27,6 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
         }
     }
 
-    // Try resolving
     if let Ok(resolved) = base_url.join(href) {
         if resolved.host_str() != base_url.host_str() {
             return LinkType::External;
@@ -50,7 +48,6 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
 pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
     let parser = dom.parser();
 
-    // Check for <base> tag
     let effective_base = dom
         .query_selector(SEL_BASE_HREF)
         .and_then(|mut iter| {
@@ -75,7 +72,6 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             }
 
-            // Skip non-HTTP schemes
             if href.starts_with("mailto:")
                 || href.starts_with("javascript:")
                 || href.starts_with("tel:")
@@ -84,7 +80,6 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             }
 
-            // Protocol-relative URLs
             let link_type = if href.starts_with("//") {
                 let resolved = format!("{}:{}", effective_base.scheme(), href);
                 if let Ok(u) = Url::parse(&resolved) {
