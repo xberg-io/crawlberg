@@ -15,6 +15,7 @@ use tracing::Instrument as _;
 use crate::browser_pool::BrowserPool;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
+use crate::net::ssrf::validate_url;
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{AuthConfig, BrowserBackend, BrowserWait, CookieInfo, CrawlConfig};
@@ -87,6 +88,25 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
 ) -> Result<HttpResponse, CrawlError> {
+    // SSRF: validate the target before navigating real headless Chrome to it.
+    // The HTTP tier guards its own fetches, but browser-tier fetches — reached
+    // directly (BrowserMode::Always/Stealth) or via dispatch escalation — land
+    // here without that check. Navigating to an unvalidated URL would let a
+    // seed (or a redirect chain that resolves to a public IP first) reach
+    // internal/link-local/metadata addresses. Mirrors the HTTP tier's initial
+    // check in `http.rs`; the same `deny_private` policy and DNS resolution
+    // apply, so private/metadata targets are rejected before any navigation.
+    let target = url::Url::parse(url).map_err(|e| CrawlError::SsrfPolicyViolation {
+        url: url.to_string(),
+        reason: format!("invalid URL: {e}"),
+    })?;
+    validate_url(&target, &config.ssrf)
+        .await
+        .map_err(|e| CrawlError::SsrfPolicyViolation {
+            url: url.to_string(),
+            reason: e.to_string(),
+        })?;
+
     if let Some(pool) = pool {
         let page = if config.browser.session_affinity {
             let session_key = crate::browser_session_pool::SessionKey::from_url(
