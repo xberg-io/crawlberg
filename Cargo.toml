@@ -12,7 +12,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.3"
+version = "1.0.4"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -44,8 +44,8 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.3" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.3" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.4" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.4" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"

@@ -2,6 +2,37 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.4] - 2026-07-09
+
+### Security
+
+- **SSRF validation on the headless-browser tier.** The browser fallback
+  (reached directly via `BrowserMode::Always`/`Stealth`, or via dispatch
+  escalation to `Tier::Browser`) navigated `page.goto(url)` without the SSRF
+  check the HTTP tier already enforced, so a seed or escalated URL could reach
+  loopback, RFC1918, link-local, or cloud-metadata addresses through a real
+  browser. The target is now validated against `CrawlConfig::ssrf` — the same
+  `deny_private` policy and DNS resolution as the HTTP tier — before any
+  navigation. (`crates/crawlberg/src/browser.rs`)
+
+  Known limitation: in-browser redirects and client-side navigations are not
+  yet re-validated per hop (that requires CDP request interception); the
+  pre-navigation check plus `deny_private` cover the direct and
+  DNS-rebinding-on-the-seed vectors.
+
+## [1.0.3] - 2026-07-04
+
+Maintenance release. Migrated pre-commit hooks to poly + mago (dropping prek,
+phpstan, and php-cs-fixer), made the `update`/`upgrade` tasks resilient to
+per-language failures, and regenerated bindings. Version-only bump synced
+across all manifests.
+
+## [1.0.2] - 2026-07-02
+
+Maintenance release. Migrated the toolchain to poly via the shared reusable
+validate workflow, upgraded binding dependencies, and regenerated bindings.
+Version-only bump synced across all manifests.
+
 ## [1.0.1] - 2026-06-29
 
 Maintenance release. Version-only bump synced across all manifests; `.gitignore`
@@ -15,7 +46,7 @@ First stable release. Promotes 1.0.0-rc.2; version-only bump synced across all m
 
 Release candidate 2. Maintenance release with version bump.
 
-## [Unreleased]
+## [1.0.0-rc.1] - 2026-06-26
 
 ### Changed
 
