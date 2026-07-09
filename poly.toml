@@ -22,22 +22,6 @@ exclude = [
     "test_documents/**",
     "vendor/**",
     "**/Cargo.toml",
-    "Package.swift",
-    "packages/**",
-    "e2e/**",
-    "test_apps/**",
-    "**/_generated/**",
-    "**/*_bridge_generated/**",
-    "crates/*-dart/**",
-    "crates/*-ffi/**",
-    "crates/*-jni/**",
-    "crates/*-node/**",
-    "crates/*-php/**",
-    "crates/*-py/**",
-    "crates/*-rb/**",
-    "crates/*-rs-jni/**",
-    "crates/*-ruby/**",
-    "crates/*-wasm/**",
 ]
 
 [lint.markdown.rumdl]
@@ -45,14 +29,6 @@ disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051
 
 [fmt.markdown.rumdl]
 disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051", "MD076"]
-
-[lint.uncomment]
-enabled = true
-remove_todos = true
-remove_fixme = true
-remove_docs = false
-use_default_ignores = true
-preserve_patterns = ["~keep"]
 
 [lint.python.ruff]
 select = ["ALL"]
@@ -182,8 +158,6 @@ ser = "ser"
     "EXE001",
     "A001",
     "N801",
-    "comment",
-    "doc-comment",
 ]
 "**/test_apps/**" = [
     "ANN",
@@ -225,28 +199,9 @@ ser = "ser"
     "EXE001",
     "A001",
     "N801",
-    "comment",
-    "doc-comment",
 ]
-"**/_generated/**" = ["comment", "doc-comment"]
-"**/*_bridge_generated/**" = ["comment", "doc-comment"]
-"Package.swift" = ["comment", "doc-comment"]
-"packages/**" = ["comment", "doc-comment"]
-"crates/*-dart/**" = ["comment", "doc-comment"]
-"crates/*-ffi/**" = ["comment", "doc-comment"]
-"crates/*-jni/**" = ["comment", "doc-comment"]
-"crates/*-node/**" = ["comment", "doc-comment"]
-"crates/*-php/**" = ["comment", "doc-comment"]
-"crates/*-py/**" = ["comment", "doc-comment"]
-"crates/*-rs-jni/**" = ["comment", "doc-comment"]
-"crates/*-ruby/**" = ["comment", "doc-comment"]
-"crates/*-wasm/**" = ["comment", "doc-comment"]
 "cli-proxy/**/*.py" = ["ANN", "S310", "T201"]
-"crates/*-ffi/include/**" = ["comment", "doc-comment"]
 "crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
-"docker/**" = ["DL3006", "DL3059"]
-"packages/go/include/**" = ["comment", "doc-comment"]
-"packages/swift/Sources/RustBridge*/**" = ["comment", "doc-comment"]
 "readme_templates/**/*.md" = ["MD057"]
 "scripts/**/*.py" = ["B023", "C901", "D103", "ERA001", "EXE001", "PLC0415", "PLR0912", "PLR0915", "PTH123", "T201"]
 "tests/**/*.py" = ["PERF203", "PLC0415", "S607"]

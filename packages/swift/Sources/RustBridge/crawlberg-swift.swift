@@ -1,6 +1,12 @@
 // swift-format-ignore-file
 import RustBridgeC
 
+public func crawlConfigValidateFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RustString {
+    try { let val = __swift_bridge__$crawl_config_validate_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func crawlResultUniqueNormalizedUrlsFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> RustString {
+    try { let val = __swift_bridge__$crawl_result_unique_normalized_urls_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return RustString(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func crawl_engine_handle_noop(_ client: CrawlEngineHandleRef) {
     __swift_bridge__$crawl_engine_handle_noop(client.ptr)
 }

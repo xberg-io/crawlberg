@@ -175,5 +175,4 @@ pub fn build(b: *std.Build) void {
     }
     scrape_run.step.dependOn(&metadata_run.step);
     test_step.dependOn(&scrape_run.step);
-
 }

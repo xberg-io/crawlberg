@@ -1356,6 +1356,7 @@ dependencies = [
 name = "crawlberg-jni"
 version = "1.0.4"
 dependencies = [
+ "async-trait",
  "base64",
  "crawlberg",
  "futures-util",

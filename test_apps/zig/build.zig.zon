@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .crawlberg = .{
-            .url = "https://github.com/xberg-io/crawlberg/releases/download/v1.0.3/crawlberg-zig-v1.0.3.tar.gz",
-            .hash = "crawlberg-1.0.3-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH",
+            .url = "https://github.com/xberg-io/crawlberg/releases/download/v1.0.4/crawlberg-zig-v1.0.4.tar.gz",
+            .hash = "crawlberg-1.0.4-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH",
         },
     },
     .paths = .{
