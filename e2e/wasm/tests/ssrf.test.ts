@@ -11,7 +11,8 @@
 // rejection of URLs that fail URL parsing. Full private-IP enforcement is
 // exercised by the Rust, Python, and Node e2e suites.
 //
-// ~keep TODO(ssrf-parity): Re-evaluate once a wasm-compatible SSRF shim is available.
+// Keep this target-specific assertion narrow: the browser-style WASM runtime
+// cannot run the native DNS preflight used by the Rust and Node suites.
 
 import { describe, expect, it } from "vitest";
 import { scrape, createEngine } from "@xberg-io/crawlberg-wasm";
