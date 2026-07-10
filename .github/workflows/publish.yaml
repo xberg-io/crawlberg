@@ -2193,7 +2193,7 @@ jobs:
         with:
           working-directory: packages/zig
           tag: ${{ needs.prepare.outputs.tag }}
-          # ~keep build.zig.zon TODO hash.
+          # ~keep build.zig.zon placeholder hash.
           package-name: crawlberg-zig
           multi-platform-ffi-dir: ffi-artifacts
           module-name: crawlberg

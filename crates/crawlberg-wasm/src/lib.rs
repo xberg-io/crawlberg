@@ -6645,7 +6645,7 @@ impl From<crawlberg::AuthConfig> for WasmAuthConfig {
                 username: None,
                 value: Some(value),
             },
-            _ => ::std::todo!("unmapped AuthConfig variant"),
+            _ => ::std::panic!("unmapped AuthConfig variant"),
         }
     }
 }
@@ -6879,7 +6879,7 @@ impl From<crawlberg::PageAction> for WasmPageAction {
                 selector: None,
                 text: None,
             },
-            _ => ::std::todo!("unmapped PageAction variant"),
+            _ => ::std::panic!("unmapped PageAction variant"),
         }
     }
 }
