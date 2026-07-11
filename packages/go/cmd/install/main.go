@@ -30,22 +30,14 @@ import (
 )
 
 const (
-	// DefaultVersion is the default version to download if not specified
-	DefaultVersion = "0.1.1"
-	// BaseURL is the base URL for GitHub releases
-	BaseURL = "https://github.com/xberg-io/crawlberg/releases/download"
-	// DefaultInstallDir is the default installation directory
-	DefaultInstallDir = ".crawlberg"
-	// dirPermissions is the directory permission mode (user rwx, group rx, other rx)
-	dirPermissions = 0o750
-	// filePermissions is the file permission mode (user rw, group r, other r)
-	filePermissions = 0o644
-	// maxExtractSize is the maximum size of extracted files (500MB) to prevent decompression bombs
-	maxExtractSize int64 = 500 * 1024 * 1024
-	// httpTimeout is the timeout for HTTP requests
-	httpTimeout = 5 * time.Minute
-	// osWindows is the constant for Windows OS
-	osWindows = "windows"
+	DefaultVersion          = "0.1.1"
+	BaseURL                 = "https://github.com/xberg-io/crawlberg/releases/download"
+	DefaultInstallDir       = ".crawlberg"
+	dirPermissions          = 0o750
+	filePermissions         = 0o644
+	maxExtractSize    int64 = 500 * 1024 * 1024
+	httpTimeout             = 5 * time.Minute
+	osWindows               = "windows"
 )
 
 // PlatformMapping maps Go's GOOS/GOARCH to release artifact names
@@ -134,7 +126,6 @@ func run() error {
 		return fmt.Errorf("missing Go directory mapping for: %s", platform)
 	}
 
-	// Determine installation directory
 	targetDir := *installDir
 	if targetDir == "" {
 		home, err := os.UserHomeDir()
@@ -149,32 +140,26 @@ func run() error {
 	headerDir := filepath.Join(targetDir, "include")
 	headerPath := filepath.Join(headerDir, "crawlberg.h")
 
-	// If --env flag is set, just show the environment variables
 	if *showEnv {
 		printEnvVars(libDir, headerDir)
 		return nil
 	}
 
-	// Check if already installed
 	alreadyInstalled := false
 	if _, err := os.Stat(libPath); err == nil {
 		fmt.Printf("Library already installed at: %s\n", libPath)
 		alreadyInstalled = true
 	}
 
-	// Download the release if not already installed
 	if !alreadyInstalled {
 		if err := downloadAndInstall(*version, releaseName, targetDir, goDir, libDir, headerDir, libPath, headerPath); err != nil {
 			return err
 		}
 	}
 
-	// Generate cgo_flags.go unless --no-generate is set
 	if !*noGenerate {
 		outDir := *outputDir
 		if outDir == "" {
-			// When running via go generate, GOFILE contains the source file name
-			// and the current working directory is the package directory
 			wd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("failed to get current working directory: %w", err)
@@ -206,19 +191,16 @@ func validateVersion(version string) error {
 }
 
 func downloadAndInstall(version, releaseName, targetDir, goDir, libDir, headerDir, libPath, headerPath string) error {
-	// Validate version format to prevent URL manipulation
 	if err := validateVersion(version); err != nil {
 		return err
 	}
 
 	platform := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 
-	// Construct URL using only known-safe base URL and validated version/releaseName
 	url := BaseURL + "/v" + version + "/go-ffi-" + releaseName + ".tar.gz"
 	fmt.Printf("Downloading Crawlberg FFI library v%s for %s...\n", version, platform)
 	fmt.Printf("URL: %s\n", url)
 
-	// Create HTTP client with timeout
 	client := &http.Client{
 		Timeout: httpTimeout,
 	}
@@ -227,7 +209,6 @@ func downloadAndInstall(version, releaseName, targetDir, goDir, libDir, headerDi
 		return fmt.Errorf("failed to download: %w", err)
 	}
 
-	// Ensure response body is closed and drained
 	defer closeResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
@@ -237,12 +218,10 @@ func downloadAndInstall(version, releaseName, targetDir, goDir, libDir, headerDi
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
-	// Check Content-Length to fail fast on oversized downloads
 	if resp.ContentLength > 0 && resp.ContentLength > maxExtractSize*2 {
 		return fmt.Errorf("download too large: %d bytes (max %d)", resp.ContentLength, maxExtractSize*2)
 	}
 
-	// Create directories
 	if err := os.MkdirAll(libDir, dirPermissions); err != nil {
 		return fmt.Errorf("failed to create lib directory: %w", err)
 	}
@@ -250,13 +229,11 @@ func downloadAndInstall(version, releaseName, targetDir, goDir, libDir, headerDi
 		return fmt.Errorf("failed to create include directory: %w", err)
 	}
 
-	// Extract the tarball
 	fmt.Println("Extracting...")
 	if err := extractTarGz(resp.Body, targetDir, goDir); err != nil {
 		return fmt.Errorf("failed to extract: %w", err)
 	}
 
-	// Verify installation
 	if _, err := os.Stat(libPath); os.IsNotExist(err) {
 		return fmt.Errorf("library not found after extraction at: %s", libPath)
 	}
@@ -276,7 +253,6 @@ func downloadAndInstall(version, releaseName, targetDir, goDir, libDir, headerDi
 // This is a best-effort operation for cleanup; errors are intentionally not propagated
 // since the main operation has already completed.
 func closeResponseBody(resp *http.Response) {
-	// Drain body to allow connection reuse (ignore errors for best-effort cleanup)
 	_, _ = io.Copy(io.Discard, resp.Body) //nolint:errcheck,gosec
 	_ = resp.Body.Close()                 //nolint:errcheck,gosec
 }
@@ -289,7 +265,6 @@ func isPathWithinBase(targetPath, baseDir string) bool {
 	if err != nil {
 		return false
 	}
-	// Check that the relative path doesn't escape the base directory
 	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
 }
 
@@ -315,7 +290,6 @@ func extractTarGz(r io.Reader, targetDir, goDir string) (returnErr error) {
 			return fmt.Errorf("tar read error: %w", err)
 		}
 
-		// Only process regular files (prevents symlink attacks)
 		if header.Typeflag != tar.TypeReg {
 			continue
 		}
@@ -325,27 +299,21 @@ func extractTarGz(r io.Reader, targetDir, goDir string) (returnErr error) {
 
 		switch {
 		case strings.HasSuffix(header.Name, "libcrawlberg_ffi.a"):
-			// Library goes to lib/{platform}/
 			targetPath = filepath.Join(targetDir, "lib", goDir, "libcrawlberg_ffi.a")
 		case strings.HasSuffix(header.Name, "crawlberg.h"):
-			// Header goes to include/
 			targetPath = filepath.Join(targetDir, "include", "crawlberg.h")
 		default:
-			// Skip other files
 			continue
 		}
 
-		// Validate target path is within target directory (prevent path traversal)
 		if !isPathWithinBase(targetPath, targetDir) {
 			return fmt.Errorf("invalid path in archive: %s", header.Name)
 		}
 
-		// Create parent directories
 		if err := os.MkdirAll(filepath.Dir(targetPath), dirPermissions); err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
 
-		// Extract file with size limit to prevent decompression bombs
 		if err := extractFile(tr, targetPath, header.Size); err != nil {
 			return err
 		}
@@ -357,7 +325,6 @@ func extractTarGz(r io.Reader, targetDir, goDir string) (returnErr error) {
 }
 
 func extractFile(r io.Reader, targetPath string, size int64) (returnErr error) {
-	// Check size limit
 	if size > maxExtractSize {
 		return fmt.Errorf("file too large: %d bytes (max %d)", size, maxExtractSize)
 	}
@@ -372,7 +339,6 @@ func extractFile(r io.Reader, targetPath string, size int64) (returnErr error) {
 		}
 	}()
 
-	// Use LimitReader to prevent decompression bombs
 	limitedReader := io.LimitReader(r, maxExtractSize)
 	if _, err := io.Copy(outFile, limitedReader); err != nil {
 		return fmt.Errorf("failed to write file %s: %w", targetPath, err)
@@ -388,13 +354,10 @@ func printEnvVars(libDir, headerDir string) {
 	var ldflags string
 	switch runtime.GOOS {
 	case "darwin":
-		// macOS: Direct path to static library (Apple ld does not support -Bstatic)
 		ldflags = fmt.Sprintf("%s -framework CoreFoundation -framework CoreServices -framework SystemConfiguration -framework Security -framework Foundation -lc++", libPath)
 	case "linux":
-		// Linux: Use GNU ld static/dynamic switching
 		ldflags = fmt.Sprintf("-L%s -Wl,-Bstatic -lcrawlberg_ffi -Wl,-Bdynamic -lpthread -ldl -lm -lstdc++", libDir)
 	case osWindows:
-		// Windows: Static library with Windows system libs
 		ldflags = fmt.Sprintf("-L%s -lcrawlberg_ffi -lws2_32 -luserenv -lbcrypt -lntdll -static-libgcc -static-libstdc++", libDir)
 	default:
 		ldflags = fmt.Sprintf("-L%s -lcrawlberg_ffi", libDir)
@@ -434,23 +397,17 @@ func generateCgoFlags(installDir, outputDir string) error {
 	includeDir := filepath.Join(installDir, "include")
 	libDir := filepath.Join(installDir, "lib")
 
-	// Build platform-specific LDFLAGS for each platform
 	data := cgoFlagsData{
 		InstallDir: installDir,
 		IncludeDir: includeDir,
-		// macOS ARM64: Direct path to static library (Apple ld does not support -Bstatic)
 		DarwinArm64LDFLAGS: fmt.Sprintf("%s/darwin_arm64/libcrawlberg_ffi.a -framework CoreFoundation -framework CoreServices -framework SystemConfiguration -framework Security -framework Foundation -lc++",
 			libDir),
-		// macOS AMD64: Direct path to static library
 		DarwinAmd64LDFLAGS: fmt.Sprintf("%s/darwin_amd64/libcrawlberg_ffi.a -framework CoreFoundation -framework CoreServices -framework SystemConfiguration -framework Security -framework Foundation -lc++",
 			libDir),
-		// Linux AMD64: Use GNU ld static/dynamic switching
 		LinuxAmd64LDFLAGS: fmt.Sprintf("-L%s/linux_amd64 -Wl,-Bstatic -lcrawlberg_ffi -Wl,-Bdynamic -lpthread -ldl -lm -lstdc++",
 			libDir),
-		// Linux ARM64: Use GNU ld static/dynamic switching
 		LinuxArm64LDFLAGS: fmt.Sprintf("-L%s/linux_arm64 -Wl,-Bstatic -lcrawlberg_ffi -Wl,-Bdynamic -lpthread -ldl -lm -lstdc++",
 			libDir),
-		// Windows AMD64: Static library with Windows system libs
 		WindowsAmd64LDFLAGS: fmt.Sprintf("-L%s/windows_amd64 -lcrawlberg_ffi -lws2_32 -luserenv -lbcrypt -lntdll -static-libgcc -static-libstdc++",
 			libDir),
 	}
@@ -461,7 +418,6 @@ func generateCgoFlags(installDir, outputDir string) error {
 	}
 
 	outputPath := filepath.Join(outputDir, "cgo_flags.go")
-	// #nosec G304 - Path is safely constructed from outputDir (user-provided or current directory) joined with a literal filename
 	file, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePermissions)
 	if err != nil {
 		return fmt.Errorf("failed to create %s: %w", outputPath, err)

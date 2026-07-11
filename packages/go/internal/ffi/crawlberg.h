@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
-/* Opaque type forward declarations */
 /**
  * Result from a single page action execution.
  */

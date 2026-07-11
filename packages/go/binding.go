@@ -61,56 +61,31 @@ func Ptr[T any](v T) *T {
 }
 
 var (
-	// ErrNotFound is returned when not_found.
-	ErrNotFound = errors.New("not_found")
-	// ErrUnauthorized is returned when unauthorized.
-	ErrUnauthorized = errors.New("unauthorized")
-	// ErrForbidden is returned when forbidden.
-	ErrForbidden = errors.New("forbidden")
-	// ErrWafBlocked is returned when forbidden: waf/blocked.
-	ErrWafBlocked = errors.New("forbidden: waf/blocked")
-	// ErrTimeout is returned when timeout.
-	ErrTimeout = errors.New("timeout")
-	// ErrRateLimited is returned when rate_limited.
-	ErrRateLimited = errors.New("rate_limited")
-	// ErrServerError is returned when server_error.
-	ErrServerError = errors.New("server_error")
-	// ErrBadGateway is returned when bad_gateway.
-	ErrBadGateway = errors.New("bad_gateway")
-	// ErrGone is returned when gone.
-	ErrGone = errors.New("gone")
-	// ErrConnection is returned when connection.
-	ErrConnection = errors.New("connection")
-	// ErrDns is returned when DNS.
-	ErrDns = errors.New("DNS")
-	// ErrSsl is returned when SSL.
-	ErrSsl = errors.New("SSL")
-	// ErrDataLoss is returned when data_loss.
-	ErrDataLoss = errors.New("data_loss")
-	// ErrBrowserError is returned when browser.
-	ErrBrowserError = errors.New("browser")
-	// ErrBrowserTimeout is returned when browser_timeout.
-	ErrBrowserTimeout = errors.New("browser_timeout")
-	// ErrInvalidConfig is returned when invalid_config.
-	ErrInvalidConfig = errors.New("invalid_config")
-	// ErrUnsupported is returned when unsupported.
-	ErrUnsupported = errors.New("unsupported")
-	// ErrSsrfPolicyViolation is returned when ssrf_policy_violation.
+	ErrNotFound            = errors.New("not_found")
+	ErrUnauthorized        = errors.New("unauthorized")
+	ErrForbidden           = errors.New("forbidden")
+	ErrWafBlocked          = errors.New("forbidden: waf/blocked")
+	ErrTimeout             = errors.New("timeout")
+	ErrRateLimited         = errors.New("rate_limited")
+	ErrServerError         = errors.New("server_error")
+	ErrBadGateway          = errors.New("bad_gateway")
+	ErrGone                = errors.New("gone")
+	ErrConnection          = errors.New("connection")
+	ErrDns                 = errors.New("DNS")
+	ErrSsl                 = errors.New("SSL")
+	ErrDataLoss            = errors.New("data_loss")
+	ErrBrowserError        = errors.New("browser")
+	ErrBrowserTimeout      = errors.New("browser_timeout")
+	ErrInvalidConfig       = errors.New("invalid_config")
+	ErrUnsupported         = errors.New("unsupported")
 	ErrSsrfPolicyViolation = errors.New("ssrf_policy_violation")
-	// ErrOther is returned when other.
-	ErrOther = errors.New("other")
-	// ErrDeniedByPolicy is returned when denied by SSRF policy.
-	ErrDeniedByPolicy = errors.New("denied by SSRF policy")
-	// ErrNotOnAllowlist is returned when host not on allowlist.
-	ErrNotOnAllowlist = errors.New("host not on allowlist")
-	// ErrDnsResolutionFailed is returned when DNS resolution failed.
+	ErrOther               = errors.New("other")
+	ErrDeniedByPolicy      = errors.New("denied by SSRF policy")
+	ErrNotOnAllowlist      = errors.New("host not on allowlist")
 	ErrDnsResolutionFailed = errors.New("DNS resolution failed")
-	// ErrInvalidUrl is returned when invalid URL.
-	ErrInvalidUrl = errors.New("invalid URL")
-	// ErrDisallowedScheme is returned when disallowed scheme.
-	ErrDisallowedScheme = errors.New("disallowed scheme")
-	// ErrTooManyRedirects is returned when too many redirects.
-	ErrTooManyRedirects = errors.New("too many redirects")
+	ErrInvalidUrl          = errors.New("invalid URL")
+	ErrDisallowedScheme    = errors.New("disallowed scheme")
+	ErrTooManyRedirects    = errors.New("too many redirects")
 )
 
 // CrawlError is a structured error type.
@@ -133,25 +108,9 @@ func (e SsrfError) Error() string { return e.Message }
 type BrowserMode string
 
 const (
-	// BrowserModeAuto BrowserModeAuto automatically detect when JS rendering is needed and fall back to browser.
-	BrowserModeAuto BrowserMode = "auto"
-	// BrowserModeAlways BrowserModeAlways always use the browser for every request.
-	BrowserModeAlways BrowserMode = "always"
-	// BrowserModeNever BrowserModeNever never use the browser fallback.
-	BrowserModeNever BrowserMode = "never"
-	// BrowserModeStealth BrowserModeStealth always use the browser with all stealth surfaces enabled.
-	//
-	// Behaves like [`Always`](BrowserMode::Always) for escalation purposes
-	// (every request is routed through the browser tier), but additionally
-	// enables:
-	//
-	// - browser JavaScript stealth patches
-	// - native-backend TLS fingerprint spoofing
-	// - stealth-aware default user-agent when no explicit UA is set
-	// - 1920×1080 viewport override
-	//
-	// Use this instead of setting the now-removed `BrowserConfig.stealth`
-	// boolean field.
+	BrowserModeAuto    BrowserMode = "auto"
+	BrowserModeAlways  BrowserMode = "always"
+	BrowserModeNever   BrowserMode = "never"
 	BrowserModeStealth BrowserMode = "stealth"
 )
 
@@ -159,22 +118,17 @@ const (
 type BrowserWait string
 
 const (
-	// BrowserWaitNetworkIdle BrowserWaitNetworkIdle wait until network activity is idle.
 	BrowserWaitNetworkIdle BrowserWait = "network_idle"
-	// BrowserWaitSelector BrowserWaitSelector wait for a specific CSS selector to appear in the DOM.
-	BrowserWaitSelector BrowserWait = "selector"
-	// BrowserWaitFixed BrowserWaitFixed wait for a fixed duration after navigation.
-	BrowserWaitFixed BrowserWait = "fixed"
+	BrowserWaitSelector    BrowserWait = "selector"
+	BrowserWaitFixed       BrowserWait = "fixed"
 )
 
 // BrowserBackend is an enumeration type.
 type BrowserBackend string
 
 const (
-	// BrowserBackendChromiumoxide BrowserBackendChromiumoxide existing Chromium/CDP backend powered by chromiumoxide.
 	BrowserBackendChromiumoxide BrowserBackend = "chromiumoxide"
-	// BrowserBackendNative BrowserBackendNative crawlberg-owned native browser backend derived from Obscura.
-	BrowserBackendNative BrowserBackend = "native"
+	BrowserBackendNative        BrowserBackend = "native"
 )
 
 // AuthConfig authentication configuration.
@@ -187,9 +141,7 @@ type AuthConfig interface {
 
 // AuthConfigBasic hTTP Basic authentication.
 type AuthConfigBasic struct {
-	// Username sent in the `Authorization: Basic` header.
 	Username string `json:"username"`
-	// Password sent in the `Authorization: Basic` header.
 	Password string `json:"password"`
 }
 
@@ -210,7 +162,6 @@ func (v AuthConfigBasic) MarshalJSON() ([]byte, error) {
 
 // AuthConfigBearer bearer token authentication.
 type AuthConfigBearer struct {
-	// Token sent in the `Authorization: Bearer` header.
 	Token string `json:"token"`
 }
 
@@ -229,9 +180,7 @@ func (v AuthConfigBearer) MarshalJSON() ([]byte, error) {
 
 // AuthConfigHeader custom authentication header.
 type AuthConfigHeader struct {
-	// HTTP header name to set on each request.
-	Name string `json:"name"`
-	// HTTP header value to send.
+	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
@@ -286,13 +235,9 @@ func UnmarshalAuthConfig(data []byte) (AuthConfig, error) {
 type LinkType string
 
 const (
-	// LinkTypeInternal LinkTypeInternal a link to the same domain.
 	LinkTypeInternal LinkType = "internal"
-	// LinkTypeExternal LinkTypeExternal a link to a different domain.
 	LinkTypeExternal LinkType = "external"
-	// LinkTypeAnchor LinkTypeAnchor a fragment-only link (e.g., `#section`).
-	LinkTypeAnchor LinkType = "anchor"
-	// LinkTypeDocument LinkTypeDocument a link to a downloadable document (PDF, DOC, etc.).
+	LinkTypeAnchor   LinkType = "anchor"
 	LinkTypeDocument LinkType = "document"
 )
 
@@ -300,25 +245,18 @@ const (
 type ImageSource string
 
 const (
-	// ImageSourceImg ImageSourceImg an `<img>` tag.
-	ImageSourceImg ImageSource = "img"
-	// ImageSourcePictureSource ImageSourcePictureSource a `<source>` tag inside `<picture>`.
+	ImageSourceImg           ImageSource = "img"
 	ImageSourcePictureSource ImageSource = "picture_source"
-	// ImageSourceOgImage ImageSourceOgImage an `og:image` meta tag.
-	ImageSourceOgImage ImageSource = "og:image"
-	// ImageSourceTwitterImage ImageSourceTwitterImage a `twitter:image` meta tag.
-	ImageSourceTwitterImage ImageSource = "twitter:image"
+	ImageSourceOgImage       ImageSource = "og:image"
+	ImageSourceTwitterImage  ImageSource = "twitter:image"
 )
 
 // FeedType is an enumeration type.
 type FeedType string
 
 const (
-	// FeedTypeRss FeedTypeRss rSS feed.
-	FeedTypeRss FeedType = "rss"
-	// FeedTypeAtom FeedTypeAtom atom feed.
-	FeedTypeAtom FeedType = "atom"
-	// FeedTypeJSONFeed FeedTypeJSONFeed jSON Feed.
+	FeedTypeRss      FeedType = "rss"
+	FeedTypeAtom     FeedType = "atom"
 	FeedTypeJSONFeed FeedType = "json_feed"
 )
 
@@ -326,26 +264,16 @@ const (
 type AssetCategory string
 
 const (
-	// AssetCategoryDocument AssetCategoryDocument a document file (PDF, DOC, etc.).
-	AssetCategoryDocument AssetCategory = "document"
-	// AssetCategoryImage AssetCategoryImage an image file.
-	AssetCategoryImage AssetCategory = "image"
-	// AssetCategoryAudio AssetCategoryAudio an audio file.
-	AssetCategoryAudio AssetCategory = "audio"
-	// AssetCategoryVideo AssetCategoryVideo a video file.
-	AssetCategoryVideo AssetCategory = "video"
-	// AssetCategoryFont AssetCategoryFont a font file.
-	AssetCategoryFont AssetCategory = "font"
-	// AssetCategoryStylesheet AssetCategoryStylesheet a CSS stylesheet.
+	AssetCategoryDocument   AssetCategory = "document"
+	AssetCategoryImage      AssetCategory = "image"
+	AssetCategoryAudio      AssetCategory = "audio"
+	AssetCategoryVideo      AssetCategory = "video"
+	AssetCategoryFont       AssetCategory = "font"
 	AssetCategoryStylesheet AssetCategory = "stylesheet"
-	// AssetCategoryScript AssetCategoryScript a JavaScript file.
-	AssetCategoryScript AssetCategory = "script"
-	// AssetCategoryArchive AssetCategoryArchive an archive file (ZIP, TAR, etc.).
-	AssetCategoryArchive AssetCategory = "archive"
-	// AssetCategoryData AssetCategoryData a data file (JSON, XML, CSV, etc.).
-	AssetCategoryData AssetCategory = "data"
-	// AssetCategoryOther AssetCategoryOther an unrecognized asset type.
-	AssetCategoryOther AssetCategory = "other"
+	AssetCategoryScript     AssetCategory = "script"
+	AssetCategoryArchive    AssetCategory = "archive"
+	AssetCategoryData       AssetCategory = "data"
+	AssetCategoryOther      AssetCategory = "other"
 )
 
 // CrawlEvent event emitted during a streaming crawl operation.
@@ -363,7 +291,6 @@ type CrawlEvent interface {
 
 // CrawlEventPage single page has been crawled.
 type CrawlEventPage struct {
-	// The crawled page result.
 	Result CrawlPageResult `json:"result"`
 }
 
@@ -382,9 +309,7 @@ func (v CrawlEventPage) MarshalJSON() ([]byte, error) {
 
 // CrawlEventError error occurred while crawling a URL.
 type CrawlEventError struct {
-	// The URL that failed.
-	URL string `json:"url"`
-	// The error message.
+	URL   string `json:"url"`
 	Error string `json:"error"`
 }
 
@@ -405,7 +330,6 @@ func (v CrawlEventError) MarshalJSON() ([]byte, error) {
 
 // CrawlEventComplete crawl has completed.
 type CrawlEventComplete struct {
-	// Total number of pages crawled.
 	PagesCrawled uint `json:"pages_crawled"`
 }
 
@@ -467,7 +391,6 @@ type PageAction interface {
 
 // PageActionClick click on an element matching the given CSS selector.
 type PageActionClick struct {
-	// CSS selector for the element to click.
 	Selector string `json:"selector"`
 }
 
@@ -486,10 +409,8 @@ func (v PageActionClick) MarshalJSON() ([]byte, error) {
 
 // PageActionTypeText type text into an element matching the given CSS selector.
 type PageActionTypeText struct {
-	// CSS selector for the input element.
 	Selector string `json:"selector"`
-	// Text to type into the element.
-	Text string `json:"text"`
+	Text     string `json:"text"`
 }
 
 func (PageActionTypeText) isPageAction() {}
@@ -509,7 +430,6 @@ func (v PageActionTypeText) MarshalJSON() ([]byte, error) {
 
 // PageActionPress press a keyboard key (e.g. "Enter", "Tab", "Escape").
 type PageActionPress struct {
-	// Key name to press.
 	Key string `json:"key"`
 }
 
@@ -528,12 +448,9 @@ func (v PageActionPress) MarshalJSON() ([]byte, error) {
 
 // PageActionScroll scroll the page or a specific element.
 type PageActionScroll struct {
-	// Direction to scroll.
 	Direction ScrollDirection `json:"direction"`
-	// Optional CSS selector for a scrollable element. Scrolls the page if absent.
-	Selector *string `json:"selector,omitempty"`
-	// Optional pixel amount to scroll. Uses a default if absent.
-	Amount *int64 `json:"amount,omitempty"`
+	Selector  *string         `json:"selector,omitempty"`
+	Amount    *int64          `json:"amount,omitempty"`
 }
 
 func (PageActionScroll) isPageAction() {}
@@ -555,10 +472,8 @@ func (v PageActionScroll) MarshalJSON() ([]byte, error) {
 
 // PageActionWait wait for a duration or for an element to appear.
 type PageActionWait struct {
-	// Milliseconds to wait. Ignored if `selector` is provided.
-	Milliseconds *int64 `json:"milliseconds,omitempty"`
-	// CSS selector to wait for.
-	Selector *string `json:"selector,omitempty"`
+	Milliseconds *int64  `json:"milliseconds,omitempty"`
+	Selector     *string `json:"selector,omitempty"`
 }
 
 func (PageActionWait) isPageAction() {}
@@ -578,11 +493,6 @@ func (v PageActionWait) MarshalJSON() ([]byte, error) {
 
 // PageActionScreenshot take a screenshot of the current page.
 type PageActionScreenshot struct {
-	// Whether to capture the full scrollable page. Defaults to viewport only.
-	//
-	// Accepts both the canonical `fullPage` (camelCase) form and the
-	// `full_page` (snake_case) alias so language bindings and fixtures can
-	// use either convention without error.
 	FullPage *bool `json:"fullPage,omitempty"`
 }
 
@@ -601,7 +511,6 @@ func (v PageActionScreenshot) MarshalJSON() ([]byte, error) {
 
 // PageActionExecuteJs execute arbitrary JavaScript in the page context.
 type PageActionExecuteJs struct {
-	// JavaScript source code to execute. Max 1 MB.
 	Script string `json:"script"`
 }
 
@@ -699,33 +608,23 @@ func UnmarshalPageAction(data []byte) (PageAction, error) {
 type ScrollDirection string
 
 const (
-	// ScrollDirectionUp ScrollDirectionUp scroll upward.
-	ScrollDirectionUp ScrollDirection = "up"
-	// ScrollDirectionDown ScrollDirectionDown scroll downward.
+	ScrollDirectionUp   ScrollDirection = "up"
 	ScrollDirectionDown ScrollDirection = "down"
 )
 
 // ExtractionMeta metadata about an LLM extraction pass.
 type ExtractionMeta struct {
-	// Estimated cost of the LLM call in USD.
-	Cost *float64 `json:"cost,omitempty"`
-	// Number of prompt (input) tokens consumed.
-	PromptTokens *uint64 `json:"prompt_tokens,omitempty"`
-	// Number of completion (output) tokens generated.
-	CompletionTokens *uint64 `json:"completion_tokens,omitempty"`
-	// The model identifier used for extraction.
-	Model *string `json:"model,omitempty"`
-	// Number of content chunks sent to the LLM.
-	ChunksProcessed uint `json:"chunks_processed"`
+	Cost             *float64 `json:"cost,omitempty"`
+	PromptTokens     *uint64  `json:"prompt_tokens,omitempty"`
+	CompletionTokens *uint64  `json:"completion_tokens,omitempty"`
+	Model            *string  `json:"model,omitempty"`
+	ChunksProcessed  uint     `json:"chunks_processed"`
 }
 
 // ProxyConfig proxy configuration for HTTP requests.
 type ProxyConfig struct {
-	// Proxy URL (e.g. "http://proxy:8080", "socks5://proxy:1080").
-	URL string `json:"url"`
-	// Optional username for proxy authentication.
+	URL      string  `json:"url"`
 	Username *string `json:"username,omitempty"`
-	// Optional password for proxy authentication.
 	Password *string `json:"password,omitempty"`
 }
 
@@ -735,181 +634,78 @@ type ProxyConfig struct {
 // html-to-markdown-rs as the conversion engine for all formats
 // (markdown, plain text, djot).
 type ContentConfig struct {
-	// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
-	OutputFormat *string `json:"output_format,omitempty"`
-	// Preprocessing aggressiveness: `"minimal"`, `"standard"` (default), `"aggressive"`.
-	//
-	// - Minimal: only scripts/styles removed.
-	// - Standard: also removes nav, nav-hinted headers/footers/asides, forms.
-	// - Aggressive: removes all footers/asides unconditionally.
-	PreprocessingPreset *string `json:"preprocessing_preset,omitempty"`
-	// Remove navigation elements (nav, breadcrumbs, menus). Default: `true`.
-	RemoveNavigation *bool `json:"remove_navigation,omitempty"`
-	// Remove form elements. Default: `true`.
-	RemoveForms *bool `json:"remove_forms,omitempty"`
-	// HTML tag names to strip (render children only, remove the tag wrapper).
-	// Default: `["noscript"]`.
-	StripTags []string `json:"strip_tags,omitempty"`
-	// HTML tag names to preserve as raw HTML in output.
-	PreserveTags []string `json:"preserve_tags,omitempty"`
-	// CSS selectors for elements to exclude entirely (element + all content).
-	//
-	// Unlike `strip_tags` (which removes the wrapper but keeps children),
-	// excluded elements and all descendants are dropped. Supports CSS selectors:
-	// `.class`, `#id`, `[attribute]`, compound selectors.
-	//
-	// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
-	ExcludeSelectors []string `json:"exclude_selectors,omitempty"`
-	// Skip image elements in output. Default: `false`.
-	SkipImages bool `json:"skip_images"`
-	// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML.
-	MaxDepth *uint `json:"max_depth,omitempty"`
-	// Enable line wrapping. Default: `false`.
-	Wrap bool `json:"wrap"`
-	// Wrap width when `wrap` is enabled. Default: `80`.
-	WrapWidth *uint `json:"wrap_width,omitempty"`
-	// Include document structure tree in output. Default: `true`.
-	IncludeDocumentStructure *bool `json:"include_document_structure,omitempty"`
+	OutputFormat             *string  `json:"output_format,omitempty"`
+	PreprocessingPreset      *string  `json:"preprocessing_preset,omitempty"`
+	RemoveNavigation         *bool    `json:"remove_navigation,omitempty"`
+	RemoveForms              *bool    `json:"remove_forms,omitempty"`
+	StripTags                []string `json:"strip_tags,omitempty"`
+	PreserveTags             []string `json:"preserve_tags,omitempty"`
+	ExcludeSelectors         []string `json:"exclude_selectors,omitempty"`
+	SkipImages               bool     `json:"skip_images"`
+	MaxDepth                 *uint    `json:"max_depth,omitempty"`
+	Wrap                     bool     `json:"wrap"`
+	WrapWidth                *uint    `json:"wrap_width,omitempty"`
+	IncludeDocumentStructure *bool    `json:"include_document_structure,omitempty"`
 }
 
 // BrowserConfig browser fallback configuration.
 type BrowserConfig struct {
-	// When to use the headless browser fallback.
-	Mode *BrowserMode `json:"mode,omitempty"`
-	// Browser backend used to render JavaScript-heavy pages.
-	Backend *BrowserBackend `json:"backend,omitempty"`
-	// CDP WebSocket endpoint for connecting to an external browser instance.
-	Endpoint *string `json:"endpoint,omitempty"`
-	// Timeout for browser page load and rendering (in milliseconds when serialized).
-	Timeout *uint64 `json:"timeout,omitempty"`
-	// Wait strategy after browser navigation.
-	Wait BrowserWait `json:"wait,omitempty"`
-	// CSS selector to wait for when `wait` is `Selector`.
-	WaitSelector *string `json:"wait_selector,omitempty"`
-	// Extra time to wait after the wait condition is met.
-	ExtraWait *uint64 `json:"extra_wait,omitempty"`
-	// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.
-	// Native backend supports http/https only (no SOCKS5).
-	Proxy *ProxyConfig `json:"proxy,omitempty"`
-	// URL patterns to block before the network request fires. Supports `*`
-	// wildcards. Useful for skipping ads/analytics/large images. Honored by
-	// `BrowserBackend::Native`; chromiumoxide ignores this field today.
-	BlockURLPatterns []string `json:"block_url_patterns,omitempty"`
-	// JavaScript snippet evaluated after navigation completes.
-	//
-	// Scraping captures the native backend result in `ScrapeResult.browser.eval_result`.
-	// Interactions run this script before page actions on both browser backends but do
-	// not include the script result in `InteractionResult`.
-	EvalScript *string `json:"eval_script,omitempty"`
-	// User-agent used when fetching robots.txt. Defaults to `BrowserConfig.user_agent`
-	// (or crawlberg's default) if unset. Native only.
-	RobotsUserAgent *string `json:"robots_user_agent,omitempty"`
-	// Capture the full network event stream into the result. Default false
-	// (only the document event is captured). Native only.
-	CaptureNetworkEvents bool `json:"capture_network_events"`
-	// Enable session affinity: reuse chromiumoxide Pages for same-domain
-	// requests so cookies + fingerprint + solved challenges persist.
-	// Default: true. When false, each request gets a fresh Page.
-	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	Mode                 *BrowserMode    `json:"mode,omitempty"`
+	Backend              *BrowserBackend `json:"backend,omitempty"`
+	Endpoint             *string         `json:"endpoint,omitempty"`
+	Timeout              *uint64         `json:"timeout,omitempty"`
+	Wait                 BrowserWait     `json:"wait,omitempty"`
+	WaitSelector         *string         `json:"wait_selector,omitempty"`
+	ExtraWait            *uint64         `json:"extra_wait,omitempty"`
+	Proxy                *ProxyConfig    `json:"proxy,omitempty"`
+	BlockURLPatterns     []string        `json:"block_url_patterns,omitempty"`
+	EvalScript           *string         `json:"eval_script,omitempty"`
+	RobotsUserAgent      *string         `json:"robots_user_agent,omitempty"`
+	CaptureNetworkEvents bool            `json:"capture_network_events"`
+	SessionAffinity      *bool           `json:"session_affinity,omitempty"`
 }
 
 // CrawlConfig configuration for crawl, scrape, and map operations.
 type CrawlConfig struct {
-	// Maximum crawl depth (number of link hops from the start URL).
-	MaxDepth *uint `json:"max_depth,omitempty"`
-	// Maximum number of pages to crawl.
-	MaxPages *uint `json:"max_pages,omitempty"`
-	// Maximum number of concurrent requests.
-	MaxConcurrent *uint `json:"max_concurrent,omitempty"`
-	// Whether to respect robots.txt directives.
-	RespectRobotsTxt bool `json:"respect_robots_txt"`
-	// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
-	// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-	// than raised as `CrawlError`. Default `false` preserves the historical
-	// throw-on-error contract for direct fetches. Independently of this flag,
-	// 404s reached at the end of a redirect chain are *always* surfaced softly —
-	// the user opted into redirect-following, so receiving a 404 there is part of
-	// the normal flow rather than an unexpected error.
-	SoftHTTPErrors bool `json:"soft_http_errors"`
-	// Custom user-agent string.
-	UserAgent *string `json:"user_agent,omitempty"`
-	// Whether to restrict crawling to the same domain.
-	StayOnDomain bool `json:"stay_on_domain"`
-	// Whether to allow subdomains when `stay_on_domain` is true.
-	AllowSubdomains bool `json:"allow_subdomains"`
-	// Regex patterns for paths to include during crawling.
-	IncludePaths []string `json:"include_paths,omitempty"`
-	// Regex patterns for paths to exclude during crawling.
-	ExcludePaths []string `json:"exclude_paths,omitempty"`
-	// Custom HTTP headers to send with each request.
-	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
-	// Timeout for individual HTTP requests (in milliseconds when serialized).
-	RequestTimeout *uint64 `json:"request_timeout,omitempty"`
-	// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
-	// between requests to the same domain. Defaults to 200ms when `None`.
-	RateLimitMs *uint64 `json:"rate_limit_ms,omitempty"`
-	// Maximum number of redirects to follow.
-	MaxRedirects *uint `json:"max_redirects,omitempty"`
-	// Number of retry attempts for failed requests.
-	RetryCount uint `json:"retry_count"`
-	// HTTP status codes that should trigger a retry.
-	RetryCodes []uint16 `json:"retry_codes,omitempty"`
-	// Whether to enable cookie handling.
-	CookiesEnabled bool `json:"cookies_enabled"`
-	// Authentication configuration.
-	Auth AuthConfig `json:"auth,omitempty"`
-	// Maximum response body size in bytes.
-	MaxBodySize *uint `json:"max_body_size,omitempty"`
-	// CSS selectors for tags to remove from HTML before processing.
-	RemoveTags []string `json:"remove_tags,omitempty"`
-	// Content extraction and conversion configuration.
-	Content ContentConfig `json:"content"`
-	// Maximum number of URLs to return from a map operation.
-	MapLimit *uint `json:"map_limit,omitempty"`
-	// Search filter for map results (case-insensitive substring match on URLs).
-	MapSearch *string `json:"map_search,omitempty"`
-	// Whether to download assets (CSS, JS, images, etc.) from the page.
-	DownloadAssets bool `json:"download_assets"`
-	// Filter for asset categories to download.
-	AssetTypes []AssetCategory `json:"asset_types,omitempty"`
-	// Maximum size in bytes for individual asset downloads.
-	MaxAssetSize *uint `json:"max_asset_size,omitempty"`
-	// Browser configuration.
-	Browser BrowserConfig `json:"browser"`
-	// Proxy configuration for HTTP requests.
-	Proxy *ProxyConfig `json:"proxy,omitempty"`
-	// List of user-agent strings for rotation. If non-empty, overrides `user_agent`.
-	UserAgents []string `json:"user_agents,omitempty"`
-	// Whether to capture a screenshot when using the browser.
-	CaptureScreenshot bool `json:"capture_screenshot"`
-	// Re-enqueue discovered `LinkType::Document` URLs into the crawl frontier so
-	// the crawl follows links *from* document pages (PDFs, etc.) as it would
-	// from HTML pages. Default: `false` (documents terminate at materialisation).
-	FollowDocumentUrls bool `json:"follow_document_urls"`
-	// Maximum document-depth (from the seed URL through document links only)
-	// when `follow_document_urls` is true. `None` means inherit `max_depth`.
-	// Independent of `max_depth`: a document URL is enqueued only if BOTH the
-	// outer `max_depth` and (if set) `document_url_depth` permit it.
-	DocumentURLDepth *uint32 `json:"document_url_depth,omitempty"`
-	// Whether to download non-HTML documents (PDF, DOCX, images, code, etc.) instead of skipping them.
-	DownloadDocuments *bool `json:"download_documents,omitempty"`
-	// Maximum size in bytes for document downloads. Defaults to 50 MB.
-	DocumentMaxSize *uint `json:"document_max_size,omitempty"`
-	// Allowlist of MIME types to download. If empty, uses built-in defaults.
-	DocumentMimeTypes []string `json:"document_mime_types,omitempty"`
-	// Path to write WARC output. If `None`, WARC output is disabled.
-	WarcOutput *string `json:"warc_output,omitempty"`
-	// Named browser profile for persistent sessions (cookies, localStorage).
-	BrowserProfile *string `json:"browser_profile,omitempty"`
-	// Whether to save changes back to the browser profile on exit.
-	SaveBrowserProfile bool `json:"save_browser_profile"`
-	// SSRF policy for outbound network requests. Default: deny private networks,
-	// allow http/https only, max 5 redirects.
-	//
-	// Phase 1: `deny_private` and `max_redirects` are exposed to all language
-	// bindings. `allowlist` is skipped (see `SsrfPolicy` fields) and will be
-	// added in a follow-up when `HostMatcher`'s tagged-enum FFI form is decided.
-	Ssrf SsrfPolicy `json:"ssrf"`
+	MaxDepth           *uint             `json:"max_depth,omitempty"`
+	MaxPages           *uint             `json:"max_pages,omitempty"`
+	MaxConcurrent      *uint             `json:"max_concurrent,omitempty"`
+	RespectRobotsTxt   bool              `json:"respect_robots_txt"`
+	SoftHTTPErrors     bool              `json:"soft_http_errors"`
+	UserAgent          *string           `json:"user_agent,omitempty"`
+	StayOnDomain       bool              `json:"stay_on_domain"`
+	AllowSubdomains    bool              `json:"allow_subdomains"`
+	IncludePaths       []string          `json:"include_paths,omitempty"`
+	ExcludePaths       []string          `json:"exclude_paths,omitempty"`
+	CustomHeaders      map[string]string `json:"custom_headers,omitempty"`
+	RequestTimeout     *uint64           `json:"request_timeout,omitempty"`
+	RateLimitMs        *uint64           `json:"rate_limit_ms,omitempty"`
+	MaxRedirects       *uint             `json:"max_redirects,omitempty"`
+	RetryCount         uint              `json:"retry_count"`
+	RetryCodes         []uint16          `json:"retry_codes,omitempty"`
+	CookiesEnabled     bool              `json:"cookies_enabled"`
+	Auth               AuthConfig        `json:"auth,omitempty"`
+	MaxBodySize        *uint             `json:"max_body_size,omitempty"`
+	RemoveTags         []string          `json:"remove_tags,omitempty"`
+	Content            ContentConfig     `json:"content"`
+	MapLimit           *uint             `json:"map_limit,omitempty"`
+	MapSearch          *string           `json:"map_search,omitempty"`
+	DownloadAssets     bool              `json:"download_assets"`
+	AssetTypes         []AssetCategory   `json:"asset_types,omitempty"`
+	MaxAssetSize       *uint             `json:"max_asset_size,omitempty"`
+	Browser            BrowserConfig     `json:"browser"`
+	Proxy              *ProxyConfig      `json:"proxy,omitempty"`
+	UserAgents         []string          `json:"user_agents,omitempty"`
+	CaptureScreenshot  bool              `json:"capture_screenshot"`
+	FollowDocumentUrls bool              `json:"follow_document_urls"`
+	DocumentURLDepth   *uint32           `json:"document_url_depth,omitempty"`
+	DownloadDocuments  *bool             `json:"download_documents,omitempty"`
+	DocumentMaxSize    *uint             `json:"document_max_size,omitempty"`
+	DocumentMimeTypes  []string          `json:"document_mime_types,omitempty"`
+	WarcOutput         *string           `json:"warc_output,omitempty"`
+	BrowserProfile     *string           `json:"browser_profile,omitempty"`
+	SaveBrowserProfile bool              `json:"save_browser_profile"`
+	Ssrf               SsrfPolicy        `json:"ssrf"`
 }
 
 func (s *CrawlConfig) UnmarshalJSON(data []byte) error {
@@ -1009,14 +805,9 @@ func (s *CrawlConfig) UnmarshalJSON(data []byte) error {
 //
 // Available on `ScrapeResult.browser` when `BrowserBackend::Native` handled the request.
 type BrowserExtras struct {
-	// Return value of `BrowserConfig.eval_script`, if provided.
-	EvalResult *json.RawMessage `json:"eval_result,omitempty"`
-	// Network events captured during page navigation (only populated when
-	// `BrowserConfig.capture_network_events` is true).
-	NetworkEvents []ResponseMeta `json:"network_events,omitempty"`
-	// All non-expired cookies present in the browser's cookie jar after
-	// navigation completes (includes both prior cookies and server Set-Cookie).
-	Cookies []CookieInfo `json:"cookies,omitempty"`
+	EvalResult    *json.RawMessage `json:"eval_result,omitempty"`
+	NetworkEvents []ResponseMeta   `json:"network_events,omitempty"`
+	Cookies       []CookieInfo     `json:"cookies,omitempty"`
 }
 
 // DownloadedDocument downloaded non-HTML document (PDF, DOCX, image, code file, etc.).
@@ -1025,434 +816,257 @@ type BrowserExtras struct {
 // enabled, it downloads the raw bytes and populates this struct instead of
 // skipping the resource.
 type DownloadedDocument struct {
-	// The URL the document was fetched from.
-	URL string `json:"url"`
-	// The MIME type from the Content-Type header.
-	MimeType string `json:"mime_type"`
-	// Size of the document in bytes.
-	Size uint `json:"size"`
-	// Filename extracted from Content-Disposition or URL path.
-	Filename *string `json:"filename,omitempty"`
-	// SHA-256 hex digest of the content.
-	ContentHash string `json:"content_hash"`
-	// Selected response headers.
-	Headers map[string]string `json:"headers,omitempty"`
+	URL         string            `json:"url"`
+	MimeType    string            `json:"mime_type"`
+	Size        uint              `json:"size"`
+	Filename    *string           `json:"filename,omitempty"`
+	ContentHash string            `json:"content_hash"`
+	Headers     map[string]string `json:"headers,omitempty"`
 }
 
 // InteractionResult result of executing a sequence of page interaction actions.
 type InteractionResult struct {
-	// Results from each executed action.
 	ActionResults []ActionResult `json:"action_results,omitempty"`
-	// Final page HTML after all actions completed.
-	FinalHTML string `json:"final_html"`
-	// Final page URL (may have changed due to navigation).
-	FinalURL string `json:"final_url"`
+	FinalHTML     string         `json:"final_html"`
+	FinalURL      string         `json:"final_url"`
 }
 
 // ActionResult result from a single page action execution.
 type ActionResult struct {
-	// Zero-based index of the action in the sequence.
-	ActionIndex uint `json:"action_index"`
-	// The type of action that was executed.
-	ActionType string `json:"action_type"`
-	// Whether the action completed successfully.
-	Success bool `json:"success"`
-	// Action-specific return data (screenshot bytes, JS return value, scraped HTML).
-	Data *json.RawMessage `json:"data,omitempty"`
-	// Error message if the action failed.
-	Error *string `json:"error,omitempty"`
+	ActionIndex uint             `json:"action_index"`
+	ActionType  string           `json:"action_type"`
+	Success     bool             `json:"success"`
+	Data        *json.RawMessage `json:"data,omitempty"`
+	Error       *string          `json:"error,omitempty"`
 }
 
 // ScrapeResult result of a single-page scrape operation.
 type ScrapeResult struct {
-	// The HTTP status code of the response.
-	StatusCode uint16 `json:"status_code"`
-	// The final URL after following all redirects.
-	FinalURL string `json:"final_url"`
-	// The Content-Type header value.
-	ContentType string `json:"content_type"`
-	// The HTML body of the response.
-	HTML string `json:"html"`
-	// The size of the response body in bytes.
-	BodySize uint `json:"body_size"`
-	// Extracted metadata from the page.
-	Metadata PageMetadata `json:"metadata"`
-	// Links found on the page.
-	Links []LinkInfo `json:"links,omitempty"`
-	// Images found on the page.
-	Images []ImageInfo `json:"images,omitempty"`
-	// Feed links found on the page.
-	Feeds []FeedInfo `json:"feeds,omitempty"`
-	// JSON-LD entries found on the page.
-	JSONLd []JSONLdEntry `json:"json_ld,omitempty"`
-	// Whether the URL is allowed by robots.txt.
-	IsAllowed bool `json:"is_allowed"`
-	// The crawl delay from robots.txt, in seconds.
-	CrawlDelay *uint64 `json:"crawl_delay,omitempty"`
-	// Whether a noindex directive was detected.
-	NoindexDetected bool `json:"noindex_detected"`
-	// Whether a nofollow directive was detected.
-	NofollowDetected bool `json:"nofollow_detected"`
-	// The X-Robots-Tag header value, if present.
-	XRobotsTag *string `json:"x_robots_tag,omitempty"`
-	// Whether the content is a PDF.
-	IsPdf bool `json:"is_pdf"`
-	// Whether the page was skipped (binary or PDF content).
-	WasSkipped bool `json:"was_skipped"`
-	// The detected character set encoding.
-	DetectedCharset *string `json:"detected_charset,omitempty"`
-	// Whether an authentication header was sent with the request.
-	AuthHeaderSent bool `json:"auth_header_sent"`
-	// Response metadata extracted from HTTP headers.
-	ResponseMeta *ResponseMeta `json:"response_meta,omitempty"`
-	// Downloaded assets from the page.
-	Assets []DownloadedAsset `json:"assets,omitempty"`
-	// Whether the page content suggests JavaScript rendering is needed.
-	JsRenderHint bool `json:"js_render_hint"`
-	// Whether the browser fallback was used to fetch this page.
-	BrowserUsed bool `json:"browser_used"`
-	// Markdown conversion of the page content.
-	Markdown *MarkdownResult `json:"markdown,omitempty"`
-	// Structured data extracted by LLM. Populated when extraction is configured.
-	ExtractedData *json.RawMessage `json:"extracted_data,omitempty"`
-	// Metadata about the LLM extraction pass (cost, tokens, model).
-	ExtractionMeta *ExtractionMeta `json:"extraction_meta,omitempty"`
-	// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
+	StatusCode         uint16              `json:"status_code"`
+	FinalURL           string              `json:"final_url"`
+	ContentType        string              `json:"content_type"`
+	HTML               string              `json:"html"`
+	BodySize           uint                `json:"body_size"`
+	Metadata           PageMetadata        `json:"metadata"`
+	Links              []LinkInfo          `json:"links,omitempty"`
+	Images             []ImageInfo         `json:"images,omitempty"`
+	Feeds              []FeedInfo          `json:"feeds,omitempty"`
+	JSONLd             []JSONLdEntry       `json:"json_ld,omitempty"`
+	IsAllowed          bool                `json:"is_allowed"`
+	CrawlDelay         *uint64             `json:"crawl_delay,omitempty"`
+	NoindexDetected    bool                `json:"noindex_detected"`
+	NofollowDetected   bool                `json:"nofollow_detected"`
+	XRobotsTag         *string             `json:"x_robots_tag,omitempty"`
+	IsPdf              bool                `json:"is_pdf"`
+	WasSkipped         bool                `json:"was_skipped"`
+	DetectedCharset    *string             `json:"detected_charset,omitempty"`
+	AuthHeaderSent     bool                `json:"auth_header_sent"`
+	ResponseMeta       *ResponseMeta       `json:"response_meta,omitempty"`
+	Assets             []DownloadedAsset   `json:"assets,omitempty"`
+	JsRenderHint       bool                `json:"js_render_hint"`
+	BrowserUsed        bool                `json:"browser_used"`
+	Markdown           *MarkdownResult     `json:"markdown,omitempty"`
+	ExtractedData      *json.RawMessage    `json:"extracted_data,omitempty"`
+	ExtractionMeta     *ExtractionMeta     `json:"extraction_meta,omitempty"`
 	DownloadedDocument *DownloadedDocument `json:"downloaded_document,omitempty"`
-	// Browser-specific extras (eval result, network events, cookies). Only
-	// populated when `BrowserBackend::Native` was used for this request.
-	Browser *BrowserExtras `json:"browser,omitempty"`
+	Browser            *BrowserExtras      `json:"browser,omitempty"`
 }
 
 // CrawlPageResult result of crawling a single page during a crawl operation.
 type CrawlPageResult struct {
-	// The original URL of the page.
-	URL string `json:"url"`
-	// The normalized URL of the page.
-	NormalizedURL string `json:"normalized_url"`
-	// The HTTP status code of the response.
-	StatusCode uint16 `json:"status_code"`
-	// The Content-Type header value.
-	ContentType string `json:"content_type"`
-	// The HTML body of the response.
-	HTML string `json:"html"`
-	// The size of the response body in bytes.
-	BodySize uint `json:"body_size"`
-	// Extracted metadata from the page.
-	Metadata PageMetadata `json:"metadata"`
-	// Links found on the page.
-	Links []LinkInfo `json:"links,omitempty"`
-	// Images found on the page.
-	Images []ImageInfo `json:"images,omitempty"`
-	// Feed links found on the page.
-	Feeds []FeedInfo `json:"feeds,omitempty"`
-	// JSON-LD entries found on the page.
-	JSONLd []JSONLdEntry `json:"json_ld,omitempty"`
-	// The depth of this page from the start URL.
-	Depth uint `json:"depth"`
-	// Whether this page is on the same domain as the start URL.
-	StayedOnDomain bool `json:"stayed_on_domain"`
-	// Whether this page was skipped (binary or PDF content).
-	WasSkipped bool `json:"was_skipped"`
-	// Whether the content is a PDF.
-	IsPdf bool `json:"is_pdf"`
-	// The detected character set encoding.
-	DetectedCharset *string `json:"detected_charset,omitempty"`
-	// Markdown conversion of the page content.
-	Markdown *MarkdownResult `json:"markdown,omitempty"`
-	// Structured data extracted by LLM. Populated when extraction is configured.
-	ExtractedData *json.RawMessage `json:"extracted_data,omitempty"`
-	// Metadata about the LLM extraction pass (cost, tokens, model).
-	ExtractionMeta *ExtractionMeta `json:"extraction_meta,omitempty"`
-	// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
+	URL                string              `json:"url"`
+	NormalizedURL      string              `json:"normalized_url"`
+	StatusCode         uint16              `json:"status_code"`
+	ContentType        string              `json:"content_type"`
+	HTML               string              `json:"html"`
+	BodySize           uint                `json:"body_size"`
+	Metadata           PageMetadata        `json:"metadata"`
+	Links              []LinkInfo          `json:"links,omitempty"`
+	Images             []ImageInfo         `json:"images,omitempty"`
+	Feeds              []FeedInfo          `json:"feeds,omitempty"`
+	JSONLd             []JSONLdEntry       `json:"json_ld,omitempty"`
+	Depth              uint                `json:"depth"`
+	StayedOnDomain     bool                `json:"stayed_on_domain"`
+	WasSkipped         bool                `json:"was_skipped"`
+	IsPdf              bool                `json:"is_pdf"`
+	DetectedCharset    *string             `json:"detected_charset,omitempty"`
+	Markdown           *MarkdownResult     `json:"markdown,omitempty"`
+	ExtractedData      *json.RawMessage    `json:"extracted_data,omitempty"`
+	ExtractionMeta     *ExtractionMeta     `json:"extraction_meta,omitempty"`
 	DownloadedDocument *DownloadedDocument `json:"downloaded_document,omitempty"`
-	// Whether the browser fallback was used to fetch this page.
-	BrowserUsed bool `json:"browser_used"`
+	BrowserUsed        bool                `json:"browser_used"`
 }
 
 // CrawlResult result of a multi-page crawl operation.
 type CrawlResult struct {
-	// The list of crawled pages.
-	Pages []CrawlPageResult `json:"pages,omitempty"`
-	// The final URL after following redirects.
-	FinalURL string `json:"final_url"`
-	// The number of redirects followed.
-	RedirectCount uint `json:"redirect_count"`
-	// Whether any page was skipped during crawling.
-	WasSkipped bool `json:"was_skipped"`
-	// An error message, if the crawl encountered an issue.
-	Error *string `json:"error,omitempty"`
-	// Cookies collected during the crawl.
-	Cookies []CookieInfo `json:"cookies,omitempty"`
-	// Whether all crawled pages stayed on the same domain as the start URL.
-	StayedOnDomain bool `json:"stayed_on_domain"`
-	// Whether the browser fallback was used for any page in this crawl.
-	BrowserUsed bool `json:"browser_used"`
+	Pages          []CrawlPageResult `json:"pages,omitempty"`
+	FinalURL       string            `json:"final_url"`
+	RedirectCount  uint              `json:"redirect_count"`
+	WasSkipped     bool              `json:"was_skipped"`
+	Error          *string           `json:"error,omitempty"`
+	Cookies        []CookieInfo      `json:"cookies,omitempty"`
+	StayedOnDomain bool              `json:"stayed_on_domain"`
+	BrowserUsed    bool              `json:"browser_used"`
 }
 
 // SitemapURL uRL entry from a sitemap.
 type SitemapURL struct {
-	// The URL.
-	URL string `json:"url"`
-	// The last modification date, if present.
-	Lastmod *string `json:"lastmod,omitempty"`
-	// The change frequency, if present.
+	URL        string  `json:"url"`
+	Lastmod    *string `json:"lastmod,omitempty"`
 	Changefreq *string `json:"changefreq,omitempty"`
-	// The priority, if present.
-	Priority *string `json:"priority,omitempty"`
+	Priority   *string `json:"priority,omitempty"`
 }
 
 // MapResult result of a map operation, containing discovered URLs.
 type MapResult struct {
-	// The list of discovered URLs.
 	Urls []SitemapURL `json:"urls,omitempty"`
 }
 
 // MarkdownResult rich markdown conversion result from HTML processing.
 type MarkdownResult struct {
-	// Converted markdown text.
-	Content string `json:"content"`
-	// Structured document tree with semantic nodes.
-	DocumentStructure *json.RawMessage `json:"document_structure,omitempty"`
-	// Extracted tables with structured cell data.
-	Tables []json.RawMessage `json:"tables,omitempty"`
-	// Non-fatal processing warnings.
-	Warnings []string `json:"warnings,omitempty"`
-	// Whether citation conversion was applied and produced at least one reference.
-	//
-	// `true` when the markdown contained inline links that were converted to
-	// numbered citation references. The converted content (with `[N]` markers)
-	// is available in `content`; the full reference list is accessible via
-	// `generate_citations` if needed separately.
-	Citations bool `json:"citations"`
-	// Content-filtered markdown optimized for LLM consumption.
-	FitContent *string `json:"fit_content,omitempty"`
+	Content           string            `json:"content"`
+	DocumentStructure *json.RawMessage  `json:"document_structure,omitempty"`
+	Tables            []json.RawMessage `json:"tables,omitempty"`
+	Warnings          []string          `json:"warnings,omitempty"`
+	Citations         bool              `json:"citations"`
+	FitContent        *string           `json:"fit_content,omitempty"`
 }
 
 // LinkInfo information about a link found on a page.
 type LinkInfo struct {
-	// The resolved URL of the link.
-	URL string `json:"url"`
-	// The visible text of the link.
-	Text string `json:"text"`
-	// The classification of the link.
+	URL      string   `json:"url"`
+	Text     string   `json:"text"`
 	LinkType LinkType `json:"link_type,omitempty"`
-	// The `rel` attribute value, if present.
-	Rel *string `json:"rel,omitempty"`
-	// Whether the link has `rel="nofollow"`.
-	Nofollow bool `json:"nofollow"`
+	Rel      *string  `json:"rel,omitempty"`
+	Nofollow bool     `json:"nofollow"`
 }
 
 // ImageInfo information about an image found on a page.
 type ImageInfo struct {
-	// The image URL.
-	URL string `json:"url"`
-	// The alt text, if present.
-	Alt *string `json:"alt,omitempty"`
-	// The width attribute, if present and parseable.
-	Width *uint32 `json:"width,omitempty"`
-	// The height attribute, if present and parseable.
-	Height *uint32 `json:"height,omitempty"`
-	// The source of the image reference.
+	URL    string      `json:"url"`
+	Alt    *string     `json:"alt,omitempty"`
+	Width  *uint32     `json:"width,omitempty"`
+	Height *uint32     `json:"height,omitempty"`
 	Source ImageSource `json:"source,omitempty"`
 }
 
 // FeedInfo information about a feed link found on a page.
 type FeedInfo struct {
-	// The feed URL.
-	URL string `json:"url"`
-	// The feed title, if present.
-	Title *string `json:"title,omitempty"`
-	// The type of feed.
+	URL      string   `json:"url"`
+	Title    *string  `json:"title,omitempty"`
 	FeedType FeedType `json:"feed_type,omitempty"`
 }
 
 // JSONLdEntry jSON-LD structured data entry found on a page.
 type JSONLdEntry struct {
-	// The `@type` value from the JSON-LD object.
-	SchemaType string `json:"schema_type"`
-	// The `name` value, if present.
-	Name *string `json:"name,omitempty"`
-	// The raw JSON-LD string.
-	Raw string `json:"raw"`
+	SchemaType string  `json:"schema_type"`
+	Name       *string `json:"name,omitempty"`
+	Raw        string  `json:"raw"`
 }
 
 // CookieInfo information about an HTTP cookie received from a response.
 type CookieInfo struct {
-	// The cookie name.
-	Name string `json:"name"`
-	// The cookie value.
-	Value string `json:"value"`
-	// The cookie domain, if specified.
+	Name   string  `json:"name"`
+	Value  string  `json:"value"`
 	Domain *string `json:"domain,omitempty"`
-	// The cookie path, if specified.
-	Path *string `json:"path,omitempty"`
+	Path   *string `json:"path,omitempty"`
 }
 
 // DownloadedAsset downloaded asset from a page.
 type DownloadedAsset struct {
-	// The original URL of the asset.
-	URL string `json:"url"`
-	// The SHA-256 content hash of the asset.
-	ContentHash string `json:"content_hash"`
-	// The MIME type from the Content-Type header.
-	MimeType *string `json:"mime_type,omitempty"`
-	// The size of the asset in bytes.
-	Size uint `json:"size"`
-	// The category of the asset.
+	URL           string        `json:"url"`
+	ContentHash   string        `json:"content_hash"`
+	MimeType      *string       `json:"mime_type,omitempty"`
+	Size          uint          `json:"size"`
 	AssetCategory AssetCategory `json:"asset_category,omitempty"`
-	// The HTML tag that referenced this asset (e.g., "link", "script", "img").
-	HTMLTag *string `json:"html_tag,omitempty"`
+	HTMLTag       *string       `json:"html_tag,omitempty"`
 }
 
 // ArticleMetadata article metadata extracted from `article:*` Open Graph tags.
 type ArticleMetadata struct {
-	// The article publication time.
-	PublishedTime *string `json:"published_time,omitempty"`
-	// The article modification time.
-	ModifiedTime *string `json:"modified_time,omitempty"`
-	// The article author.
-	Author *string `json:"author,omitempty"`
-	// The article section.
-	Section *string `json:"section,omitempty"`
-	// The article tags.
-	Tags []string `json:"tags,omitempty"`
+	PublishedTime *string  `json:"published_time,omitempty"`
+	ModifiedTime  *string  `json:"modified_time,omitempty"`
+	Author        *string  `json:"author,omitempty"`
+	Section       *string  `json:"section,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
 }
 
 // HreflangEntry hreflang alternate link entry.
 type HreflangEntry struct {
-	// The language code (e.g., "en", "fr", "x-default").
 	Lang string `json:"lang"`
-	// The URL for this language variant.
-	URL string `json:"url"`
+	URL  string `json:"url"`
 }
 
 // FaviconInfo information about a favicon or icon link.
 type FaviconInfo struct {
-	// The icon URL.
-	URL string `json:"url"`
-	// The `rel` attribute (e.g., "icon", "apple-touch-icon").
-	Rel string `json:"rel"`
-	// The `sizes` attribute, if present.
-	Sizes *string `json:"sizes,omitempty"`
-	// The MIME type, if present.
+	URL      string  `json:"url"`
+	Rel      string  `json:"rel"`
+	Sizes    *string `json:"sizes,omitempty"`
 	MimeType *string `json:"mime_type,omitempty"`
 }
 
 // HeadingInfo heading element extracted from the page.
 type HeadingInfo struct {
-	// The heading level (1-6).
-	Level uint8 `json:"level"`
-	// The heading text content.
-	Text string `json:"text"`
+	Level uint8  `json:"level"`
+	Text  string `json:"text"`
 }
 
 // ResponseMeta response metadata extracted from HTTP headers.
 type ResponseMeta struct {
-	// The ETag header value.
-	Etag *string `json:"etag,omitempty"`
-	// The Last-Modified header value.
-	LastModified *string `json:"last_modified,omitempty"`
-	// The Cache-Control header value.
-	CacheControl *string `json:"cache_control,omitempty"`
-	// The Server header value.
-	Server *string `json:"server,omitempty"`
-	// The X-Powered-By header value.
-	XPoweredBy *string `json:"x_powered_by,omitempty"`
-	// The Content-Language header value.
+	Etag            *string `json:"etag,omitempty"`
+	LastModified    *string `json:"last_modified,omitempty"`
+	CacheControl    *string `json:"cache_control,omitempty"`
+	Server          *string `json:"server,omitempty"`
+	XPoweredBy      *string `json:"x_powered_by,omitempty"`
 	ContentLanguage *string `json:"content_language,omitempty"`
-	// The Content-Encoding header value.
 	ContentEncoding *string `json:"content_encoding,omitempty"`
 }
 
 // PageMetadata metadata extracted from an HTML page's `<meta>` tags and `<title>` element.
 type PageMetadata struct {
-	// The page title from the `<title>` element.
-	Title *string `json:"title,omitempty"`
-	// The meta description.
-	Description *string `json:"description,omitempty"`
-	// The canonical URL from `<link rel="canonical">`.
-	CanonicalURL *string `json:"canonical_url,omitempty"`
-	// Keywords from `<meta name="keywords">`.
-	Keywords *string `json:"keywords,omitempty"`
-	// Author from `<meta name="author">`.
-	Author *string `json:"author,omitempty"`
-	// Viewport content from `<meta name="viewport">`.
-	Viewport *string `json:"viewport,omitempty"`
-	// Theme color from `<meta name="theme-color">`.
-	ThemeColor *string `json:"theme_color,omitempty"`
-	// Generator from `<meta name="generator">`.
-	Generator *string `json:"generator,omitempty"`
-	// Robots content from `<meta name="robots">`.
-	Robots *string `json:"robots,omitempty"`
-	// The `lang` attribute from the `<html>` element.
-	HTMLLang *string `json:"html_lang,omitempty"`
-	// The `dir` attribute from the `<html>` element.
-	HTMLDir *string `json:"html_dir,omitempty"`
-	// Open Graph title.
-	OgTitle *string `json:"og_title,omitempty"`
-	// Open Graph type.
-	OgType *string `json:"og_type,omitempty"`
-	// Open Graph image URL.
-	OgImage *string `json:"og_image,omitempty"`
-	// Open Graph description.
-	OgDescription *string `json:"og_description,omitempty"`
-	// Open Graph URL.
-	OgURL *string `json:"og_url,omitempty"`
-	// Open Graph site name.
-	OgSiteName *string `json:"og_site_name,omitempty"`
-	// Open Graph locale.
-	OgLocale *string `json:"og_locale,omitempty"`
-	// Open Graph video URL.
-	OgVideo *string `json:"og_video,omitempty"`
-	// Open Graph audio URL.
-	OgAudio *string `json:"og_audio,omitempty"`
-	// Open Graph locale alternates.
-	OgLocaleAlternates []string `json:"og_locale_alternates,omitempty"`
-	// Twitter card type.
-	TwitterCard *string `json:"twitter_card,omitempty"`
-	// Twitter title.
-	TwitterTitle *string `json:"twitter_title,omitempty"`
-	// Twitter description.
-	TwitterDescription *string `json:"twitter_description,omitempty"`
-	// Twitter image URL.
-	TwitterImage *string `json:"twitter_image,omitempty"`
-	// Twitter site handle.
-	TwitterSite *string `json:"twitter_site,omitempty"`
-	// Twitter creator handle.
-	TwitterCreator *string `json:"twitter_creator,omitempty"`
-	// Dublin Core title.
-	DcTitle *string `json:"dc_title,omitempty"`
-	// Dublin Core creator.
-	DcCreator *string `json:"dc_creator,omitempty"`
-	// Dublin Core subject.
-	DcSubject *string `json:"dc_subject,omitempty"`
-	// Dublin Core description.
-	DcDescription *string `json:"dc_description,omitempty"`
-	// Dublin Core publisher.
-	DcPublisher *string `json:"dc_publisher,omitempty"`
-	// Dublin Core date.
-	DcDate *string `json:"dc_date,omitempty"`
-	// Dublin Core type.
-	DcType *string `json:"dc_type,omitempty"`
-	// Dublin Core format.
-	DcFormat *string `json:"dc_format,omitempty"`
-	// Dublin Core identifier.
-	DcIdentifier *string `json:"dc_identifier,omitempty"`
-	// Dublin Core language.
-	DcLanguage *string `json:"dc_language,omitempty"`
-	// Dublin Core rights.
-	DcRights *string `json:"dc_rights,omitempty"`
-	// Article metadata from `article:*` Open Graph tags.
-	Article *ArticleMetadata `json:"article,omitempty"`
-	// Hreflang alternate links.
-	Hreflangs []HreflangEntry `json:"hreflangs,omitempty"`
-	// Favicon and icon links.
-	Favicons []FaviconInfo `json:"favicons,omitempty"`
-	// Heading elements (h1-h6).
-	Headings []HeadingInfo `json:"headings,omitempty"`
-	// Computed word count of the page body text.
-	WordCount *uint `json:"word_count,omitempty"`
+	Title              *string          `json:"title,omitempty"`
+	Description        *string          `json:"description,omitempty"`
+	CanonicalURL       *string          `json:"canonical_url,omitempty"`
+	Keywords           *string          `json:"keywords,omitempty"`
+	Author             *string          `json:"author,omitempty"`
+	Viewport           *string          `json:"viewport,omitempty"`
+	ThemeColor         *string          `json:"theme_color,omitempty"`
+	Generator          *string          `json:"generator,omitempty"`
+	Robots             *string          `json:"robots,omitempty"`
+	HTMLLang           *string          `json:"html_lang,omitempty"`
+	HTMLDir            *string          `json:"html_dir,omitempty"`
+	OgTitle            *string          `json:"og_title,omitempty"`
+	OgType             *string          `json:"og_type,omitempty"`
+	OgImage            *string          `json:"og_image,omitempty"`
+	OgDescription      *string          `json:"og_description,omitempty"`
+	OgURL              *string          `json:"og_url,omitempty"`
+	OgSiteName         *string          `json:"og_site_name,omitempty"`
+	OgLocale           *string          `json:"og_locale,omitempty"`
+	OgVideo            *string          `json:"og_video,omitempty"`
+	OgAudio            *string          `json:"og_audio,omitempty"`
+	OgLocaleAlternates []string         `json:"og_locale_alternates,omitempty"`
+	TwitterCard        *string          `json:"twitter_card,omitempty"`
+	TwitterTitle       *string          `json:"twitter_title,omitempty"`
+	TwitterDescription *string          `json:"twitter_description,omitempty"`
+	TwitterImage       *string          `json:"twitter_image,omitempty"`
+	TwitterSite        *string          `json:"twitter_site,omitempty"`
+	TwitterCreator     *string          `json:"twitter_creator,omitempty"`
+	DcTitle            *string          `json:"dc_title,omitempty"`
+	DcCreator          *string          `json:"dc_creator,omitempty"`
+	DcSubject          *string          `json:"dc_subject,omitempty"`
+	DcDescription      *string          `json:"dc_description,omitempty"`
+	DcPublisher        *string          `json:"dc_publisher,omitempty"`
+	DcDate             *string          `json:"dc_date,omitempty"`
+	DcType             *string          `json:"dc_type,omitempty"`
+	DcFormat           *string          `json:"dc_format,omitempty"`
+	DcIdentifier       *string          `json:"dc_identifier,omitempty"`
+	DcLanguage         *string          `json:"dc_language,omitempty"`
+	DcRights           *string          `json:"dc_rights,omitempty"`
+	Article            *ArticleMetadata `json:"article,omitempty"`
+	Hreflangs          []HreflangEntry  `json:"hreflangs,omitempty"`
+	Favicons           []FaviconInfo    `json:"favicons,omitempty"`
+	Headings           []HeadingInfo    `json:"headings,omitempty"`
+	WordCount          *uint            `json:"word_count,omitempty"`
 }
 
 // CrawlStreamRequest request to begin a single-URL streaming crawl.
@@ -1461,7 +1075,6 @@ type PageMetadata struct {
 // surface. Required as a struct because alef's streaming adapter requires a
 // named request type — primitives are not supported.
 type CrawlStreamRequest struct {
-	// The seed URL to crawl.
 	URL string `json:"url"`
 }
 
@@ -1471,28 +1084,21 @@ type CrawlStreamRequest struct {
 // surface. Required as a struct because alef's streaming adapter requires a
 // named request type — primitives are not supported.
 type BatchCrawlStreamRequest struct {
-	// The seed URLs to crawl. Each URL is followed independently up to the
-	// engine's configured depth.
 	Urls []string `json:"urls,omitempty"`
 }
 
 // CitationResult result of citation conversion.
 type CitationResult struct {
-	// Markdown with links replaced by numbered citations.
-	Content string `json:"content"`
-	// Numbered reference list: (index, url, text).
+	Content    string              `json:"content"`
 	References []CitationReference `json:"references,omitempty"`
 }
 
 // CitationReference single numbered reference in a citation list — produced by the citation
 // extractor when content uses inline `[N]`-style markers.
 type CitationReference struct {
-	// 1-based reference number as it appears in the source text.
-	Index uint `json:"index"`
-	// Resolved absolute URL for this reference.
-	URL string `json:"url"`
-	// Human-readable anchor text or title for the reference.
-	Text string `json:"text"`
+	Index uint   `json:"index"`
+	URL   string `json:"url"`
+	Text  string `json:"text"`
 }
 
 // CrawlEngineHandle is an opaque handle type.
@@ -1510,22 +1116,16 @@ func (h *CrawlEngineHandle) Free() {
 
 // BatchScrapeResult result from a single URL in a batch scrape operation.
 type BatchScrapeResult struct {
-	// The URL that was scraped.
-	URL string `json:"url"`
-	// The scrape result, if successful.
+	URL    string        `json:"url"`
 	Result *ScrapeResult `json:"result,omitempty"`
-	// The error message, if the scrape failed.
-	Error *string `json:"error,omitempty"`
+	Error  *string       `json:"error,omitempty"`
 }
 
 // BatchCrawlResult result from a single URL in a batch crawl operation.
 type BatchCrawlResult struct {
-	// The seed URL that was crawled.
-	URL string `json:"url"`
-	// The crawl result, if successful.
+	URL    string       `json:"url"`
 	Result *CrawlResult `json:"result,omitempty"`
-	// The error message, if the crawl failed.
-	Error *string `json:"error,omitempty"`
+	Error  *string      `json:"error,omitempty"`
 }
 
 // BatchScrapeResults aggregate result of a batch scrape, exposing per-URL results plus precomputed counts.
@@ -1533,14 +1133,10 @@ type BatchCrawlResult struct {
 // The counts are derived once at construction so every binding language can read them
 // as plain integer fields without re-iterating the `results` vector.
 type BatchScrapeResults struct {
-	// Per-URL scrape results, in the order URLs were submitted.
-	Results []BatchScrapeResult `json:"results,omitempty"`
-	// Total number of URLs in the batch (equal to `results.len()`).
-	TotalCount uint `json:"total_count"`
-	// Number of URLs whose scrape succeeded (`error` is `None`).
-	CompletedCount uint `json:"completed_count"`
-	// Number of URLs whose scrape failed (`error` is `Some`).
-	FailedCount uint `json:"failed_count"`
+	Results        []BatchScrapeResult `json:"results,omitempty"`
+	TotalCount     uint                `json:"total_count"`
+	CompletedCount uint                `json:"completed_count"`
+	FailedCount    uint                `json:"failed_count"`
 }
 
 // BatchCrawlResults aggregate result of a batch crawl, exposing per-URL results plus precomputed counts.
@@ -1548,21 +1144,15 @@ type BatchScrapeResults struct {
 // The counts are derived once at construction so every binding language can read them
 // as plain integer fields without re-iterating the `results` vector.
 type BatchCrawlResults struct {
-	// Per-URL crawl results, in the order seed URLs were submitted.
-	Results []BatchCrawlResult `json:"results,omitempty"`
-	// Total number of seed URLs in the batch (equal to `results.len()`).
-	TotalCount uint `json:"total_count"`
-	// Number of seed URLs whose crawl succeeded (`error` is `None`).
-	CompletedCount uint `json:"completed_count"`
-	// Number of seed URLs whose crawl failed (`error` is `Some`).
-	FailedCount uint `json:"failed_count"`
+	Results        []BatchCrawlResult `json:"results,omitempty"`
+	TotalCount     uint               `json:"total_count"`
+	CompletedCount uint               `json:"completed_count"`
+	FailedCount    uint               `json:"failed_count"`
 }
 
 // SsrfPolicy sSRF policy configuration.
 type SsrfPolicy struct {
-	// If true, reject URLs that resolve to private/metadata IP ranges.
-	DenyPrivate *bool `json:"deny_private,omitempty"`
-	// Maximum number of HTTP redirects to follow during validation.
+	DenyPrivate  *bool  `json:"deny_private,omitempty"`
 	MaxRedirects *uint8 `json:"max_redirects,omitempty"`
 }
 
@@ -1600,10 +1190,6 @@ func CreateEngine(config *CrawlConfig) (*CrawlEngineHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal: %w", err)
 	}
-	// When the parameter is a nil pointer (Option<&T> on the Rust side), json.Marshal
-	// emits "null" which the FFI's _from_json rejects. Substitute "{}" so a default
-	// instance is constructed instead — semantically equivalent to None for query types
-	// whose fields are all optional with serde(default).
 	if string(jsonBytescConfig) == "null" {
 		jsonBytescConfig = []byte("{}")
 	}
@@ -1871,10 +1457,6 @@ func (h *CrawlEngineHandle) CrawlStream(req CrawlStreamRequest) (<-chan CrawlEve
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal: %w", err)
 	}
-	// When the parameter is a nil pointer (Option<&T> on the Rust side), json.Marshal
-	// emits "null" which the FFI's _from_json rejects. Substitute "{}" so a default
-	// instance is constructed instead — semantically equivalent to None for query types
-	// whose fields are all optional with serde(default).
 	if string(jsonBytescReq) == "null" {
 		jsonBytescReq = []byte("{}")
 	}
@@ -1900,8 +1482,6 @@ func (h *CrawlEngineHandle) CrawlStream(req CrawlStreamRequest) (<-chan CrawlEve
 		for {
 			chunkPtr := C.cberg_crawl_engine_handle_crawl_stream_next(handle)
 			if chunkPtr == nil {
-				// Null = clean end-of-stream (errno 0) or stream error (errno != 0).
-				// In either case there are no more chunks; close the channel.
 				return
 			}
 			jsonPtr := C.cberg_crawl_event_to_json(chunkPtr)
@@ -1935,10 +1515,6 @@ func (h *CrawlEngineHandle) BatchCrawlStream(req BatchCrawlStreamRequest) (<-cha
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal: %w", err)
 	}
-	// When the parameter is a nil pointer (Option<&T> on the Rust side), json.Marshal
-	// emits "null" which the FFI's _from_json rejects. Substitute "{}" so a default
-	// instance is constructed instead — semantically equivalent to None for query types
-	// whose fields are all optional with serde(default).
 	if string(jsonBytescReq) == "null" {
 		jsonBytescReq = []byte("{}")
 	}
@@ -1964,8 +1540,6 @@ func (h *CrawlEngineHandle) BatchCrawlStream(req BatchCrawlStreamRequest) (<-cha
 		for {
 			chunkPtr := C.cberg_crawl_engine_handle_batch_crawl_stream_next(handle)
 			if chunkPtr == nil {
-				// Null = clean end-of-stream (errno 0) or stream error (errno != 0).
-				// In either case there are no more chunks; close the channel.
 				return
 			}
 			jsonPtr := C.cberg_crawl_event_to_json(chunkPtr)

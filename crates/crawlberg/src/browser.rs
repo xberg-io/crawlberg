@@ -93,14 +93,6 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
 ) -> Result<HttpResponse, CrawlError> {
-    // SSRF: validate the target before navigating real headless Chrome to it.
-    // The HTTP tier guards its own fetches, but browser-tier fetches — reached
-    // directly (BrowserMode::Always/Stealth) or via dispatch escalation — land
-    // here without that check. Navigating to an unvalidated URL would let a
-    // seed (or a redirect chain that resolves to a public IP first) reach
-    // internal/link-local/metadata addresses. Mirrors the HTTP tier's initial
-    // check in `http.rs`; the same `deny_private` policy and DNS resolution
-    // apply, so private/metadata targets are rejected before any navigation.
     let target = url::Url::parse(url).map_err(|e| CrawlError::SsrfPolicyViolation {
         url: url.to_string(),
         reason: format!("invalid URL: {e}"),
@@ -214,7 +206,6 @@ impl SsrfInterceptGuard {
     async fn finish(self) -> Option<(String, String)> {
         let _ = self.page.execute(FetchDisableParams::default()).await;
         self.listener.abort();
-        // The listener is aborted, so this lock is uncontended.
         match self.blocked.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
@@ -246,7 +237,6 @@ async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
 ) -> Result<SsrfInterceptGuard, CrawlError> {
-    // Register the listener before enabling so no paused request is missed.
     let mut events = page
         .event_listener::<EventRequestPaused>()
         .await
@@ -364,10 +354,6 @@ async fn page_fetch(
 
     let timeout = config.browser.timeout;
 
-    // Re-validate every request the browser issues (initial navigation, 3xx
-    // redirects, client-side navigations, and subresources) against the SSRF
-    // policy. The seed is already checked before we get here, but the browser
-    // follows redirects internally; interception is what re-checks each hop.
     let interceptor = start_ssrf_interception(page, &config.ssrf).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
@@ -383,9 +369,6 @@ async fn page_fetch(
     })
     .await;
 
-    // Tear down interception and recover the first blocked (url, reason), if any.
-    // A blocked main-frame request makes navigation fail; prefer the precise
-    // SSRF reason over the generic navigation/timeout error in that case.
     let blocked = interceptor.finish().await;
     match navigation {
         Ok(Ok(())) => {}
@@ -569,8 +552,6 @@ mod ssrf_interception_tests {
 
     #[tokio::test]
     async fn allows_loopback_when_private_networks_permitted() {
-        // The opt-out must let the interceptor pass private targets so browser
-        // behavior matches the HTTP tier under the same policy.
         let verdict = ssrf_verdict("http://127.0.0.1/", &allow_private_policy()).await;
         assert!(
             verdict.is_ok(),
