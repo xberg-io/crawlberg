@@ -1,0 +1,8 @@
+name: crawlberg_e2e
+version: 0.0.0
+
+dependencies:
+  crawlberg:
+    path: ../../packages/crystal
+
+crystal: ">= 1.0.0"

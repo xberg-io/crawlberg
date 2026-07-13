@@ -1,0 +1,6 @@
+version: 2.0
+shards:
+  crawlberg:
+    path: ../../packages/crystal
+    version: 1.0.3
+

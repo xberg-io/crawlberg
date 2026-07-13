@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.31.1"
+alef_version = "0.32.6"
 languages = [
     "python",
     "node",
@@ -16,6 +16,7 @@ languages = [
     "jni",
     "swift",
     "zig",
+    "crystal",
 ]
 
 # ---------------------------------------------------------------------------
@@ -228,6 +229,9 @@ package_name = "Crawlberg"
 [crates.zig]
 module_name = "crawlberg"
 
+[crates.crystal]
+module_name = "Crawlberg"
+
 # wasm32-unknown-unknown cannot compile chromiumoxide: enabling
 # `browser-chromiumoxide` (directly or via `interact` → `browser`) pulls
 # tokio's net/process features and therefore `mio`, which has no wasm32
@@ -252,6 +256,7 @@ dart = "packages/dart/lib/src/"
 kotlin_android = "packages/kotlin-android/src/main/kotlin/io/xberg/crawlberg/android/"
 swift = "packages/swift/Sources/Crawlberg/"
 zig = "packages/zig/src/"
+crystal = "packages/crystal/src/"
 
 # Crate-internal items are hidden from alef via `#[cfg_attr(alef, alef(skip))]`
 # on the Rust definition (preferred over an exclude list here — keeps the intent
@@ -567,6 +572,7 @@ languages = [
     "swift",
     "zig",
     "kotlin_android",
+    "crystal",
 ]
 # Fixture categories that exercise internal middleware which the binding
 # surface does not expose. Skipped by every per-language e2e generator —
@@ -820,6 +826,9 @@ function = "scrape"
 async = false
 result_is_json_struct = true
 
+[crates.e2e.call.overrides.crystal]
+module = "Crawlberg"
+
 # Named call config for batch_scrape — auto-selected for fixtures in the
 # `batch` category whose input contains `batch_urls`. `batch_crawl` is routed
 # separately via its more-specific id_prefix and takes precedence because the
@@ -895,6 +904,9 @@ c_engine_factory = "CrawlConfig"
 [crates.e2e.calls.batch_scrape.overrides.brew]
 function = "batch-scrape"
 cli_args = ["--format", "json", "--browser-mode", "never"]
+
+[crates.e2e.calls.batch_scrape.overrides.crystal]
+module = "Crawlberg"
 
 # Named call config for crawl — auto-selected for fixtures tagged "crawl".
 # All 27 fixtures in fixtures/crawl/ carry this tag, plus selected fixtures in
@@ -991,6 +1003,9 @@ c_engine_factory = "CrawlConfig"
 function = "crawl"
 cli_args = ["--format", "json", "--browser-mode", "never"]
 
+[crates.e2e.calls.crawl.overrides.crystal]
+module = "Crawlberg"
+
 # Named call config for map_urls — auto-selected for fixtures in the `map`
 # category. Sitemap-only fixtures (category = "sitemap") are deliberately
 # left on the default `scrape` call for now; route them later if sitemap
@@ -1076,6 +1091,9 @@ c_engine_factory = "CrawlConfig"
 [crates.e2e.calls.map_urls.overrides.brew]
 function = "map"
 cli_args = ["--format", "json"]
+
+[crates.e2e.calls.map_urls.overrides.crystal]
+module = "Crawlberg"
 
 # Named call config for interact — auto-selected when fixture input contains
 # `actions` (which is unique to the interaction category).
@@ -1172,6 +1190,9 @@ function = "interact"
 result_type = "InteractionResult"
 c_engine_factory = "CrawlConfig"
 
+[crates.e2e.calls.interact.overrides.crystal]
+module = "Crawlberg"
+
 # Named call config for batch_crawl — auto-selected for fixtures in the
 # `batch` category whose id starts with `batch_crawl`. Alphabetical name
 # ordering (`batch_crawl` < `batch_scrape`) ensures this routes first when
@@ -1254,6 +1275,9 @@ c_engine_factory = "CrawlConfig"
 function = "batch-crawl"
 cli_args = ["--format", "json", "--browser-mode", "never"]
 
+[crates.e2e.calls.batch_crawl.overrides.crystal]
+module = "Crawlberg"
+
 # Named call config for crawl_stream — auto-selected for fixtures in the
 # `stream` category whose id does NOT start with `batch_crawl_stream`.
 # Alphabetical ordering (`batch_crawl_stream` < `crawl_stream`) ensures the
@@ -1273,7 +1297,7 @@ select_when = { category = "stream" }
 # cberg_crawl_engine_handle_crawl_stream), not a simple `char*` return, and
 # cannot be expressed as assertion-based tests without a dedicated callback
 # harness. A future streaming e2e harness will re-enable C.
-skip_languages = ["wasm", "c"]
+skip_languages = ["wasm", "c", "crystal"]
 # CrawlEvent is a discriminated enum streamed item-by-item; result_fields
 # applies to the per-event projection (alef streaming adapter exposes
 # `url`, `event_type`, `page`, `error`, `final_url` etc. as virtual fields).
@@ -1342,6 +1366,11 @@ c_engine_factory = "CrawlConfig"
 function = "crawl"
 cli_args = ["--format", "json", "--stream"]
 
+# Crystal streaming e2e tests require a dedicated Channel-based harness;
+# skipping until streaming-assertion support lands in the Crystal codegen.
+[crates.e2e.calls.crawl_stream.overrides.crystal]
+module = "Crawlberg"
+
 # Named call config for batch_crawl_stream — auto-selected for fixtures in the
 # `stream` category whose id starts with `batch_crawl_stream`. There are no
 # such fixtures today; routing is wired in so adding one Just Works.
@@ -1355,7 +1384,7 @@ streaming = true
 options_type = "CrawlConfig"
 select_when = { category = "stream", id_prefix = "batch_crawl_stream" }
 # C excluded: callback-based FFI API, same reason as crawl_stream.
-skip_languages = ["wasm", "elixir", "zig", "swift", "brew", "c"]
+skip_languages = ["wasm", "elixir", "zig", "swift", "brew", "c", "crystal"]
 result_fields = ["url", "event_type", "page", "error", "final_url", "result", "pages_crawled"]
 
 [[crates.e2e.calls.batch_crawl_stream.args]]
@@ -1403,6 +1432,9 @@ function = "batch_crawl_stream"
 result_type = "char*"
 raw_c_result_type = "char*"
 c_engine_factory = "CrawlConfig"
+
+[crates.e2e.calls.batch_crawl_stream.overrides.crystal]
+module = "Crawlberg"
 
 [crates.e2e.fields]
 title = "metadata.title"
@@ -1534,6 +1566,9 @@ path = "../../packages/go"
 [crates.e2e.packages.dart]
 name = "crawlberg"
 path = "../../packages/dart"
+
+[crates.e2e.packages.crystal]
+path = "../../packages/crystal"
 
 [crates.e2e.packages.zig]
 path = "../../packages/zig"
@@ -1849,4 +1884,20 @@ Direct C FFI via @cImport, idiomatic error sets, optional types, and slice-based
 """
 
 [crates.readme.languages.zig.snippets]
+basic_usage = "getting-started/basic_usage.md"
+
+[crates.readme.languages.crystal]
+name = "Crystal"
+template = "language_package.md"
+output_path = "packages/crystal/README.md"
+package_manager = ["shards"]
+package_name = "crawlberg"
+install_command = "shards install"
+description = """
+Crystal bindings for **crawlberg** — a high-performance Rust web crawling engine.
+Idiomatic Crystal API over the C FFI with `#` doc comments, `JSON::Serializable` types,
+and fiber-based concurrency for streaming.
+"""
+
+[crates.readme.languages.crystal.snippets]
 basic_usage = "getting-started/basic_usage.md"
