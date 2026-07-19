@@ -10,298 +10,405 @@ part 'lib.freezed.dart';
 
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
-
 /// Convert markdown links to numbered citations.
 ///
 /// `[Example](https://example.com)` becomes `Example[1]`
 /// with `[1]: https://example.com` in the reference list.
 /// Images `![alt](url)` are preserved unchanged.
-Future<CitationResult>  generateCitations({required String markdown }) => RustLib.instance.api.crateGenerateCitations(markdown: markdown);
+Future<CitationResult> generateCitations({required String markdown}) =>
+    RustLib.instance.api.crateGenerateCitations(markdown: markdown);
 
 /// Create a new crawl engine with the given configuration.
 ///
 /// If `config` is `null`, uses `CrawlConfig.default()`.
 /// Returns an error if the configuration is invalid.
-Future<CrawlEngineHandle>  createEngine({CrawlConfig? config }) => RustLib.instance.api.crateCreateEngine(config: config);
+Future<CrawlEngineHandle> createEngine({CrawlConfig? config}) =>
+    RustLib.instance.api.crateCreateEngine(config: config);
 
 /// Scrape a single URL, returning extracted page data.
-Future<ScrapeResult>  scrape({required CrawlEngineHandle engine , required String url }) => RustLib.instance.api.crateScrape(engine: engine, url: url);
+Future<ScrapeResult> scrape({
+  required CrawlEngineHandle engine,
+  required String url,
+}) => RustLib.instance.api.crateScrape(engine: engine, url: url);
 
 /// Crawl a website starting from `url`, following links up to the configured depth.
-Future<CrawlResult>  crawl({required CrawlEngineHandle engine , required String url }) => RustLib.instance.api.crateCrawl(engine: engine, url: url);
+Future<CrawlResult> crawl({
+  required CrawlEngineHandle engine,
+  required String url,
+}) => RustLib.instance.api.crateCrawl(engine: engine, url: url);
 
 /// Discover all pages on a website by following links and sitemaps.
-Future<MapResult>  mapUrls({required CrawlEngineHandle engine , required String url }) => RustLib.instance.api.crateMapUrls(engine: engine, url: url);
+Future<MapResult> mapUrls({
+  required CrawlEngineHandle engine,
+  required String url,
+}) => RustLib.instance.api.crateMapUrls(engine: engine, url: url);
 
 /// Execute browser actions on a single page.
-Future<InteractionResult>  interact({required CrawlEngineHandle engine , required String url , required List<PageAction> actions }) => RustLib.instance.api.crateInteract(engine: engine, url: url, actions: actions);
+Future<InteractionResult> interact({
+  required CrawlEngineHandle engine,
+  required String url,
+  required List<PageAction> actions,
+}) => RustLib.instance.api.crateInteract(
+  engine: engine,
+  url: url,
+  actions: actions,
+);
 
 /// Scrape multiple URLs concurrently.
-Future<BatchScrapeResults>  batchScrape({required CrawlEngineHandle engine , required List<String> urls }) => RustLib.instance.api.crateBatchScrape(engine: engine, urls: urls);
+Future<BatchScrapeResults> batchScrape({
+  required CrawlEngineHandle engine,
+  required List<String> urls,
+}) => RustLib.instance.api.crateBatchScrape(engine: engine, urls: urls);
 
 /// Crawl multiple seed URLs concurrently, each following links to configured depth.
-Future<BatchCrawlResults>  batchCrawl({required CrawlEngineHandle engine , required List<String> urls }) => RustLib.instance.api.crateBatchCrawl(engine: engine, urls: urls);
+Future<BatchCrawlResults> batchCrawl({
+  required CrawlEngineHandle engine,
+  required List<String> urls,
+}) => RustLib.instance.api.crateBatchCrawl(engine: engine, urls: urls);
 
-Future<ExtractionMeta>  createExtractionMetaFromJson({required String json }) => RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
+Future<ExtractionMeta> createExtractionMetaFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
 
-Future<ProxyConfig>  createProxyConfigFromJson({required String json }) => RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
+Future<ProxyConfig> createProxyConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
 
-Future<ContentConfig>  createContentConfigFromJson({required String json }) => RustLib.instance.api.crateCreateContentConfigFromJson(json: json);
+Future<ContentConfig> createContentConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateContentConfigFromJson(json: json);
 
-Future<BrowserConfig>  createBrowserConfigFromJson({required String json }) => RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
+Future<BrowserConfig> createBrowserConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
 
-Future<CrawlConfig>  createCrawlConfigFromJson({required String json }) => RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
+Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
 
-Future<BrowserExtras>  createBrowserExtrasFromJson({required String json }) => RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);
+Future<BrowserExtras> createBrowserExtrasFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);
 
-Future<DownloadedDocument>  createDownloadedDocumentFromJson({required String json }) => RustLib.instance.api.crateCreateDownloadedDocumentFromJson(json: json);
+Future<DownloadedDocument> createDownloadedDocumentFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateDownloadedDocumentFromJson(json: json);
 
-Future<InteractionResult>  createInteractionResultFromJson({required String json }) => RustLib.instance.api.crateCreateInteractionResultFromJson(json: json);
+Future<InteractionResult> createInteractionResultFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateInteractionResultFromJson(json: json);
 
-Future<ActionResult>  createActionResultFromJson({required String json }) => RustLib.instance.api.crateCreateActionResultFromJson(json: json);
+Future<ActionResult> createActionResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateActionResultFromJson(json: json);
 
-Future<ScrapeResult>  createScrapeResultFromJson({required String json }) => RustLib.instance.api.crateCreateScrapeResultFromJson(json: json);
+Future<ScrapeResult> createScrapeResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateScrapeResultFromJson(json: json);
 
-Future<CrawlPageResult>  createCrawlPageResultFromJson({required String json }) => RustLib.instance.api.crateCreateCrawlPageResultFromJson(json: json);
+Future<CrawlPageResult> createCrawlPageResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlPageResultFromJson(json: json);
 
-Future<CrawlResult>  createCrawlResultFromJson({required String json }) => RustLib.instance.api.crateCreateCrawlResultFromJson(json: json);
+Future<CrawlResult> createCrawlResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlResultFromJson(json: json);
 
-Future<SitemapUrl>  createSitemapUrlFromJson({required String json }) => RustLib.instance.api.crateCreateSitemapUrlFromJson(json: json);
+Future<SitemapUrl> createSitemapUrlFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateSitemapUrlFromJson(json: json);
 
-Future<MapResult>  createMapResultFromJson({required String json }) => RustLib.instance.api.crateCreateMapResultFromJson(json: json);
+Future<MapResult> createMapResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateMapResultFromJson(json: json);
 
-Future<MarkdownResult>  createMarkdownResultFromJson({required String json }) => RustLib.instance.api.crateCreateMarkdownResultFromJson(json: json);
+Future<MarkdownResult> createMarkdownResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateMarkdownResultFromJson(json: json);
 
-Future<LinkInfo>  createLinkInfoFromJson({required String json }) => RustLib.instance.api.crateCreateLinkInfoFromJson(json: json);
+Future<LinkInfo> createLinkInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateLinkInfoFromJson(json: json);
 
-Future<ImageInfo>  createImageInfoFromJson({required String json }) => RustLib.instance.api.crateCreateImageInfoFromJson(json: json);
+Future<ImageInfo> createImageInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateImageInfoFromJson(json: json);
 
-Future<FeedInfo>  createFeedInfoFromJson({required String json }) => RustLib.instance.api.crateCreateFeedInfoFromJson(json: json);
+Future<FeedInfo> createFeedInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateFeedInfoFromJson(json: json);
 
-Future<JsonLdEntry>  createJsonLdEntryFromJson({required String json }) => RustLib.instance.api.crateCreateJsonLdEntryFromJson(json: json);
+Future<JsonLdEntry> createJsonLdEntryFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateJsonLdEntryFromJson(json: json);
 
-Future<CookieInfo>  createCookieInfoFromJson({required String json }) => RustLib.instance.api.crateCreateCookieInfoFromJson(json: json);
+Future<CookieInfo> createCookieInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCookieInfoFromJson(json: json);
 
-Future<DownloadedAsset>  createDownloadedAssetFromJson({required String json }) => RustLib.instance.api.crateCreateDownloadedAssetFromJson(json: json);
+Future<DownloadedAsset> createDownloadedAssetFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateDownloadedAssetFromJson(json: json);
 
-Future<ArticleMetadata>  createArticleMetadataFromJson({required String json }) => RustLib.instance.api.crateCreateArticleMetadataFromJson(json: json);
+Future<ArticleMetadata> createArticleMetadataFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateArticleMetadataFromJson(json: json);
 
-Future<HreflangEntry>  createHreflangEntryFromJson({required String json }) => RustLib.instance.api.crateCreateHreflangEntryFromJson(json: json);
+Future<HreflangEntry> createHreflangEntryFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateHreflangEntryFromJson(json: json);
 
-Future<FaviconInfo>  createFaviconInfoFromJson({required String json }) => RustLib.instance.api.crateCreateFaviconInfoFromJson(json: json);
+Future<FaviconInfo> createFaviconInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateFaviconInfoFromJson(json: json);
 
-Future<HeadingInfo>  createHeadingInfoFromJson({required String json }) => RustLib.instance.api.crateCreateHeadingInfoFromJson(json: json);
+Future<HeadingInfo> createHeadingInfoFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateHeadingInfoFromJson(json: json);
 
-Future<ResponseMeta>  createResponseMetaFromJson({required String json }) => RustLib.instance.api.crateCreateResponseMetaFromJson(json: json);
+Future<ResponseMeta> createResponseMetaFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateResponseMetaFromJson(json: json);
 
-Future<PageMetadata>  createPageMetadataFromJson({required String json }) => RustLib.instance.api.crateCreatePageMetadataFromJson(json: json);
+Future<PageMetadata> createPageMetadataFromJson({required String json}) =>
+    RustLib.instance.api.crateCreatePageMetadataFromJson(json: json);
 
-Future<CrawlStreamRequest>  createCrawlStreamRequestFromJson({required String json }) => RustLib.instance.api.crateCreateCrawlStreamRequestFromJson(json: json);
+Future<CrawlStreamRequest> createCrawlStreamRequestFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateCrawlStreamRequestFromJson(json: json);
 
-Future<BatchCrawlStreamRequest>  createBatchCrawlStreamRequestFromJson({required String json }) => RustLib.instance.api.crateCreateBatchCrawlStreamRequestFromJson(json: json);
+Future<BatchCrawlStreamRequest> createBatchCrawlStreamRequestFromJson({
+  required String json,
+}) =>
+    RustLib.instance.api.crateCreateBatchCrawlStreamRequestFromJson(json: json);
 
-Future<CitationResult>  createCitationResultFromJson({required String json }) => RustLib.instance.api.crateCreateCitationResultFromJson(json: json);
+Future<CitationResult> createCitationResultFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCitationResultFromJson(json: json);
 
-Future<CitationReference>  createCitationReferenceFromJson({required String json }) => RustLib.instance.api.crateCreateCitationReferenceFromJson(json: json);
+Future<CitationReference> createCitationReferenceFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateCitationReferenceFromJson(json: json);
 
-Future<BatchScrapeResult>  createBatchScrapeResultFromJson({required String json }) => RustLib.instance.api.crateCreateBatchScrapeResultFromJson(json: json);
+Future<BatchScrapeResult> createBatchScrapeResultFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateBatchScrapeResultFromJson(json: json);
 
-Future<BatchCrawlResult>  createBatchCrawlResultFromJson({required String json }) => RustLib.instance.api.crateCreateBatchCrawlResultFromJson(json: json);
+Future<BatchCrawlResult> createBatchCrawlResultFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateBatchCrawlResultFromJson(json: json);
 
-Future<BatchScrapeResults>  createBatchScrapeResultsFromJson({required String json }) => RustLib.instance.api.crateCreateBatchScrapeResultsFromJson(json: json);
+Future<BatchScrapeResults> createBatchScrapeResultsFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateBatchScrapeResultsFromJson(json: json);
 
-Future<BatchCrawlResults>  createBatchCrawlResultsFromJson({required String json }) => RustLib.instance.api.crateCreateBatchCrawlResultsFromJson(json: json);
+Future<BatchCrawlResults> createBatchCrawlResultsFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateBatchCrawlResultsFromJson(json: json);
 
-Future<SsrfPolicy>  createSsrfPolicyFromJson({required String json }) => RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
-
+Future<SsrfPolicy> createSsrfPolicyFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>
 abstract class CrawlEngineHandle implements RustOpaqueInterface {
-  Stream<CrawlEvent>  batchCrawlStream({required BatchCrawlStreamRequest req });
+  Stream<CrawlEvent> batchCrawlStream({required BatchCrawlStreamRequest req});
 
-
-  Stream<CrawlEvent>  crawlStream({required CrawlStreamRequest req });
-
-
-
-
+  Stream<CrawlEvent> crawlStream({required CrawlStreamRequest req});
 }
 
-
 /// Result from a single page action execution.
-class ActionResult  {
+class ActionResult {
   /// Zero-based index of the action in the sequence.
   final PlatformInt64 actionIndex;
+
   /// The type of action that was executed.
   final String actionType;
+
   /// Whether the action completed successfully.
   final bool success;
+
   /// Action-specific return data (screenshot bytes, JS return value, scraped HTML).
   final String? data;
+
   /// Error message if the action failed.
   final String? error;
 
-  const ActionResult({required this.actionIndex ,required this.actionType ,required this.success ,this.data ,this.error ,});
-
-
-
-
+  const ActionResult({
+    required this.actionIndex,
+    required this.actionType,
+    required this.success,
+    this.data,
+    this.error,
+  });
 
   @override
-  int get hashCode => actionIndex.hashCode^actionType.hashCode^success.hashCode^data.hashCode^error.hashCode;
-
-
+  int get hashCode =>
+      actionIndex.hashCode ^
+      actionType.hashCode ^
+      success.hashCode ^
+      data.hashCode ^
+      error.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ActionResult &&
-  runtimeType == other.runtimeType
-  && actionIndex == other.actionIndex&& actionType == other.actionType&& success == other.success&& data == other.data&& error == other.error;
-
+      identical(this, other) ||
+      other is ActionResult &&
+          runtimeType == other.runtimeType &&
+          actionIndex == other.actionIndex &&
+          actionType == other.actionType &&
+          success == other.success &&
+          data == other.data &&
+          error == other.error;
 }
 
 /// Article metadata extracted from `article:*` Open Graph tags.
-class ArticleMetadata  {
+class ArticleMetadata {
   /// The article publication time.
   final String? publishedTime;
+
   /// The article modification time.
   final String? modifiedTime;
+
   /// The article author.
   final String? author;
+
   /// The article section.
   final String? section;
+
   /// The article tags.
   final List<String> tags;
 
-  const ArticleMetadata({this.publishedTime ,this.modifiedTime ,this.author ,this.section ,required this.tags ,});
-
-
-
-
+  const ArticleMetadata({
+    this.publishedTime,
+    this.modifiedTime,
+    this.author,
+    this.section,
+    required this.tags,
+  });
 
   @override
-  int get hashCode => publishedTime.hashCode^modifiedTime.hashCode^author.hashCode^section.hashCode^tags.hashCode;
-
-
+  int get hashCode =>
+      publishedTime.hashCode ^
+      modifiedTime.hashCode ^
+      author.hashCode ^
+      section.hashCode ^
+      tags.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ArticleMetadata &&
-  runtimeType == other.runtimeType
-  && publishedTime == other.publishedTime&& modifiedTime == other.modifiedTime&& author == other.author&& section == other.section&& tags == other.tags;
-
+      identical(this, other) ||
+      other is ArticleMetadata &&
+          runtimeType == other.runtimeType &&
+          publishedTime == other.publishedTime &&
+          modifiedTime == other.modifiedTime &&
+          author == other.author &&
+          section == other.section &&
+          tags == other.tags;
 }
 
 /// The category of a downloaded asset.
 enum AssetCategory {
   /// A document file (PDF, DOC, etc.).
   document,
+
   /// An image file.
   image,
+
   /// An audio file.
   audio,
+
   /// A video file.
   video,
+
   /// A font file.
   font,
+
   /// A CSS stylesheet.
   stylesheet,
+
   /// A JavaScript file.
   script,
+
   /// An archive file (ZIP, TAR, etc.).
   archive,
+
   /// A data file (JSON, XML, CSV, etc.).
   data,
+
   /// An unrecognized asset type.
   other,
-  ;
-
 }
 
 @freezed
-sealed class AuthConfig with _$AuthConfig  {
+sealed class AuthConfig with _$AuthConfig {
   const AuthConfig._();
 
   /// HTTP Basic authentication.
-  const factory AuthConfig.basic({ /// Username sent in the `Authorization: Basic` header.
-    required String username ,/// Password sent in the `Authorization: Basic` header.
-    required String password , }) = AuthConfig_Basic;
+  const factory AuthConfig.basic({
+    /// Username sent in the `Authorization: Basic` header.
+    required String username,
+
+    /// Password sent in the `Authorization: Basic` header.
+    required String password,
+  }) = AuthConfig_Basic;
+
   /// Bearer token authentication.
-  const factory AuthConfig.bearer({ /// Token sent in the `Authorization: Bearer` header.
-    required String token , }) = AuthConfig_Bearer;
+  const factory AuthConfig.bearer({
+    /// Token sent in the `Authorization: Bearer` header.
+    required String token,
+  }) = AuthConfig_Bearer;
+
   /// Custom authentication header.
-  const factory AuthConfig.header({ /// HTTP header name to set on each request.
-    required String name ,/// HTTP header value to send.
-    required String value , }) = AuthConfig_Header;
+  const factory AuthConfig.header({
+    /// HTTP header name to set on each request.
+    required String name,
 
-
-
-
+    /// HTTP header value to send.
+    required String value,
+  }) = AuthConfig_Header;
 }
 
 /// Result from a single URL in a batch crawl operation.
-class BatchCrawlResult  {
+class BatchCrawlResult {
   /// The seed URL that was crawled.
   final String url;
+
   /// The crawl result, if successful.
   final CrawlResult? result;
+
   /// The error message, if the crawl failed.
   final String? error;
 
-  const BatchCrawlResult({required this.url ,this.result ,this.error ,});
-
-
-
-
+  const BatchCrawlResult({required this.url, this.result, this.error});
 
   @override
-  int get hashCode => url.hashCode^result.hashCode^error.hashCode;
-
-
+  int get hashCode => url.hashCode ^ result.hashCode ^ error.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BatchCrawlResult &&
-  runtimeType == other.runtimeType
-  && url == other.url&& result == other.result&& error == other.error;
-
+      identical(this, other) ||
+      other is BatchCrawlResult &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          result == other.result &&
+          error == other.error;
 }
 
 /// Aggregate result of a batch crawl, exposing per-URL results plus precomputed counts.
 ///
 /// The counts are derived once at construction so every binding language can read them
 /// as plain integer fields without re-iterating the `results` vector.
-class BatchCrawlResults  {
+class BatchCrawlResults {
   /// Per-URL crawl results, in the order seed URLs were submitted.
   final List<BatchCrawlResult> results;
+
   /// Total number of seed URLs in the batch (equal to `results.len()`).
   final PlatformInt64 totalCount;
+
   /// Number of seed URLs whose crawl succeeded (`error` is `None`).
   final PlatformInt64 completedCount;
+
   /// Number of seed URLs whose crawl failed (`error` is `Some`).
   final PlatformInt64 failedCount;
 
-  const BatchCrawlResults({required this.results ,required this.totalCount ,required this.completedCount ,required this.failedCount ,});
-
-
-
-
+  const BatchCrawlResults({
+    required this.results,
+    required this.totalCount,
+    required this.completedCount,
+    required this.failedCount,
+  });
 
   @override
-  int get hashCode => results.hashCode^totalCount.hashCode^completedCount.hashCode^failedCount.hashCode;
-
-
+  int get hashCode =>
+      results.hashCode ^
+      totalCount.hashCode ^
+      completedCount.hashCode ^
+      failedCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BatchCrawlResults &&
-  runtimeType == other.runtimeType
-  && results == other.results&& totalCount == other.totalCount&& completedCount == other.completedCount&& failedCount == other.failedCount;
-
+      identical(this, other) ||
+      other is BatchCrawlResults &&
+          runtimeType == other.runtimeType &&
+          results == other.results &&
+          totalCount == other.totalCount &&
+          completedCount == other.completedCount &&
+          failedCount == other.failedCount;
 }
 
 /// Request to begin a multi-URL streaming crawl.
@@ -309,205 +416,251 @@ class BatchCrawlResults  {
 /// Wraps a set of seed URLs for delivery through the streaming-adapter binding
 /// surface. Required as a struct because alef's streaming adapter requires a
 /// named request type — primitives are not supported.
-class BatchCrawlStreamRequest  {
+class BatchCrawlStreamRequest {
   /// The seed URLs to crawl. Each URL is followed independently up to the
   /// engine's configured depth.
   final List<String> urls;
 
-  const BatchCrawlStreamRequest({required this.urls ,});
-
-
-
-
+  const BatchCrawlStreamRequest({required this.urls});
 
   @override
   int get hashCode => urls.hashCode;
 
-
-
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BatchCrawlStreamRequest &&
-  runtimeType == other.runtimeType
-  && urls == other.urls;
-
+      identical(this, other) ||
+      other is BatchCrawlStreamRequest &&
+          runtimeType == other.runtimeType &&
+          urls == other.urls;
 }
 
 /// Result from a single URL in a batch scrape operation.
-class BatchScrapeResult  {
+class BatchScrapeResult {
   /// The URL that was scraped.
   final String url;
+
   /// The scrape result, if successful.
   final ScrapeResult? result;
+
   /// The error message, if the scrape failed.
   final String? error;
 
-  const BatchScrapeResult({required this.url ,this.result ,this.error ,});
-
-
-
-
+  const BatchScrapeResult({required this.url, this.result, this.error});
 
   @override
-  int get hashCode => url.hashCode^result.hashCode^error.hashCode;
-
-
+  int get hashCode => url.hashCode ^ result.hashCode ^ error.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BatchScrapeResult &&
-  runtimeType == other.runtimeType
-  && url == other.url&& result == other.result&& error == other.error;
-
+      identical(this, other) ||
+      other is BatchScrapeResult &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          result == other.result &&
+          error == other.error;
 }
 
 /// Aggregate result of a batch scrape, exposing per-URL results plus precomputed counts.
 ///
 /// The counts are derived once at construction so every binding language can read them
 /// as plain integer fields without re-iterating the `results` vector.
-class BatchScrapeResults  {
+class BatchScrapeResults {
   /// Per-URL scrape results, in the order URLs were submitted.
   final List<BatchScrapeResult> results;
+
   /// Total number of URLs in the batch (equal to `results.len()`).
   final PlatformInt64 totalCount;
+
   /// Number of URLs whose scrape succeeded (`error` is `None`).
   final PlatformInt64 completedCount;
+
   /// Number of URLs whose scrape failed (`error` is `Some`).
   final PlatformInt64 failedCount;
 
-  const BatchScrapeResults({required this.results ,required this.totalCount ,required this.completedCount ,required this.failedCount ,});
-
-
-
-
+  const BatchScrapeResults({
+    required this.results,
+    required this.totalCount,
+    required this.completedCount,
+    required this.failedCount,
+  });
 
   @override
-  int get hashCode => results.hashCode^totalCount.hashCode^completedCount.hashCode^failedCount.hashCode;
-
-
+  int get hashCode =>
+      results.hashCode ^
+      totalCount.hashCode ^
+      completedCount.hashCode ^
+      failedCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BatchScrapeResults &&
-  runtimeType == other.runtimeType
-  && results == other.results&& totalCount == other.totalCount&& completedCount == other.completedCount&& failedCount == other.failedCount;
-
+      identical(this, other) ||
+      other is BatchScrapeResults &&
+          runtimeType == other.runtimeType &&
+          results == other.results &&
+          totalCount == other.totalCount &&
+          completedCount == other.completedCount &&
+          failedCount == other.failedCount;
 }
 
 /// Browser backend used for JavaScript rendering.
 enum BrowserBackend {
   /// Existing Chromium/CDP backend powered by chromiumoxide.
   chromiumoxide,
+
   /// Crawlberg-owned native browser backend derived from Obscura.
   native,
-  ;
-
 }
 
 /// Browser fallback configuration.
-class BrowserConfig  {
+class BrowserConfig {
   /// When to use the headless browser fallback.
   final BrowserMode mode;
+
   /// Browser backend used to render JavaScript-heavy pages.
   final BrowserBackend backend;
+
   /// CDP WebSocket endpoint for connecting to an external browser instance.
   final String? endpoint;
+
   /// Timeout for browser page load and rendering (in milliseconds when serialized).
   final PlatformInt64 timeout;
+
   /// Wait strategy after browser navigation.
   final BrowserWait wait;
+
   /// CSS selector to wait for when `wait` is `Selector`.
   final String? waitSelector;
+
   /// Extra time to wait after the wait condition is met.
   final PlatformInt64? extraWait;
+
   /// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.
   /// Native backend supports http/https only (no SOCKS5).
   final ProxyConfig? proxy;
+
   /// URL patterns to block before the network request fires. Supports `*`
   /// wildcards. Useful for skipping ads/analytics/large images. Honored by
   /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
   final List<String> blockUrlPatterns;
+
   /// JavaScript snippet evaluated after navigation completes.
   ///
   /// Scraping captures the native backend result in `ScrapeResult.browser.eval_result`.
   /// Interactions run this script before page actions on both browser backends but do
   /// not include the script result in `InteractionResult`.
   final String? evalScript;
+
   /// User-agent used when fetching robots.txt. Defaults to `BrowserConfig.user_agent`
   /// (or crawlberg's default) if unset. Native only.
   final String? robotsUserAgent;
+
   /// Capture the full network event stream into the result. Default false
   /// (only the document event is captured). Native only.
   final bool captureNetworkEvents;
+
   /// Enable session affinity: reuse chromiumoxide Pages for same-domain
   /// requests so cookies + fingerprint + solved challenges persist.
   /// Default: true. When false, each request gets a fresh Page.
   final bool sessionAffinity;
 
-  const BrowserConfig({required this.mode ,required this.backend ,this.endpoint ,required this.timeout ,required this.wait ,this.waitSelector ,this.extraWait ,this.proxy ,required this.blockUrlPatterns ,this.evalScript ,this.robotsUserAgent ,required this.captureNetworkEvents ,required this.sessionAffinity ,});
-
-
-
-
+  const BrowserConfig({
+    required this.mode,
+    required this.backend,
+    this.endpoint,
+    required this.timeout,
+    required this.wait,
+    this.waitSelector,
+    this.extraWait,
+    this.proxy,
+    required this.blockUrlPatterns,
+    this.evalScript,
+    this.robotsUserAgent,
+    required this.captureNetworkEvents,
+    required this.sessionAffinity,
+  });
 
   @override
-  int get hashCode => mode.hashCode^backend.hashCode^endpoint.hashCode^timeout.hashCode^wait.hashCode^waitSelector.hashCode^extraWait.hashCode^proxy.hashCode^blockUrlPatterns.hashCode^evalScript.hashCode^robotsUserAgent.hashCode^captureNetworkEvents.hashCode^sessionAffinity.hashCode;
-
-
+  int get hashCode =>
+      mode.hashCode ^
+      backend.hashCode ^
+      endpoint.hashCode ^
+      timeout.hashCode ^
+      wait.hashCode ^
+      waitSelector.hashCode ^
+      extraWait.hashCode ^
+      proxy.hashCode ^
+      blockUrlPatterns.hashCode ^
+      evalScript.hashCode ^
+      robotsUserAgent.hashCode ^
+      captureNetworkEvents.hashCode ^
+      sessionAffinity.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BrowserConfig &&
-  runtimeType == other.runtimeType
-  && mode == other.mode&& backend == other.backend&& endpoint == other.endpoint&& timeout == other.timeout&& wait == other.wait&& waitSelector == other.waitSelector&& extraWait == other.extraWait&& proxy == other.proxy&& blockUrlPatterns == other.blockUrlPatterns&& evalScript == other.evalScript&& robotsUserAgent == other.robotsUserAgent&& captureNetworkEvents == other.captureNetworkEvents&& sessionAffinity == other.sessionAffinity;
-
+      identical(this, other) ||
+      other is BrowserConfig &&
+          runtimeType == other.runtimeType &&
+          mode == other.mode &&
+          backend == other.backend &&
+          endpoint == other.endpoint &&
+          timeout == other.timeout &&
+          wait == other.wait &&
+          waitSelector == other.waitSelector &&
+          extraWait == other.extraWait &&
+          proxy == other.proxy &&
+          blockUrlPatterns == other.blockUrlPatterns &&
+          evalScript == other.evalScript &&
+          robotsUserAgent == other.robotsUserAgent &&
+          captureNetworkEvents == other.captureNetworkEvents &&
+          sessionAffinity == other.sessionAffinity;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
 ///
 /// Available on `ScrapeResult.browser` when `BrowserBackend::Native` handled the request.
-class BrowserExtras  {
+class BrowserExtras {
   /// Return value of `BrowserConfig.eval_script`, if provided.
   final String? evalResult;
+
   /// Network events captured during page navigation (only populated when
   /// `BrowserConfig.capture_network_events` is true).
   final List<ResponseMeta> networkEvents;
+
   /// All non-expired cookies present in the browser's cookie jar after
   /// navigation completes (includes both prior cookies and server Set-Cookie).
   final List<CookieInfo> cookies;
 
-  const BrowserExtras({this.evalResult ,required this.networkEvents ,required this.cookies ,});
-
-
-
-
+  const BrowserExtras({
+    this.evalResult,
+    required this.networkEvents,
+    required this.cookies,
+  });
 
   @override
-  int get hashCode => evalResult.hashCode^networkEvents.hashCode^cookies.hashCode;
-
-
+  int get hashCode =>
+      evalResult.hashCode ^ networkEvents.hashCode ^ cookies.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is BrowserExtras &&
-  runtimeType == other.runtimeType
-  && evalResult == other.evalResult&& networkEvents == other.networkEvents&& cookies == other.cookies;
-
+      identical(this, other) ||
+      other is BrowserExtras &&
+          runtimeType == other.runtimeType &&
+          evalResult == other.evalResult &&
+          networkEvents == other.networkEvents &&
+          cookies == other.cookies;
 }
 
 /// When to use the headless browser fallback.
 enum BrowserMode {
   /// Automatically detect when JS rendering is needed and fall back to browser.
   auto,
+
   /// Always use the browser for every request.
   always,
+
   /// Never use the browser fallback.
   never,
+
   /// Always use the browser with all stealth surfaces enabled.
   ///
   /// Behaves like [`Always`](BrowserMode::Always) for escalation purposes
@@ -522,77 +675,71 @@ enum BrowserMode {
   /// Use this instead of setting the now-removed `BrowserConfig.stealth`
   /// boolean field.
   stealth,
-  ;
-
 }
 
 /// Wait strategy for browser page rendering.
 enum BrowserWait {
   /// Wait until network activity is idle.
   networkIdle,
+
   /// Wait for a specific CSS selector to appear in the DOM.
   selector,
+
   /// Wait for a fixed duration after navigation.
   fixed,
-  ;
-
 }
 
 /// A single numbered reference in a citation list — produced by the citation
 /// extractor when content uses inline `[N]`-style markers.
-class CitationReference  {
+class CitationReference {
   /// 1-based reference number as it appears in the source text.
   final PlatformInt64 index;
+
   /// Resolved absolute URL for this reference.
   final String url;
+
   /// Human-readable anchor text or title for the reference.
   final String text;
 
-  const CitationReference({required this.index ,required this.url ,required this.text ,});
-
-
-
-
+  const CitationReference({
+    required this.index,
+    required this.url,
+    required this.text,
+  });
 
   @override
-  int get hashCode => index.hashCode^url.hashCode^text.hashCode;
-
-
+  int get hashCode => index.hashCode ^ url.hashCode ^ text.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CitationReference &&
-  runtimeType == other.runtimeType
-  && index == other.index&& url == other.url&& text == other.text;
-
+      identical(this, other) ||
+      other is CitationReference &&
+          runtimeType == other.runtimeType &&
+          index == other.index &&
+          url == other.url &&
+          text == other.text;
 }
 
 /// Result of citation conversion.
-class CitationResult  {
+class CitationResult {
   /// Markdown with links replaced by numbered citations.
   final String content;
+
   /// Numbered reference list: (index, url, text).
   final List<CitationReference> references;
 
-  const CitationResult({required this.content ,required this.references ,});
-
-
-
-
+  const CitationResult({required this.content, required this.references});
 
   @override
-  int get hashCode => content.hashCode^references.hashCode;
-
-
+  int get hashCode => content.hashCode ^ references.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CitationResult &&
-  runtimeType == other.runtimeType
-  && content == other.content&& references == other.references;
-
+      identical(this, other) ||
+      other is CitationResult &&
+          runtimeType == other.runtimeType &&
+          content == other.content &&
+          references == other.references;
 }
 
 /// Content extraction and conversion configuration.
@@ -600,24 +747,30 @@ class CitationResult  {
 /// Controls how HTML is converted to the output format. Uses
 /// html-to-markdown-rs as the conversion engine for all formats
 /// (markdown, plain text, djot).
-class ContentConfig  {
+class ContentConfig {
   /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
   final String outputFormat;
+
   /// Preprocessing aggressiveness: `"minimal"`, `"standard"` (default), `"aggressive"`.
   ///
   /// - Minimal: only scripts/styles removed.
   /// - Standard: also removes nav, nav-hinted headers/footers/asides, forms.
   /// - Aggressive: removes all footers/asides unconditionally.
   final String preprocessingPreset;
+
   /// Remove navigation elements (nav, breadcrumbs, menus). Default: `true`.
   final bool removeNavigation;
+
   /// Remove form elements. Default: `true`.
   final bool removeForms;
+
   /// HTML tag names to strip (render children only, remove the tag wrapper).
   /// Default: `["noscript"]`.
   final List<String> stripTags;
+
   /// HTML tag names to preserve as raw HTML in output.
   final List<String> preserveTags;
+
   /// CSS selectors for elements to exclude entirely (element + all content).
   ///
   /// Unlike `strip_tags` (which removes the wrapper but keeps children),
@@ -626,78 +779,121 @@ class ContentConfig  {
   ///
   /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
   final List<String> excludeSelectors;
+
   /// Skip image elements in output. Default: `false`.
   final bool skipImages;
+
   /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML.
   final PlatformInt64? maxDepth;
+
   /// Enable line wrapping. Default: `false`.
   final bool wrap;
+
   /// Wrap width when `wrap` is enabled. Default: `80`.
   final PlatformInt64 wrapWidth;
+
   /// Include document structure tree in output. Default: `true`.
   final bool includeDocumentStructure;
 
-  const ContentConfig({required this.outputFormat ,required this.preprocessingPreset ,required this.removeNavigation ,required this.removeForms ,required this.stripTags ,required this.preserveTags ,required this.excludeSelectors ,required this.skipImages ,this.maxDepth ,required this.wrap ,required this.wrapWidth ,required this.includeDocumentStructure ,});
-
-
-
-
+  const ContentConfig({
+    required this.outputFormat,
+    required this.preprocessingPreset,
+    required this.removeNavigation,
+    required this.removeForms,
+    required this.stripTags,
+    required this.preserveTags,
+    required this.excludeSelectors,
+    required this.skipImages,
+    this.maxDepth,
+    required this.wrap,
+    required this.wrapWidth,
+    required this.includeDocumentStructure,
+  });
 
   @override
-  int get hashCode => outputFormat.hashCode^preprocessingPreset.hashCode^removeNavigation.hashCode^removeForms.hashCode^stripTags.hashCode^preserveTags.hashCode^excludeSelectors.hashCode^skipImages.hashCode^maxDepth.hashCode^wrap.hashCode^wrapWidth.hashCode^includeDocumentStructure.hashCode;
-
-
+  int get hashCode =>
+      outputFormat.hashCode ^
+      preprocessingPreset.hashCode ^
+      removeNavigation.hashCode ^
+      removeForms.hashCode ^
+      stripTags.hashCode ^
+      preserveTags.hashCode ^
+      excludeSelectors.hashCode ^
+      skipImages.hashCode ^
+      maxDepth.hashCode ^
+      wrap.hashCode ^
+      wrapWidth.hashCode ^
+      includeDocumentStructure.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ContentConfig &&
-  runtimeType == other.runtimeType
-  && outputFormat == other.outputFormat&& preprocessingPreset == other.preprocessingPreset&& removeNavigation == other.removeNavigation&& removeForms == other.removeForms&& stripTags == other.stripTags&& preserveTags == other.preserveTags&& excludeSelectors == other.excludeSelectors&& skipImages == other.skipImages&& maxDepth == other.maxDepth&& wrap == other.wrap&& wrapWidth == other.wrapWidth&& includeDocumentStructure == other.includeDocumentStructure;
-
+      identical(this, other) ||
+      other is ContentConfig &&
+          runtimeType == other.runtimeType &&
+          outputFormat == other.outputFormat &&
+          preprocessingPreset == other.preprocessingPreset &&
+          removeNavigation == other.removeNavigation &&
+          removeForms == other.removeForms &&
+          stripTags == other.stripTags &&
+          preserveTags == other.preserveTags &&
+          excludeSelectors == other.excludeSelectors &&
+          skipImages == other.skipImages &&
+          maxDepth == other.maxDepth &&
+          wrap == other.wrap &&
+          wrapWidth == other.wrapWidth &&
+          includeDocumentStructure == other.includeDocumentStructure;
 }
 
 /// Information about an HTTP cookie received from a response.
-class CookieInfo  {
+class CookieInfo {
   /// The cookie name.
   final String name;
+
   /// The cookie value.
   final String value;
+
   /// The cookie domain, if specified.
   final String? domain;
+
   /// The cookie path, if specified.
   final String? path;
 
-  const CookieInfo({required this.name ,required this.value ,this.domain ,this.path ,});
-
-
-
-
+  const CookieInfo({
+    required this.name,
+    required this.value,
+    this.domain,
+    this.path,
+  });
 
   @override
-  int get hashCode => name.hashCode^value.hashCode^domain.hashCode^path.hashCode;
-
-
+  int get hashCode =>
+      name.hashCode ^ value.hashCode ^ domain.hashCode ^ path.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CookieInfo &&
-  runtimeType == other.runtimeType
-  && name == other.name&& value == other.value&& domain == other.domain&& path == other.path;
-
+      identical(this, other) ||
+      other is CookieInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          value == other.value &&
+          domain == other.domain &&
+          path == other.path;
 }
 
 /// Configuration for crawl, scrape, and map operations.
-class CrawlConfig  {
+class CrawlConfig {
   /// Maximum crawl depth (number of link hops from the start URL).
   final PlatformInt64? maxDepth;
+
   /// Maximum number of pages to crawl.
   final PlatformInt64? maxPages;
+
   /// Maximum number of concurrent requests.
   final PlatformInt64? maxConcurrent;
+
   /// Whether to respect robots.txt directives.
   final bool respectRobotsTxt;
+
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
   /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
   /// than raised as `CrawlError`. Default `false` preserves the historical
@@ -706,78 +902,112 @@ class CrawlConfig  {
   /// the user opted into redirect-following, so receiving a 404 there is part of
   /// the normal flow rather than an unexpected error.
   final bool softHttpErrors;
+
   /// Custom user-agent string.
   final String? userAgent;
+
   /// Whether to restrict crawling to the same domain.
   final bool stayOnDomain;
+
   /// Whether to allow subdomains when `stay_on_domain` is true.
   final bool allowSubdomains;
+
   /// Regex patterns for paths to include during crawling.
   final List<String> includePaths;
+
   /// Regex patterns for paths to exclude during crawling.
   final List<String> excludePaths;
+
   /// Custom HTTP headers to send with each request.
   final Map<String, String> customHeaders;
+
   /// Timeout for individual HTTP requests (in milliseconds when serialized).
   final PlatformInt64 requestTimeout;
+
   /// Per-domain rate limit in milliseconds. When set, enforces a minimum delay
   /// between requests to the same domain. Defaults to 200ms when `None`.
   final PlatformInt64? rateLimitMs;
+
   /// Maximum number of redirects to follow.
   final PlatformInt64 maxRedirects;
+
   /// Number of retry attempts for failed requests.
   final PlatformInt64 retryCount;
+
   /// HTTP status codes that should trigger a retry.
   final Int64List retryCodes;
+
   /// Whether to enable cookie handling.
   final bool cookiesEnabled;
+
   /// Authentication configuration.
   final AuthConfig? auth;
+
   /// Maximum response body size in bytes.
   final PlatformInt64? maxBodySize;
+
   /// CSS selectors for tags to remove from HTML before processing.
   final List<String> removeTags;
+
   /// Content extraction and conversion configuration.
   final ContentConfig content;
+
   /// Maximum number of URLs to return from a map operation.
   final PlatformInt64? mapLimit;
+
   /// Search filter for map results (case-insensitive substring match on URLs).
   final String? mapSearch;
+
   /// Whether to download assets (CSS, JS, images, etc.) from the page.
   final bool downloadAssets;
+
   /// Filter for asset categories to download.
   final List<AssetCategory> assetTypes;
+
   /// Maximum size in bytes for individual asset downloads.
   final PlatformInt64? maxAssetSize;
+
   /// Browser configuration.
   final BrowserConfig browser;
+
   /// Proxy configuration for HTTP requests.
   final ProxyConfig? proxy;
+
   /// List of user-agent strings for rotation. If non-empty, overrides `user_agent`.
   final List<String> userAgents;
+
   /// Whether to capture a screenshot when using the browser.
   final bool captureScreenshot;
+
   /// Re-enqueue discovered `LinkType::Document` URLs into the crawl frontier so
   /// the crawl follows links *from* document pages (PDFs, etc.) as it would
   /// from HTML pages. Default: `false` (documents terminate at materialisation).
   final bool followDocumentUrls;
+
   /// Maximum document-depth (from the seed URL through document links only)
   /// when `follow_document_urls` is true. `None` means inherit `max_depth`.
   /// Independent of `max_depth`: a document URL is enqueued only if BOTH the
   /// outer `max_depth` and (if set) `document_url_depth` permit it.
   final PlatformInt64? documentUrlDepth;
+
   /// Whether to download non-HTML documents (PDF, DOCX, images, code, etc.) instead of skipping them.
   final bool downloadDocuments;
+
   /// Maximum size in bytes for document downloads. Defaults to 50 MB.
   final PlatformInt64? documentMaxSize;
+
   /// Allowlist of MIME types to download. If empty, uses built-in defaults.
   final List<String> documentMimeTypes;
+
   /// Path to write WARC output. If `None`, WARC output is disabled.
   final String? warcOutput;
+
   /// Named browser profile for persistent sessions (cookies, localStorage).
   final String? browserProfile;
+
   /// Whether to save changes back to the browser profile on exit.
   final bool saveBrowserProfile;
+
   /// SSRF policy for outbound network requests. Default: deny private networks,
   /// allow http/https only, max 5 redirects.
   ///
@@ -786,36 +1016,152 @@ class CrawlConfig  {
   /// added in a follow-up when `HostMatcher`'s tagged-enum FFI form is decided.
   final SsrfPolicy ssrf;
 
-  const CrawlConfig({this.maxDepth ,this.maxPages ,this.maxConcurrent ,required this.respectRobotsTxt ,required this.softHttpErrors ,this.userAgent ,required this.stayOnDomain ,required this.allowSubdomains ,required this.includePaths ,required this.excludePaths ,required this.customHeaders ,required this.requestTimeout ,this.rateLimitMs ,required this.maxRedirects ,required this.retryCount ,required this.retryCodes ,required this.cookiesEnabled ,this.auth ,this.maxBodySize ,required this.removeTags ,required this.content ,this.mapLimit ,this.mapSearch ,required this.downloadAssets ,required this.assetTypes ,this.maxAssetSize ,required this.browser ,this.proxy ,required this.userAgents ,required this.captureScreenshot ,required this.followDocumentUrls ,this.documentUrlDepth ,required this.downloadDocuments ,this.documentMaxSize ,required this.documentMimeTypes ,this.warcOutput ,this.browserProfile ,required this.saveBrowserProfile ,required this.ssrf ,});
-
-
-
-
+  const CrawlConfig({
+    this.maxDepth,
+    this.maxPages,
+    this.maxConcurrent,
+    required this.respectRobotsTxt,
+    required this.softHttpErrors,
+    this.userAgent,
+    required this.stayOnDomain,
+    required this.allowSubdomains,
+    required this.includePaths,
+    required this.excludePaths,
+    required this.customHeaders,
+    required this.requestTimeout,
+    this.rateLimitMs,
+    required this.maxRedirects,
+    required this.retryCount,
+    required this.retryCodes,
+    required this.cookiesEnabled,
+    this.auth,
+    this.maxBodySize,
+    required this.removeTags,
+    required this.content,
+    this.mapLimit,
+    this.mapSearch,
+    required this.downloadAssets,
+    required this.assetTypes,
+    this.maxAssetSize,
+    required this.browser,
+    this.proxy,
+    required this.userAgents,
+    required this.captureScreenshot,
+    required this.followDocumentUrls,
+    this.documentUrlDepth,
+    required this.downloadDocuments,
+    this.documentMaxSize,
+    required this.documentMimeTypes,
+    this.warcOutput,
+    this.browserProfile,
+    required this.saveBrowserProfile,
+    required this.ssrf,
+  });
 
   @override
-  int get hashCode => maxDepth.hashCode^maxPages.hashCode^maxConcurrent.hashCode^respectRobotsTxt.hashCode^softHttpErrors.hashCode^userAgent.hashCode^stayOnDomain.hashCode^allowSubdomains.hashCode^includePaths.hashCode^excludePaths.hashCode^customHeaders.hashCode^requestTimeout.hashCode^rateLimitMs.hashCode^maxRedirects.hashCode^retryCount.hashCode^retryCodes.hashCode^cookiesEnabled.hashCode^auth.hashCode^maxBodySize.hashCode^removeTags.hashCode^content.hashCode^mapLimit.hashCode^mapSearch.hashCode^downloadAssets.hashCode^assetTypes.hashCode^maxAssetSize.hashCode^browser.hashCode^proxy.hashCode^userAgents.hashCode^captureScreenshot.hashCode^followDocumentUrls.hashCode^documentUrlDepth.hashCode^downloadDocuments.hashCode^documentMaxSize.hashCode^documentMimeTypes.hashCode^warcOutput.hashCode^browserProfile.hashCode^saveBrowserProfile.hashCode^ssrf.hashCode;
-
-
+  int get hashCode =>
+      maxDepth.hashCode ^
+      maxPages.hashCode ^
+      maxConcurrent.hashCode ^
+      respectRobotsTxt.hashCode ^
+      softHttpErrors.hashCode ^
+      userAgent.hashCode ^
+      stayOnDomain.hashCode ^
+      allowSubdomains.hashCode ^
+      includePaths.hashCode ^
+      excludePaths.hashCode ^
+      customHeaders.hashCode ^
+      requestTimeout.hashCode ^
+      rateLimitMs.hashCode ^
+      maxRedirects.hashCode ^
+      retryCount.hashCode ^
+      retryCodes.hashCode ^
+      cookiesEnabled.hashCode ^
+      auth.hashCode ^
+      maxBodySize.hashCode ^
+      removeTags.hashCode ^
+      content.hashCode ^
+      mapLimit.hashCode ^
+      mapSearch.hashCode ^
+      downloadAssets.hashCode ^
+      assetTypes.hashCode ^
+      maxAssetSize.hashCode ^
+      browser.hashCode ^
+      proxy.hashCode ^
+      userAgents.hashCode ^
+      captureScreenshot.hashCode ^
+      followDocumentUrls.hashCode ^
+      documentUrlDepth.hashCode ^
+      downloadDocuments.hashCode ^
+      documentMaxSize.hashCode ^
+      documentMimeTypes.hashCode ^
+      warcOutput.hashCode ^
+      browserProfile.hashCode ^
+      saveBrowserProfile.hashCode ^
+      ssrf.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CrawlConfig &&
-  runtimeType == other.runtimeType
-  && maxDepth == other.maxDepth&& maxPages == other.maxPages&& maxConcurrent == other.maxConcurrent&& respectRobotsTxt == other.respectRobotsTxt&& softHttpErrors == other.softHttpErrors&& userAgent == other.userAgent&& stayOnDomain == other.stayOnDomain&& allowSubdomains == other.allowSubdomains&& includePaths == other.includePaths&& excludePaths == other.excludePaths&& customHeaders == other.customHeaders&& requestTimeout == other.requestTimeout&& rateLimitMs == other.rateLimitMs&& maxRedirects == other.maxRedirects&& retryCount == other.retryCount&& retryCodes == other.retryCodes&& cookiesEnabled == other.cookiesEnabled&& auth == other.auth&& maxBodySize == other.maxBodySize&& removeTags == other.removeTags&& content == other.content&& mapLimit == other.mapLimit&& mapSearch == other.mapSearch&& downloadAssets == other.downloadAssets&& assetTypes == other.assetTypes&& maxAssetSize == other.maxAssetSize&& browser == other.browser&& proxy == other.proxy&& userAgents == other.userAgents&& captureScreenshot == other.captureScreenshot&& followDocumentUrls == other.followDocumentUrls&& documentUrlDepth == other.documentUrlDepth&& downloadDocuments == other.downloadDocuments&& documentMaxSize == other.documentMaxSize&& documentMimeTypes == other.documentMimeTypes&& warcOutput == other.warcOutput&& browserProfile == other.browserProfile&& saveBrowserProfile == other.saveBrowserProfile&& ssrf == other.ssrf;
-
+      identical(this, other) ||
+      other is CrawlConfig &&
+          runtimeType == other.runtimeType &&
+          maxDepth == other.maxDepth &&
+          maxPages == other.maxPages &&
+          maxConcurrent == other.maxConcurrent &&
+          respectRobotsTxt == other.respectRobotsTxt &&
+          softHttpErrors == other.softHttpErrors &&
+          userAgent == other.userAgent &&
+          stayOnDomain == other.stayOnDomain &&
+          allowSubdomains == other.allowSubdomains &&
+          includePaths == other.includePaths &&
+          excludePaths == other.excludePaths &&
+          customHeaders == other.customHeaders &&
+          requestTimeout == other.requestTimeout &&
+          rateLimitMs == other.rateLimitMs &&
+          maxRedirects == other.maxRedirects &&
+          retryCount == other.retryCount &&
+          retryCodes == other.retryCodes &&
+          cookiesEnabled == other.cookiesEnabled &&
+          auth == other.auth &&
+          maxBodySize == other.maxBodySize &&
+          removeTags == other.removeTags &&
+          content == other.content &&
+          mapLimit == other.mapLimit &&
+          mapSearch == other.mapSearch &&
+          downloadAssets == other.downloadAssets &&
+          assetTypes == other.assetTypes &&
+          maxAssetSize == other.maxAssetSize &&
+          browser == other.browser &&
+          proxy == other.proxy &&
+          userAgents == other.userAgents &&
+          captureScreenshot == other.captureScreenshot &&
+          followDocumentUrls == other.followDocumentUrls &&
+          documentUrlDepth == other.documentUrlDepth &&
+          downloadDocuments == other.downloadDocuments &&
+          documentMaxSize == other.documentMaxSize &&
+          documentMimeTypes == other.documentMimeTypes &&
+          warcOutput == other.warcOutput &&
+          browserProfile == other.browserProfile &&
+          saveBrowserProfile == other.saveBrowserProfile &&
+          ssrf == other.ssrf;
 }
 
 @freezed
-sealed class CrawlError with _$CrawlError  {
+sealed class CrawlError with _$CrawlError {
   const CrawlError._();
 
   /// The requested page was not found (HTTP 404).
-  const factory CrawlError.notFound({   required String field0 , }) = CrawlError_NotFound;
+  const factory CrawlError.notFound({required String field0}) =
+      CrawlError_NotFound;
+
   /// The request was unauthorized (HTTP 401).
-  const factory CrawlError.unauthorized({   required String field0 , }) = CrawlError_Unauthorized;
+  const factory CrawlError.unauthorized({required String field0}) =
+      CrawlError_Unauthorized;
+
   /// The request was forbidden (HTTP 403).
-  const factory CrawlError.forbidden({   required String field0 , }) = CrawlError_Forbidden;
+  const factory CrawlError.forbidden({required String field0}) =
+      CrawlError_Forbidden;
+
   /// The request was blocked by a WAF or bot protection (HTTP 403 with WAF indicators).
   ///
   /// `vendor` is the lowercase identifier of the detected WAF (e.g. "cloudflare",
@@ -825,165 +1171,298 @@ sealed class CrawlError with _$CrawlError  {
   /// The stable error tag remains `forbidden: waf/blocked: MESSAGE` so existing
   /// log-grep patterns and cross-language bindings continue to work; vendor is
   /// surfaced separately for structured consumers.
-  const factory CrawlError.wafBlocked({   required String vendor ,  required String message , }) = CrawlError_WafBlocked;
+  const factory CrawlError.wafBlocked({
+    required String vendor,
+    required String message,
+  }) = CrawlError_WafBlocked;
+
   /// The request timed out.
-  const factory CrawlError.timeout({   required String field0 , }) = CrawlError_Timeout;
+  const factory CrawlError.timeout({required String field0}) =
+      CrawlError_Timeout;
+
   /// The request was rate-limited (HTTP 429).
-  const factory CrawlError.rateLimited({   required String field0 , }) = CrawlError_RateLimited;
+  const factory CrawlError.rateLimited({required String field0}) =
+      CrawlError_RateLimited;
+
   /// A server error occurred (HTTP 5xx).
-  const factory CrawlError.serverError({   required String field0 , }) = CrawlError_ServerError;
+  const factory CrawlError.serverError({required String field0}) =
+      CrawlError_ServerError;
+
   /// A bad gateway error occurred (HTTP 502).
-  const factory CrawlError.badGateway({   required String field0 , }) = CrawlError_BadGateway;
+  const factory CrawlError.badGateway({required String field0}) =
+      CrawlError_BadGateway;
+
   /// The resource is permanently gone (HTTP 410).
-  const factory CrawlError.gone({   required String field0 , }) = CrawlError_Gone;
+  const factory CrawlError.gone({required String field0}) = CrawlError_Gone;
+
   /// A connection error occurred.
-  const factory CrawlError.connection({   required String field0 , }) = CrawlError_Connection;
+  const factory CrawlError.connection({required String field0}) =
+      CrawlError_Connection;
+
   /// A DNS resolution error occurred.
-  const factory CrawlError.dns({   required String field0 , }) = CrawlError_Dns;
+  const factory CrawlError.dns({required String field0}) = CrawlError_Dns;
+
   /// An SSL/TLS error occurred.
-  const factory CrawlError.ssl({   required String field0 , }) = CrawlError_Ssl;
+  const factory CrawlError.ssl({required String field0}) = CrawlError_Ssl;
+
   /// Data was lost or truncated during transfer.
-  const factory CrawlError.dataLoss({   required String field0 , }) = CrawlError_DataLoss;
+  const factory CrawlError.dataLoss({required String field0}) =
+      CrawlError_DataLoss;
+
   /// The browser failed to launch, connect, or navigate.
-  const factory CrawlError.browserError({   required String field0 , }) = CrawlError_BrowserError;
+  const factory CrawlError.browserError({required String field0}) =
+      CrawlError_BrowserError;
+
   /// The browser page load or rendering timed out.
-  const factory CrawlError.browserTimeout({   required String field0 , }) = CrawlError_BrowserTimeout;
+  const factory CrawlError.browserTimeout({required String field0}) =
+      CrawlError_BrowserTimeout;
+
   /// The provided configuration is invalid.
-  const factory CrawlError.invalidConfig({   required String field0 , }) = CrawlError_InvalidConfig;
+  const factory CrawlError.invalidConfig({required String field0}) =
+      CrawlError_InvalidConfig;
+
   /// The requested capability is not supported by the active backend or build.
-  const factory CrawlError.unsupported({   required String field0 , }) = CrawlError_Unsupported;
+  const factory CrawlError.unsupported({required String field0}) =
+      CrawlError_Unsupported;
+
   /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
-  const factory CrawlError.ssrfPolicyViolation({   required String url ,  required String reason , }) = CrawlError_SsrfPolicyViolation;
+  const factory CrawlError.ssrfPolicyViolation({
+    required String url,
+    required String reason,
+  }) = CrawlError_SsrfPolicyViolation;
+
   /// An unclassified error occurred.
-  const factory CrawlError.other({   required String field0 , }) = CrawlError_Other;
-
-
-
-
+  const factory CrawlError.other({required String field0}) = CrawlError_Other;
 }
 
 @freezed
-sealed class CrawlEvent with _$CrawlEvent  {
+sealed class CrawlEvent with _$CrawlEvent {
   const CrawlEvent._();
 
   /// A single page has been crawled.
-  const factory CrawlEvent.page({ /// The crawled page result.
-    required CrawlPageResult result , }) = CrawlEvent_Page;
+  const factory CrawlEvent.page({
+    /// The crawled page result.
+    required CrawlPageResult result,
+  }) = CrawlEvent_Page;
+
   /// An error occurred while crawling a URL.
-  const factory CrawlEvent.error({ /// The URL that failed.
-    required String url ,/// The error message.
-    required String error , }) = CrawlEvent_Error;
+  const factory CrawlEvent.error({
+    /// The URL that failed.
+    required String url,
+
+    /// The error message.
+    required String error,
+  }) = CrawlEvent_Error;
+
   /// The crawl has completed.
-  const factory CrawlEvent.complete({ /// Total number of pages crawled.
-    required PlatformInt64 pagesCrawled , }) = CrawlEvent_Complete;
-
-
-
-
+  const factory CrawlEvent.complete({
+    /// Total number of pages crawled.
+    required PlatformInt64 pagesCrawled,
+  }) = CrawlEvent_Complete;
 }
 
 /// The result of crawling a single page during a crawl operation.
-class CrawlPageResult  {
+class CrawlPageResult {
   /// The original URL of the page.
   final String url;
+
   /// The normalized URL of the page.
   final String normalizedUrl;
+
   /// The HTTP status code of the response.
   final PlatformInt64 statusCode;
+
   /// The Content-Type header value.
   final String contentType;
+
   /// The HTML body of the response.
   final String html;
+
   /// The size of the response body in bytes.
   final PlatformInt64 bodySize;
+
   /// Extracted metadata from the page.
   final PageMetadata metadata;
+
   /// Links found on the page.
   final List<LinkInfo> links;
+
   /// Images found on the page.
   final List<ImageInfo> images;
+
   /// Feed links found on the page.
   final List<FeedInfo> feeds;
+
   /// JSON-LD entries found on the page.
   final List<JsonLdEntry> jsonLd;
+
   /// The depth of this page from the start URL.
   final PlatformInt64 depth;
+
   /// Whether this page is on the same domain as the start URL.
   final bool stayedOnDomain;
+
   /// Whether this page was skipped (binary or PDF content).
   final bool wasSkipped;
+
   /// Whether the content is a PDF.
   final bool isPdf;
+
   /// The detected character set encoding.
   final String? detectedCharset;
+
   /// Markdown conversion of the page content.
   final MarkdownResult? markdown;
+
   /// Structured data extracted by LLM. Populated when extraction is configured.
   final String? extractedData;
+
   /// Metadata about the LLM extraction pass (cost, tokens, model).
   final ExtractionMeta? extractionMeta;
+
   /// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
   final DownloadedDocument? downloadedDocument;
+
   /// Whether the browser fallback was used to fetch this page.
   final bool browserUsed;
 
-  const CrawlPageResult({required this.url ,required this.normalizedUrl ,required this.statusCode ,required this.contentType ,required this.html ,required this.bodySize ,required this.metadata ,required this.links ,required this.images ,required this.feeds ,required this.jsonLd ,required this.depth ,required this.stayedOnDomain ,required this.wasSkipped ,required this.isPdf ,this.detectedCharset ,this.markdown ,this.extractedData ,this.extractionMeta ,this.downloadedDocument ,required this.browserUsed ,});
-
-
-
-
+  const CrawlPageResult({
+    required this.url,
+    required this.normalizedUrl,
+    required this.statusCode,
+    required this.contentType,
+    required this.html,
+    required this.bodySize,
+    required this.metadata,
+    required this.links,
+    required this.images,
+    required this.feeds,
+    required this.jsonLd,
+    required this.depth,
+    required this.stayedOnDomain,
+    required this.wasSkipped,
+    required this.isPdf,
+    this.detectedCharset,
+    this.markdown,
+    this.extractedData,
+    this.extractionMeta,
+    this.downloadedDocument,
+    required this.browserUsed,
+  });
 
   @override
-  int get hashCode => url.hashCode^normalizedUrl.hashCode^statusCode.hashCode^contentType.hashCode^html.hashCode^bodySize.hashCode^metadata.hashCode^links.hashCode^images.hashCode^feeds.hashCode^jsonLd.hashCode^depth.hashCode^stayedOnDomain.hashCode^wasSkipped.hashCode^isPdf.hashCode^detectedCharset.hashCode^markdown.hashCode^extractedData.hashCode^extractionMeta.hashCode^downloadedDocument.hashCode^browserUsed.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^
+      normalizedUrl.hashCode ^
+      statusCode.hashCode ^
+      contentType.hashCode ^
+      html.hashCode ^
+      bodySize.hashCode ^
+      metadata.hashCode ^
+      links.hashCode ^
+      images.hashCode ^
+      feeds.hashCode ^
+      jsonLd.hashCode ^
+      depth.hashCode ^
+      stayedOnDomain.hashCode ^
+      wasSkipped.hashCode ^
+      isPdf.hashCode ^
+      detectedCharset.hashCode ^
+      markdown.hashCode ^
+      extractedData.hashCode ^
+      extractionMeta.hashCode ^
+      downloadedDocument.hashCode ^
+      browserUsed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CrawlPageResult &&
-  runtimeType == other.runtimeType
-  && url == other.url&& normalizedUrl == other.normalizedUrl&& statusCode == other.statusCode&& contentType == other.contentType&& html == other.html&& bodySize == other.bodySize&& metadata == other.metadata&& links == other.links&& images == other.images&& feeds == other.feeds&& jsonLd == other.jsonLd&& depth == other.depth&& stayedOnDomain == other.stayedOnDomain&& wasSkipped == other.wasSkipped&& isPdf == other.isPdf&& detectedCharset == other.detectedCharset&& markdown == other.markdown&& extractedData == other.extractedData&& extractionMeta == other.extractionMeta&& downloadedDocument == other.downloadedDocument&& browserUsed == other.browserUsed;
-
+      identical(this, other) ||
+      other is CrawlPageResult &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          normalizedUrl == other.normalizedUrl &&
+          statusCode == other.statusCode &&
+          contentType == other.contentType &&
+          html == other.html &&
+          bodySize == other.bodySize &&
+          metadata == other.metadata &&
+          links == other.links &&
+          images == other.images &&
+          feeds == other.feeds &&
+          jsonLd == other.jsonLd &&
+          depth == other.depth &&
+          stayedOnDomain == other.stayedOnDomain &&
+          wasSkipped == other.wasSkipped &&
+          isPdf == other.isPdf &&
+          detectedCharset == other.detectedCharset &&
+          markdown == other.markdown &&
+          extractedData == other.extractedData &&
+          extractionMeta == other.extractionMeta &&
+          downloadedDocument == other.downloadedDocument &&
+          browserUsed == other.browserUsed;
 }
 
 /// The result of a multi-page crawl operation.
-class CrawlResult  {
+class CrawlResult {
   /// The list of crawled pages.
   final List<CrawlPageResult> pages;
+
   /// The final URL after following redirects.
   final String finalUrl;
+
   /// The number of redirects followed.
   final PlatformInt64 redirectCount;
+
   /// Whether any page was skipped during crawling.
   final bool wasSkipped;
+
   /// An error message, if the crawl encountered an issue.
   final String? error;
+
   /// Cookies collected during the crawl.
   final List<CookieInfo> cookies;
+
   /// Whether all crawled pages stayed on the same domain as the start URL.
   final bool stayedOnDomain;
+
   /// Whether the browser fallback was used for any page in this crawl.
   final bool browserUsed;
 
-  const CrawlResult({required this.pages ,required this.finalUrl ,required this.redirectCount ,required this.wasSkipped ,this.error ,required this.cookies ,required this.stayedOnDomain ,required this.browserUsed ,});
-
-
-
-
+  const CrawlResult({
+    required this.pages,
+    required this.finalUrl,
+    required this.redirectCount,
+    required this.wasSkipped,
+    this.error,
+    required this.cookies,
+    required this.stayedOnDomain,
+    required this.browserUsed,
+  });
 
   @override
-  int get hashCode => pages.hashCode^finalUrl.hashCode^redirectCount.hashCode^wasSkipped.hashCode^error.hashCode^cookies.hashCode^stayedOnDomain.hashCode^browserUsed.hashCode;
-
-
+  int get hashCode =>
+      pages.hashCode ^
+      finalUrl.hashCode ^
+      redirectCount.hashCode ^
+      wasSkipped.hashCode ^
+      error.hashCode ^
+      cookies.hashCode ^
+      stayedOnDomain.hashCode ^
+      browserUsed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CrawlResult &&
-  runtimeType == other.runtimeType
-  && pages == other.pages&& finalUrl == other.finalUrl&& redirectCount == other.redirectCount&& wasSkipped == other.wasSkipped&& error == other.error&& cookies == other.cookies&& stayedOnDomain == other.stayedOnDomain&& browserUsed == other.browserUsed;
-
+      identical(this, other) ||
+      other is CrawlResult &&
+          runtimeType == other.runtimeType &&
+          pages == other.pages &&
+          finalUrl == other.finalUrl &&
+          redirectCount == other.redirectCount &&
+          wasSkipped == other.wasSkipped &&
+          error == other.error &&
+          cookies == other.cookies &&
+          stayedOnDomain == other.stayedOnDomain &&
+          browserUsed == other.browserUsed;
 }
 
 /// Request to begin a single-URL streaming crawl.
@@ -991,63 +1470,72 @@ class CrawlResult  {
 /// Wraps a single seed URL for delivery through the streaming-adapter binding
 /// surface. Required as a struct because alef's streaming adapter requires a
 /// named request type — primitives are not supported.
-class CrawlStreamRequest  {
+class CrawlStreamRequest {
   /// The seed URL to crawl.
   final String url;
 
-  const CrawlStreamRequest({required this.url ,});
-
-
-
-
+  const CrawlStreamRequest({required this.url});
 
   @override
   int get hashCode => url.hashCode;
 
-
-
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is CrawlStreamRequest &&
-  runtimeType == other.runtimeType
-  && url == other.url;
-
+      identical(this, other) ||
+      other is CrawlStreamRequest &&
+          runtimeType == other.runtimeType &&
+          url == other.url;
 }
 
 /// A downloaded asset from a page.
-class DownloadedAsset  {
+class DownloadedAsset {
   /// The original URL of the asset.
   final String url;
+
   /// The SHA-256 content hash of the asset.
   final String contentHash;
+
   /// The MIME type from the Content-Type header.
   final String? mimeType;
+
   /// The size of the asset in bytes.
   final PlatformInt64 size;
+
   /// The category of the asset.
   final AssetCategory assetCategory;
+
   /// The HTML tag that referenced this asset (e.g., "link", "script", "img").
   final String? htmlTag;
 
-  const DownloadedAsset({required this.url ,required this.contentHash ,this.mimeType ,required this.size ,required this.assetCategory ,this.htmlTag ,});
-
-
-
-
+  const DownloadedAsset({
+    required this.url,
+    required this.contentHash,
+    this.mimeType,
+    required this.size,
+    required this.assetCategory,
+    this.htmlTag,
+  });
 
   @override
-  int get hashCode => url.hashCode^contentHash.hashCode^mimeType.hashCode^size.hashCode^assetCategory.hashCode^htmlTag.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^
+      contentHash.hashCode ^
+      mimeType.hashCode ^
+      size.hashCode ^
+      assetCategory.hashCode ^
+      htmlTag.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is DownloadedAsset &&
-  runtimeType == other.runtimeType
-  && url == other.url&& contentHash == other.contentHash&& mimeType == other.mimeType&& size == other.size&& assetCategory == other.assetCategory&& htmlTag == other.htmlTag;
-
+      identical(this, other) ||
+      other is DownloadedAsset &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          contentHash == other.contentHash &&
+          mimeType == other.mimeType &&
+          size == other.size &&
+          assetCategory == other.assetCategory &&
+          htmlTag == other.htmlTag;
 }
 
 /// A downloaded non-HTML document (PDF, DOCX, image, code file, etc.).
@@ -1055,386 +1543,428 @@ class DownloadedAsset  {
 /// When the crawler encounters non-HTML content and `download_documents` is
 /// enabled, it downloads the raw bytes and populates this struct instead of
 /// skipping the resource.
-class DownloadedDocument  {
+class DownloadedDocument {
   /// The URL the document was fetched from.
   final String url;
+
   /// The MIME type from the Content-Type header.
   final String mimeType;
+
   /// Size of the document in bytes.
   final PlatformInt64 size;
+
   /// Filename extracted from Content-Disposition or URL path.
   final String? filename;
+
   /// SHA-256 hex digest of the content.
   final String contentHash;
+
   /// Selected response headers.
   final Map<String, String> headers;
 
-  const DownloadedDocument({required this.url ,required this.mimeType ,required this.size ,this.filename ,required this.contentHash ,required this.headers ,});
-
-
-
-
+  const DownloadedDocument({
+    required this.url,
+    required this.mimeType,
+    required this.size,
+    this.filename,
+    required this.contentHash,
+    required this.headers,
+  });
 
   @override
-  int get hashCode => url.hashCode^mimeType.hashCode^size.hashCode^filename.hashCode^contentHash.hashCode^headers.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^
+      mimeType.hashCode ^
+      size.hashCode ^
+      filename.hashCode ^
+      contentHash.hashCode ^
+      headers.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is DownloadedDocument &&
-  runtimeType == other.runtimeType
-  && url == other.url&& mimeType == other.mimeType&& size == other.size&& filename == other.filename&& contentHash == other.contentHash&& headers == other.headers;
-
+      identical(this, other) ||
+      other is DownloadedDocument &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          mimeType == other.mimeType &&
+          size == other.size &&
+          filename == other.filename &&
+          contentHash == other.contentHash &&
+          headers == other.headers;
 }
 
 /// Metadata about an LLM extraction pass.
-class ExtractionMeta  {
+class ExtractionMeta {
   /// Estimated cost of the LLM call in USD.
   final double? cost;
+
   /// Number of prompt (input) tokens consumed.
   final PlatformInt64? promptTokens;
+
   /// Number of completion (output) tokens generated.
   final PlatformInt64? completionTokens;
+
   /// The model identifier used for extraction.
   final String? model;
+
   /// Number of content chunks sent to the LLM.
   final PlatformInt64 chunksProcessed;
 
-  const ExtractionMeta({this.cost ,this.promptTokens ,this.completionTokens ,this.model ,required this.chunksProcessed ,});
-
-
-
-
+  const ExtractionMeta({
+    this.cost,
+    this.promptTokens,
+    this.completionTokens,
+    this.model,
+    required this.chunksProcessed,
+  });
 
   @override
-  int get hashCode => cost.hashCode^promptTokens.hashCode^completionTokens.hashCode^model.hashCode^chunksProcessed.hashCode;
-
-
+  int get hashCode =>
+      cost.hashCode ^
+      promptTokens.hashCode ^
+      completionTokens.hashCode ^
+      model.hashCode ^
+      chunksProcessed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ExtractionMeta &&
-  runtimeType == other.runtimeType
-  && cost == other.cost&& promptTokens == other.promptTokens&& completionTokens == other.completionTokens&& model == other.model&& chunksProcessed == other.chunksProcessed;
-
+      identical(this, other) ||
+      other is ExtractionMeta &&
+          runtimeType == other.runtimeType &&
+          cost == other.cost &&
+          promptTokens == other.promptTokens &&
+          completionTokens == other.completionTokens &&
+          model == other.model &&
+          chunksProcessed == other.chunksProcessed;
 }
 
 /// Information about a favicon or icon link.
-class FaviconInfo  {
+class FaviconInfo {
   /// The icon URL.
   final String url;
+
   /// The `rel` attribute (e.g., "icon", "apple-touch-icon").
   final String rel;
+
   /// The `sizes` attribute, if present.
   final String? sizes;
+
   /// The MIME type, if present.
   final String? mimeType;
 
-  const FaviconInfo({required this.url ,required this.rel ,this.sizes ,this.mimeType ,});
-
-
-
-
+  const FaviconInfo({
+    required this.url,
+    required this.rel,
+    this.sizes,
+    this.mimeType,
+  });
 
   @override
-  int get hashCode => url.hashCode^rel.hashCode^sizes.hashCode^mimeType.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^ rel.hashCode ^ sizes.hashCode ^ mimeType.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is FaviconInfo &&
-  runtimeType == other.runtimeType
-  && url == other.url&& rel == other.rel&& sizes == other.sizes&& mimeType == other.mimeType;
-
+      identical(this, other) ||
+      other is FaviconInfo &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          rel == other.rel &&
+          sizes == other.sizes &&
+          mimeType == other.mimeType;
 }
 
 /// Information about a feed link found on a page.
-class FeedInfo  {
+class FeedInfo {
   /// The feed URL.
   final String url;
+
   /// The feed title, if present.
   final String? title;
+
   /// The type of feed.
   final FeedType feedType;
 
-  const FeedInfo({required this.url ,this.title ,required this.feedType ,});
-
-
-
-
+  const FeedInfo({required this.url, this.title, required this.feedType});
 
   @override
-  int get hashCode => url.hashCode^title.hashCode^feedType.hashCode;
-
-
+  int get hashCode => url.hashCode ^ title.hashCode ^ feedType.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is FeedInfo &&
-  runtimeType == other.runtimeType
-  && url == other.url&& title == other.title&& feedType == other.feedType;
-
+      identical(this, other) ||
+      other is FeedInfo &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          title == other.title &&
+          feedType == other.feedType;
 }
 
 /// The type of a feed (RSS, Atom, or JSON Feed).
 enum FeedType {
   /// RSS feed.
   rss,
+
   /// Atom feed.
   atom,
+
   /// JSON Feed.
   jsonFeed,
-  ;
-
 }
 
 /// A heading element extracted from the page.
-class HeadingInfo  {
+class HeadingInfo {
   /// The heading level (1-6).
   final PlatformInt64 level;
+
   /// The heading text content.
   final String text;
 
-  const HeadingInfo({required this.level ,required this.text ,});
-
-
-
-
+  const HeadingInfo({required this.level, required this.text});
 
   @override
-  int get hashCode => level.hashCode^text.hashCode;
-
-
+  int get hashCode => level.hashCode ^ text.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is HeadingInfo &&
-  runtimeType == other.runtimeType
-  && level == other.level&& text == other.text;
-
+      identical(this, other) ||
+      other is HeadingInfo &&
+          runtimeType == other.runtimeType &&
+          level == other.level &&
+          text == other.text;
 }
 
 /// An hreflang alternate link entry.
-class HreflangEntry  {
+class HreflangEntry {
   /// The language code (e.g., "en", "fr", "x-default").
   final String lang;
+
   /// The URL for this language variant.
   final String url;
 
-  const HreflangEntry({required this.lang ,required this.url ,});
-
-
-
-
+  const HreflangEntry({required this.lang, required this.url});
 
   @override
-  int get hashCode => lang.hashCode^url.hashCode;
-
-
+  int get hashCode => lang.hashCode ^ url.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is HreflangEntry &&
-  runtimeType == other.runtimeType
-  && lang == other.lang&& url == other.url;
-
+      identical(this, other) ||
+      other is HreflangEntry &&
+          runtimeType == other.runtimeType &&
+          lang == other.lang &&
+          url == other.url;
 }
 
 /// Information about an image found on a page.
-class ImageInfo  {
+class ImageInfo {
   /// The image URL.
   final String url;
+
   /// The alt text, if present.
   final String? alt;
+
   /// The width attribute, if present and parseable.
   final PlatformInt64? width;
+
   /// The height attribute, if present and parseable.
   final PlatformInt64? height;
+
   /// The source of the image reference.
   final ImageSource source;
 
-  const ImageInfo({required this.url ,this.alt ,this.width ,this.height ,required this.source ,});
-
-
-
-
+  const ImageInfo({
+    required this.url,
+    this.alt,
+    this.width,
+    this.height,
+    required this.source,
+  });
 
   @override
-  int get hashCode => url.hashCode^alt.hashCode^width.hashCode^height.hashCode^source.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^
+      alt.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      source.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ImageInfo &&
-  runtimeType == other.runtimeType
-  && url == other.url&& alt == other.alt&& width == other.width&& height == other.height&& source == other.source;
-
+      identical(this, other) ||
+      other is ImageInfo &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          alt == other.alt &&
+          width == other.width &&
+          height == other.height &&
+          source == other.source;
 }
 
 /// The source of an image reference.
 enum ImageSource {
   /// An `<img>` tag.
   img,
+
   /// A `<source>` tag inside `<picture>`.
   pictureSource,
+
   /// An `og:image` meta tag.
   ogImage,
+
   /// A `twitter:image` meta tag.
   twitterImage,
-  ;
-
 }
 
 /// Result of executing a sequence of page interaction actions.
-class InteractionResult  {
+class InteractionResult {
   /// Results from each executed action.
   final List<ActionResult> actionResults;
+
   /// Final page HTML after all actions completed.
   final String finalHtml;
+
   /// Final page URL (may have changed due to navigation).
   final String finalUrl;
 
-  const InteractionResult({required this.actionResults ,required this.finalHtml ,required this.finalUrl ,});
-
-
-
-
+  const InteractionResult({
+    required this.actionResults,
+    required this.finalHtml,
+    required this.finalUrl,
+  });
 
   @override
-  int get hashCode => actionResults.hashCode^finalHtml.hashCode^finalUrl.hashCode;
-
-
+  int get hashCode =>
+      actionResults.hashCode ^ finalHtml.hashCode ^ finalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is InteractionResult &&
-  runtimeType == other.runtimeType
-  && actionResults == other.actionResults&& finalHtml == other.finalHtml&& finalUrl == other.finalUrl;
-
+      identical(this, other) ||
+      other is InteractionResult &&
+          runtimeType == other.runtimeType &&
+          actionResults == other.actionResults &&
+          finalHtml == other.finalHtml &&
+          finalUrl == other.finalUrl;
 }
 
 /// A JSON-LD structured data entry found on a page.
-class JsonLdEntry  {
+class JsonLdEntry {
   /// The `@type` value from the JSON-LD object.
   final String schemaType;
+
   /// The `name` value, if present.
   final String? name;
+
   /// The raw JSON-LD string.
   final String raw;
 
-  const JsonLdEntry({required this.schemaType ,this.name ,required this.raw ,});
-
-
-
-
+  const JsonLdEntry({required this.schemaType, this.name, required this.raw});
 
   @override
-  int get hashCode => schemaType.hashCode^name.hashCode^raw.hashCode;
-
-
+  int get hashCode => schemaType.hashCode ^ name.hashCode ^ raw.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is JsonLdEntry &&
-  runtimeType == other.runtimeType
-  && schemaType == other.schemaType&& name == other.name&& raw == other.raw;
-
+      identical(this, other) ||
+      other is JsonLdEntry &&
+          runtimeType == other.runtimeType &&
+          schemaType == other.schemaType &&
+          name == other.name &&
+          raw == other.raw;
 }
 
 /// Information about a link found on a page.
-class LinkInfo  {
+class LinkInfo {
   /// The resolved URL of the link.
   final String url;
+
   /// The visible text of the link.
   final String text;
+
   /// The classification of the link.
   final LinkType linkType;
+
   /// The `rel` attribute value, if present.
   final String? rel;
+
   /// Whether the link has `rel="nofollow"`.
   final bool nofollow;
 
-  const LinkInfo({required this.url ,required this.text ,required this.linkType ,this.rel ,required this.nofollow ,});
-
-
-
-
+  const LinkInfo({
+    required this.url,
+    required this.text,
+    required this.linkType,
+    this.rel,
+    required this.nofollow,
+  });
 
   @override
-  int get hashCode => url.hashCode^text.hashCode^linkType.hashCode^rel.hashCode^nofollow.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^
+      text.hashCode ^
+      linkType.hashCode ^
+      rel.hashCode ^
+      nofollow.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is LinkInfo &&
-  runtimeType == other.runtimeType
-  && url == other.url&& text == other.text&& linkType == other.linkType&& rel == other.rel&& nofollow == other.nofollow;
-
+      identical(this, other) ||
+      other is LinkInfo &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          text == other.text &&
+          linkType == other.linkType &&
+          rel == other.rel &&
+          nofollow == other.nofollow;
 }
 
 /// The classification of a link.
 enum LinkType {
   /// A link to the same domain.
   internal,
+
   /// A link to a different domain.
   external_,
+
   /// A fragment-only link (e.g., `#section`).
   anchor,
+
   /// A link to a downloadable document (PDF, DOC, etc.).
   document,
-  ;
-
 }
 
 /// The result of a map operation, containing discovered URLs.
-class MapResult  {
+class MapResult {
   /// The list of discovered URLs.
   final List<SitemapUrl> urls;
 
-  const MapResult({required this.urls ,});
-
-
-
-
+  const MapResult({required this.urls});
 
   @override
   int get hashCode => urls.hashCode;
 
-
-
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is MapResult &&
-  runtimeType == other.runtimeType
-  && urls == other.urls;
-
+      identical(this, other) ||
+      other is MapResult &&
+          runtimeType == other.runtimeType &&
+          urls == other.urls;
 }
 
 /// Rich markdown conversion result from HTML processing.
-class MarkdownResult  {
+class MarkdownResult {
   /// Converted markdown text.
   final String content;
+
   /// Structured document tree with semantic nodes.
   final String? documentStructure;
+
   /// Extracted tables with structured cell data.
   final List<String> tables;
+
   /// Non-fatal processing warnings.
   final List<String> warnings;
+
   /// Whether citation conversion was applied and produced at least one reference.
   ///
   /// `true` when the markdown contained inline links that were converted to
@@ -1442,416 +1972,742 @@ class MarkdownResult  {
   /// is available in `content`; the full reference list is accessible via
   /// `generate_citations` if needed separately.
   final bool citations;
+
   /// Content-filtered markdown optimized for LLM consumption.
   final String? fitContent;
 
-  const MarkdownResult({required this.content ,this.documentStructure ,required this.tables ,required this.warnings ,required this.citations ,this.fitContent ,});
-
-
-
-
+  const MarkdownResult({
+    required this.content,
+    this.documentStructure,
+    required this.tables,
+    required this.warnings,
+    required this.citations,
+    this.fitContent,
+  });
 
   @override
-  int get hashCode => content.hashCode^documentStructure.hashCode^tables.hashCode^warnings.hashCode^citations.hashCode^fitContent.hashCode;
-
-
+  int get hashCode =>
+      content.hashCode ^
+      documentStructure.hashCode ^
+      tables.hashCode ^
+      warnings.hashCode ^
+      citations.hashCode ^
+      fitContent.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is MarkdownResult &&
-  runtimeType == other.runtimeType
-  && content == other.content&& documentStructure == other.documentStructure&& tables == other.tables&& warnings == other.warnings&& citations == other.citations&& fitContent == other.fitContent;
-
+      identical(this, other) ||
+      other is MarkdownResult &&
+          runtimeType == other.runtimeType &&
+          content == other.content &&
+          documentStructure == other.documentStructure &&
+          tables == other.tables &&
+          warnings == other.warnings &&
+          citations == other.citations &&
+          fitContent == other.fitContent;
 }
 
 @freezed
-sealed class PageAction with _$PageAction  {
+sealed class PageAction with _$PageAction {
   const PageAction._();
 
   /// Click on an element matching the given CSS selector.
-  const factory PageAction.click({ /// CSS selector for the element to click.
-    required String selector , }) = PageAction_Click;
+  const factory PageAction.click({
+    /// CSS selector for the element to click.
+    required String selector,
+  }) = PageAction_Click;
+
   /// Type text into an element matching the given CSS selector.
-  const factory PageAction.typeText({ /// CSS selector for the input element.
-    required String selector ,/// Text to type into the element.
-    required String text , }) = PageAction_TypeText;
+  const factory PageAction.typeText({
+    /// CSS selector for the input element.
+    required String selector,
+
+    /// Text to type into the element.
+    required String text,
+  }) = PageAction_TypeText;
+
   /// Press a keyboard key (e.g. "Enter", "Tab", "Escape").
-  const factory PageAction.press({ /// Key name to press.
-    required String key , }) = PageAction_Press;
+  const factory PageAction.press({
+    /// Key name to press.
+    required String key,
+  }) = PageAction_Press;
+
   /// Scroll the page or a specific element.
-  const factory PageAction.scroll({ /// Direction to scroll.
-    required ScrollDirection direction ,/// Optional CSS selector for a scrollable element. Scrolls the page if absent.
-    required String selector ,/// Optional pixel amount to scroll. Uses a default if absent.
-    required PlatformInt64 amount , }) = PageAction_Scroll;
+  const factory PageAction.scroll({
+    /// Direction to scroll.
+    required ScrollDirection direction,
+
+    /// Optional CSS selector for a scrollable element. Scrolls the page if absent.
+    required String selector,
+
+    /// Optional pixel amount to scroll. Uses a default if absent.
+    required PlatformInt64 amount,
+  }) = PageAction_Scroll;
+
   /// Wait for a duration or for an element to appear.
-  const factory PageAction.wait({ /// Milliseconds to wait. Ignored if `selector` is provided.
-    required PlatformInt64 milliseconds ,/// CSS selector to wait for.
-    required String selector , }) = PageAction_Wait;
+  const factory PageAction.wait({
+    /// Milliseconds to wait. Ignored if `selector` is provided.
+    required PlatformInt64 milliseconds,
+
+    /// CSS selector to wait for.
+    required String selector,
+  }) = PageAction_Wait;
+
   /// Take a screenshot of the current page.
-  const factory PageAction.screenshot({ /// Whether to capture the full scrollable page. Defaults to viewport only.
+  const factory PageAction.screenshot({
+    /// Whether to capture the full scrollable page. Defaults to viewport only.
     ///
     /// Accepts both the canonical `fullPage` (camelCase) form and the
     /// `full_page` (snake_case) alias so language bindings and fixtures can
     /// use either convention without error.
-    required bool fullPage , }) = PageAction_Screenshot;
+    required bool fullPage,
+  }) = PageAction_Screenshot;
+
   /// Execute arbitrary JavaScript in the page context.
   ///
   /// # Safety
   ///
   /// The script runs with full page privileges in the browser context.
   /// Only execute scripts from trusted sources.
-  const factory PageAction.executeJs({ /// JavaScript source code to execute. Max 1 MB.
-    required String script , }) = PageAction_ExecuteJs;
+  const factory PageAction.executeJs({
+    /// JavaScript source code to execute. Max 1 MB.
+    required String script,
+  }) = PageAction_ExecuteJs;
+
   /// Scrape the current page HTML.
   const factory PageAction.scrape() = PageAction_Scrape;
-
-
-
-
 }
 
 /// Metadata extracted from an HTML page's `<meta>` tags and `<title>` element.
-class PageMetadata  {
+class PageMetadata {
   /// The page title from the `<title>` element.
   final String? title;
+
   /// The meta description.
   final String? description;
+
   /// The canonical URL from `<link rel="canonical">`.
   final String? canonicalUrl;
+
   /// Keywords from `<meta name="keywords">`.
   final String? keywords;
+
   /// Author from `<meta name="author">`.
   final String? author;
+
   /// Viewport content from `<meta name="viewport">`.
   final String? viewport;
+
   /// Theme color from `<meta name="theme-color">`.
   final String? themeColor;
+
   /// Generator from `<meta name="generator">`.
   final String? generator;
+
   /// Robots content from `<meta name="robots">`.
   final String? robots;
+
   /// The `lang` attribute from the `<html>` element.
   final String? htmlLang;
+
   /// The `dir` attribute from the `<html>` element.
   final String? htmlDir;
+
   /// Open Graph title.
   final String? ogTitle;
+
   /// Open Graph type.
   final String? ogType;
+
   /// Open Graph image URL.
   final String? ogImage;
+
   /// Open Graph description.
   final String? ogDescription;
+
   /// Open Graph URL.
   final String? ogUrl;
+
   /// Open Graph site name.
   final String? ogSiteName;
+
   /// Open Graph locale.
   final String? ogLocale;
+
   /// Open Graph video URL.
   final String? ogVideo;
+
   /// Open Graph audio URL.
   final String? ogAudio;
+
   /// Open Graph locale alternates.
   final List<String>? ogLocaleAlternates;
+
   /// Twitter card type.
   final String? twitterCard;
+
   /// Twitter title.
   final String? twitterTitle;
+
   /// Twitter description.
   final String? twitterDescription;
+
   /// Twitter image URL.
   final String? twitterImage;
+
   /// Twitter site handle.
   final String? twitterSite;
+
   /// Twitter creator handle.
   final String? twitterCreator;
+
   /// Dublin Core title.
   final String? dcTitle;
+
   /// Dublin Core creator.
   final String? dcCreator;
+
   /// Dublin Core subject.
   final String? dcSubject;
+
   /// Dublin Core description.
   final String? dcDescription;
+
   /// Dublin Core publisher.
   final String? dcPublisher;
+
   /// Dublin Core date.
   final String? dcDate;
+
   /// Dublin Core type.
   final String? dcType;
+
   /// Dublin Core format.
   final String? dcFormat;
+
   /// Dublin Core identifier.
   final String? dcIdentifier;
+
   /// Dublin Core language.
   final String? dcLanguage;
+
   /// Dublin Core rights.
   final String? dcRights;
+
   /// Article metadata from `article:*` Open Graph tags.
   final ArticleMetadata? article;
+
   /// Hreflang alternate links.
   final List<HreflangEntry>? hreflangs;
+
   /// Favicon and icon links.
   final List<FaviconInfo>? favicons;
+
   /// Heading elements (h1-h6).
   final List<HeadingInfo>? headings;
+
   /// Computed word count of the page body text.
   final PlatformInt64? wordCount;
 
-  const PageMetadata({this.title ,this.description ,this.canonicalUrl ,this.keywords ,this.author ,this.viewport ,this.themeColor ,this.generator ,this.robots ,this.htmlLang ,this.htmlDir ,this.ogTitle ,this.ogType ,this.ogImage ,this.ogDescription ,this.ogUrl ,this.ogSiteName ,this.ogLocale ,this.ogVideo ,this.ogAudio ,this.ogLocaleAlternates ,this.twitterCard ,this.twitterTitle ,this.twitterDescription ,this.twitterImage ,this.twitterSite ,this.twitterCreator ,this.dcTitle ,this.dcCreator ,this.dcSubject ,this.dcDescription ,this.dcPublisher ,this.dcDate ,this.dcType ,this.dcFormat ,this.dcIdentifier ,this.dcLanguage ,this.dcRights ,this.article ,this.hreflangs ,this.favicons ,this.headings ,this.wordCount ,});
-
-
-
-
+  const PageMetadata({
+    this.title,
+    this.description,
+    this.canonicalUrl,
+    this.keywords,
+    this.author,
+    this.viewport,
+    this.themeColor,
+    this.generator,
+    this.robots,
+    this.htmlLang,
+    this.htmlDir,
+    this.ogTitle,
+    this.ogType,
+    this.ogImage,
+    this.ogDescription,
+    this.ogUrl,
+    this.ogSiteName,
+    this.ogLocale,
+    this.ogVideo,
+    this.ogAudio,
+    this.ogLocaleAlternates,
+    this.twitterCard,
+    this.twitterTitle,
+    this.twitterDescription,
+    this.twitterImage,
+    this.twitterSite,
+    this.twitterCreator,
+    this.dcTitle,
+    this.dcCreator,
+    this.dcSubject,
+    this.dcDescription,
+    this.dcPublisher,
+    this.dcDate,
+    this.dcType,
+    this.dcFormat,
+    this.dcIdentifier,
+    this.dcLanguage,
+    this.dcRights,
+    this.article,
+    this.hreflangs,
+    this.favicons,
+    this.headings,
+    this.wordCount,
+  });
 
   @override
-  int get hashCode => title.hashCode^description.hashCode^canonicalUrl.hashCode^keywords.hashCode^author.hashCode^viewport.hashCode^themeColor.hashCode^generator.hashCode^robots.hashCode^htmlLang.hashCode^htmlDir.hashCode^ogTitle.hashCode^ogType.hashCode^ogImage.hashCode^ogDescription.hashCode^ogUrl.hashCode^ogSiteName.hashCode^ogLocale.hashCode^ogVideo.hashCode^ogAudio.hashCode^ogLocaleAlternates.hashCode^twitterCard.hashCode^twitterTitle.hashCode^twitterDescription.hashCode^twitterImage.hashCode^twitterSite.hashCode^twitterCreator.hashCode^dcTitle.hashCode^dcCreator.hashCode^dcSubject.hashCode^dcDescription.hashCode^dcPublisher.hashCode^dcDate.hashCode^dcType.hashCode^dcFormat.hashCode^dcIdentifier.hashCode^dcLanguage.hashCode^dcRights.hashCode^article.hashCode^hreflangs.hashCode^favicons.hashCode^headings.hashCode^wordCount.hashCode;
-
-
+  int get hashCode =>
+      title.hashCode ^
+      description.hashCode ^
+      canonicalUrl.hashCode ^
+      keywords.hashCode ^
+      author.hashCode ^
+      viewport.hashCode ^
+      themeColor.hashCode ^
+      generator.hashCode ^
+      robots.hashCode ^
+      htmlLang.hashCode ^
+      htmlDir.hashCode ^
+      ogTitle.hashCode ^
+      ogType.hashCode ^
+      ogImage.hashCode ^
+      ogDescription.hashCode ^
+      ogUrl.hashCode ^
+      ogSiteName.hashCode ^
+      ogLocale.hashCode ^
+      ogVideo.hashCode ^
+      ogAudio.hashCode ^
+      ogLocaleAlternates.hashCode ^
+      twitterCard.hashCode ^
+      twitterTitle.hashCode ^
+      twitterDescription.hashCode ^
+      twitterImage.hashCode ^
+      twitterSite.hashCode ^
+      twitterCreator.hashCode ^
+      dcTitle.hashCode ^
+      dcCreator.hashCode ^
+      dcSubject.hashCode ^
+      dcDescription.hashCode ^
+      dcPublisher.hashCode ^
+      dcDate.hashCode ^
+      dcType.hashCode ^
+      dcFormat.hashCode ^
+      dcIdentifier.hashCode ^
+      dcLanguage.hashCode ^
+      dcRights.hashCode ^
+      article.hashCode ^
+      hreflangs.hashCode ^
+      favicons.hashCode ^
+      headings.hashCode ^
+      wordCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is PageMetadata &&
-  runtimeType == other.runtimeType
-  && title == other.title&& description == other.description&& canonicalUrl == other.canonicalUrl&& keywords == other.keywords&& author == other.author&& viewport == other.viewport&& themeColor == other.themeColor&& generator == other.generator&& robots == other.robots&& htmlLang == other.htmlLang&& htmlDir == other.htmlDir&& ogTitle == other.ogTitle&& ogType == other.ogType&& ogImage == other.ogImage&& ogDescription == other.ogDescription&& ogUrl == other.ogUrl&& ogSiteName == other.ogSiteName&& ogLocale == other.ogLocale&& ogVideo == other.ogVideo&& ogAudio == other.ogAudio&& ogLocaleAlternates == other.ogLocaleAlternates&& twitterCard == other.twitterCard&& twitterTitle == other.twitterTitle&& twitterDescription == other.twitterDescription&& twitterImage == other.twitterImage&& twitterSite == other.twitterSite&& twitterCreator == other.twitterCreator&& dcTitle == other.dcTitle&& dcCreator == other.dcCreator&& dcSubject == other.dcSubject&& dcDescription == other.dcDescription&& dcPublisher == other.dcPublisher&& dcDate == other.dcDate&& dcType == other.dcType&& dcFormat == other.dcFormat&& dcIdentifier == other.dcIdentifier&& dcLanguage == other.dcLanguage&& dcRights == other.dcRights&& article == other.article&& hreflangs == other.hreflangs&& favicons == other.favicons&& headings == other.headings&& wordCount == other.wordCount;
-
+      identical(this, other) ||
+      other is PageMetadata &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          description == other.description &&
+          canonicalUrl == other.canonicalUrl &&
+          keywords == other.keywords &&
+          author == other.author &&
+          viewport == other.viewport &&
+          themeColor == other.themeColor &&
+          generator == other.generator &&
+          robots == other.robots &&
+          htmlLang == other.htmlLang &&
+          htmlDir == other.htmlDir &&
+          ogTitle == other.ogTitle &&
+          ogType == other.ogType &&
+          ogImage == other.ogImage &&
+          ogDescription == other.ogDescription &&
+          ogUrl == other.ogUrl &&
+          ogSiteName == other.ogSiteName &&
+          ogLocale == other.ogLocale &&
+          ogVideo == other.ogVideo &&
+          ogAudio == other.ogAudio &&
+          ogLocaleAlternates == other.ogLocaleAlternates &&
+          twitterCard == other.twitterCard &&
+          twitterTitle == other.twitterTitle &&
+          twitterDescription == other.twitterDescription &&
+          twitterImage == other.twitterImage &&
+          twitterSite == other.twitterSite &&
+          twitterCreator == other.twitterCreator &&
+          dcTitle == other.dcTitle &&
+          dcCreator == other.dcCreator &&
+          dcSubject == other.dcSubject &&
+          dcDescription == other.dcDescription &&
+          dcPublisher == other.dcPublisher &&
+          dcDate == other.dcDate &&
+          dcType == other.dcType &&
+          dcFormat == other.dcFormat &&
+          dcIdentifier == other.dcIdentifier &&
+          dcLanguage == other.dcLanguage &&
+          dcRights == other.dcRights &&
+          article == other.article &&
+          hreflangs == other.hreflangs &&
+          favicons == other.favicons &&
+          headings == other.headings &&
+          wordCount == other.wordCount;
 }
 
 /// Proxy configuration for HTTP requests.
-class ProxyConfig  {
+class ProxyConfig {
   /// Proxy URL (e.g. "http://proxy:8080", "socks5://proxy:1080").
   final String url;
+
   /// Optional username for proxy authentication.
   final String? username;
+
   /// Optional password for proxy authentication.
   final String? password;
 
-  const ProxyConfig({required this.url ,this.username ,this.password ,});
-
-
-
-
+  const ProxyConfig({required this.url, this.username, this.password});
 
   @override
-  int get hashCode => url.hashCode^username.hashCode^password.hashCode;
-
-
+  int get hashCode => url.hashCode ^ username.hashCode ^ password.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ProxyConfig &&
-  runtimeType == other.runtimeType
-  && url == other.url&& username == other.username&& password == other.password;
-
+      identical(this, other) ||
+      other is ProxyConfig &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          username == other.username &&
+          password == other.password;
 }
 
 /// Response metadata extracted from HTTP headers.
-class ResponseMeta  {
+class ResponseMeta {
   /// The ETag header value.
   final String? etag;
+
   /// The Last-Modified header value.
   final String? lastModified;
+
   /// The Cache-Control header value.
   final String? cacheControl;
+
   /// The Server header value.
   final String? server;
+
   /// The X-Powered-By header value.
   final String? xPoweredBy;
+
   /// The Content-Language header value.
   final String? contentLanguage;
+
   /// The Content-Encoding header value.
   final String? contentEncoding;
 
-  const ResponseMeta({this.etag ,this.lastModified ,this.cacheControl ,this.server ,this.xPoweredBy ,this.contentLanguage ,this.contentEncoding ,});
-
-
-
-
+  const ResponseMeta({
+    this.etag,
+    this.lastModified,
+    this.cacheControl,
+    this.server,
+    this.xPoweredBy,
+    this.contentLanguage,
+    this.contentEncoding,
+  });
 
   @override
-  int get hashCode => etag.hashCode^lastModified.hashCode^cacheControl.hashCode^server.hashCode^xPoweredBy.hashCode^contentLanguage.hashCode^contentEncoding.hashCode;
-
-
+  int get hashCode =>
+      etag.hashCode ^
+      lastModified.hashCode ^
+      cacheControl.hashCode ^
+      server.hashCode ^
+      xPoweredBy.hashCode ^
+      contentLanguage.hashCode ^
+      contentEncoding.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ResponseMeta &&
-  runtimeType == other.runtimeType
-  && etag == other.etag&& lastModified == other.lastModified&& cacheControl == other.cacheControl&& server == other.server&& xPoweredBy == other.xPoweredBy&& contentLanguage == other.contentLanguage&& contentEncoding == other.contentEncoding;
-
+      identical(this, other) ||
+      other is ResponseMeta &&
+          runtimeType == other.runtimeType &&
+          etag == other.etag &&
+          lastModified == other.lastModified &&
+          cacheControl == other.cacheControl &&
+          server == other.server &&
+          xPoweredBy == other.xPoweredBy &&
+          contentLanguage == other.contentLanguage &&
+          contentEncoding == other.contentEncoding;
 }
 
 /// The result of a single-page scrape operation.
-class ScrapeResult  {
+class ScrapeResult {
   /// The HTTP status code of the response.
   final PlatformInt64 statusCode;
+
   /// The final URL after following all redirects.
   final String finalUrl;
+
   /// The Content-Type header value.
   final String contentType;
+
   /// The HTML body of the response.
   final String html;
+
   /// The size of the response body in bytes.
   final PlatformInt64 bodySize;
+
   /// Extracted metadata from the page.
   final PageMetadata metadata;
+
   /// Links found on the page.
   final List<LinkInfo> links;
+
   /// Images found on the page.
   final List<ImageInfo> images;
+
   /// Feed links found on the page.
   final List<FeedInfo> feeds;
+
   /// JSON-LD entries found on the page.
   final List<JsonLdEntry> jsonLd;
+
   /// Whether the URL is allowed by robots.txt.
   final bool isAllowed;
+
   /// The crawl delay from robots.txt, in seconds.
   final PlatformInt64? crawlDelay;
+
   /// Whether a noindex directive was detected.
   final bool noindexDetected;
+
   /// Whether a nofollow directive was detected.
   final bool nofollowDetected;
+
   /// The X-Robots-Tag header value, if present.
   final String? xRobotsTag;
+
   /// Whether the content is a PDF.
   final bool isPdf;
+
   /// Whether the page was skipped (binary or PDF content).
   final bool wasSkipped;
+
   /// The detected character set encoding.
   final String? detectedCharset;
+
   /// Whether an authentication header was sent with the request.
   final bool authHeaderSent;
+
   /// Response metadata extracted from HTTP headers.
   final ResponseMeta? responseMeta;
+
   /// Downloaded assets from the page.
   final List<DownloadedAsset> assets;
+
   /// Whether the page content suggests JavaScript rendering is needed.
   final bool jsRenderHint;
+
   /// Whether the browser fallback was used to fetch this page.
   final bool browserUsed;
+
   /// Markdown conversion of the page content.
   final MarkdownResult? markdown;
+
   /// Structured data extracted by LLM. Populated when extraction is configured.
   final String? extractedData;
+
   /// Metadata about the LLM extraction pass (cost, tokens, model).
   final ExtractionMeta? extractionMeta;
+
   /// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
   final DownloadedDocument? downloadedDocument;
+
   /// Browser-specific extras (eval result, network events, cookies). Only
   /// populated when `BrowserBackend::Native` was used for this request.
   final BrowserExtras? browser;
 
-  const ScrapeResult({required this.statusCode ,required this.finalUrl ,required this.contentType ,required this.html ,required this.bodySize ,required this.metadata ,required this.links ,required this.images ,required this.feeds ,required this.jsonLd ,required this.isAllowed ,this.crawlDelay ,required this.noindexDetected ,required this.nofollowDetected ,this.xRobotsTag ,required this.isPdf ,required this.wasSkipped ,this.detectedCharset ,required this.authHeaderSent ,this.responseMeta ,required this.assets ,required this.jsRenderHint ,required this.browserUsed ,this.markdown ,this.extractedData ,this.extractionMeta ,this.downloadedDocument ,this.browser ,});
-
-
-
-
+  const ScrapeResult({
+    required this.statusCode,
+    required this.finalUrl,
+    required this.contentType,
+    required this.html,
+    required this.bodySize,
+    required this.metadata,
+    required this.links,
+    required this.images,
+    required this.feeds,
+    required this.jsonLd,
+    required this.isAllowed,
+    this.crawlDelay,
+    required this.noindexDetected,
+    required this.nofollowDetected,
+    this.xRobotsTag,
+    required this.isPdf,
+    required this.wasSkipped,
+    this.detectedCharset,
+    required this.authHeaderSent,
+    this.responseMeta,
+    required this.assets,
+    required this.jsRenderHint,
+    required this.browserUsed,
+    this.markdown,
+    this.extractedData,
+    this.extractionMeta,
+    this.downloadedDocument,
+    this.browser,
+  });
 
   @override
-  int get hashCode => statusCode.hashCode^finalUrl.hashCode^contentType.hashCode^html.hashCode^bodySize.hashCode^metadata.hashCode^links.hashCode^images.hashCode^feeds.hashCode^jsonLd.hashCode^isAllowed.hashCode^crawlDelay.hashCode^noindexDetected.hashCode^nofollowDetected.hashCode^xRobotsTag.hashCode^isPdf.hashCode^wasSkipped.hashCode^detectedCharset.hashCode^authHeaderSent.hashCode^responseMeta.hashCode^assets.hashCode^jsRenderHint.hashCode^browserUsed.hashCode^markdown.hashCode^extractedData.hashCode^extractionMeta.hashCode^downloadedDocument.hashCode^browser.hashCode;
-
-
+  int get hashCode =>
+      statusCode.hashCode ^
+      finalUrl.hashCode ^
+      contentType.hashCode ^
+      html.hashCode ^
+      bodySize.hashCode ^
+      metadata.hashCode ^
+      links.hashCode ^
+      images.hashCode ^
+      feeds.hashCode ^
+      jsonLd.hashCode ^
+      isAllowed.hashCode ^
+      crawlDelay.hashCode ^
+      noindexDetected.hashCode ^
+      nofollowDetected.hashCode ^
+      xRobotsTag.hashCode ^
+      isPdf.hashCode ^
+      wasSkipped.hashCode ^
+      detectedCharset.hashCode ^
+      authHeaderSent.hashCode ^
+      responseMeta.hashCode ^
+      assets.hashCode ^
+      jsRenderHint.hashCode ^
+      browserUsed.hashCode ^
+      markdown.hashCode ^
+      extractedData.hashCode ^
+      extractionMeta.hashCode ^
+      downloadedDocument.hashCode ^
+      browser.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is ScrapeResult &&
-  runtimeType == other.runtimeType
-  && statusCode == other.statusCode&& finalUrl == other.finalUrl&& contentType == other.contentType&& html == other.html&& bodySize == other.bodySize&& metadata == other.metadata&& links == other.links&& images == other.images&& feeds == other.feeds&& jsonLd == other.jsonLd&& isAllowed == other.isAllowed&& crawlDelay == other.crawlDelay&& noindexDetected == other.noindexDetected&& nofollowDetected == other.nofollowDetected&& xRobotsTag == other.xRobotsTag&& isPdf == other.isPdf&& wasSkipped == other.wasSkipped&& detectedCharset == other.detectedCharset&& authHeaderSent == other.authHeaderSent&& responseMeta == other.responseMeta&& assets == other.assets&& jsRenderHint == other.jsRenderHint&& browserUsed == other.browserUsed&& markdown == other.markdown&& extractedData == other.extractedData&& extractionMeta == other.extractionMeta&& downloadedDocument == other.downloadedDocument&& browser == other.browser;
-
+      identical(this, other) ||
+      other is ScrapeResult &&
+          runtimeType == other.runtimeType &&
+          statusCode == other.statusCode &&
+          finalUrl == other.finalUrl &&
+          contentType == other.contentType &&
+          html == other.html &&
+          bodySize == other.bodySize &&
+          metadata == other.metadata &&
+          links == other.links &&
+          images == other.images &&
+          feeds == other.feeds &&
+          jsonLd == other.jsonLd &&
+          isAllowed == other.isAllowed &&
+          crawlDelay == other.crawlDelay &&
+          noindexDetected == other.noindexDetected &&
+          nofollowDetected == other.nofollowDetected &&
+          xRobotsTag == other.xRobotsTag &&
+          isPdf == other.isPdf &&
+          wasSkipped == other.wasSkipped &&
+          detectedCharset == other.detectedCharset &&
+          authHeaderSent == other.authHeaderSent &&
+          responseMeta == other.responseMeta &&
+          assets == other.assets &&
+          jsRenderHint == other.jsRenderHint &&
+          browserUsed == other.browserUsed &&
+          markdown == other.markdown &&
+          extractedData == other.extractedData &&
+          extractionMeta == other.extractionMeta &&
+          downloadedDocument == other.downloadedDocument &&
+          browser == other.browser;
 }
 
 /// Direction for a scroll action.
 enum ScrollDirection {
   /// Scroll upward.
   up,
+
   /// Scroll downward.
   down,
-  ;
-
 }
 
 /// A URL entry from a sitemap.
-class SitemapUrl  {
+class SitemapUrl {
   /// The URL.
   final String url;
+
   /// The last modification date, if present.
   final String? lastmod;
+
   /// The change frequency, if present.
   final String? changefreq;
+
   /// The priority, if present.
   final String? priority;
 
-  const SitemapUrl({required this.url ,this.lastmod ,this.changefreq ,this.priority ,});
-
-
-
-
+  const SitemapUrl({
+    required this.url,
+    this.lastmod,
+    this.changefreq,
+    this.priority,
+  });
 
   @override
-  int get hashCode => url.hashCode^lastmod.hashCode^changefreq.hashCode^priority.hashCode;
-
-
+  int get hashCode =>
+      url.hashCode ^ lastmod.hashCode ^ changefreq.hashCode ^ priority.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is SitemapUrl &&
-  runtimeType == other.runtimeType
-  && url == other.url&& lastmod == other.lastmod&& changefreq == other.changefreq&& priority == other.priority;
-
+      identical(this, other) ||
+      other is SitemapUrl &&
+          runtimeType == other.runtimeType &&
+          url == other.url &&
+          lastmod == other.lastmod &&
+          changefreq == other.changefreq &&
+          priority == other.priority;
 }
 
 @freezed
-sealed class SsrfError with _$SsrfError  {
+sealed class SsrfError with _$SsrfError {
   const SsrfError._();
 
   /// URL denied by SSRF policy: private IP, metadata IP, etc.
-  const factory SsrfError.deniedByPolicy({   required String reason , }) = SsrfError_DeniedByPolicy;
+  const factory SsrfError.deniedByPolicy({required String reason}) =
+      SsrfError_DeniedByPolicy;
+
   /// Host not on allowlist when an allowlist is configured.
   const factory SsrfError.notOnAllowlist() = SsrfError_NotOnAllowlist;
+
   /// DNS resolution failed for hostname.
-  const factory SsrfError.dnsResolutionFailed({   required String field0 , }) = SsrfError_DnsResolutionFailed;
+  const factory SsrfError.dnsResolutionFailed({required String field0}) =
+      SsrfError_DnsResolutionFailed;
+
   /// Invalid URL format.
-  const factory SsrfError.invalidUrl({   required String field0 , }) = SsrfError_InvalidUrl;
+  const factory SsrfError.invalidUrl({required String field0}) =
+      SsrfError_InvalidUrl;
+
   /// URL scheme not in allowlist (e.g., `ftp://` when only `http`/`https` allowed).
-  const factory SsrfError.disallowedScheme({   required String field0 , }) = SsrfError_DisallowedScheme;
+  const factory SsrfError.disallowedScheme({required String field0}) =
+      SsrfError_DisallowedScheme;
+
   /// Too many HTTP redirects encountered during validation.
   const factory SsrfError.tooManyRedirects() = SsrfError_TooManyRedirects;
-
-
-
-
 }
 
 /// SSRF policy configuration.
-class SsrfPolicy  {
+class SsrfPolicy {
   /// If true, reject URLs that resolve to private/metadata IP ranges.
   final bool denyPrivate;
+
   /// Maximum number of HTTP redirects to follow during validation.
   final PlatformInt64 maxRedirects;
 
-  const SsrfPolicy({required this.denyPrivate ,required this.maxRedirects ,});
-
-
-
-
+  const SsrfPolicy({required this.denyPrivate, required this.maxRedirects});
 
   @override
-  int get hashCode => denyPrivate.hashCode^maxRedirects.hashCode;
-
-
+  int get hashCode => denyPrivate.hashCode ^ maxRedirects.hashCode;
 
   @override
   bool operator ==(Object other) =>
-  identical(this, other) ||
-  other is SsrfPolicy &&
-  runtimeType == other.runtimeType
-  && denyPrivate == other.denyPrivate&& maxRedirects == other.maxRedirects;
-
+      identical(this, other) ||
+      other is SsrfPolicy &&
+          runtimeType == other.runtimeType &&
+          denyPrivate == other.denyPrivate &&
+          maxRedirects == other.maxRedirects;
 }

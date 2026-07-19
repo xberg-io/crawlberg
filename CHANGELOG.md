@@ -2,6 +2,30 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.7] - 2026-07-19
+
+### Fixed
+
+- **Elixir NIF now builds and publishes.** 1.0.6 could not publish the Elixir
+  package — the generated streaming-start NIF cloned the `Arc<RwLock<Handle>>`
+  and called a core stream method that does not exist on it (`E0599`), failing
+  all NIF builds. Regenerated with alef 0.37.2, the streaming NIF read-locks and
+  clones the inner handle first, matching the non-streaming path.
+- **Dart `freezed` dev-dependency pinned back to `^3.2.5`.** The 1.0.6 release
+  carried a `4.0.0-dev.3` prerelease that requires a newer Dart SDK than CI
+  provides; reverted so `dart pub get` resolves the stable release.
+  (`packages/dart/pubspec.yaml`)
+- **Swift e2e length assertions on JSON-bridged metadata collections compile
+  again.** `metadata.headings` / `hreflangs` / `favicons` are `Option<Vec<T>>`
+  fields that swift-bridge exposes as a scalar `RustString` (no `.count`), so the
+  generated `.length` assertions emitted uncompilable `.count`. alef 0.37.2 skips
+  these, matching the other C-ABI backends.
+
+### Build
+
+- Bindings, stubs, READMEs, docs, and e2e suites regenerated with alef 0.37.2
+  (up from 0.34.4).
+
 ## [1.0.6] - 2026-07-19
 
 ### Fixed

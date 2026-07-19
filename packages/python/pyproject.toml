@@ -4,7 +4,7 @@ requires = ["maturin>=1,<2"]
 
 [project]
 name = "crawlberg"
-version = "1.0.6"
+version = "1.0.7"
 description = "High-performance web crawling engine"
 keywords = ["crawl", "scrape", "spider", "web"]
 license = "MIT"
@@ -28,12 +28,21 @@ dev = ["pyrefly>=1.1.1", "ruff>=0.14.8"]
 profile = "release"
 module-name = "crawlberg._crawlberg"
 manifest-path = "../../crates/crawlberg-py/Cargo.toml"
+# abi3-py310 produces a single wheel per platform that loads on Python 3.10+,
+# avoiding a per-Python-version build matrix.
 features = ["pyo3/extension-module", "pyo3/abi3-py310"]
 python-packages = ["crawlberg"]
 
 [tool.pyrefly]
 python-version = "3.10"
 preset = "strict"
+# The alef-emitted `api.py` wrapper has a structural mismatch between its
+# `options.*` dataclass signatures and the `_internal_bindings.*` pyclass types
+# pyo3 accepts/returns at runtime. pyo3 reconciles them dynamically via
+# FromPyObject — the Python e2e suite exercises the runtime path — but a static
+# checker sees only the discrepancy. Suppress the errors it raises on the
+# wrapper until the codegen emits matching `_to_rust_*` calls and casts the
+# return values.
 [[tool.pyrefly.sub-config]]
 matches = "**/api.py"
 [tool.pyrefly.sub-config.errors]

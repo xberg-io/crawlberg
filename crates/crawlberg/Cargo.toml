@@ -33,10 +33,27 @@ telemetry-init = [
 ]
 interact = ["browser"]
 mcp = ["dep:rmcp", "dep:schemars"]
-api = ["dep:axum", "dep:tower-http", "dep:utoipa", "dep:uuid", "dep:base64", "native-runtime"]
+api = [
+    "dep:axum",
+    "dep:tower-http",
+    "dep:utoipa",
+    "dep:uuid",
+    "dep:base64",
+    "native-runtime",
+]
 mcp-http = ["mcp", "api"]
 warc = ["dep:uuid"]
-full = ["browser", "browser-native", "ai", "telemetry-init", "interact", "mcp", "api", "mcp-http", "warc"]
+full = [
+    "browser",
+    "browser-native",
+    "ai",
+    "telemetry-init",
+    "interact",
+    "mcp",
+    "api",
+    "mcp-http",
+    "warc",
+]
 
 [dependencies]
 ahash = { workspace = true }

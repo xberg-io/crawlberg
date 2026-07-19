@@ -32,7 +32,7 @@ importers:
   e2e/node:
     devDependencies:
       '@types/node':
-        specifier: ^26.1.1
+        specifier: ^26.0.0
         version: 26.1.1
       '@xberg-io/crawlberg':
         specifier: workspace:*

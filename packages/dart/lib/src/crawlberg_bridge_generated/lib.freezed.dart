@@ -182,7 +182,7 @@ return header(_that.name,_that.value);case _:
 
 class AuthConfig_Basic extends AuthConfig {
   const AuthConfig_Basic({required this.username, required this.password}): super._();
-  
+
 
 /// Username sent in the `Authorization: Basic` header.
  final  String username;
@@ -252,7 +252,7 @@ as String,
 
 class AuthConfig_Bearer extends AuthConfig {
   const AuthConfig_Bearer({required this.token}): super._();
-  
+
 
 /// Token sent in the `Authorization: Bearer` header.
  final  String token;
@@ -319,7 +319,7 @@ as String,
 
 class AuthConfig_Header extends AuthConfig {
   const AuthConfig_Header({required this.name, required this.value}): super._();
-  
+
 
 /// HTTP header name to set on each request.
  final  String name;
@@ -651,7 +651,7 @@ return other(_that.field0);case _:
 
 class CrawlError_NotFound extends CrawlError {
   const CrawlError_NotFound({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -717,7 +717,7 @@ as String,
 
 class CrawlError_Unauthorized extends CrawlError {
   const CrawlError_Unauthorized({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -783,7 +783,7 @@ as String,
 
 class CrawlError_Forbidden extends CrawlError {
   const CrawlError_Forbidden({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -849,7 +849,7 @@ as String,
 
 class CrawlError_WafBlocked extends CrawlError {
   const CrawlError_WafBlocked({required this.vendor, required this.message}): super._();
-  
+
 
  final  String vendor;
  final  String message;
@@ -917,7 +917,7 @@ as String,
 
 class CrawlError_Timeout extends CrawlError {
   const CrawlError_Timeout({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -983,7 +983,7 @@ as String,
 
 class CrawlError_RateLimited extends CrawlError {
   const CrawlError_RateLimited({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1049,7 +1049,7 @@ as String,
 
 class CrawlError_ServerError extends CrawlError {
   const CrawlError_ServerError({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1115,7 +1115,7 @@ as String,
 
 class CrawlError_BadGateway extends CrawlError {
   const CrawlError_BadGateway({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1181,7 +1181,7 @@ as String,
 
 class CrawlError_Gone extends CrawlError {
   const CrawlError_Gone({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1247,7 +1247,7 @@ as String,
 
 class CrawlError_Connection extends CrawlError {
   const CrawlError_Connection({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1313,7 +1313,7 @@ as String,
 
 class CrawlError_Dns extends CrawlError {
   const CrawlError_Dns({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1379,7 +1379,7 @@ as String,
 
 class CrawlError_Ssl extends CrawlError {
   const CrawlError_Ssl({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1445,7 +1445,7 @@ as String,
 
 class CrawlError_DataLoss extends CrawlError {
   const CrawlError_DataLoss({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1511,7 +1511,7 @@ as String,
 
 class CrawlError_BrowserError extends CrawlError {
   const CrawlError_BrowserError({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1577,7 +1577,7 @@ as String,
 
 class CrawlError_BrowserTimeout extends CrawlError {
   const CrawlError_BrowserTimeout({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1643,7 +1643,7 @@ as String,
 
 class CrawlError_InvalidConfig extends CrawlError {
   const CrawlError_InvalidConfig({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1709,7 +1709,7 @@ as String,
 
 class CrawlError_Unsupported extends CrawlError {
   const CrawlError_Unsupported({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -1775,7 +1775,7 @@ as String,
 
 class CrawlError_SsrfPolicyViolation extends CrawlError {
   const CrawlError_SsrfPolicyViolation({required this.url, required this.reason}): super._();
-  
+
 
  final  String url;
  final  String reason;
@@ -1843,7 +1843,7 @@ as String,
 
 class CrawlError_Other extends CrawlError {
   const CrawlError_Other({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -2075,7 +2075,7 @@ return complete(_that.pagesCrawled);case _:
 
 class CrawlEvent_Page extends CrawlEvent {
   const CrawlEvent_Page({required this.result}): super._();
-  
+
 
 /// The crawled page result.
  final  CrawlPageResult result;
@@ -2142,7 +2142,7 @@ as CrawlPageResult,
 
 class CrawlEvent_Error extends CrawlEvent {
   const CrawlEvent_Error({required this.url, required this.error}): super._();
-  
+
 
 /// The URL that failed.
  final  String url;
@@ -2212,7 +2212,7 @@ as String,
 
 class CrawlEvent_Complete extends CrawlEvent {
   const CrawlEvent_Complete({required this.pagesCrawled}): super._();
-  
+
 
 /// Total number of pages crawled.
  final  PlatformInt64 pagesCrawled;
@@ -2475,7 +2475,7 @@ return scrape();case _:
 
 class PageAction_Click extends PageAction {
   const PageAction_Click({required this.selector}): super._();
-  
+
 
 /// CSS selector for the element to click.
  final  String selector;
@@ -2542,7 +2542,7 @@ as String,
 
 class PageAction_TypeText extends PageAction {
   const PageAction_TypeText({required this.selector, required this.text}): super._();
-  
+
 
 /// CSS selector for the input element.
  final  String selector;
@@ -2612,7 +2612,7 @@ as String,
 
 class PageAction_Press extends PageAction {
   const PageAction_Press({required this.key}): super._();
-  
+
 
 /// Key name to press.
  final  String key;
@@ -2679,7 +2679,7 @@ as String,
 
 class PageAction_Scroll extends PageAction {
   const PageAction_Scroll({required this.direction, required this.selector, required this.amount}): super._();
-  
+
 
 /// Direction to scroll.
  final  ScrollDirection direction;
@@ -2752,7 +2752,7 @@ as PlatformInt64,
 
 class PageAction_Wait extends PageAction {
   const PageAction_Wait({required this.milliseconds, required this.selector}): super._();
-  
+
 
 /// Milliseconds to wait. Ignored if `selector` is provided.
  final  PlatformInt64 milliseconds;
@@ -2822,7 +2822,7 @@ as String,
 
 class PageAction_Screenshot extends PageAction {
   const PageAction_Screenshot({required this.fullPage}): super._();
-  
+
 
 /// Whether to capture the full scrollable page. Defaults to viewport only.
 ///
@@ -2893,7 +2893,7 @@ as bool,
 
 class PageAction_ExecuteJs extends PageAction {
   const PageAction_ExecuteJs({required this.script}): super._();
-  
+
 
 /// JavaScript source code to execute. Max 1 MB.
  final  String script;
@@ -2960,7 +2960,7 @@ as String,
 
 class PageAction_Scrape extends PageAction {
   const PageAction_Scrape(): super._();
-  
+
 
 
 
@@ -3176,7 +3176,7 @@ return tooManyRedirects();case _:
 
 class SsrfError_DeniedByPolicy extends SsrfError {
   const SsrfError_DeniedByPolicy({required this.reason}): super._();
-  
+
 
  final  String reason;
 
@@ -3242,7 +3242,7 @@ as String,
 
 class SsrfError_NotOnAllowlist extends SsrfError {
   const SsrfError_NotOnAllowlist(): super._();
-  
+
 
 
 
@@ -3274,7 +3274,7 @@ String toString() {
 
 class SsrfError_DnsResolutionFailed extends SsrfError {
   const SsrfError_DnsResolutionFailed({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -3340,7 +3340,7 @@ as String,
 
 class SsrfError_InvalidUrl extends SsrfError {
   const SsrfError_InvalidUrl({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -3406,7 +3406,7 @@ as String,
 
 class SsrfError_DisallowedScheme extends SsrfError {
   const SsrfError_DisallowedScheme({required this.field0}): super._();
-  
+
 
  final  String field0;
 
@@ -3472,7 +3472,7 @@ as String,
 
 class SsrfError_TooManyRedirects extends SsrfError {
   const SsrfError_TooManyRedirects(): super._();
-  
+
 
 
 
