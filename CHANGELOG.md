@@ -2,6 +2,28 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.6] - 2026-07-19
+
+### Fixed
+
+- **`map()` / `map_urls()` no longer materialize the entire sitemap tree before
+  applying `map_limit`.** The limit previously bounded only the returned slice,
+  not peak memory: a large sitemap-index host could drive the process into
+  multiple GB and be OOM-killed even with a small `map_limit` set. `map_limit`
+  and the `exclude_paths` / `map_search` filters are now compiled once and
+  threaded through the sitemap fetch loop — entries are filtered as they are
+  parsed, and both child-sitemap fetching and per-child parsing stop once the
+  limit is reached. Peak memory is bounded to roughly the limit plus a single
+  child sitemap. (`crates/crawlberg/src/map.rs`,
+  `crates/crawlberg/src/sitemap.rs`) Closes #33.
+
+### Build
+
+- Refreshed in-major dependencies (`deno_core` 0.408, `uuid` 1.24) and lock
+  files.
+- Internal maintenance: pruned stale TODO markers, closed remaining todo gaps,
+  and added the ai-rulez Poly commit hooks.
+
 ## [1.0.5] - 2026-07-09
 
 ### Security

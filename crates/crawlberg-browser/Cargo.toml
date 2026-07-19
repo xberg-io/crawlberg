@@ -31,7 +31,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
-wreq-util = { version = "3.0.0-rc.13", optional = true }
+wreq-util = { version = "3.0.0-rc.14", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 wreq = { version = "6.0.0-rc.29", optional = true, features = ["prefix-symbols"] }

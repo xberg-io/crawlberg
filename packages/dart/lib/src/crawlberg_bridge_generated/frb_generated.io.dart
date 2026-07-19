@@ -10,6 +10,9 @@ import 'frb_generated.dart';
 import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
+
+
+
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustLibApiImplPlatform({
     required super.handler,
@@ -18,1426 +21,740 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     required super.portManager,
   });
 
-  CrossPlatformFinalizerArg
-  get rust_arc_decrement_strong_count_CrawlEngineHandlePtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_CrawlEngineHandlePtr => wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr;
 
-  @protected
-  AnyhowException dco_decode_AnyhowException(dynamic raw);
 
-  @protected
-  CrawlEngineHandle
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    dynamic raw,
-  );
 
-  @protected
-  CrawlEngineHandle
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    dynamic raw,
-  );
+  @protected AnyhowException dco_decode_AnyhowException(dynamic raw);
 
-  @protected
-  Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
+  @protected CrawlEngineHandle dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(dynamic raw);
 
-  @protected
-  CrawlEngineHandle
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    dynamic raw,
-  );
+  @protected CrawlEngineHandle dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(dynamic raw);
 
-  @protected
-  RustStreamSink<CrawlEvent> dco_decode_StreamSink_crawl_event_Sse(dynamic raw);
+  @protected Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
 
-  @protected
-  String dco_decode_String(dynamic raw);
+  @protected CrawlEngineHandle dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(dynamic raw);
 
-  @protected
-  ActionResult dco_decode_action_result(dynamic raw);
+  @protected RustStreamSink<CrawlEvent> dco_decode_StreamSink_crawl_event_Sse(dynamic raw);
 
-  @protected
-  ArticleMetadata dco_decode_article_metadata(dynamic raw);
+  @protected String dco_decode_String(dynamic raw);
 
-  @protected
-  AssetCategory dco_decode_asset_category(dynamic raw);
+  @protected ActionResult dco_decode_action_result(dynamic raw);
 
-  @protected
-  AuthConfig dco_decode_auth_config(dynamic raw);
+  @protected ArticleMetadata dco_decode_article_metadata(dynamic raw);
 
-  @protected
-  BatchCrawlResult dco_decode_batch_crawl_result(dynamic raw);
+  @protected AssetCategory dco_decode_asset_category(dynamic raw);
 
-  @protected
-  BatchCrawlResults dco_decode_batch_crawl_results(dynamic raw);
+  @protected AuthConfig dco_decode_auth_config(dynamic raw);
 
-  @protected
-  BatchCrawlStreamRequest dco_decode_batch_crawl_stream_request(dynamic raw);
+  @protected BatchCrawlResult dco_decode_batch_crawl_result(dynamic raw);
 
-  @protected
-  BatchScrapeResult dco_decode_batch_scrape_result(dynamic raw);
+  @protected BatchCrawlResults dco_decode_batch_crawl_results(dynamic raw);
 
-  @protected
-  BatchScrapeResults dco_decode_batch_scrape_results(dynamic raw);
+  @protected BatchCrawlStreamRequest dco_decode_batch_crawl_stream_request(dynamic raw);
 
-  @protected
-  bool dco_decode_bool(dynamic raw);
+  @protected BatchScrapeResult dco_decode_batch_scrape_result(dynamic raw);
 
-  @protected
-  ArticleMetadata dco_decode_box_autoadd_article_metadata(dynamic raw);
+  @protected BatchScrapeResults dco_decode_batch_scrape_results(dynamic raw);
 
-  @protected
-  AuthConfig dco_decode_box_autoadd_auth_config(dynamic raw);
+  @protected bool dco_decode_bool(dynamic raw);
 
-  @protected
-  BatchCrawlStreamRequest dco_decode_box_autoadd_batch_crawl_stream_request(
-    dynamic raw,
-  );
+  @protected ArticleMetadata dco_decode_box_autoadd_article_metadata(dynamic raw);
 
-  @protected
-  BrowserExtras dco_decode_box_autoadd_browser_extras(dynamic raw);
+  @protected AuthConfig dco_decode_box_autoadd_auth_config(dynamic raw);
 
-  @protected
-  CrawlConfig dco_decode_box_autoadd_crawl_config(dynamic raw);
+  @protected BatchCrawlStreamRequest dco_decode_box_autoadd_batch_crawl_stream_request(dynamic raw);
 
-  @protected
-  CrawlPageResult dco_decode_box_autoadd_crawl_page_result(dynamic raw);
+  @protected BrowserExtras dco_decode_box_autoadd_browser_extras(dynamic raw);
 
-  @protected
-  CrawlResult dco_decode_box_autoadd_crawl_result(dynamic raw);
+  @protected CrawlConfig dco_decode_box_autoadd_crawl_config(dynamic raw);
 
-  @protected
-  CrawlStreamRequest dco_decode_box_autoadd_crawl_stream_request(dynamic raw);
+  @protected CrawlPageResult dco_decode_box_autoadd_crawl_page_result(dynamic raw);
 
-  @protected
-  DownloadedDocument dco_decode_box_autoadd_downloaded_document(dynamic raw);
+  @protected CrawlResult dco_decode_box_autoadd_crawl_result(dynamic raw);
 
-  @protected
-  ExtractionMeta dco_decode_box_autoadd_extraction_meta(dynamic raw);
+  @protected CrawlStreamRequest dco_decode_box_autoadd_crawl_stream_request(dynamic raw);
 
-  @protected
-  double dco_decode_box_autoadd_f_64(dynamic raw);
+  @protected DownloadedDocument dco_decode_box_autoadd_downloaded_document(dynamic raw);
 
-  @protected
-  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+  @protected ExtractionMeta dco_decode_box_autoadd_extraction_meta(dynamic raw);
 
-  @protected
-  MarkdownResult dco_decode_box_autoadd_markdown_result(dynamic raw);
+  @protected double dco_decode_box_autoadd_f_64(dynamic raw);
 
-  @protected
-  ProxyConfig dco_decode_box_autoadd_proxy_config(dynamic raw);
+  @protected PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
-  @protected
-  ResponseMeta dco_decode_box_autoadd_response_meta(dynamic raw);
+  @protected MarkdownResult dco_decode_box_autoadd_markdown_result(dynamic raw);
 
-  @protected
-  ScrapeResult dco_decode_box_autoadd_scrape_result(dynamic raw);
+  @protected ProxyConfig dco_decode_box_autoadd_proxy_config(dynamic raw);
 
-  @protected
-  BrowserBackend dco_decode_browser_backend(dynamic raw);
+  @protected ResponseMeta dco_decode_box_autoadd_response_meta(dynamic raw);
 
-  @protected
-  BrowserConfig dco_decode_browser_config(dynamic raw);
+  @protected ScrapeResult dco_decode_box_autoadd_scrape_result(dynamic raw);
 
-  @protected
-  BrowserExtras dco_decode_browser_extras(dynamic raw);
+  @protected BrowserBackend dco_decode_browser_backend(dynamic raw);
 
-  @protected
-  BrowserMode dco_decode_browser_mode(dynamic raw);
+  @protected BrowserConfig dco_decode_browser_config(dynamic raw);
 
-  @protected
-  BrowserWait dco_decode_browser_wait(dynamic raw);
+  @protected BrowserExtras dco_decode_browser_extras(dynamic raw);
 
-  @protected
-  CitationReference dco_decode_citation_reference(dynamic raw);
+  @protected BrowserMode dco_decode_browser_mode(dynamic raw);
 
-  @protected
-  CitationResult dco_decode_citation_result(dynamic raw);
+  @protected BrowserWait dco_decode_browser_wait(dynamic raw);
 
-  @protected
-  ContentConfig dco_decode_content_config(dynamic raw);
+  @protected CitationReference dco_decode_citation_reference(dynamic raw);
 
-  @protected
-  CookieInfo dco_decode_cookie_info(dynamic raw);
+  @protected CitationResult dco_decode_citation_result(dynamic raw);
 
-  @protected
-  CrawlConfig dco_decode_crawl_config(dynamic raw);
+  @protected ContentConfig dco_decode_content_config(dynamic raw);
 
-  @protected
-  CrawlError dco_decode_crawl_error(dynamic raw);
+  @protected CookieInfo dco_decode_cookie_info(dynamic raw);
 
-  @protected
-  CrawlEvent dco_decode_crawl_event(dynamic raw);
+  @protected CrawlConfig dco_decode_crawl_config(dynamic raw);
 
-  @protected
-  CrawlPageResult dco_decode_crawl_page_result(dynamic raw);
+  @protected CrawlError dco_decode_crawl_error(dynamic raw);
 
-  @protected
-  CrawlResult dco_decode_crawl_result(dynamic raw);
+  @protected CrawlEvent dco_decode_crawl_event(dynamic raw);
 
-  @protected
-  CrawlStreamRequest dco_decode_crawl_stream_request(dynamic raw);
+  @protected CrawlPageResult dco_decode_crawl_page_result(dynamic raw);
 
-  @protected
-  DownloadedAsset dco_decode_downloaded_asset(dynamic raw);
+  @protected CrawlResult dco_decode_crawl_result(dynamic raw);
 
-  @protected
-  DownloadedDocument dco_decode_downloaded_document(dynamic raw);
+  @protected CrawlStreamRequest dco_decode_crawl_stream_request(dynamic raw);
 
-  @protected
-  ExtractionMeta dco_decode_extraction_meta(dynamic raw);
+  @protected DownloadedAsset dco_decode_downloaded_asset(dynamic raw);
 
-  @protected
-  double dco_decode_f_64(dynamic raw);
+  @protected DownloadedDocument dco_decode_downloaded_document(dynamic raw);
 
-  @protected
-  FaviconInfo dco_decode_favicon_info(dynamic raw);
+  @protected ExtractionMeta dco_decode_extraction_meta(dynamic raw);
 
-  @protected
-  FeedInfo dco_decode_feed_info(dynamic raw);
+  @protected double dco_decode_f_64(dynamic raw);
 
-  @protected
-  FeedType dco_decode_feed_type(dynamic raw);
+  @protected FaviconInfo dco_decode_favicon_info(dynamic raw);
 
-  @protected
-  HeadingInfo dco_decode_heading_info(dynamic raw);
+  @protected FeedInfo dco_decode_feed_info(dynamic raw);
 
-  @protected
-  HreflangEntry dco_decode_hreflang_entry(dynamic raw);
+  @protected FeedType dco_decode_feed_type(dynamic raw);
 
-  @protected
-  int dco_decode_i_32(dynamic raw);
+  @protected HeadingInfo dco_decode_heading_info(dynamic raw);
 
-  @protected
-  PlatformInt64 dco_decode_i_64(dynamic raw);
+  @protected HreflangEntry dco_decode_hreflang_entry(dynamic raw);
 
-  @protected
-  ImageInfo dco_decode_image_info(dynamic raw);
+  @protected int dco_decode_i_32(dynamic raw);
 
-  @protected
-  ImageSource dco_decode_image_source(dynamic raw);
+  @protected PlatformInt64 dco_decode_i_64(dynamic raw);
 
-  @protected
-  InteractionResult dco_decode_interaction_result(dynamic raw);
+  @protected ImageInfo dco_decode_image_info(dynamic raw);
 
-  @protected
-  JsonLdEntry dco_decode_json_ld_entry(dynamic raw);
+  @protected ImageSource dco_decode_image_source(dynamic raw);
 
-  @protected
-  LinkInfo dco_decode_link_info(dynamic raw);
+  @protected InteractionResult dco_decode_interaction_result(dynamic raw);
 
-  @protected
-  LinkType dco_decode_link_type(dynamic raw);
+  @protected JsonLdEntry dco_decode_json_ld_entry(dynamic raw);
 
-  @protected
-  List<String> dco_decode_list_String(dynamic raw);
+  @protected LinkInfo dco_decode_link_info(dynamic raw);
 
-  @protected
-  List<ActionResult> dco_decode_list_action_result(dynamic raw);
+  @protected LinkType dco_decode_link_type(dynamic raw);
 
-  @protected
-  List<AssetCategory> dco_decode_list_asset_category(dynamic raw);
+  @protected List<String> dco_decode_list_String(dynamic raw);
 
-  @protected
-  List<BatchCrawlResult> dco_decode_list_batch_crawl_result(dynamic raw);
+  @protected List<ActionResult> dco_decode_list_action_result(dynamic raw);
 
-  @protected
-  List<BatchScrapeResult> dco_decode_list_batch_scrape_result(dynamic raw);
+  @protected List<AssetCategory> dco_decode_list_asset_category(dynamic raw);
 
-  @protected
-  List<CitationReference> dco_decode_list_citation_reference(dynamic raw);
+  @protected List<BatchCrawlResult> dco_decode_list_batch_crawl_result(dynamic raw);
 
-  @protected
-  List<CookieInfo> dco_decode_list_cookie_info(dynamic raw);
+  @protected List<BatchScrapeResult> dco_decode_list_batch_scrape_result(dynamic raw);
 
-  @protected
-  List<CrawlPageResult> dco_decode_list_crawl_page_result(dynamic raw);
+  @protected List<CitationReference> dco_decode_list_citation_reference(dynamic raw);
 
-  @protected
-  List<DownloadedAsset> dco_decode_list_downloaded_asset(dynamic raw);
+  @protected List<CookieInfo> dco_decode_list_cookie_info(dynamic raw);
 
-  @protected
-  List<FaviconInfo> dco_decode_list_favicon_info(dynamic raw);
+  @protected List<CrawlPageResult> dco_decode_list_crawl_page_result(dynamic raw);
 
-  @protected
-  List<FeedInfo> dco_decode_list_feed_info(dynamic raw);
+  @protected List<DownloadedAsset> dco_decode_list_downloaded_asset(dynamic raw);
 
-  @protected
-  List<HeadingInfo> dco_decode_list_heading_info(dynamic raw);
+  @protected List<FaviconInfo> dco_decode_list_favicon_info(dynamic raw);
 
-  @protected
-  List<HreflangEntry> dco_decode_list_hreflang_entry(dynamic raw);
+  @protected List<FeedInfo> dco_decode_list_feed_info(dynamic raw);
 
-  @protected
-  List<ImageInfo> dco_decode_list_image_info(dynamic raw);
+  @protected List<HeadingInfo> dco_decode_list_heading_info(dynamic raw);
 
-  @protected
-  List<JsonLdEntry> dco_decode_list_json_ld_entry(dynamic raw);
+  @protected List<HreflangEntry> dco_decode_list_hreflang_entry(dynamic raw);
 
-  @protected
-  List<LinkInfo> dco_decode_list_link_info(dynamic raw);
+  @protected List<ImageInfo> dco_decode_list_image_info(dynamic raw);
 
-  @protected
-  List<PageAction> dco_decode_list_page_action(dynamic raw);
+  @protected List<JsonLdEntry> dco_decode_list_json_ld_entry(dynamic raw);
 
-  @protected
-  Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
+  @protected List<LinkInfo> dco_decode_list_link_info(dynamic raw);
 
-  @protected
-  Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+  @protected List<PageAction> dco_decode_list_page_action(dynamic raw);
 
-  @protected
-  List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
+  @protected Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
-  @protected
-  List<ResponseMeta> dco_decode_list_response_meta(dynamic raw);
+  @protected Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
-  @protected
-  List<SitemapUrl> dco_decode_list_sitemap_url(dynamic raw);
+  @protected List<(String,String)> dco_decode_list_record_string_string(dynamic raw);
 
-  @protected
-  MapResult dco_decode_map_result(dynamic raw);
+  @protected List<ResponseMeta> dco_decode_list_response_meta(dynamic raw);
 
-  @protected
-  MarkdownResult dco_decode_markdown_result(dynamic raw);
+  @protected List<SitemapUrl> dco_decode_list_sitemap_url(dynamic raw);
 
-  @protected
-  String? dco_decode_opt_String(dynamic raw);
+  @protected MapResult dco_decode_map_result(dynamic raw);
 
-  @protected
-  ArticleMetadata? dco_decode_opt_box_autoadd_article_metadata(dynamic raw);
+  @protected MarkdownResult dco_decode_markdown_result(dynamic raw);
 
-  @protected
-  AuthConfig? dco_decode_opt_box_autoadd_auth_config(dynamic raw);
+  @protected String? dco_decode_opt_String(dynamic raw);
 
-  @protected
-  BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw);
+  @protected ArticleMetadata? dco_decode_opt_box_autoadd_article_metadata(dynamic raw);
 
-  @protected
-  CrawlConfig? dco_decode_opt_box_autoadd_crawl_config(dynamic raw);
+  @protected AuthConfig? dco_decode_opt_box_autoadd_auth_config(dynamic raw);
 
-  @protected
-  CrawlResult? dco_decode_opt_box_autoadd_crawl_result(dynamic raw);
+  @protected BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw);
 
-  @protected
-  DownloadedDocument? dco_decode_opt_box_autoadd_downloaded_document(
-    dynamic raw,
-  );
+  @protected CrawlConfig? dco_decode_opt_box_autoadd_crawl_config(dynamic raw);
 
-  @protected
-  ExtractionMeta? dco_decode_opt_box_autoadd_extraction_meta(dynamic raw);
+  @protected CrawlResult? dco_decode_opt_box_autoadd_crawl_result(dynamic raw);
 
-  @protected
-  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+  @protected DownloadedDocument? dco_decode_opt_box_autoadd_downloaded_document(dynamic raw);
 
-  @protected
-  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+  @protected ExtractionMeta? dco_decode_opt_box_autoadd_extraction_meta(dynamic raw);
 
-  @protected
-  MarkdownResult? dco_decode_opt_box_autoadd_markdown_result(dynamic raw);
+  @protected double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
-  @protected
-  ProxyConfig? dco_decode_opt_box_autoadd_proxy_config(dynamic raw);
+  @protected PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
-  @protected
-  ResponseMeta? dco_decode_opt_box_autoadd_response_meta(dynamic raw);
+  @protected MarkdownResult? dco_decode_opt_box_autoadd_markdown_result(dynamic raw);
 
-  @protected
-  ScrapeResult? dco_decode_opt_box_autoadd_scrape_result(dynamic raw);
+  @protected ProxyConfig? dco_decode_opt_box_autoadd_proxy_config(dynamic raw);
 
-  @protected
-  List<String>? dco_decode_opt_list_String(dynamic raw);
+  @protected ResponseMeta? dco_decode_opt_box_autoadd_response_meta(dynamic raw);
 
-  @protected
-  List<FaviconInfo>? dco_decode_opt_list_favicon_info(dynamic raw);
+  @protected ScrapeResult? dco_decode_opt_box_autoadd_scrape_result(dynamic raw);
 
-  @protected
-  List<HeadingInfo>? dco_decode_opt_list_heading_info(dynamic raw);
+  @protected List<String>? dco_decode_opt_list_String(dynamic raw);
 
-  @protected
-  List<HreflangEntry>? dco_decode_opt_list_hreflang_entry(dynamic raw);
+  @protected List<FaviconInfo>? dco_decode_opt_list_favicon_info(dynamic raw);
 
-  @protected
-  PageAction dco_decode_page_action(dynamic raw);
+  @protected List<HeadingInfo>? dco_decode_opt_list_heading_info(dynamic raw);
 
-  @protected
-  PageMetadata dco_decode_page_metadata(dynamic raw);
+  @protected List<HreflangEntry>? dco_decode_opt_list_hreflang_entry(dynamic raw);
 
-  @protected
-  ProxyConfig dco_decode_proxy_config(dynamic raw);
+  @protected PageAction dco_decode_page_action(dynamic raw);
 
-  @protected
-  (String, String) dco_decode_record_string_string(dynamic raw);
+  @protected PageMetadata dco_decode_page_metadata(dynamic raw);
 
-  @protected
-  ResponseMeta dco_decode_response_meta(dynamic raw);
+  @protected ProxyConfig dco_decode_proxy_config(dynamic raw);
 
-  @protected
-  ScrapeResult dco_decode_scrape_result(dynamic raw);
+  @protected (String,String) dco_decode_record_string_string(dynamic raw);
 
-  @protected
-  ScrollDirection dco_decode_scroll_direction(dynamic raw);
+  @protected ResponseMeta dco_decode_response_meta(dynamic raw);
 
-  @protected
-  SitemapUrl dco_decode_sitemap_url(dynamic raw);
+  @protected ScrapeResult dco_decode_scrape_result(dynamic raw);
 
-  @protected
-  SsrfError dco_decode_ssrf_error(dynamic raw);
+  @protected ScrollDirection dco_decode_scroll_direction(dynamic raw);
 
-  @protected
-  SsrfPolicy dco_decode_ssrf_policy(dynamic raw);
+  @protected SitemapUrl dco_decode_sitemap_url(dynamic raw);
 
-  @protected
-  int dco_decode_u_8(dynamic raw);
+  @protected SsrfError dco_decode_ssrf_error(dynamic raw);
 
-  @protected
-  void dco_decode_unit(dynamic raw);
+  @protected SsrfPolicy dco_decode_ssrf_policy(dynamic raw);
 
-  @protected
-  BigInt dco_decode_usize(dynamic raw);
+  @protected int dco_decode_u_8(dynamic raw);
 
-  @protected
-  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
+  @protected void dco_decode_unit(dynamic raw);
 
-  @protected
-  CrawlEngineHandle
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    SseDeserializer deserializer,
-  );
+  @protected BigInt dco_decode_usize(dynamic raw);
 
-  @protected
-  CrawlEngineHandle
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    SseDeserializer deserializer,
-  );
+  @protected AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
-  @protected
-  Map<String, String> sse_decode_Map_String_String_None(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlEngineHandle sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(SseDeserializer deserializer);
 
-  @protected
-  CrawlEngineHandle
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlEngineHandle sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(SseDeserializer deserializer);
 
-  @protected
-  RustStreamSink<CrawlEvent> sse_decode_StreamSink_crawl_event_Sse(
-    SseDeserializer deserializer,
-  );
+  @protected Map<String, String> sse_decode_Map_String_String_None(SseDeserializer deserializer);
 
-  @protected
-  String sse_decode_String(SseDeserializer deserializer);
+  @protected CrawlEngineHandle sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(SseDeserializer deserializer);
 
-  @protected
-  ActionResult sse_decode_action_result(SseDeserializer deserializer);
+  @protected RustStreamSink<CrawlEvent> sse_decode_StreamSink_crawl_event_Sse(SseDeserializer deserializer);
 
-  @protected
-  ArticleMetadata sse_decode_article_metadata(SseDeserializer deserializer);
+  @protected String sse_decode_String(SseDeserializer deserializer);
 
-  @protected
-  AssetCategory sse_decode_asset_category(SseDeserializer deserializer);
+  @protected ActionResult sse_decode_action_result(SseDeserializer deserializer);
 
-  @protected
-  AuthConfig sse_decode_auth_config(SseDeserializer deserializer);
+  @protected ArticleMetadata sse_decode_article_metadata(SseDeserializer deserializer);
 
-  @protected
-  BatchCrawlResult sse_decode_batch_crawl_result(SseDeserializer deserializer);
+  @protected AssetCategory sse_decode_asset_category(SseDeserializer deserializer);
 
-  @protected
-  BatchCrawlResults sse_decode_batch_crawl_results(
-    SseDeserializer deserializer,
-  );
+  @protected AuthConfig sse_decode_auth_config(SseDeserializer deserializer);
 
-  @protected
-  BatchCrawlStreamRequest sse_decode_batch_crawl_stream_request(
-    SseDeserializer deserializer,
-  );
+  @protected BatchCrawlResult sse_decode_batch_crawl_result(SseDeserializer deserializer);
 
-  @protected
-  BatchScrapeResult sse_decode_batch_scrape_result(
-    SseDeserializer deserializer,
-  );
+  @protected BatchCrawlResults sse_decode_batch_crawl_results(SseDeserializer deserializer);
 
-  @protected
-  BatchScrapeResults sse_decode_batch_scrape_results(
-    SseDeserializer deserializer,
-  );
+  @protected BatchCrawlStreamRequest sse_decode_batch_crawl_stream_request(SseDeserializer deserializer);
 
-  @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
+  @protected BatchScrapeResult sse_decode_batch_scrape_result(SseDeserializer deserializer);
 
-  @protected
-  ArticleMetadata sse_decode_box_autoadd_article_metadata(
-    SseDeserializer deserializer,
-  );
+  @protected BatchScrapeResults sse_decode_batch_scrape_results(SseDeserializer deserializer);
 
-  @protected
-  AuthConfig sse_decode_box_autoadd_auth_config(SseDeserializer deserializer);
+  @protected bool sse_decode_bool(SseDeserializer deserializer);
 
-  @protected
-  BatchCrawlStreamRequest sse_decode_box_autoadd_batch_crawl_stream_request(
-    SseDeserializer deserializer,
-  );
+  @protected ArticleMetadata sse_decode_box_autoadd_article_metadata(SseDeserializer deserializer);
 
-  @protected
-  BrowserExtras sse_decode_box_autoadd_browser_extras(
-    SseDeserializer deserializer,
-  );
+  @protected AuthConfig sse_decode_box_autoadd_auth_config(SseDeserializer deserializer);
 
-  @protected
-  CrawlConfig sse_decode_box_autoadd_crawl_config(SseDeserializer deserializer);
+  @protected BatchCrawlStreamRequest sse_decode_box_autoadd_batch_crawl_stream_request(SseDeserializer deserializer);
 
-  @protected
-  CrawlPageResult sse_decode_box_autoadd_crawl_page_result(
-    SseDeserializer deserializer,
-  );
+  @protected BrowserExtras sse_decode_box_autoadd_browser_extras(SseDeserializer deserializer);
 
-  @protected
-  CrawlResult sse_decode_box_autoadd_crawl_result(SseDeserializer deserializer);
+  @protected CrawlConfig sse_decode_box_autoadd_crawl_config(SseDeserializer deserializer);
 
-  @protected
-  CrawlStreamRequest sse_decode_box_autoadd_crawl_stream_request(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlPageResult sse_decode_box_autoadd_crawl_page_result(SseDeserializer deserializer);
 
-  @protected
-  DownloadedDocument sse_decode_box_autoadd_downloaded_document(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlResult sse_decode_box_autoadd_crawl_result(SseDeserializer deserializer);
 
-  @protected
-  ExtractionMeta sse_decode_box_autoadd_extraction_meta(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlStreamRequest sse_decode_box_autoadd_crawl_stream_request(SseDeserializer deserializer);
 
-  @protected
-  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+  @protected DownloadedDocument sse_decode_box_autoadd_downloaded_document(SseDeserializer deserializer);
 
-  @protected
-  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+  @protected ExtractionMeta sse_decode_box_autoadd_extraction_meta(SseDeserializer deserializer);
 
-  @protected
-  MarkdownResult sse_decode_box_autoadd_markdown_result(
-    SseDeserializer deserializer,
-  );
+  @protected double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
 
-  @protected
-  ProxyConfig sse_decode_box_autoadd_proxy_config(SseDeserializer deserializer);
+  @protected PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
-  @protected
-  ResponseMeta sse_decode_box_autoadd_response_meta(
-    SseDeserializer deserializer,
-  );
+  @protected MarkdownResult sse_decode_box_autoadd_markdown_result(SseDeserializer deserializer);
 
-  @protected
-  ScrapeResult sse_decode_box_autoadd_scrape_result(
-    SseDeserializer deserializer,
-  );
+  @protected ProxyConfig sse_decode_box_autoadd_proxy_config(SseDeserializer deserializer);
 
-  @protected
-  BrowserBackend sse_decode_browser_backend(SseDeserializer deserializer);
+  @protected ResponseMeta sse_decode_box_autoadd_response_meta(SseDeserializer deserializer);
 
-  @protected
-  BrowserConfig sse_decode_browser_config(SseDeserializer deserializer);
+  @protected ScrapeResult sse_decode_box_autoadd_scrape_result(SseDeserializer deserializer);
 
-  @protected
-  BrowserExtras sse_decode_browser_extras(SseDeserializer deserializer);
+  @protected BrowserBackend sse_decode_browser_backend(SseDeserializer deserializer);
 
-  @protected
-  BrowserMode sse_decode_browser_mode(SseDeserializer deserializer);
+  @protected BrowserConfig sse_decode_browser_config(SseDeserializer deserializer);
 
-  @protected
-  BrowserWait sse_decode_browser_wait(SseDeserializer deserializer);
+  @protected BrowserExtras sse_decode_browser_extras(SseDeserializer deserializer);
 
-  @protected
-  CitationReference sse_decode_citation_reference(SseDeserializer deserializer);
+  @protected BrowserMode sse_decode_browser_mode(SseDeserializer deserializer);
 
-  @protected
-  CitationResult sse_decode_citation_result(SseDeserializer deserializer);
+  @protected BrowserWait sse_decode_browser_wait(SseDeserializer deserializer);
 
-  @protected
-  ContentConfig sse_decode_content_config(SseDeserializer deserializer);
+  @protected CitationReference sse_decode_citation_reference(SseDeserializer deserializer);
 
-  @protected
-  CookieInfo sse_decode_cookie_info(SseDeserializer deserializer);
+  @protected CitationResult sse_decode_citation_result(SseDeserializer deserializer);
 
-  @protected
-  CrawlConfig sse_decode_crawl_config(SseDeserializer deserializer);
+  @protected ContentConfig sse_decode_content_config(SseDeserializer deserializer);
 
-  @protected
-  CrawlError sse_decode_crawl_error(SseDeserializer deserializer);
+  @protected CookieInfo sse_decode_cookie_info(SseDeserializer deserializer);
 
-  @protected
-  CrawlEvent sse_decode_crawl_event(SseDeserializer deserializer);
+  @protected CrawlConfig sse_decode_crawl_config(SseDeserializer deserializer);
 
-  @protected
-  CrawlPageResult sse_decode_crawl_page_result(SseDeserializer deserializer);
+  @protected CrawlError sse_decode_crawl_error(SseDeserializer deserializer);
 
-  @protected
-  CrawlResult sse_decode_crawl_result(SseDeserializer deserializer);
+  @protected CrawlEvent sse_decode_crawl_event(SseDeserializer deserializer);
 
-  @protected
-  CrawlStreamRequest sse_decode_crawl_stream_request(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlPageResult sse_decode_crawl_page_result(SseDeserializer deserializer);
 
-  @protected
-  DownloadedAsset sse_decode_downloaded_asset(SseDeserializer deserializer);
+  @protected CrawlResult sse_decode_crawl_result(SseDeserializer deserializer);
 
-  @protected
-  DownloadedDocument sse_decode_downloaded_document(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlStreamRequest sse_decode_crawl_stream_request(SseDeserializer deserializer);
 
-  @protected
-  ExtractionMeta sse_decode_extraction_meta(SseDeserializer deserializer);
+  @protected DownloadedAsset sse_decode_downloaded_asset(SseDeserializer deserializer);
 
-  @protected
-  double sse_decode_f_64(SseDeserializer deserializer);
+  @protected DownloadedDocument sse_decode_downloaded_document(SseDeserializer deserializer);
 
-  @protected
-  FaviconInfo sse_decode_favicon_info(SseDeserializer deserializer);
+  @protected ExtractionMeta sse_decode_extraction_meta(SseDeserializer deserializer);
 
-  @protected
-  FeedInfo sse_decode_feed_info(SseDeserializer deserializer);
+  @protected double sse_decode_f_64(SseDeserializer deserializer);
 
-  @protected
-  FeedType sse_decode_feed_type(SseDeserializer deserializer);
+  @protected FaviconInfo sse_decode_favicon_info(SseDeserializer deserializer);
 
-  @protected
-  HeadingInfo sse_decode_heading_info(SseDeserializer deserializer);
+  @protected FeedInfo sse_decode_feed_info(SseDeserializer deserializer);
 
-  @protected
-  HreflangEntry sse_decode_hreflang_entry(SseDeserializer deserializer);
+  @protected FeedType sse_decode_feed_type(SseDeserializer deserializer);
 
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
+  @protected HeadingInfo sse_decode_heading_info(SseDeserializer deserializer);
 
-  @protected
-  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+  @protected HreflangEntry sse_decode_hreflang_entry(SseDeserializer deserializer);
 
-  @protected
-  ImageInfo sse_decode_image_info(SseDeserializer deserializer);
+  @protected int sse_decode_i_32(SseDeserializer deserializer);
 
-  @protected
-  ImageSource sse_decode_image_source(SseDeserializer deserializer);
+  @protected PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
-  @protected
-  InteractionResult sse_decode_interaction_result(SseDeserializer deserializer);
+  @protected ImageInfo sse_decode_image_info(SseDeserializer deserializer);
 
-  @protected
-  JsonLdEntry sse_decode_json_ld_entry(SseDeserializer deserializer);
+  @protected ImageSource sse_decode_image_source(SseDeserializer deserializer);
 
-  @protected
-  LinkInfo sse_decode_link_info(SseDeserializer deserializer);
+  @protected InteractionResult sse_decode_interaction_result(SseDeserializer deserializer);
 
-  @protected
-  LinkType sse_decode_link_type(SseDeserializer deserializer);
+  @protected JsonLdEntry sse_decode_json_ld_entry(SseDeserializer deserializer);
 
-  @protected
-  List<String> sse_decode_list_String(SseDeserializer deserializer);
+  @protected LinkInfo sse_decode_link_info(SseDeserializer deserializer);
 
-  @protected
-  List<ActionResult> sse_decode_list_action_result(
-    SseDeserializer deserializer,
-  );
+  @protected LinkType sse_decode_link_type(SseDeserializer deserializer);
 
-  @protected
-  List<AssetCategory> sse_decode_list_asset_category(
-    SseDeserializer deserializer,
-  );
+  @protected List<String> sse_decode_list_String(SseDeserializer deserializer);
 
-  @protected
-  List<BatchCrawlResult> sse_decode_list_batch_crawl_result(
-    SseDeserializer deserializer,
-  );
+  @protected List<ActionResult> sse_decode_list_action_result(SseDeserializer deserializer);
 
-  @protected
-  List<BatchScrapeResult> sse_decode_list_batch_scrape_result(
-    SseDeserializer deserializer,
-  );
+  @protected List<AssetCategory> sse_decode_list_asset_category(SseDeserializer deserializer);
 
-  @protected
-  List<CitationReference> sse_decode_list_citation_reference(
-    SseDeserializer deserializer,
-  );
+  @protected List<BatchCrawlResult> sse_decode_list_batch_crawl_result(SseDeserializer deserializer);
 
-  @protected
-  List<CookieInfo> sse_decode_list_cookie_info(SseDeserializer deserializer);
+  @protected List<BatchScrapeResult> sse_decode_list_batch_scrape_result(SseDeserializer deserializer);
 
-  @protected
-  List<CrawlPageResult> sse_decode_list_crawl_page_result(
-    SseDeserializer deserializer,
-  );
+  @protected List<CitationReference> sse_decode_list_citation_reference(SseDeserializer deserializer);
 
-  @protected
-  List<DownloadedAsset> sse_decode_list_downloaded_asset(
-    SseDeserializer deserializer,
-  );
+  @protected List<CookieInfo> sse_decode_list_cookie_info(SseDeserializer deserializer);
 
-  @protected
-  List<FaviconInfo> sse_decode_list_favicon_info(SseDeserializer deserializer);
+  @protected List<CrawlPageResult> sse_decode_list_crawl_page_result(SseDeserializer deserializer);
 
-  @protected
-  List<FeedInfo> sse_decode_list_feed_info(SseDeserializer deserializer);
+  @protected List<DownloadedAsset> sse_decode_list_downloaded_asset(SseDeserializer deserializer);
 
-  @protected
-  List<HeadingInfo> sse_decode_list_heading_info(SseDeserializer deserializer);
+  @protected List<FaviconInfo> sse_decode_list_favicon_info(SseDeserializer deserializer);
 
-  @protected
-  List<HreflangEntry> sse_decode_list_hreflang_entry(
-    SseDeserializer deserializer,
-  );
+  @protected List<FeedInfo> sse_decode_list_feed_info(SseDeserializer deserializer);
 
-  @protected
-  List<ImageInfo> sse_decode_list_image_info(SseDeserializer deserializer);
+  @protected List<HeadingInfo> sse_decode_list_heading_info(SseDeserializer deserializer);
 
-  @protected
-  List<JsonLdEntry> sse_decode_list_json_ld_entry(SseDeserializer deserializer);
+  @protected List<HreflangEntry> sse_decode_list_hreflang_entry(SseDeserializer deserializer);
 
-  @protected
-  List<LinkInfo> sse_decode_list_link_info(SseDeserializer deserializer);
+  @protected List<ImageInfo> sse_decode_list_image_info(SseDeserializer deserializer);
 
-  @protected
-  List<PageAction> sse_decode_list_page_action(SseDeserializer deserializer);
+  @protected List<JsonLdEntry> sse_decode_list_json_ld_entry(SseDeserializer deserializer);
 
-  @protected
-  Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
+  @protected List<LinkInfo> sse_decode_list_link_info(SseDeserializer deserializer);
 
-  @protected
-  Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+  @protected List<PageAction> sse_decode_list_page_action(SseDeserializer deserializer);
 
-  @protected
-  List<(String, String)> sse_decode_list_record_string_string(
-    SseDeserializer deserializer,
-  );
+  @protected Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
-  @protected
-  List<ResponseMeta> sse_decode_list_response_meta(
-    SseDeserializer deserializer,
-  );
+  @protected Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
-  @protected
-  List<SitemapUrl> sse_decode_list_sitemap_url(SseDeserializer deserializer);
+  @protected List<(String,String)> sse_decode_list_record_string_string(SseDeserializer deserializer);
 
-  @protected
-  MapResult sse_decode_map_result(SseDeserializer deserializer);
+  @protected List<ResponseMeta> sse_decode_list_response_meta(SseDeserializer deserializer);
 
-  @protected
-  MarkdownResult sse_decode_markdown_result(SseDeserializer deserializer);
+  @protected List<SitemapUrl> sse_decode_list_sitemap_url(SseDeserializer deserializer);
 
-  @protected
-  String? sse_decode_opt_String(SseDeserializer deserializer);
+  @protected MapResult sse_decode_map_result(SseDeserializer deserializer);
 
-  @protected
-  ArticleMetadata? sse_decode_opt_box_autoadd_article_metadata(
-    SseDeserializer deserializer,
-  );
+  @protected MarkdownResult sse_decode_markdown_result(SseDeserializer deserializer);
 
-  @protected
-  AuthConfig? sse_decode_opt_box_autoadd_auth_config(
-    SseDeserializer deserializer,
-  );
+  @protected String? sse_decode_opt_String(SseDeserializer deserializer);
 
-  @protected
-  BrowserExtras? sse_decode_opt_box_autoadd_browser_extras(
-    SseDeserializer deserializer,
-  );
+  @protected ArticleMetadata? sse_decode_opt_box_autoadd_article_metadata(SseDeserializer deserializer);
 
-  @protected
-  CrawlConfig? sse_decode_opt_box_autoadd_crawl_config(
-    SseDeserializer deserializer,
-  );
+  @protected AuthConfig? sse_decode_opt_box_autoadd_auth_config(SseDeserializer deserializer);
 
-  @protected
-  CrawlResult? sse_decode_opt_box_autoadd_crawl_result(
-    SseDeserializer deserializer,
-  );
+  @protected BrowserExtras? sse_decode_opt_box_autoadd_browser_extras(SseDeserializer deserializer);
 
-  @protected
-  DownloadedDocument? sse_decode_opt_box_autoadd_downloaded_document(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlConfig? sse_decode_opt_box_autoadd_crawl_config(SseDeserializer deserializer);
 
-  @protected
-  ExtractionMeta? sse_decode_opt_box_autoadd_extraction_meta(
-    SseDeserializer deserializer,
-  );
+  @protected CrawlResult? sse_decode_opt_box_autoadd_crawl_result(SseDeserializer deserializer);
 
-  @protected
-  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+  @protected DownloadedDocument? sse_decode_opt_box_autoadd_downloaded_document(SseDeserializer deserializer);
 
-  @protected
-  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+  @protected ExtractionMeta? sse_decode_opt_box_autoadd_extraction_meta(SseDeserializer deserializer);
 
-  @protected
-  MarkdownResult? sse_decode_opt_box_autoadd_markdown_result(
-    SseDeserializer deserializer,
-  );
+  @protected double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
-  @protected
-  ProxyConfig? sse_decode_opt_box_autoadd_proxy_config(
-    SseDeserializer deserializer,
-  );
+  @protected PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
-  @protected
-  ResponseMeta? sse_decode_opt_box_autoadd_response_meta(
-    SseDeserializer deserializer,
-  );
+  @protected MarkdownResult? sse_decode_opt_box_autoadd_markdown_result(SseDeserializer deserializer);
 
-  @protected
-  ScrapeResult? sse_decode_opt_box_autoadd_scrape_result(
-    SseDeserializer deserializer,
-  );
+  @protected ProxyConfig? sse_decode_opt_box_autoadd_proxy_config(SseDeserializer deserializer);
 
-  @protected
-  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
+  @protected ResponseMeta? sse_decode_opt_box_autoadd_response_meta(SseDeserializer deserializer);
 
-  @protected
-  List<FaviconInfo>? sse_decode_opt_list_favicon_info(
-    SseDeserializer deserializer,
-  );
+  @protected ScrapeResult? sse_decode_opt_box_autoadd_scrape_result(SseDeserializer deserializer);
 
-  @protected
-  List<HeadingInfo>? sse_decode_opt_list_heading_info(
-    SseDeserializer deserializer,
-  );
+  @protected List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
-  @protected
-  List<HreflangEntry>? sse_decode_opt_list_hreflang_entry(
-    SseDeserializer deserializer,
-  );
+  @protected List<FaviconInfo>? sse_decode_opt_list_favicon_info(SseDeserializer deserializer);
 
-  @protected
-  PageAction sse_decode_page_action(SseDeserializer deserializer);
+  @protected List<HeadingInfo>? sse_decode_opt_list_heading_info(SseDeserializer deserializer);
 
-  @protected
-  PageMetadata sse_decode_page_metadata(SseDeserializer deserializer);
+  @protected List<HreflangEntry>? sse_decode_opt_list_hreflang_entry(SseDeserializer deserializer);
 
-  @protected
-  ProxyConfig sse_decode_proxy_config(SseDeserializer deserializer);
+  @protected PageAction sse_decode_page_action(SseDeserializer deserializer);
 
-  @protected
-  (String, String) sse_decode_record_string_string(
-    SseDeserializer deserializer,
-  );
+  @protected PageMetadata sse_decode_page_metadata(SseDeserializer deserializer);
 
-  @protected
-  ResponseMeta sse_decode_response_meta(SseDeserializer deserializer);
+  @protected ProxyConfig sse_decode_proxy_config(SseDeserializer deserializer);
 
-  @protected
-  ScrapeResult sse_decode_scrape_result(SseDeserializer deserializer);
+  @protected (String,String) sse_decode_record_string_string(SseDeserializer deserializer);
 
-  @protected
-  ScrollDirection sse_decode_scroll_direction(SseDeserializer deserializer);
+  @protected ResponseMeta sse_decode_response_meta(SseDeserializer deserializer);
 
-  @protected
-  SitemapUrl sse_decode_sitemap_url(SseDeserializer deserializer);
+  @protected ScrapeResult sse_decode_scrape_result(SseDeserializer deserializer);
 
-  @protected
-  SsrfError sse_decode_ssrf_error(SseDeserializer deserializer);
+  @protected ScrollDirection sse_decode_scroll_direction(SseDeserializer deserializer);
 
-  @protected
-  SsrfPolicy sse_decode_ssrf_policy(SseDeserializer deserializer);
+  @protected SitemapUrl sse_decode_sitemap_url(SseDeserializer deserializer);
 
-  @protected
-  int sse_decode_u_8(SseDeserializer deserializer);
+  @protected SsrfError sse_decode_ssrf_error(SseDeserializer deserializer);
 
-  @protected
-  void sse_decode_unit(SseDeserializer deserializer);
+  @protected SsrfPolicy sse_decode_ssrf_policy(SseDeserializer deserializer);
 
-  @protected
-  BigInt sse_decode_usize(SseDeserializer deserializer);
+  @protected int sse_decode_u_8(SseDeserializer deserializer);
 
-  @protected
-  void sse_encode_AnyhowException(
-    AnyhowException self,
-    SseSerializer serializer,
-  );
+  @protected void sse_decode_unit(SseDeserializer deserializer);
 
-  @protected
-  void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    CrawlEngineHandle self,
-    SseSerializer serializer,
-  );
+  @protected BigInt sse_decode_usize(SseDeserializer deserializer);
 
-  @protected
-  void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    CrawlEngineHandle self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_AnyhowException(AnyhowException self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_Map_String_String_None(
-    Map<String, String> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(CrawlEngineHandle self, SseSerializer serializer);
 
-  @protected
-  void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
-    CrawlEngineHandle self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(CrawlEngineHandle self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_StreamSink_crawl_event_Sse(
-    RustStreamSink<CrawlEvent> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_Map_String_String_None(Map<String, String> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_String(String self, SseSerializer serializer);
+  @protected void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(CrawlEngineHandle self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_action_result(ActionResult self, SseSerializer serializer);
+  @protected void sse_encode_StreamSink_crawl_event_Sse(RustStreamSink<CrawlEvent> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_article_metadata(
-    ArticleMetadata self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_String(String self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_asset_category(AssetCategory self, SseSerializer serializer);
+  @protected void sse_encode_action_result(ActionResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_auth_config(AuthConfig self, SseSerializer serializer);
+  @protected void sse_encode_article_metadata(ArticleMetadata self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_batch_crawl_result(
-    BatchCrawlResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_asset_category(AssetCategory self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_batch_crawl_results(
-    BatchCrawlResults self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_auth_config(AuthConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_batch_crawl_stream_request(
-    BatchCrawlStreamRequest self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_batch_crawl_result(BatchCrawlResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_batch_scrape_result(
-    BatchScrapeResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_batch_crawl_results(BatchCrawlResults self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_batch_scrape_results(
-    BatchScrapeResults self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_batch_crawl_stream_request(BatchCrawlStreamRequest self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
+  @protected void sse_encode_batch_scrape_result(BatchScrapeResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_article_metadata(
-    ArticleMetadata self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_batch_scrape_results(BatchScrapeResults self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_auth_config(
-    AuthConfig self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_bool(bool self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_batch_crawl_stream_request(
-    BatchCrawlStreamRequest self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_article_metadata(ArticleMetadata self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_browser_extras(
-    BrowserExtras self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_auth_config(AuthConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_crawl_config(
-    CrawlConfig self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_batch_crawl_stream_request(BatchCrawlStreamRequest self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_crawl_page_result(
-    CrawlPageResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_browser_extras(BrowserExtras self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_crawl_result(
-    CrawlResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_crawl_config(CrawlConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_crawl_stream_request(
-    CrawlStreamRequest self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_crawl_page_result(CrawlPageResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_downloaded_document(
-    DownloadedDocument self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_crawl_result(CrawlResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_extraction_meta(
-    ExtractionMeta self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_crawl_stream_request(CrawlStreamRequest self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+  @protected void sse_encode_box_autoadd_downloaded_document(DownloadedDocument self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_i_64(
-    PlatformInt64 self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_extraction_meta(ExtractionMeta self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_markdown_result(
-    MarkdownResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_proxy_config(
-    ProxyConfig self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_i_64(PlatformInt64 self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_response_meta(
-    ResponseMeta self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_markdown_result(MarkdownResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_box_autoadd_scrape_result(
-    ScrapeResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_proxy_config(ProxyConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_browser_backend(
-    BrowserBackend self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_box_autoadd_response_meta(ResponseMeta self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_browser_config(BrowserConfig self, SseSerializer serializer);
+  @protected void sse_encode_box_autoadd_scrape_result(ScrapeResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_browser_extras(BrowserExtras self, SseSerializer serializer);
+  @protected void sse_encode_browser_backend(BrowserBackend self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_browser_mode(BrowserMode self, SseSerializer serializer);
+  @protected void sse_encode_browser_config(BrowserConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_browser_wait(BrowserWait self, SseSerializer serializer);
+  @protected void sse_encode_browser_extras(BrowserExtras self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_citation_reference(
-    CitationReference self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_browser_mode(BrowserMode self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_citation_result(
-    CitationResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_browser_wait(BrowserWait self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_content_config(ContentConfig self, SseSerializer serializer);
+  @protected void sse_encode_citation_reference(CitationReference self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_cookie_info(CookieInfo self, SseSerializer serializer);
+  @protected void sse_encode_citation_result(CitationResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_config(CrawlConfig self, SseSerializer serializer);
+  @protected void sse_encode_content_config(ContentConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_error(CrawlError self, SseSerializer serializer);
+  @protected void sse_encode_cookie_info(CookieInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_event(CrawlEvent self, SseSerializer serializer);
+  @protected void sse_encode_crawl_config(CrawlConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_page_result(
-    CrawlPageResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_crawl_error(CrawlError self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_result(CrawlResult self, SseSerializer serializer);
+  @protected void sse_encode_crawl_event(CrawlEvent self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_crawl_stream_request(
-    CrawlStreamRequest self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_crawl_page_result(CrawlPageResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_downloaded_asset(
-    DownloadedAsset self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_crawl_result(CrawlResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_downloaded_document(
-    DownloadedDocument self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_crawl_stream_request(CrawlStreamRequest self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_extraction_meta(
-    ExtractionMeta self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_downloaded_asset(DownloadedAsset self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_f_64(double self, SseSerializer serializer);
+  @protected void sse_encode_downloaded_document(DownloadedDocument self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_favicon_info(FaviconInfo self, SseSerializer serializer);
+  @protected void sse_encode_extraction_meta(ExtractionMeta self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_feed_info(FeedInfo self, SseSerializer serializer);
+  @protected void sse_encode_f_64(double self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_feed_type(FeedType self, SseSerializer serializer);
+  @protected void sse_encode_favicon_info(FaviconInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_heading_info(HeadingInfo self, SseSerializer serializer);
+  @protected void sse_encode_feed_info(FeedInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_hreflang_entry(HreflangEntry self, SseSerializer serializer);
+  @protected void sse_encode_feed_type(FeedType self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
+  @protected void sse_encode_heading_info(HeadingInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+  @protected void sse_encode_hreflang_entry(HreflangEntry self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_image_info(ImageInfo self, SseSerializer serializer);
+  @protected void sse_encode_i_32(int self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_image_source(ImageSource self, SseSerializer serializer);
+  @protected void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_interaction_result(
-    InteractionResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_image_info(ImageInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_json_ld_entry(JsonLdEntry self, SseSerializer serializer);
+  @protected void sse_encode_image_source(ImageSource self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_link_info(LinkInfo self, SseSerializer serializer);
+  @protected void sse_encode_interaction_result(InteractionResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_link_type(LinkType self, SseSerializer serializer);
+  @protected void sse_encode_json_ld_entry(JsonLdEntry self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+  @protected void sse_encode_link_info(LinkInfo self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_action_result(
-    List<ActionResult> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_link_type(LinkType self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_asset_category(
-    List<AssetCategory> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_batch_crawl_result(
-    List<BatchCrawlResult> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_action_result(List<ActionResult> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_batch_scrape_result(
-    List<BatchScrapeResult> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_asset_category(List<AssetCategory> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_citation_reference(
-    List<CitationReference> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_batch_crawl_result(List<BatchCrawlResult> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_cookie_info(
-    List<CookieInfo> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_batch_scrape_result(List<BatchScrapeResult> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_crawl_page_result(
-    List<CrawlPageResult> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_citation_reference(List<CitationReference> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_downloaded_asset(
-    List<DownloadedAsset> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_cookie_info(List<CookieInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_favicon_info(
-    List<FaviconInfo> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_crawl_page_result(List<CrawlPageResult> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_feed_info(List<FeedInfo> self, SseSerializer serializer);
+  @protected void sse_encode_list_downloaded_asset(List<DownloadedAsset> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_heading_info(
-    List<HeadingInfo> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_favicon_info(List<FaviconInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_hreflang_entry(
-    List<HreflangEntry> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_feed_info(List<FeedInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_image_info(
-    List<ImageInfo> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_heading_info(List<HeadingInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_json_ld_entry(
-    List<JsonLdEntry> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_hreflang_entry(List<HreflangEntry> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_link_info(List<LinkInfo> self, SseSerializer serializer);
+  @protected void sse_encode_list_image_info(List<ImageInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_page_action(
-    List<PageAction> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_json_ld_entry(List<JsonLdEntry> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_prim_i_64_strict(
-    Int64List self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_link_info(List<LinkInfo> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_prim_u_8_strict(
-    Uint8List self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_page_action(List<PageAction> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_record_string_string(
-    List<(String, String)> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_prim_i_64_strict(Int64List self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_response_meta(
-    List<ResponseMeta> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_prim_u_8_strict(Uint8List self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_list_sitemap_url(
-    List<SitemapUrl> self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_record_string_string(List<(String,String)> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_map_result(MapResult self, SseSerializer serializer);
+  @protected void sse_encode_list_response_meta(List<ResponseMeta> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_markdown_result(
-    MarkdownResult self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_list_sitemap_url(List<SitemapUrl> self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_String(String? self, SseSerializer serializer);
+  @protected void sse_encode_map_result(MapResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_article_metadata(
-    ArticleMetadata? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_markdown_result(MarkdownResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_auth_config(
-    AuthConfig? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_String(String? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_browser_extras(
-    BrowserExtras? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_article_metadata(ArticleMetadata? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_crawl_config(
-    CrawlConfig? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_auth_config(AuthConfig? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_crawl_result(
-    CrawlResult? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_browser_extras(BrowserExtras? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_downloaded_document(
-    DownloadedDocument? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_crawl_config(CrawlConfig? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_extraction_meta(
-    ExtractionMeta? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_crawl_result(CrawlResult? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+  @protected void sse_encode_opt_box_autoadd_downloaded_document(DownloadedDocument? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_i_64(
-    PlatformInt64? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_extraction_meta(ExtractionMeta? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_markdown_result(
-    MarkdownResult? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_proxy_config(
-    ProxyConfig? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_i_64(PlatformInt64? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_response_meta(
-    ResponseMeta? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_markdown_result(MarkdownResult? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_box_autoadd_scrape_result(
-    ScrapeResult? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_proxy_config(ProxyConfig? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
+  @protected void sse_encode_opt_box_autoadd_response_meta(ResponseMeta? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_list_favicon_info(
-    List<FaviconInfo>? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_box_autoadd_scrape_result(ScrapeResult? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_list_heading_info(
-    List<HeadingInfo>? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_opt_list_hreflang_entry(
-    List<HreflangEntry>? self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_opt_list_favicon_info(List<FaviconInfo>? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_page_action(PageAction self, SseSerializer serializer);
+  @protected void sse_encode_opt_list_heading_info(List<HeadingInfo>? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_page_metadata(PageMetadata self, SseSerializer serializer);
+  @protected void sse_encode_opt_list_hreflang_entry(List<HreflangEntry>? self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_proxy_config(ProxyConfig self, SseSerializer serializer);
+  @protected void sse_encode_page_action(PageAction self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_record_string_string(
-    (String, String) self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_page_metadata(PageMetadata self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_response_meta(ResponseMeta self, SseSerializer serializer);
+  @protected void sse_encode_proxy_config(ProxyConfig self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_scrape_result(ScrapeResult self, SseSerializer serializer);
+  @protected void sse_encode_record_string_string((String,String) self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_scroll_direction(
-    ScrollDirection self,
-    SseSerializer serializer,
-  );
+  @protected void sse_encode_response_meta(ResponseMeta self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_sitemap_url(SitemapUrl self, SseSerializer serializer);
+  @protected void sse_encode_scrape_result(ScrapeResult self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_ssrf_error(SsrfError self, SseSerializer serializer);
+  @protected void sse_encode_scroll_direction(ScrollDirection self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_ssrf_policy(SsrfPolicy self, SseSerializer serializer);
+  @protected void sse_encode_sitemap_url(SitemapUrl self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_u_8(int self, SseSerializer serializer);
+  @protected void sse_encode_ssrf_error(SsrfError self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_unit(void self, SseSerializer serializer);
+  @protected void sse_encode_ssrf_policy(SsrfPolicy self, SseSerializer serializer);
 
-  @protected
-  void sse_encode_usize(BigInt self, SseSerializer serializer);
+  @protected void sse_encode_u_8(int self, SseSerializer serializer);
+
+  @protected void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected void sse_encode_usize(BigInt self, SseSerializer serializer);
 }
+
+
 
 // Section: wire_class
 
+
 class RustLibWire implements BaseWire {
+
   factory RustLibWire.fromExternalLibrary(ExternalLibrary lib) =>
-      RustLibWire(lib.ffiDynamicLibrary);
+  RustLibWire(lib.ffiDynamicLibrary);
 
   /// Holds the symbol lookup function.
   final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
@@ -1445,10 +762,10 @@ class RustLibWire implements BaseWire {
 
   /// The symbols are looked up in [dynamicLibrary].
   RustLibWire(ffi.DynamicLibrary dynamicLibrary)
-    : _lookup = dynamicLibrary.lookup;
+  : _lookup = dynamicLibrary.lookup;
 
-  void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
@@ -1456,16 +773,10 @@ class RustLibWire implements BaseWire {
     );
   }
 
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_crawlberg_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle',
-      );
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>('frbgen_crawlberg_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle');
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle = _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr.asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle(
@@ -1473,11 +784,7 @@ class RustLibWire implements BaseWire {
     );
   }
 
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_crawlberg_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle',
-      );
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>('frbgen_crawlberg_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle');
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle = _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandlePtr.asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
 }

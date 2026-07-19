@@ -12,7 +12,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -44,12 +44,12 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.5" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.5" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.6" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.6" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"
-deno_core = "0.406"
+deno_core = "0.408"
 deno_error = "0.7"
 dirs = "6"
 encoding_rs = "0.8"
@@ -116,7 +116,7 @@ tracing-opentelemetry = "0.33"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "5", features = ["axum_extras"] }
-uuid = { version = "1.23", features = ["v4"] }
+uuid = { version = "1.24", features = ["v4"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
