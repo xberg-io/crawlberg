@@ -298,6 +298,16 @@ jobs:
         with:
           swift-version: ${{ matrix.swift-version }}
 
+      # The Swift package links the crawlberg FFI staticlib, which pulls in liblzma
+      # (-llzma). The ubuntu-24.04-arm runner ships the runtime lib but not the
+      # -dev package that provides the `liblzma.so` link symlink, so the SwiftPM
+      # link step fails with `cannot find -llzma`. Runtime-linked FFI langs
+      # (go/java/csharp/…) don't need it; the Swift link step does.
+      - name: Install liblzma-dev for Swift FFI linking
+        if: matrix.lang == 'swift'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y liblzma-dev
+
       - name: Setup Zig
         if: matrix.zig-version
         uses: xberg-io/actions/setup-zig@v1
