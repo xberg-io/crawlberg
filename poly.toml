@@ -25,13 +25,33 @@ exclude = [
 ]
 
 [lint.markdown.rumdl]
-disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051", "MD076"]
+disable = [
+    "MD012",
+    "MD013",
+    "MD024",
+    "MD033",
+    "MD036",
+    "MD041",
+    "MD046",
+    "MD051",
+    "MD076",
+]
 
 [fmt.markdown.rumdl]
-disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051", "MD076"]
+disable = [
+    "MD012",
+    "MD013",
+    "MD024",
+    "MD033",
+    "MD036",
+    "MD041",
+    "MD046",
+    "MD051",
+    "MD076",
+]
 
 [lint.python.ruff]
-select = ["ALL"]
+select = [ "ALL" ]
 ignore = [
     "ANN401",
     "ASYNC109",
@@ -64,8 +84,13 @@ pylint_max_branches = 15
 pylint_max_returns = 10
 
 [lint.php.mago]
-select = ["correctness", "security"]
-ignore = ["strict-assertions", "use-specific-assertions", "no-redundant-variable", "sensitive-parameter"]
+select = [ "correctness", "security" ]
+ignore = [
+    "strict-assertions",
+    "use-specific-assertions",
+    "no-redundant-variable",
+    "sensitive-parameter",
+]
 php_version = "8.2"
 
 [lint.typos.extend_words]
@@ -73,10 +98,10 @@ flate = "flate"
 ser = "ser"
 
 [per-file-ignores]
-"**/api.py" = ["F401", "I001", "TC006", "UP035"]
-"**/*.pyi" = ["A002", "F401", "I001", "PYI033", "TC006", "UP035"]
-"**/options.py" = ["F401", "I001", "RUF100"]
-"**/__init__.py" = ["I001"]
+"**/api.py" = [ "F401", "I001", "TC006", "UP035" ]
+"**/*.pyi" = [ "A002", "F401", "I001", "PYI033", "TC006", "UP035" ]
+"**/options.py" = [ "F401", "I001", "RUF100" ]
+"**/__init__.py" = [ "I001" ]
 "**/tests/**" = [
     "ANN",
     "D103",
@@ -200,14 +225,38 @@ ser = "ser"
     "A001",
     "N801",
 ]
-"cli-proxy/**/*.py" = ["ANN", "S310", "T201"]
-"crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
-"readme_templates/**/*.md" = ["MD057"]
-"scripts/**/*.py" = ["B023", "C901", "D103", "ERA001", "EXE001", "PLC0415", "PLR0912", "PLR0915", "PTH123", "T201"]
-"tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
+"cli-proxy/**/*.py" = [
+    "ANN",
+    "S310",
+    "T201",
+]
+"crates/crawlberg-browser/js/**" = [
+    "no-unused-vars",
+    "no-unused-expressions",
+]
+"readme_templates/**/*.md" = [
+    "MD057",
+]
+"scripts/**/*.py" = [
+    "B023",
+    "C901",
+    "D103",
+    "ERA001",
+    "EXE001",
+    "PLC0415",
+    "PLR0912",
+    "PLR0915",
+    "PTH123",
+    "T201",
+]
+"tests/**/*.py" = [
+    "PERF203",
+    "PLC0415",
+    "S607",
+]
 
 [hooks]
-stages = ["pre-commit"]
+stages = [ "pre-commit" ]
 
 [hooks.builtin]
 lint = { exclude = [
@@ -283,7 +332,7 @@ file_safety = { exclude = [
     "**/Cargo.toml",
 ] }
 cargo = true
-commit = { stages = ["commit-msg"] }
+commit = { stages = [ "commit-msg" ] }
 
 [hooks.pre-commit.commands.pyrefly]
 run = "pyrefly check packages/python"

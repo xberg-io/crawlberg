@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@xberg-io/crawlberg": "^1.0.6",
+    "@xberg-io/crawlberg": "^1.0.7",
     "@types/node": "^26.0.0",
     "vitest": "^4.1.10"
   }

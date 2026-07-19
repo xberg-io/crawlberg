@@ -9,8 +9,13 @@ All notable changes to crawlberg are documented here.
 - **Elixir NIF now builds and publishes.** 1.0.6 could not publish the Elixir
   package — the generated streaming-start NIF cloned the `Arc<RwLock<Handle>>`
   and called a core stream method that does not exist on it (`E0599`), failing
-  all NIF builds. Regenerated with alef 0.37.2, the streaming NIF read-locks and
+  all NIF builds. Regenerated with alef 0.38.0, the streaming NIF read-locks and
   clones the inner handle first, matching the non-streaming path.
+- **Elixir `create_engine/1` no longer double-encodes its config.** The generated
+  binding unconditionally re-encoded its argument, so the documented
+  `Jason.encode!(%CrawlConfig{})` string form was JSON-encoded twice (serde
+  rejected the string) and `create_engine(nil)` became `"null"`. alef 0.38.0
+  forwards `nil` and pre-encoded strings as-is, encoding only native maps.
 - **Dart `freezed` dev-dependency pinned back to `^3.2.5`.** The 1.0.6 release
   carried a `4.0.0-dev.3` prerelease that requires a newer Dart SDK than CI
   provides; reverted so `dart pub get` resolves the stable release.
@@ -18,12 +23,12 @@ All notable changes to crawlberg are documented here.
 - **Swift e2e length assertions on JSON-bridged metadata collections compile
   again.** `metadata.headings` / `hreflangs` / `favicons` are `Option<Vec<T>>`
   fields that swift-bridge exposes as a scalar `RustString` (no `.count`), so the
-  generated `.length` assertions emitted uncompilable `.count`. alef 0.37.2 skips
+  generated `.length` assertions emitted uncompilable `.count`. alef 0.38.0 skips
   these, matching the other C-ABI backends.
 
 ### Build
 
-- Bindings, stubs, READMEs, docs, and e2e suites regenerated with alef 0.37.2
+- Bindings, stubs, READMEs, docs, and e2e suites regenerated with alef 0.38.0
   (up from 0.34.4).
 
 ## [1.0.6] - 2026-07-19

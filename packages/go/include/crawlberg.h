@@ -261,7 +261,7 @@ typedef struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle CBERGCbergCraw
  * `chunk_json` is a JSON-encoded chunk; `user_data` is forwarded from the caller.
  */
 typedef void (*CBERGCbergStreamCallback)(const char *chunk_json,
-                                         void *user_data);
+    void *user_data);
 
 /**
  * Return the last error code (0 means no error).
@@ -295,8 +295,8 @@ void cberg_free_string(char *ptr);
  * out-params), or be null. The len and cap values must be unchanged since the call.
  */
 void cberg_free_bytes(uint8_t *ptr,
-                      uintptr_t len,
-                      uintptr_t cap);
+    uintptr_t len,
+    uintptr_t cap);
 
 /**
  * Return the library version string. The pointer is static and must NOT be freed.
@@ -318,7 +318,7 @@ const char *cberg_version(void);
  * Both pointers must remain valid until this function returns.
  */
 struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *cberg_crawl_engine_handle_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                        const CBERGCrawlStreamRequest *req);
+    const CBERGCrawlStreamRequest *req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -360,7 +360,7 @@ void cberg_crawl_engine_handle_crawl_stream_free(struct CBERGCbergCrawlEngineHan
  * Both pointers must remain valid until this function returns.
  */
 struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *cberg_crawl_engine_handle_batch_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                                   const CBERGBatchCrawlStreamRequest *req);
+    const CBERGBatchCrawlStreamRequest *req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -1121,7 +1121,7 @@ char *cberg_downloaded_document_mime_type(const CBERGDownloadedDocument *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 uint8_t *cberg_downloaded_document_content(const CBERGDownloadedDocument *ptr,
-                                           uintptr_t *out_len);
+    uintptr_t *out_len);
 
 /**
  * Get the `size` field from a `DownloadedDocument`.
@@ -1201,7 +1201,7 @@ char *cberg_interaction_result_final_url(const CBERGInteractionResult *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 uint8_t *cberg_interaction_result_screenshot(const CBERGInteractionResult *ptr,
-                                             uintptr_t *out_len);
+    uintptr_t *out_len);
 
 /**
  * Create a `ActionResult` from a JSON string. Returns null on failure.
@@ -1472,7 +1472,7 @@ CBERGExtractionMeta *cberg_scrape_result_extraction_meta(const CBERGScrapeResult
  * Pointer must be a valid handle returned by this library.
  */
 uint8_t *cberg_scrape_result_screenshot(const CBERGScrapeResult *ptr,
-                                        uintptr_t *out_len);
+    uintptr_t *out_len);
 
 /**
  * Get the `downloaded_document` field from a `ScrapeResult`.
@@ -2958,9 +2958,9 @@ void cberg_crawl_engine_handle_free(CBERGCrawlEngineHandle *ptr);
  * freed with the appropriate free function.
  */
 int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *client,
-                                               const char *request_json,
-                                               CBERGCbergStreamCallback callback,
-                                               void *user_data);
+    const char *request_json,
+    CBERGCbergStreamCallback callback,
+    void *user_data);
 
 /**
  * Stream a multi-URL crawl, yielding `CrawlEvent`s across all seeds.
@@ -2976,9 +2976,9 @@ int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *cli
  * freed with the appropriate free function.
  */
 int32_t cberg_crawl_engine_handle_batch_crawl_stream(const CBERGCrawlEngineHandle *client,
-                                                     const char *request_json,
-                                                     CBERGCbergStreamCallback callback,
-                                                     void *user_data);
+    const char *request_json,
+    CBERGCbergStreamCallback callback,
+    void *user_data);
 
 /**
  * Create a `BatchScrapeResult` from a JSON string. Returns null on failure.
@@ -3653,7 +3653,7 @@ CBERGCrawlEngineHandle *cberg_create_engine(const CBERGCrawlConfig *config);
  * freed with the appropriate free function.
  */
 CBERGScrapeResult *cberg_scrape(const CBERGCrawlEngineHandle *engine,
-                                const char *url);
+    const char *url);
 
 /**
  * Crawl a website starting from `url`, following links up to the configured depth.
@@ -3661,7 +3661,7 @@ CBERGScrapeResult *cberg_scrape(const CBERGCrawlEngineHandle *engine,
  * freed with the appropriate free function.
  */
 CBERGCrawlResult *cberg_crawl(const CBERGCrawlEngineHandle *engine,
-                              const char *url);
+    const char *url);
 
 /**
  * Discover all pages on a website by following links and sitemaps.
@@ -3669,7 +3669,7 @@ CBERGCrawlResult *cberg_crawl(const CBERGCrawlEngineHandle *engine,
  * freed with the appropriate free function.
  */
 CBERGMapResult *cberg_map_urls(const CBERGCrawlEngineHandle *engine,
-                               const char *url);
+    const char *url);
 
 /**
  * Execute browser actions on a single page.
@@ -3677,8 +3677,8 @@ CBERGMapResult *cberg_map_urls(const CBERGCrawlEngineHandle *engine,
  * freed with the appropriate free function.
  */
 CBERGInteractionResult *cberg_interact(const CBERGCrawlEngineHandle *engine,
-                                       const char *url,
-                                       const char *actions);
+    const char *url,
+    const char *actions);
 
 /**
  * Scrape multiple URLs concurrently.
@@ -3686,7 +3686,7 @@ CBERGInteractionResult *cberg_interact(const CBERGCrawlEngineHandle *engine,
  * freed with the appropriate free function.
  */
 CBERGBatchScrapeResults *cberg_batch_scrape(const CBERGCrawlEngineHandle *engine,
-                                            const char *urls);
+    const char *urls);
 
 /**
  * Crawl multiple seed URLs concurrently, each following links to configured depth.
@@ -3694,6 +3694,6 @@ CBERGBatchScrapeResults *cberg_batch_scrape(const CBERGCrawlEngineHandle *engine
  * freed with the appropriate free function.
  */
 CBERGBatchCrawlResults *cberg_batch_crawl(const CBERGCrawlEngineHandle *engine,
-                                          const char *urls);
+    const char *urls);
 
 #endif  /* CBERG_H */
