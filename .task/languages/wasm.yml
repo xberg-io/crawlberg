@@ -218,7 +218,11 @@ tasks:
     desc: Run WASM E2E tests (Node/vitest, alef-generated)
     dir: e2e/wasm
     cmds:
-      - pnpm install
+      # --no-frozen-lockfile: the e2e builds the binding from source and must not
+      # require a frozen lock that references the current, not-yet-published
+      # @xberg-io/crawlberg-<platform> version packages (CI defaults install to
+      # --frozen-lockfile, which fails pre-publish and on regen-bumped devDeps).
+      - pnpm install --no-frozen-lockfile
       - pnpm exec vitest run
 
   e2e:deno:verify:
