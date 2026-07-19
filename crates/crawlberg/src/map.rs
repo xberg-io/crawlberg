@@ -24,9 +24,15 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// 3. Direct fetch of the URL (handles XML sitemaps, gzip, or HTML link extraction)
 ///
 /// Applies `exclude_paths`, `map_search`, and `map_limit` filters to the result.
+///
+/// `map_limit` bounds both the returned length and the work performed: it is
+/// threaded into the sitemap fetch loop so a large sitemap-index tree is not
+/// fully materialized before truncation. Peak memory is bounded to roughly the
+/// limit plus a single child sitemap.
 pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
     let parsed_url = Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
+    let filter = MapFilter::from_config(config)?;
 
     if config.respect_robots_txt {
         let robots = robots_url(&parsed_url);
@@ -36,12 +42,18 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
             if !rules.sitemaps.is_empty() {
                 let mut all_urls = Vec::new();
                 for sitemap_ref in &rules.sitemaps {
+                    if let Some(limit) = config.map_limit
+                        && all_urls.len() >= limit
+                    {
+                        break;
+                    }
                     let sitemap_url = resolve_redirect(url, sitemap_ref);
                     let resolved = rewrite_url_host(&sitemap_url, &parsed_url);
-                    all_urls.extend(fetch_sitemap_tree(&resolved, config, &client).await);
+                    let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
+                    all_urls.extend(fetch_sitemap_tree(&resolved, config, &client, &filter, remaining).await);
                 }
                 if !all_urls.is_empty() {
-                    return filter_map_result(all_urls, config);
+                    return Ok(filter_map_result(all_urls, &filter, config.map_limit));
                 }
             }
         }
@@ -58,10 +70,12 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
             &sitemap_resp.content_type,
             config,
             &client,
+            &filter,
+            config.map_limit,
         )
         .await;
         if !urls.is_empty() {
-            return filter_map_result(urls, config);
+            return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
     }
 
@@ -76,18 +90,18 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
     if is_gzip && let Ok(decompressed) = decompress_gzip(&resp.body_bytes) {
         let urls = parse_sitemap_xml(&decompressed);
         if !urls.is_empty() {
-            return filter_map_result(urls, config);
+            return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
     }
 
     if is_xml {
         if is_sitemap_index(&resp.body) {
-            let urls = fetch_sitemap_tree(url, config, &client).await;
-            return filter_map_result(urls, config);
+            let urls = fetch_sitemap_tree(url, config, &client, &filter, config.map_limit).await;
+            return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
         let urls = parse_sitemap_xml(&resp.body);
         if !urls.is_empty() {
-            return filter_map_result(urls, config);
+            return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
     }
 
@@ -121,41 +135,65 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
                 }
             }
         }
-        return filter_map_result(url_set, config);
+        return Ok(filter_map_result(url_set, &filter, config.map_limit));
     }
 
     Ok(MapResult { urls: Vec::new() })
 }
 
-/// Apply exclude paths, search filter, and limit to the map result.
+/// Compiled URL filter for map results: `exclude_paths` regexes plus an optional
+/// case-insensitive `map_search` substring.
 ///
-/// Returns an error if any `exclude_paths` pattern is not a valid regex.
-pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-    if !config.exclude_paths.is_empty() {
-        let mut regexes = Vec::with_capacity(config.exclude_paths.len());
+/// Built once per [`map`] call so the same predicate can be applied incrementally
+/// while sitemaps are fetched — this bounds peak memory instead of materializing
+/// the entire sitemap tree before filtering.
+pub(crate) struct MapFilter {
+    exclude_paths: Vec<Regex>,
+    search: Option<String>,
+}
+
+impl MapFilter {
+    /// Compile the filter from config.
+    ///
+    /// Returns an error if any `exclude_paths` pattern is not a valid regex.
+    pub(crate) fn from_config(config: &CrawlConfig) -> Result<Self, CrawlError> {
+        let mut exclude_paths = Vec::with_capacity(config.exclude_paths.len());
         for pat in &config.exclude_paths {
             let re = Regex::new(pat)
                 .map_err(|e| CrawlError::Other(format!("invalid exclude_paths regex pattern '{pat}': {e}")))?;
-            regexes.push(re);
+            exclude_paths.push(re);
         }
-        urls.retain(|su| {
-            if let Ok(u) = Url::parse(&su.url) {
-                let path = u.path();
-                !regexes.iter().any(|re| re.is_match(path))
-            } else {
-                true
+        let search = config.map_search.as_ref().map(|s| s.to_lowercase());
+        Ok(Self { exclude_paths, search })
+    }
+
+    /// Whether a discovered URL passes the exclude-path and search filters.
+    ///
+    /// A URL that fails to parse is not subject to `exclude_paths` (there is no
+    /// path to match against) but is still subject to `map_search`.
+    pub(crate) fn matches(&self, url: &str) -> bool {
+        if !self.exclude_paths.is_empty()
+            && let Ok(parsed) = Url::parse(url)
+        {
+            let path = parsed.path();
+            if self.exclude_paths.iter().any(|re| re.is_match(path)) {
+                return false;
             }
-        });
+        }
+        if let Some(ref search) = self.search
+            && !url.to_lowercase().contains(search)
+        {
+            return false;
+        }
+        true
     }
+}
 
-    if let Some(ref search) = config.map_search {
-        let lower = search.to_lowercase();
-        urls.retain(|su| su.url.to_lowercase().contains(&lower));
-    }
-
-    if let Some(limit) = config.map_limit {
+/// Apply the compiled filter and `map_limit` to the collected URLs.
+pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, filter: &MapFilter, limit: Option<usize>) -> MapResult {
+    urls.retain(|su| filter.matches(&su.url));
+    if let Some(limit) = limit {
         urls.truncate(limit);
     }
-
-    Ok(MapResult { urls })
+    MapResult { urls }
 }

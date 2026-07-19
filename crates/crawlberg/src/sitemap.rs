@@ -27,6 +27,7 @@ use quick_xml::events::Event;
 use url::Url;
 
 use crate::http::http_fetch;
+use crate::map::MapFilter;
 use crate::normalize::{resolve_redirect, rewrite_url_host};
 use crate::types::{CrawlConfig, SitemapUrl};
 
@@ -157,10 +158,17 @@ pub fn is_sitemap_index(body: &str) -> bool {
 ///
 /// If the URL points to a sitemap index, fetches each child sitemap and
 /// collects all URL entries. Handles gzip-compressed sitemaps.
+///
+/// `filter` and `limit` are applied incrementally as entries are parsed: only
+/// matching URLs are retained, and fetching stops once `limit` matching URLs
+/// have been collected. This bounds both peak memory and network work on large
+/// sitemap-index trees.
 pub(crate) async fn fetch_sitemap_tree(
     sitemap_url: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    filter: &MapFilter,
+    limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
     let resp = match http_fetch(sitemap_url, config, &std::collections::HashMap::new(), client).await {
         Ok(r) => r,
@@ -174,12 +182,19 @@ pub(crate) async fn fetch_sitemap_tree(
         &resp.content_type,
         config,
         client,
+        filter,
+        limit,
     )
     .await
 }
 
 /// Process an already-fetched sitemap response body, following sitemap index
 /// references if needed. Avoids re-fetching a URL that was already retrieved.
+///
+/// `filter` and `limit` bound the result incrementally: entries that do not
+/// match `filter` are discarded as they are parsed, and both child-sitemap
+/// fetching and per-child parsing stop once `limit` matching URLs are collected.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process_sitemap_response(
     sitemap_url: &str,
     body: &str,
@@ -187,6 +202,8 @@ pub(crate) async fn process_sitemap_response(
     content_type: &str,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    filter: &MapFilter,
+    limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
     let decompressed;
     let xml_body = if content_type.contains("gzip") || content_type.contains("x-gzip") {
@@ -201,12 +218,17 @@ pub(crate) async fn process_sitemap_response(
         body
     };
 
+    let reached_limit = |len: usize| limit.is_some_and(|limit| len >= limit);
+
     if is_sitemap_index(xml_body) {
         let child_urls = parse_sitemap_index(xml_body);
         let base = Url::parse(sitemap_url).ok();
         let mut all_urls = Vec::new();
         let max_children = 100;
         for child_url in child_urls.iter().take(max_children) {
+            if reached_limit(all_urls.len()) {
+                break;
+            }
             let resolved = if let Some(ref base_parsed) = base {
                 if Url::parse(child_url).is_ok() {
                     rewrite_url_host(child_url, base_parsed)
@@ -233,11 +255,29 @@ pub(crate) async fn process_sitemap_response(
             } else {
                 child_body
             };
-            all_urls.extend(parse_sitemap_xml(child_xml));
+            for entry in parse_sitemap_xml(child_xml) {
+                if !filter.matches(&entry.url) {
+                    continue;
+                }
+                all_urls.push(entry);
+                if reached_limit(all_urls.len()) {
+                    break;
+                }
+            }
         }
         all_urls
     } else {
-        parse_sitemap_xml(xml_body)
+        let mut urls = Vec::new();
+        for entry in parse_sitemap_xml(xml_body) {
+            if !filter.matches(&entry.url) {
+                continue;
+            }
+            urls.push(entry);
+            if reached_limit(urls.len()) {
+                break;
+            }
+        }
+        urls
     }
 }
 
@@ -255,4 +295,102 @@ pub(crate) fn decompress_gzip(data: &[u8]) -> Result<String, std::io::Error> {
     let mut result = String::new();
     limited.read_to_string(&mut result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::MapFilter;
+    use crate::types::CrawlConfig;
+
+    fn urlset(count: usize) -> String {
+        let mut body =
+            String::from(r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
+        for i in 0..count {
+            body.push_str(&format!("<url><loc>https://example.com/page-{i}</loc></url>"));
+        }
+        body.push_str("</urlset>");
+        body
+    }
+
+    #[tokio::test]
+    async fn process_sitemap_response_stops_at_limit_on_single_sitemap() {
+        let config = CrawlConfig::default();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = urlset(1000);
+
+        let urls = process_sitemap_response(
+            "https://example.com/sitemap.xml",
+            &body,
+            body.as_bytes(),
+            "application/xml",
+            &config,
+            &client,
+            &filter,
+            Some(10),
+        )
+        .await;
+
+        assert_eq!(
+            urls.len(),
+            10,
+            "map_limit must cap the parsed URLs, not just the returned slice"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_sitemap_response_returns_all_when_unlimited() {
+        let config = CrawlConfig::default();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = urlset(25);
+
+        let urls = process_sitemap_response(
+            "https://example.com/sitemap.xml",
+            &body,
+            body.as_bytes(),
+            "application/xml",
+            &config,
+            &client,
+            &filter,
+            None,
+        )
+        .await;
+
+        assert_eq!(urls.len(), 25);
+    }
+
+    #[tokio::test]
+    async fn process_sitemap_response_applies_filter_before_limit() {
+        let config = CrawlConfig {
+            map_search: Some("keep".to_string()),
+            ..CrawlConfig::default()
+        };
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = concat!(
+            r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#,
+            "<url><loc>https://example.com/keep-1</loc></url>",
+            "<url><loc>https://example.com/drop-1</loc></url>",
+            "<url><loc>https://example.com/keep-2</loc></url>",
+            "<url><loc>https://example.com/drop-2</loc></url>",
+            "</urlset>",
+        );
+
+        let urls = process_sitemap_response(
+            "https://example.com/sitemap.xml",
+            body,
+            body.as_bytes(),
+            "application/xml",
+            &config,
+            &client,
+            &filter,
+            None,
+        )
+        .await;
+
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().all(|entry| entry.url.contains("keep")));
+    }
 }
