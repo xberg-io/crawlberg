@@ -105,6 +105,9 @@ uuid = { workspace = true, optional = true }
 
 # ~keep Tokio OS features stay target-scoped here because Cargo feature activations are global.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# ~keep reqwest's native TLS/HTTP2/proxy features (its `default` set) pull tokio/net -> mio,
+# which fails to compile on wasm32; restore them for native builds only.
+reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "signal", "process", "io-util"] }
 
 # ~keep wasm32 needs JS getrandom backends for both the direct v0.4 API and transitive v0.3 API.

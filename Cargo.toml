@@ -12,7 +12,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.7"
+version = "1.0.8"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -44,8 +44,8 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.7" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.7" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.8" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.8" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"
@@ -87,7 +87,11 @@ pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 quick-xml = "0.41"
 rayon = "1"
 regex = "1"
-reqwest = { version = "0.13", features = ["cookies", "gzip", "brotli"] }
+# default-features = false: reqwest's `default` set (default-tls, http2, system-proxy) pulls
+# tokio/net -> mio, which fails to compile on wasm32 even though reqwest's own code cfg-gates
+# native transport off wasm. Native-only features are re-added per-crate under
+# `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
+reqwest = { version = "0.13", default-features = false, features = ["cookies", "gzip", "brotli"] }
 rmcp = { version = "2", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 selectors = "0.39"

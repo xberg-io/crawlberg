@@ -39,6 +39,14 @@ wreq = { version = "6.0.0-rc.29", optional = true, features = ["prefix-symbols"]
 [target.'cfg(not(any(target_os = "linux", target_os = "android")))'.dependencies]
 wreq = { version = "6.0.0-rc.29", optional = true }
 
+# crawlberg-browser is native-only (deno_core is not wasm32-compatible), but the workspace-level
+# `reqwest` dependency defaults to `default-features = false` (see root Cargo.toml) so that
+# wasm32 consumers of the shared `reqwest` package edge never pull mio via tokio/net. Restore the
+# native TLS/HTTP2/proxy features here so this crate keeps building standalone (e.g. `cargo
+# publish -p crawlberg-browser`), not only when feature-unified with crates/crawlberg.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
+
 [build-dependencies]
 deno_core = { workspace = true }
 

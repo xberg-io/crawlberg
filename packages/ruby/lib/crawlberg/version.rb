@@ -6,5 +6,5 @@
 
 module Crawlberg
   ## The version string for this package.
-  VERSION = "1.0.7"
+  VERSION = "1.0.8"
 end

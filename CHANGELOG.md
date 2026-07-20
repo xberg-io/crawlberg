@@ -2,6 +2,22 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.8] - 2026-07-20
+
+### Fixed
+
+- **wasm32 builds no longer fail compiling `mio`.** `reqwest` was declared with its
+  default feature set (`default-tls`, `http2`, `system-proxy`), which enables
+  `tokio/net` → `mio` at the Cargo-manifest level. `mio` has no wasm32 support, so any
+  downstream wasm build that pulls crawlberg (e.g. `xberg-wasm`) failed to compile —
+  even though reqwest's own code cfg-gates its native transport off wasm. `reqwest` is
+  now `default-features = false` at the workspace level, with the native
+  TLS/HTTP2/proxy features re-added only under
+  `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` in the crates that need
+  them (`crawlberg`, `crawlberg-browser`, `crawlberg-bypass`, and the internal
+  `benchmark-harness` tool). Native behavior is unchanged; wasm builds get a
+  fetch-backed reqwest with no tokio/mio.
+
 ## [1.0.7] - 2026-07-19
 
 ### Fixed

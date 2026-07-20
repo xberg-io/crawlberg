@@ -46,5 +46,13 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# benchmark-harness is a native-only, unpublished dev tool (`publish = false`) that fetches
+# datasets over HTTPS via `reqwest::Client`. The workspace-level `reqwest` dependency defaults
+# to `default-features = false` (see root Cargo.toml) so that wasm32 consumers of the shared
+# `reqwest` package edge never pull mio via tokio/net; restore native TLS/HTTP2 here so dataset
+# fetches keep working.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "system-proxy"] }
+
 [lints]
 workspace = true

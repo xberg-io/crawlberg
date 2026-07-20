@@ -6,7 +6,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/xberg-io/crawlberg"
-VERSION="1.0.7"
+VERSION="1.0.8"
 FFI_PKG_NAME="crawlberg-ffi"
 FFI_DIR="ffi"
 
