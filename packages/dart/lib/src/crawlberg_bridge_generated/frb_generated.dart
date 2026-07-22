@@ -3,17 +3,14 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
-import 'package:crawlberg/src/native_loader.dart';
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:io';
-import 'dart:core' as _DartCore;
-import 'dart:core';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
-if (dart.library.js_interop) 'frb_generated.web.dart';
+    if (dart.library.js_interop) 'frb_generated.web.dart';
 import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -23,187 +20,64 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   static final instance = RustLib._();
 
   RustLib._();
-  /// Resolve the prebuilt native library from environment variable,
-  /// package-relative location, or defer to flutter_rust_bridge's default loader.
-  /// Returns `null` to defer to flutter_rust_bridge's default loader.
+
+  /// Resolve the prebuilt native library from this package's own installed
+  /// location so the load works from any working directory and under hardened
+  /// runtimes. Returns `null` to defer to flutter_rust_bridge's default loader.
   ///
-  /// Checks in order:
-  /// 1. FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR environment variable
-  ///    (allows test harnesses to point to development build paths)
-  /// 2. Package-installed location with RID subdirectory (lib/src/native/<rid>/)
-  ///    (for published pub.dev packages with platform-specific bundled native libraries)
-  /// 3. Package-installed location (lib/src/crawlberg_bridge_generated/)
-  ///    (legacy fallback for development or packages without per-platform binaries)
-  /// 4. Versioned user cache populated by `dart run crawlberg:download_libs`
-  ///    (`<cache>/crawlberg/<version>/<rid>/`), shared with the download script
-  ///    via `nativeCachedLibPath()` in `native_loader.dart`.
-  /// 5. Throws a StateError naming the expected release asset URL, the
-  ///    download command, and the env-var override (never a silent null miss).
+  /// Published pub.dev packages stage natives under `lib/src/native/<rid>/`
+  /// (e.g. `macos-arm64`, `linux-x64`). For local FRB-dev builds the dylib is
+  /// emitted into `lib/src/crawlberg_bridge_generated/`; that
+  /// path is searched as a fallback.
   static Future<ExternalLibrary?> _alefResolveExternalLibrary() async {
     try {
-      const candidates = <String>[
-        // macOS: framework bundle (preferred modern packaging)
-        'crawlberg_dart.framework',
-        // macOS: bare dylib fallback
-        'libcrawlberg_dart.dylib',
-        // Linux
-        'libcrawlberg_dart.so',
-        // Windows
-        'crawlberg_dart.dll',
+      final packageRoot = await Isolate.resolvePackageUri(
+        Uri.parse('package:crawlberg/crawlberg.dart'),
+      );
+      if (packageRoot == null) return null;
+      final libNames = _alefHostLibNames();
+      final searchDirs = <Uri>[
+        if (_alefHostRid() != null)
+          packageRoot.resolve('src/native/${_alefHostRid()}/'),
+        packageRoot.resolve('src/crawlberg_bridge_generated/'),
       ];
-
-      // Helper to open a native library by absolute path.
-      // Normalizes path to absolute to avoid hardened-runtime "relative path rejected" errors.
-      ExternalLibrary? tryOpenAbsolute(String libPath) {
-        try {
-          final absPath = File(libPath).absolute.path;
-          return ExternalLibrary.open(absPath);
-        } catch (_) {
-          return null;
-        }
-      }
-
-      bool candidateExists(String libPath) {
-        return File(libPath).existsSync() || Directory(libPath).existsSync();
-      }
-
-      // Check FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR env var first.
-      // This allows test harnesses to override library location for development.
-      final envDir = Platform.environment['FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR'];
-      if (envDir != null && envDir.isNotEmpty) {
-        final absEnvDir = Directory(envDir).absolute.path;
-        final libDir = Directory(absEnvDir);
-        if (libDir.existsSync()) {
-          for (final candidate in candidates) {
-            final libPath = '$absEnvDir/$candidate';
-            if (candidateExists(libPath)) {
-              final result = tryOpenAbsolute(libPath);
-              if (result != null) return result;
-            }
+      for (final dir in searchDirs) {
+        for (final name in libNames) {
+          final libPath = dir.resolve(name).toFilePath();
+          if (File(libPath).existsSync() || Directory(libPath).existsSync()) {
+            return ExternalLibrary.open(libPath);
           }
         }
-      }
-
-      // Compute RID (runtime identifier) from platform and architecture using Abi.current().
-      // This is more reliable than parsing Platform.version.
-      String? computeRid() {
-        final abi = Abi.current();
-        final os = Platform.operatingSystem;
-
-        // Map from (os, Abi) to RID string.
-        String? ridFromAbi() {
-          if (os == 'linux') {
-            if (abi == Abi.linuxX64) return 'linux-x64';
-            if (abi == Abi.linuxArm64) return 'linux-arm64';
-          } else if (os == 'macos') {
-            if (abi == Abi.macosX64) return 'macos-x64';
-            if (abi == Abi.macosArm64) return 'macos-arm64';
-          } else if (os == 'windows') {
-            if (abi == Abi.windowsX64) return 'windows-x64';
-            if (abi == Abi.windowsArm64) return 'windows-arm64';
-          }
-          return null;
-        }
-
-        return ridFromAbi();
-      }
-
-      final rid = computeRid();
-      if (rid != null) {
-        final packageRoot =
-        await Isolate.resolvePackageUri(_DartCore.Uri.parse('package:crawlberg/crawlberg.dart'));
-        if (packageRoot != null) {
-          final ridDir = packageRoot.resolve('src/native/$rid/');
-          for (final candidate in candidates) {
-            final libPath = ridDir.resolve(candidate).toFilePath();
-            if (candidateExists(libPath)) {
-              final result = tryOpenAbsolute(libPath);
-              if (result != null) return result;
-            }
-          }
-        }
-      }
-
-      // Check legacy package-installed location as fallback.
-      final packageRoot =
-      await Isolate.resolvePackageUri(_DartCore.Uri.parse('package:crawlberg/crawlberg.dart'));
-      if (packageRoot != null) {
-        final libDir = packageRoot.resolve('src/crawlberg_bridge_generated/');
-        for (final candidate in candidates) {
-          final libPath = libDir.resolve(candidate).toFilePath();
-          if (candidateExists(libPath)) {
-            final result = tryOpenAbsolute(libPath);
-            if (result != null) return result;
-          }
-        }
-      }
-
-      // As a last resort, resolve the running test/script's package root via
-      // `Platform.script` and search standard RID-relative locations there.
-      // Critical on macOS: `Directory.current` under hardened-runtime `dart` is
-      // the dart binary's own bin dir (relative-path dlopen rejected), whereas
-      // `Platform.script` resolves to the running .dart file's absolute URI,
-      // from which we can walk up to find the package root (the dir containing
-      // `pubspec.yaml`) and look for the bundled native library at standard
-      // paths. This handles the case where `Isolate.resolvePackageUri`
-      // resolution did not yield the actual staging location (e.g., a path
-      // dependency in local development, or a test_app whose host package
-      // contains the native lib directly rather than via the bridged package).
-      try {
-        final scriptPath = Platform.script.toFilePath();
-        var dir = File(scriptPath).absolute.parent;
-        while (dir.parent.path != dir.path
-          && !File('${dir.path}/pubspec.yaml').existsSync()) {
-          dir = dir.parent;
-        }
-        if (File('${dir.path}/pubspec.yaml').existsSync()) {
-          final rid = computeRid();
-          final absRootPath = dir.absolute.path;
-          final searchRoots = <String>[
-            if (rid != null) '$absRootPath/lib/src/native/$rid',
-            '$absRootPath/lib',
-            absRootPath,
-          ];
-          for (final root in searchRoots) {
-            final absRoot = Directory(root).absolute.path;
-            for (final candidate in candidates) {
-              final libPath = '$absRoot/$candidate';
-              if (candidateExists(libPath)) {
-                final result = tryOpenAbsolute(libPath);
-                if (result != null) return result;
-              }
-            }
-          }
-        }
-      } catch (_) {
-        // fall through to default loader
-      }
-
-      // Versioned user cache populated by `dart run crawlberg:download_libs`.
-      // Shares its cache-path logic with the download script via
-      // `nativeCachedLibPath()` so the two can never disagree on the location.
-      final cachedLibPath = nativeCachedLibPath();
-      if (cachedLibPath != null && candidateExists(cachedLibPath)) {
-        final result = tryOpenAbsolute(cachedLibPath);
-        if (result != null) return result;
       }
     } catch (_) {
-      // Fall through to the descriptive miss below on any resolution failure.
+      // Fall through to the default loader on any resolution failure.
     }
+    return null;
+  }
 
-    // Nothing bundled and nothing staged in the cache: fail loudly rather than
-    // let flutter_rust_bridge attempt a doomed relative-path dlopen. Name the
-    // exact release asset, the fetch command, and the env-var override so the
-    // consumer can recover.
-    final rid = nativeComputeRid() ?? Platform.operatingSystem;
-    throw StateError(
-      'Native library for crawlberg ($rid) was not found. '
-      'Expected it in the versioned cache (${nativeCacheDir() ?? '<unresolved cache dir>'}) '
-      'or bundled with the package. Download it with '
-      '`dart run crawlberg:download_libs`, which fetches '
-      '${nativeAssetUrlBase()}.tar.gz and verifies its SHA-256, '
-      'or point \$nativeLibDirEnv at a directory containing the native library.',
-    );
+  /// Map the host platform to the pub.dev native staging RID. Returns `null`
+  /// for unrecognized host triples so the FRB-dev fallback path runs instead.
+  static String? _alefHostRid() {
+    final abi = Abi.current();
+    if (abi == Abi.macosArm64) return 'macos-arm64';
+    if (abi == Abi.macosX64) return 'macos-x64';
+    if (abi == Abi.linuxArm64) return 'linux-arm64';
+    if (abi == Abi.linuxX64) return 'linux-x64';
+    if (abi == Abi.windowsArm64) return 'windows-arm64';
+    if (abi == Abi.windowsX64) return 'windows-x64';
+    return null;
+  }
+
+  static List<String> _alefHostLibNames() {
+    // The Dart-binding Rust crate is `{stem}-dart` (per the cargo manifest
+    // template), which produces a cdylib named `lib{stem}_dart.{ext}` on Unix
+    // and `{stem}_dart.dll` on Windows. On macOS, pub.dev-published packages
+    // may ship the binary as a Framework bundle (preferred modern packaging)
+    // — list that first so the loader finds it before the bare dylib.
+    if (Platform.isMacOS)
+      return const ['crawlberg_dart.framework', 'libcrawlberg_dart.dylib'];
+    if (Platform.isWindows) return const ['crawlberg_dart.dll'];
+    return const ['libcrawlberg_dart.so'];
   }
 
   /// Initialize flutter_rust_bridge
@@ -236,18 +110,18 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 
   @override
   ApiImplConstructor<RustLibApiImpl, RustLibWire> get apiImplConstructor =>
-  RustLibApiImpl.new;
+      RustLibApiImpl.new;
 
   @override
   WireConstructor<RustLibWire> get wireConstructor =>
-  RustLibWire.fromExternalLibrary;
+      RustLibWire.fromExternalLibrary;
 
   @override
   Future<void> executeRustInitializers() async {}
 
   @override
   ExternalLibraryLoaderConfig get defaultExternalLibraryLoaderConfig =>
-  kDefaultExternalLibraryLoaderConfig;
+      kDefaultExternalLibraryLoaderConfig;
 
   @override
   String get codegenVersion => '2.12.0';
@@ -256,12 +130,12 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   int get rustContentHash => 59002788;
 
   static const kDefaultExternalLibraryLoaderConfig =
-  ExternalLibraryLoaderConfig(
-    stem: 'crawlberg_dart',
-    ioDirectory: 'rust/target/release/',
-    webPrefix: 'pkg/',
-    wasmBindgenName: 'wasm_bindgen',
-  );
+      ExternalLibraryLoaderConfig(
+        stem: 'crawlberg_dart',
+        ioDirectory: 'rust/target/release/',
+        webPrefix: 'pkg/',
+        wasmBindgenName: 'wasm_bindgen',
+      );
 }
 
 abstract class RustLibApi extends BaseApi {
@@ -476,10 +350,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCrawlEngineHandleBatchCrawlStreamConstMeta =>
-  const TaskConstMeta(
-    debugName: "CrawlEngineHandle_batch_crawl_stream",
-    argNames: ["that", "req", "sink"],
-  );
+      const TaskConstMeta(
+        debugName: "CrawlEngineHandle_batch_crawl_stream",
+        argNames: ["that", "req", "sink"],
+      );
 
   @override
   Stream<CrawlEvent> crateCrawlEngineHandleCrawlStream({
@@ -519,10 +393,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCrawlEngineHandleCrawlStreamConstMeta =>
-  const TaskConstMeta(
-    debugName: "CrawlEngineHandle_crawl_stream",
-    argNames: ["that", "req", "sink"],
-  );
+      const TaskConstMeta(
+        debugName: "CrawlEngineHandle_crawl_stream",
+        argNames: ["that", "req", "sink"],
+      );
 
   @override
   Future<BatchCrawlResults> crateBatchCrawl({
@@ -631,7 +505,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCrawlConstMeta =>
-  const TaskConstMeta(debugName: "crawl", argNames: ["engine", "url"]);
+      const TaskConstMeta(debugName: "crawl", argNames: ["engine", "url"]);
 
   @override
   Future<ActionResult> crateCreateActionResultFromJson({required String json}) {
@@ -659,10 +533,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateActionResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_action_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_action_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ArticleMetadata> crateCreateArticleMetadataFromJson({
@@ -692,10 +566,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateArticleMetadataFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_article_metadata_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_article_metadata_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BatchCrawlResult> crateCreateBatchCrawlResultFromJson({
@@ -725,10 +599,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBatchCrawlResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_batch_crawl_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_batch_crawl_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BatchCrawlResults> crateCreateBatchCrawlResultsFromJson({
@@ -758,10 +632,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBatchCrawlResultsFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_batch_crawl_results_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_batch_crawl_results_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BatchCrawlStreamRequest> crateCreateBatchCrawlStreamRequestFromJson({
@@ -791,10 +665,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBatchCrawlStreamRequestFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_batch_crawl_stream_request_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_batch_crawl_stream_request_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BatchScrapeResult> crateCreateBatchScrapeResultFromJson({
@@ -824,10 +698,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBatchScrapeResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_batch_scrape_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_batch_scrape_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BatchScrapeResults> crateCreateBatchScrapeResultsFromJson({
@@ -857,10 +731,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBatchScrapeResultsFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_batch_scrape_results_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_batch_scrape_results_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BrowserConfig> crateCreateBrowserConfigFromJson({
@@ -890,10 +764,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBrowserConfigFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_browser_config_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_browser_config_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<BrowserExtras> crateCreateBrowserExtrasFromJson({
@@ -923,10 +797,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateBrowserExtrasFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_browser_extras_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_browser_extras_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CitationReference> crateCreateCitationReferenceFromJson({
@@ -956,10 +830,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCitationReferenceFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_citation_reference_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_citation_reference_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CitationResult> crateCreateCitationResultFromJson({
@@ -989,10 +863,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCitationResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_citation_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_citation_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ContentConfig> crateCreateContentConfigFromJson({
@@ -1022,10 +896,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateContentConfigFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_content_config_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_content_config_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CookieInfo> crateCreateCookieInfoFromJson({required String json}) {
@@ -1053,10 +927,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCookieInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_cookie_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_cookie_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CrawlConfig> crateCreateCrawlConfigFromJson({required String json}) {
@@ -1084,10 +958,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCrawlConfigFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_crawl_config_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_crawl_config_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CrawlPageResult> crateCreateCrawlPageResultFromJson({
@@ -1117,10 +991,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCrawlPageResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_crawl_page_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_crawl_page_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CrawlResult> crateCreateCrawlResultFromJson({required String json}) {
@@ -1148,10 +1022,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCrawlResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_crawl_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_crawl_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CrawlStreamRequest> crateCreateCrawlStreamRequestFromJson({
@@ -1181,10 +1055,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateCrawlStreamRequestFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_crawl_stream_request_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_crawl_stream_request_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<DownloadedAsset> crateCreateDownloadedAssetFromJson({
@@ -1214,10 +1088,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateDownloadedAssetFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_downloaded_asset_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_downloaded_asset_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<DownloadedDocument> crateCreateDownloadedDocumentFromJson({
@@ -1247,10 +1121,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateDownloadedDocumentFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_downloaded_document_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_downloaded_document_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CrawlEngineHandle> crateCreateEngine({CrawlConfig? config}) {
@@ -1268,7 +1142,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         },
         codec: SseCodec(
           decodeSuccessData:
-          sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle,
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle,
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateCreateEngineConstMeta,
@@ -1279,7 +1153,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateEngineConstMeta =>
-  const TaskConstMeta(debugName: "create_engine", argNames: ["config"]);
+      const TaskConstMeta(debugName: "create_engine", argNames: ["config"]);
 
   @override
   Future<ExtractionMeta> crateCreateExtractionMetaFromJson({
@@ -1309,10 +1183,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateExtractionMetaFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_extraction_meta_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_extraction_meta_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<FaviconInfo> crateCreateFaviconInfoFromJson({required String json}) {
@@ -1340,10 +1214,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateFaviconInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_favicon_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_favicon_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<FeedInfo> crateCreateFeedInfoFromJson({required String json}) {
@@ -1371,10 +1245,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateFeedInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_feed_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_feed_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<HeadingInfo> crateCreateHeadingInfoFromJson({required String json}) {
@@ -1402,10 +1276,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateHeadingInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_heading_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_heading_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<HreflangEntry> crateCreateHreflangEntryFromJson({
@@ -1435,10 +1309,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateHreflangEntryFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_hreflang_entry_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_hreflang_entry_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ImageInfo> crateCreateImageInfoFromJson({required String json}) {
@@ -1466,10 +1340,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateImageInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_image_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_image_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<InteractionResult> crateCreateInteractionResultFromJson({
@@ -1499,10 +1373,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateInteractionResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_interaction_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_interaction_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<JsonLdEntry> crateCreateJsonLdEntryFromJson({required String json}) {
@@ -1530,10 +1404,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateJsonLdEntryFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_json_ld_entry_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_json_ld_entry_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<LinkInfo> crateCreateLinkInfoFromJson({required String json}) {
@@ -1561,10 +1435,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateLinkInfoFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_link_info_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_link_info_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<MapResult> crateCreateMapResultFromJson({required String json}) {
@@ -1592,10 +1466,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateMapResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_map_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_map_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<MarkdownResult> crateCreateMarkdownResultFromJson({
@@ -1625,10 +1499,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateMarkdownResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_markdown_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_markdown_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<PageMetadata> crateCreatePageMetadataFromJson({required String json}) {
@@ -1656,10 +1530,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreatePageMetadataFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_page_metadata_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_page_metadata_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ProxyConfig> crateCreateProxyConfigFromJson({required String json}) {
@@ -1687,10 +1561,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateProxyConfigFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_proxy_config_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_proxy_config_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ResponseMeta> crateCreateResponseMetaFromJson({required String json}) {
@@ -1718,10 +1592,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateResponseMetaFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_response_meta_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_response_meta_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<ScrapeResult> crateCreateScrapeResultFromJson({required String json}) {
@@ -1749,10 +1623,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateScrapeResultFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_scrape_result_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_scrape_result_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<SitemapUrl> crateCreateSitemapUrlFromJson({required String json}) {
@@ -1780,10 +1654,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateSitemapUrlFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_sitemap_url_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_sitemap_url_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<SsrfPolicy> crateCreateSsrfPolicyFromJson({required String json}) {
@@ -1811,10 +1685,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateCreateSsrfPolicyFromJsonConstMeta =>
-  const TaskConstMeta(
-    debugName: "create_ssrf_policy_from_json",
-    argNames: ["json"],
-  );
+      const TaskConstMeta(
+        debugName: "create_ssrf_policy_from_json",
+        argNames: ["json"],
+      );
 
   @override
   Future<CitationResult> crateGenerateCitations({required String markdown}) {
@@ -1918,7 +1792,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateMapUrlsConstMeta =>
-  const TaskConstMeta(debugName: "map_urls", argNames: ["engine", "url"]);
+      const TaskConstMeta(debugName: "map_urls", argNames: ["engine", "url"]);
 
   @override
   Future<ScrapeResult> crateScrape({
@@ -1953,15 +1827,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateScrapeConstMeta =>
-  const TaskConstMeta(debugName: "scrape", argNames: ["engine", "url"]);
+      const TaskConstMeta(debugName: "scrape", argNames: ["engine", "url"]);
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_CrawlEngineHandle => wire
-  .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle;
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle;
 
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_CrawlEngineHandle => wire
-  .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle;
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCrawlEngineHandle;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
@@ -2025,7 +1899,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 5)
-    throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return ActionResult(
       actionIndex: dco_decode_i_64(arr[0]),
       actionType: dco_decode_String(arr[1]),
@@ -2040,7 +1914,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 5)
-    throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return ArticleMetadata(
       publishedTime: dco_decode_opt_String(arr[0]),
       modifiedTime: dco_decode_opt_String(arr[1]),
@@ -2061,19 +1935,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-      return AuthConfig_Basic(
+        return AuthConfig_Basic(
           username: dco_decode_String(raw[1]),
           password: dco_decode_String(raw[2]),
         );
       case 1:
-      return AuthConfig_Bearer(token: dco_decode_String(raw[1]));
+        return AuthConfig_Bearer(token: dco_decode_String(raw[1]));
       case 2:
-      return AuthConfig_Header(
+        return AuthConfig_Header(
           name: dco_decode_String(raw[1]),
           value: dco_decode_String(raw[2]),
         );
       default:
-      throw Exception("unreachable");
+        throw Exception("unreachable");
     }
   }
 
@@ -2082,7 +1956,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return BatchCrawlResult(
       url: dco_decode_String(arr[0]),
       result: dco_decode_opt_box_autoadd_crawl_result(arr[1]),
@@ -2095,7 +1969,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 4)
-    throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return BatchCrawlResults(
       results: dco_decode_list_batch_crawl_result(arr[0]),
       totalCount: dco_decode_i_64(arr[1]),
@@ -2109,7 +1983,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 1)
-    throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
     return BatchCrawlStreamRequest(urls: dco_decode_list_String(arr[0]));
   }
 
@@ -2118,7 +1992,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return BatchScrapeResult(
       url: dco_decode_String(arr[0]),
       result: dco_decode_opt_box_autoadd_scrape_result(arr[1]),
@@ -2131,7 +2005,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 4)
-    throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return BatchScrapeResults(
       results: dco_decode_list_batch_scrape_result(arr[0]),
       totalCount: dco_decode_i_64(arr[1]),
@@ -2255,7 +2129,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 13)
-    throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2278,7 +2152,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return BrowserExtras(
       evalResult: dco_decode_opt_String(arr[0]),
       networkEvents: dco_decode_list_response_meta(arr[1]),
@@ -2303,7 +2177,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return CitationReference(
       index: dco_decode_i_64(arr[0]),
       url: dco_decode_String(arr[1]),
@@ -2316,7 +2190,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2)
-    throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return CitationResult(
       content: dco_decode_String(arr[0]),
       references: dco_decode_list_citation_reference(arr[1]),
@@ -2328,7 +2202,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 12)
-    throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2350,7 +2224,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 4)
-    throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return CookieInfo(
       name: dco_decode_String(arr[0]),
       value: dco_decode_String(arr[1]),
@@ -2364,7 +2238,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 39)
-    throw Exception('unexpected arr length: expect 39 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 39 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -2413,51 +2287,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-      return CrawlError_NotFound(field0: dco_decode_String(raw[1]));
+        return CrawlError_NotFound(field0: dco_decode_String(raw[1]));
       case 1:
-      return CrawlError_Unauthorized(field0: dco_decode_String(raw[1]));
+        return CrawlError_Unauthorized(field0: dco_decode_String(raw[1]));
       case 2:
-      return CrawlError_Forbidden(field0: dco_decode_String(raw[1]));
+        return CrawlError_Forbidden(field0: dco_decode_String(raw[1]));
       case 3:
-      return CrawlError_WafBlocked(
+        return CrawlError_WafBlocked(
           vendor: dco_decode_String(raw[1]),
           message: dco_decode_String(raw[2]),
         );
       case 4:
-      return CrawlError_Timeout(field0: dco_decode_String(raw[1]));
+        return CrawlError_Timeout(field0: dco_decode_String(raw[1]));
       case 5:
-      return CrawlError_RateLimited(field0: dco_decode_String(raw[1]));
+        return CrawlError_RateLimited(field0: dco_decode_String(raw[1]));
       case 6:
-      return CrawlError_ServerError(field0: dco_decode_String(raw[1]));
+        return CrawlError_ServerError(field0: dco_decode_String(raw[1]));
       case 7:
-      return CrawlError_BadGateway(field0: dco_decode_String(raw[1]));
+        return CrawlError_BadGateway(field0: dco_decode_String(raw[1]));
       case 8:
-      return CrawlError_Gone(field0: dco_decode_String(raw[1]));
+        return CrawlError_Gone(field0: dco_decode_String(raw[1]));
       case 9:
-      return CrawlError_Connection(field0: dco_decode_String(raw[1]));
+        return CrawlError_Connection(field0: dco_decode_String(raw[1]));
       case 10:
-      return CrawlError_Dns(field0: dco_decode_String(raw[1]));
+        return CrawlError_Dns(field0: dco_decode_String(raw[1]));
       case 11:
-      return CrawlError_Ssl(field0: dco_decode_String(raw[1]));
+        return CrawlError_Ssl(field0: dco_decode_String(raw[1]));
       case 12:
-      return CrawlError_DataLoss(field0: dco_decode_String(raw[1]));
+        return CrawlError_DataLoss(field0: dco_decode_String(raw[1]));
       case 13:
-      return CrawlError_BrowserError(field0: dco_decode_String(raw[1]));
+        return CrawlError_BrowserError(field0: dco_decode_String(raw[1]));
       case 14:
-      return CrawlError_BrowserTimeout(field0: dco_decode_String(raw[1]));
+        return CrawlError_BrowserTimeout(field0: dco_decode_String(raw[1]));
       case 15:
-      return CrawlError_InvalidConfig(field0: dco_decode_String(raw[1]));
+        return CrawlError_InvalidConfig(field0: dco_decode_String(raw[1]));
       case 16:
-      return CrawlError_Unsupported(field0: dco_decode_String(raw[1]));
+        return CrawlError_Unsupported(field0: dco_decode_String(raw[1]));
       case 17:
-      return CrawlError_SsrfPolicyViolation(
+        return CrawlError_SsrfPolicyViolation(
           url: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
       case 18:
-      return CrawlError_Other(field0: dco_decode_String(raw[1]));
+        return CrawlError_Other(field0: dco_decode_String(raw[1]));
       default:
-      throw Exception("unreachable");
+        throw Exception("unreachable");
     }
   }
 
@@ -2466,18 +2340,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-      return CrawlEvent_Page(
+        return CrawlEvent_Page(
           result: dco_decode_box_autoadd_crawl_page_result(raw[1]),
         );
       case 1:
-      return CrawlEvent_Error(
+        return CrawlEvent_Error(
           url: dco_decode_String(raw[1]),
           error: dco_decode_String(raw[2]),
         );
       case 2:
-      return CrawlEvent_Complete(pagesCrawled: dco_decode_i_64(raw[1]));
+        return CrawlEvent_Complete(pagesCrawled: dco_decode_i_64(raw[1]));
       default:
-      throw Exception("unreachable");
+        throw Exception("unreachable");
     }
   }
 
@@ -2486,7 +2360,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 21)
-    throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -2519,7 +2393,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 8)
-    throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return CrawlResult(
       pages: dco_decode_list_crawl_page_result(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -2537,7 +2411,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 1)
-    throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
     return CrawlStreamRequest(url: dco_decode_String(arr[0]));
   }
 
@@ -2546,7 +2420,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 6)
-    throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return DownloadedAsset(
       url: dco_decode_String(arr[0]),
       contentHash: dco_decode_String(arr[1]),
@@ -2562,7 +2436,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 6)
-    throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return DownloadedDocument(
       url: dco_decode_String(arr[0]),
       mimeType: dco_decode_String(arr[1]),
@@ -2578,7 +2452,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 5)
-    throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return ExtractionMeta(
       cost: dco_decode_opt_box_autoadd_f_64(arr[0]),
       promptTokens: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -2599,7 +2473,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 4)
-    throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return FaviconInfo(
       url: dco_decode_String(arr[0]),
       rel: dco_decode_String(arr[1]),
@@ -2613,7 +2487,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return FeedInfo(
       url: dco_decode_String(arr[0]),
       title: dco_decode_opt_String(arr[1]),
@@ -2632,7 +2506,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2)
-    throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return HeadingInfo(
       level: dco_decode_i_64(arr[0]),
       text: dco_decode_String(arr[1]),
@@ -2644,7 +2518,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2)
-    throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return HreflangEntry(
       lang: dco_decode_String(arr[0]),
       url: dco_decode_String(arr[1]),
@@ -2668,7 +2542,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 5)
-    throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return ImageInfo(
       url: dco_decode_String(arr[0]),
       alt: dco_decode_opt_String(arr[1]),
@@ -2689,7 +2563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return InteractionResult(
       actionResults: dco_decode_list_action_result(arr[0]),
       finalHtml: dco_decode_String(arr[1]),
@@ -2702,7 +2576,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return JsonLdEntry(
       schemaType: dco_decode_String(arr[0]),
       name: dco_decode_opt_String(arr[1]),
@@ -2715,7 +2589,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 5)
-    throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return LinkInfo(
       url: dco_decode_String(arr[0]),
       text: dco_decode_String(arr[1]),
@@ -2868,7 +2742,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 1)
-    throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
     return MapResult(urls: dco_decode_list_sitemap_url(arr[0]));
   }
 
@@ -2877,7 +2751,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 6)
-    throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return MarkdownResult(
       content: dco_decode_String(arr[0]),
       documentStructure: dco_decode_opt_String(arr[1]),
@@ -3003,33 +2877,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-      return PageAction_Click(selector: dco_decode_String(raw[1]));
+        return PageAction_Click(selector: dco_decode_String(raw[1]));
       case 1:
-      return PageAction_TypeText(
+        return PageAction_TypeText(
           selector: dco_decode_String(raw[1]),
           text: dco_decode_String(raw[2]),
         );
       case 2:
-      return PageAction_Press(key: dco_decode_String(raw[1]));
+        return PageAction_Press(key: dco_decode_String(raw[1]));
       case 3:
-      return PageAction_Scroll(
+        return PageAction_Scroll(
           direction: dco_decode_scroll_direction(raw[1]),
           selector: dco_decode_String(raw[2]),
           amount: dco_decode_i_64(raw[3]),
         );
       case 4:
-      return PageAction_Wait(
+        return PageAction_Wait(
           milliseconds: dco_decode_i_64(raw[1]),
           selector: dco_decode_String(raw[2]),
         );
       case 5:
-      return PageAction_Screenshot(fullPage: dco_decode_bool(raw[1]));
+        return PageAction_Screenshot(fullPage: dco_decode_bool(raw[1]));
       case 6:
-      return PageAction_ExecuteJs(script: dco_decode_String(raw[1]));
+        return PageAction_ExecuteJs(script: dco_decode_String(raw[1]));
       case 7:
-      return PageAction_Scrape();
+        return PageAction_Scrape();
       default:
-      throw Exception("unreachable");
+        throw Exception("unreachable");
     }
   }
 
@@ -3038,7 +2912,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 43)
-    throw Exception('unexpected arr length: expect 43 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 43 but see ${arr.length}');
     return PageMetadata(
       title: dco_decode_opt_String(arr[0]),
       description: dco_decode_opt_String(arr[1]),
@@ -3091,7 +2965,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
-    throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ProxyConfig(
       url: dco_decode_String(arr[0]),
       username: dco_decode_opt_String(arr[1]),
@@ -3114,7 +2988,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 7)
-    throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return ResponseMeta(
       etag: dco_decode_opt_String(arr[0]),
       lastModified: dco_decode_opt_String(arr[1]),
@@ -3131,7 +3005,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 28)
-    throw Exception('unexpected arr length: expect 28 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 28 but see ${arr.length}');
     return ScrapeResult(
       statusCode: dco_decode_i_64(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -3177,7 +3051,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 4)
-    throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return SitemapUrl(
       url: dco_decode_String(arr[0]),
       lastmod: dco_decode_opt_String(arr[1]),
@@ -3191,19 +3065,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-      return SsrfError_DeniedByPolicy(reason: dco_decode_String(raw[1]));
+        return SsrfError_DeniedByPolicy(reason: dco_decode_String(raw[1]));
       case 1:
-      return SsrfError_NotOnAllowlist();
+        return SsrfError_NotOnAllowlist();
       case 2:
-      return SsrfError_DnsResolutionFailed(field0: dco_decode_String(raw[1]));
+        return SsrfError_DnsResolutionFailed(field0: dco_decode_String(raw[1]));
       case 3:
-      return SsrfError_InvalidUrl(field0: dco_decode_String(raw[1]));
+        return SsrfError_InvalidUrl(field0: dco_decode_String(raw[1]));
       case 4:
-      return SsrfError_DisallowedScheme(field0: dco_decode_String(raw[1]));
+        return SsrfError_DisallowedScheme(field0: dco_decode_String(raw[1]));
       case 5:
-      return SsrfError_TooManyRedirects();
+        return SsrfError_TooManyRedirects();
       default:
-      throw Exception("unreachable");
+        throw Exception("unreachable");
     }
   }
 
@@ -3212,7 +3086,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2)
-    throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
     return SsrfPolicy(
       denyPrivate: dco_decode_bool(arr[0]),
       maxRedirects: dco_decode_i_64(arr[1]),
@@ -3352,18 +3226,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-      var var_username = sse_decode_String(deserializer);
-      var var_password = sse_decode_String(deserializer);
-      return AuthConfig_Basic(username: var_username, password: var_password);
+        var var_username = sse_decode_String(deserializer);
+        var var_password = sse_decode_String(deserializer);
+        return AuthConfig_Basic(username: var_username, password: var_password);
       case 1:
-      var var_token = sse_decode_String(deserializer);
-      return AuthConfig_Bearer(token: var_token);
+        var var_token = sse_decode_String(deserializer);
+        return AuthConfig_Bearer(token: var_token);
       case 2:
-      var var_name = sse_decode_String(deserializer);
-      var var_value = sse_decode_String(deserializer);
-      return AuthConfig_Header(name: var_name, value: var_value);
+        var var_name = sse_decode_String(deserializer);
+        var var_value = sse_decode_String(deserializer);
+        return AuthConfig_Header(name: var_name, value: var_value);
       default:
-      throw UnimplementedError('');
+        throw UnimplementedError('');
     }
   }
 
@@ -3786,66 +3660,66 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_NotFound(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_NotFound(field0: var_field0);
       case 1:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Unauthorized(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Unauthorized(field0: var_field0);
       case 2:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Forbidden(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Forbidden(field0: var_field0);
       case 3:
-      var var_vendor = sse_decode_String(deserializer);
-      var var_message = sse_decode_String(deserializer);
-      return CrawlError_WafBlocked(vendor: var_vendor, message: var_message);
+        var var_vendor = sse_decode_String(deserializer);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_WafBlocked(vendor: var_vendor, message: var_message);
       case 4:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Timeout(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Timeout(field0: var_field0);
       case 5:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_RateLimited(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_RateLimited(field0: var_field0);
       case 6:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_ServerError(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_ServerError(field0: var_field0);
       case 7:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_BadGateway(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_BadGateway(field0: var_field0);
       case 8:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Gone(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Gone(field0: var_field0);
       case 9:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Connection(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Connection(field0: var_field0);
       case 10:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Dns(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Dns(field0: var_field0);
       case 11:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Ssl(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Ssl(field0: var_field0);
       case 12:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_DataLoss(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_DataLoss(field0: var_field0);
       case 13:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_BrowserError(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_BrowserError(field0: var_field0);
       case 14:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_BrowserTimeout(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_BrowserTimeout(field0: var_field0);
       case 15:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_InvalidConfig(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_InvalidConfig(field0: var_field0);
       case 16:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Unsupported(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Unsupported(field0: var_field0);
       case 17:
-      var var_url = sse_decode_String(deserializer);
-      var var_reason = sse_decode_String(deserializer);
-      return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
+        var var_url = sse_decode_String(deserializer);
+        var var_reason = sse_decode_String(deserializer);
+        return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
       case 18:
-      var var_field0 = sse_decode_String(deserializer);
-      return CrawlError_Other(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return CrawlError_Other(field0: var_field0);
       default:
-      throw UnimplementedError('');
+        throw UnimplementedError('');
     }
   }
 
@@ -3856,17 +3730,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-      var var_result = sse_decode_box_autoadd_crawl_page_result(deserializer);
-      return CrawlEvent_Page(result: var_result);
+        var var_result = sse_decode_box_autoadd_crawl_page_result(deserializer);
+        return CrawlEvent_Page(result: var_result);
       case 1:
-      var var_url = sse_decode_String(deserializer);
-      var var_error = sse_decode_String(deserializer);
-      return CrawlEvent_Error(url: var_url, error: var_error);
+        var var_url = sse_decode_String(deserializer);
+        var var_error = sse_decode_String(deserializer);
+        return CrawlEvent_Error(url: var_url, error: var_error);
       case 2:
-      var var_pagesCrawled = sse_decode_i_64(deserializer);
-      return CrawlEvent_Complete(pagesCrawled: var_pagesCrawled);
+        var var_pagesCrawled = sse_decode_i_64(deserializer);
+        return CrawlEvent_Complete(pagesCrawled: var_pagesCrawled);
       default:
-      throw UnimplementedError('');
+        throw UnimplementedError('');
     }
   }
 
@@ -4688,41 +4562,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-      var var_selector = sse_decode_String(deserializer);
-      return PageAction_Click(selector: var_selector);
+        var var_selector = sse_decode_String(deserializer);
+        return PageAction_Click(selector: var_selector);
       case 1:
-      var var_selector = sse_decode_String(deserializer);
-      var var_text = sse_decode_String(deserializer);
-      return PageAction_TypeText(selector: var_selector, text: var_text);
+        var var_selector = sse_decode_String(deserializer);
+        var var_text = sse_decode_String(deserializer);
+        return PageAction_TypeText(selector: var_selector, text: var_text);
       case 2:
-      var var_key = sse_decode_String(deserializer);
-      return PageAction_Press(key: var_key);
+        var var_key = sse_decode_String(deserializer);
+        return PageAction_Press(key: var_key);
       case 3:
-      var var_direction = sse_decode_scroll_direction(deserializer);
-      var var_selector = sse_decode_String(deserializer);
-      var var_amount = sse_decode_i_64(deserializer);
-      return PageAction_Scroll(
+        var var_direction = sse_decode_scroll_direction(deserializer);
+        var var_selector = sse_decode_String(deserializer);
+        var var_amount = sse_decode_i_64(deserializer);
+        return PageAction_Scroll(
           direction: var_direction,
           selector: var_selector,
           amount: var_amount,
         );
       case 4:
-      var var_milliseconds = sse_decode_i_64(deserializer);
-      var var_selector = sse_decode_String(deserializer);
-      return PageAction_Wait(
+        var var_milliseconds = sse_decode_i_64(deserializer);
+        var var_selector = sse_decode_String(deserializer);
+        return PageAction_Wait(
           milliseconds: var_milliseconds,
           selector: var_selector,
         );
       case 5:
-      var var_fullPage = sse_decode_bool(deserializer);
-      return PageAction_Screenshot(fullPage: var_fullPage);
+        var var_fullPage = sse_decode_bool(deserializer);
+        return PageAction_Screenshot(fullPage: var_fullPage);
       case 6:
-      var var_script = sse_decode_String(deserializer);
-      return PageAction_ExecuteJs(script: var_script);
+        var var_script = sse_decode_String(deserializer);
+        return PageAction_ExecuteJs(script: var_script);
       case 7:
-      return PageAction_Scrape();
+        return PageAction_Scrape();
       default:
-      throw UnimplementedError('');
+        throw UnimplementedError('');
     }
   }
 
@@ -4961,23 +4835,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-      var var_reason = sse_decode_String(deserializer);
-      return SsrfError_DeniedByPolicy(reason: var_reason);
+        var var_reason = sse_decode_String(deserializer);
+        return SsrfError_DeniedByPolicy(reason: var_reason);
       case 1:
-      return SsrfError_NotOnAllowlist();
+        return SsrfError_NotOnAllowlist();
       case 2:
-      var var_field0 = sse_decode_String(deserializer);
-      return SsrfError_DnsResolutionFailed(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return SsrfError_DnsResolutionFailed(field0: var_field0);
       case 3:
-      var var_field0 = sse_decode_String(deserializer);
-      return SsrfError_InvalidUrl(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return SsrfError_InvalidUrl(field0: var_field0);
       case 4:
-      var var_field0 = sse_decode_String(deserializer);
-      return SsrfError_DisallowedScheme(field0: var_field0);
+        var var_field0 = sse_decode_String(deserializer);
+        return SsrfError_DisallowedScheme(field0: var_field0);
       case 5:
-      return SsrfError_TooManyRedirects();
+        return SsrfError_TooManyRedirects();
       default:
-      throw UnimplementedError('');
+        throw UnimplementedError('');
     }
   }
 
@@ -5126,16 +5000,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
       case AuthConfig_Basic(username: final username, password: final password):
-      sse_encode_i_32(0, serializer);
-      sse_encode_String(username, serializer);
-      sse_encode_String(password, serializer);
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(username, serializer);
+        sse_encode_String(password, serializer);
       case AuthConfig_Bearer(token: final token):
-      sse_encode_i_32(1, serializer);
-      sse_encode_String(token, serializer);
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(token, serializer);
       case AuthConfig_Header(name: final name, value: final value):
-      sse_encode_i_32(2, serializer);
-      sse_encode_String(name, serializer);
-      sse_encode_String(value, serializer);
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(name, serializer);
+        sse_encode_String(value, serializer);
     }
   }
 
@@ -5484,64 +5358,64 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
       case CrawlError_NotFound(field0: final field0):
-      sse_encode_i_32(0, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Unauthorized(field0: final field0):
-      sse_encode_i_32(1, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Forbidden(field0: final field0):
-      sse_encode_i_32(2, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_WafBlocked(vendor: final vendor, message: final message):
-      sse_encode_i_32(3, serializer);
-      sse_encode_String(vendor, serializer);
-      sse_encode_String(message, serializer);
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(vendor, serializer);
+        sse_encode_String(message, serializer);
       case CrawlError_Timeout(field0: final field0):
-      sse_encode_i_32(4, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(4, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_RateLimited(field0: final field0):
-      sse_encode_i_32(5, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(5, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_ServerError(field0: final field0):
-      sse_encode_i_32(6, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(6, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_BadGateway(field0: final field0):
-      sse_encode_i_32(7, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(7, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Gone(field0: final field0):
-      sse_encode_i_32(8, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(8, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Connection(field0: final field0):
-      sse_encode_i_32(9, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(9, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Dns(field0: final field0):
-      sse_encode_i_32(10, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(10, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Ssl(field0: final field0):
-      sse_encode_i_32(11, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(11, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_DataLoss(field0: final field0):
-      sse_encode_i_32(12, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(12, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_BrowserError(field0: final field0):
-      sse_encode_i_32(13, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(13, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_BrowserTimeout(field0: final field0):
-      sse_encode_i_32(14, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(14, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_InvalidConfig(field0: final field0):
-      sse_encode_i_32(15, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(15, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_Unsupported(field0: final field0):
-      sse_encode_i_32(16, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(16, serializer);
+        sse_encode_String(field0, serializer);
       case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
-      sse_encode_i_32(17, serializer);
-      sse_encode_String(url, serializer);
-      sse_encode_String(reason, serializer);
+        sse_encode_i_32(17, serializer);
+        sse_encode_String(url, serializer);
+        sse_encode_String(reason, serializer);
       case CrawlError_Other(field0: final field0):
-      sse_encode_i_32(18, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(18, serializer);
+        sse_encode_String(field0, serializer);
     }
   }
 
@@ -5550,15 +5424,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
       case CrawlEvent_Page(result: final result):
-      sse_encode_i_32(0, serializer);
-      sse_encode_box_autoadd_crawl_page_result(result, serializer);
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_crawl_page_result(result, serializer);
       case CrawlEvent_Error(url: final url, error: final error):
-      sse_encode_i_32(1, serializer);
-      sse_encode_String(url, serializer);
-      sse_encode_String(error, serializer);
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(url, serializer);
+        sse_encode_String(error, serializer);
       case CrawlEvent_Complete(pagesCrawled: final pagesCrawled):
-      sse_encode_i_32(2, serializer);
-      sse_encode_i_64(pagesCrawled, serializer);
+        sse_encode_i_32(2, serializer);
+        sse_encode_i_64(pagesCrawled, serializer);
     }
   }
 
@@ -6273,39 +6147,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
       case PageAction_Click(selector: final selector):
-      sse_encode_i_32(0, serializer);
-      sse_encode_String(selector, serializer);
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(selector, serializer);
       case PageAction_TypeText(selector: final selector, text: final text):
-      sse_encode_i_32(1, serializer);
-      sse_encode_String(selector, serializer);
-      sse_encode_String(text, serializer);
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(selector, serializer);
+        sse_encode_String(text, serializer);
       case PageAction_Press(key: final key):
-      sse_encode_i_32(2, serializer);
-      sse_encode_String(key, serializer);
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(key, serializer);
       case PageAction_Scroll(
         direction: final direction,
         selector: final selector,
         amount: final amount,
       ):
-      sse_encode_i_32(3, serializer);
-      sse_encode_scroll_direction(direction, serializer);
-      sse_encode_String(selector, serializer);
-      sse_encode_i_64(amount, serializer);
+        sse_encode_i_32(3, serializer);
+        sse_encode_scroll_direction(direction, serializer);
+        sse_encode_String(selector, serializer);
+        sse_encode_i_64(amount, serializer);
       case PageAction_Wait(
         milliseconds: final milliseconds,
         selector: final selector,
       ):
-      sse_encode_i_32(4, serializer);
-      sse_encode_i_64(milliseconds, serializer);
-      sse_encode_String(selector, serializer);
+        sse_encode_i_32(4, serializer);
+        sse_encode_i_64(milliseconds, serializer);
+        sse_encode_String(selector, serializer);
       case PageAction_Screenshot(fullPage: final fullPage):
-      sse_encode_i_32(5, serializer);
-      sse_encode_bool(fullPage, serializer);
+        sse_encode_i_32(5, serializer);
+        sse_encode_bool(fullPage, serializer);
       case PageAction_ExecuteJs(script: final script):
-      sse_encode_i_32(6, serializer);
-      sse_encode_String(script, serializer);
+        sse_encode_i_32(6, serializer);
+        sse_encode_String(script, serializer);
       case PageAction_Scrape():
-      sse_encode_i_32(7, serializer);
+        sse_encode_i_32(7, serializer);
     }
   }
 
@@ -6446,21 +6320,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
       case SsrfError_DeniedByPolicy(reason: final reason):
-      sse_encode_i_32(0, serializer);
-      sse_encode_String(reason, serializer);
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(reason, serializer);
       case SsrfError_NotOnAllowlist():
-      sse_encode_i_32(1, serializer);
+        sse_encode_i_32(1, serializer);
       case SsrfError_DnsResolutionFailed(field0: final field0):
-      sse_encode_i_32(2, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(field0, serializer);
       case SsrfError_InvalidUrl(field0: final field0):
-      sse_encode_i_32(3, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(field0, serializer);
       case SsrfError_DisallowedScheme(field0: final field0):
-      sse_encode_i_32(4, serializer);
-      sse_encode_String(field0, serializer);
+        sse_encode_i_32(4, serializer);
+        sse_encode_String(field0, serializer);
       case SsrfError_TooManyRedirects():
-      sse_encode_i_32(5, serializer);
+        sse_encode_i_32(5, serializer);
     }
   }
 
@@ -6493,7 +6367,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 class CrawlEngineHandleImpl extends RustOpaque implements CrawlEngineHandle {
   // Not to be used by end users
   CrawlEngineHandleImpl.frbInternalDcoDecode(List<dynamic> wire)
-  : super.frbInternalDcoDecode(wire, _kStaticData);
+    : super.frbInternalDcoDecode(wire, _kStaticData);
 
   // Not to be used by end users
   CrawlEngineHandleImpl.frbInternalSseDecode(
@@ -6503,23 +6377,23 @@ class CrawlEngineHandleImpl extends RustOpaque implements CrawlEngineHandle {
 
   static final _kStaticData = RustArcStaticData(
     rustArcIncrementStrongCount:
-    RustLib.instance.api.rust_arc_increment_strong_count_CrawlEngineHandle,
+        RustLib.instance.api.rust_arc_increment_strong_count_CrawlEngineHandle,
     rustArcDecrementStrongCount:
-    RustLib.instance.api.rust_arc_decrement_strong_count_CrawlEngineHandle,
+        RustLib.instance.api.rust_arc_decrement_strong_count_CrawlEngineHandle,
     rustArcDecrementStrongCountPtr: RustLib
-    .instance
-    .api
-    .rust_arc_decrement_strong_count_CrawlEngineHandlePtr,
+        .instance
+        .api
+        .rust_arc_decrement_strong_count_CrawlEngineHandlePtr,
   );
 
   Stream<CrawlEvent> batchCrawlStream({required BatchCrawlStreamRequest req}) =>
-  RustLib.instance.api.crateCrawlEngineHandleBatchCrawlStream(
-    that: this,
-    req: req,
-  );
+      RustLib.instance.api.crateCrawlEngineHandleBatchCrawlStream(
+        that: this,
+        req: req,
+      );
 
   Stream<CrawlEvent> crawlStream({required CrawlStreamRequest req}) => RustLib
-  .instance
-  .api
-  .crateCrawlEngineHandleCrawlStream(that: this, req: req);
+      .instance
+      .api
+      .crateCrawlEngineHandleCrawlStream(that: this, req: req);
 }

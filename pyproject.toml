@@ -8,9 +8,9 @@ dev = ["pyrefly>=1.1.1", "pytest-asyncio>=1.3", "validate-pyproject"]
 [tool.uv]
 workspace.members = ["packages/python"]
 cache-keys = [
-    { file = "pyproject.toml" },
-    { file = "Cargo.toml" },
-    { file = "Cargo.lock" },
-    { file = "crates/**/*.rs" },
-    { file = "crates/**/Cargo.toml" },
+  { file = "pyproject.toml" },
+  { file = "Cargo.toml" },
+  { file = "Cargo.lock" },
+  { file = "crates/**/*.rs" },
+  { file = "crates/**/Cargo.toml" },
 ]

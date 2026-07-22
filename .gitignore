@@ -304,7 +304,8 @@ e2e/ruby/.bundle/
 docs-site/dist/
 docs-site/.astro/
 
+poly.local.toml
+
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
 .ai-rulez/.generated-manifest.json
 # END ai-rulez
-poly.local.toml

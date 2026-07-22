@@ -1116,14 +1116,6 @@ char *cberg_downloaded_document_url(const CBERGDownloadedDocument *ptr);
 char *cberg_downloaded_document_mime_type(const CBERGDownloadedDocument *ptr);
 
 /**
- * Get the `content` field from a `DownloadedDocument`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-uint8_t *cberg_downloaded_document_content(const CBERGDownloadedDocument *ptr,
-                                           uintptr_t *out_len);
-
-/**
  * Get the `size` field from a `DownloadedDocument`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1194,14 +1186,6 @@ char *cberg_interaction_result_final_html(const CBERGInteractionResult *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_interaction_result_final_url(const CBERGInteractionResult *ptr);
-
-/**
- * Get the `screenshot` field from a `InteractionResult`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-uint8_t *cberg_interaction_result_screenshot(const CBERGInteractionResult *ptr,
-                                             uintptr_t *out_len);
 
 /**
  * Create a `ActionResult` from a JSON string. Returns null on failure.
@@ -1467,14 +1451,6 @@ char *cberg_scrape_result_extracted_data(const CBERGScrapeResult *ptr);
 CBERGExtractionMeta *cberg_scrape_result_extraction_meta(const CBERGScrapeResult *ptr);
 
 /**
- * Get the `screenshot` field from a `ScrapeResult`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-uint8_t *cberg_scrape_result_screenshot(const CBERGScrapeResult *ptr,
-                                        uintptr_t *out_len);
-
-/**
  * Get the `downloaded_document` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1736,13 +1712,6 @@ int32_t cberg_crawl_result_stayed_on_domain(const CBERGCrawlResult *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_crawl_result_browser_used(const CBERGCrawlResult *ptr);
-
-/**
- * Get the `normalized_urls` field from a `CrawlResult`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-char *cberg_crawl_result_normalized_urls(const CBERGCrawlResult *ptr);
 
 /**
  * Returns the count of unique normalized URLs encountered during crawling.
@@ -3206,13 +3175,6 @@ int32_t cberg_ssrf_policy_deny_private(const CBERGSsrfPolicy *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 uint8_t cberg_ssrf_policy_max_redirects(const CBERGSsrfPolicy *ptr);
-
-/**
- * Get the `scheme_allowlist` field from a `SsrfPolicy`.
- * # Safety
- * Pointer must be a valid handle returned by this library.
- */
-char *cberg_ssrf_policy_scheme_allowlist(const CBERGSsrfPolicy *ptr);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be

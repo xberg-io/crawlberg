@@ -31,30 +31,30 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem } from "@astrojs/starlight/comp
 ## Why crawlberg
 
 <CardGrid>
-	<Card title="Crawl a whole site or a single page" icon="random">
-		Follow links across an entire site or fetch one URL, with concurrent requests and live progress
-		events. Tune how it walks the site with breadth-first, depth-first, best-first, or adaptive strategies.
-	</Card>
-	<Card title="Clean Markdown, every time" icon="document">
-		Every page comes back as ready-to-use Markdown — feed it straight to an LLM or your own pipeline.
-		Generate a citation list when you need one.
-	</Card>
-	<Card title="Know what's on every page" icon="magnifier">
-		Titles, links, images, feeds, and social-card data arrive already extracted and structured, so you
-		skip the HTML parsing. Covers Open Graph, Twitter Card, Dublin Core, JSON-LD, and hreflang.
-	</Card>
-	<Card title="Handles JS-heavy and bot-protected sites" icon="laptop">
-		When a page needs JavaScript or trips a bot filter, crawlberg renders it in a real browser for you.
-		It escalates to a Chromium (CDP) or native browser backend only when a page needs it.
-	</Card>
-	<Card title="Use it from your agent, API, or CLI" icon="setting">
-		Drive crawlberg from an AI agent over MCP, a REST service, or the command line — no glue code
-		required. The MCP and REST servers are gated behind cargo features.
-	</Card>
-	<Card title="Works in the language you already use" icon="translate">
-		One Rust engine, identical results across 14 languages: Python, TypeScript, Go, Java, Kotlin Android,
-		C#, Ruby, PHP, Elixir, Dart, Swift, Zig, WebAssembly, and C FFI.
-	</Card>
+    <Card title="Crawl a whole site or a single page" icon="random">
+        Follow links across an entire site or fetch one URL, with concurrent requests and live progress
+        events. Tune how it walks the site with breadth-first, depth-first, best-first, or adaptive strategies.
+    </Card>
+    <Card title="Clean Markdown, every time" icon="document">
+        Every page comes back as ready-to-use Markdown — feed it straight to an LLM or your own pipeline.
+        Generate a citation list when you need one.
+    </Card>
+    <Card title="Know what's on every page" icon="magnifier">
+        Titles, links, images, feeds, and social-card data arrive already extracted and structured, so you
+        skip the HTML parsing. Covers Open Graph, Twitter Card, Dublin Core, JSON-LD, and hreflang.
+    </Card>
+    <Card title="Handles JS-heavy and bot-protected sites" icon="laptop">
+        When a page needs JavaScript or trips a bot filter, crawlberg renders it in a real browser for you.
+        It escalates to a Chromium (CDP) or native browser backend only when a page needs it.
+    </Card>
+    <Card title="Use it from your agent, API, or CLI" icon="setting">
+        Drive crawlberg from an AI agent over MCP, a REST service, or the command line — no glue code
+        required. The MCP and REST servers are gated behind cargo features.
+    </Card>
+    <Card title="Works in the language you already use" icon="translate">
+        One Rust engine, identical results across 14 languages: Python, TypeScript, Go, Java, Kotlin Android,
+        C#, Ruby, PHP, Elixir, Dart, Swift, Zig, WebAssembly, and C FFI.
+    </Card>
 </CardGrid>
 
 [See all features →](/features/)
@@ -152,24 +152,24 @@ for (const page of result.pages) {
 ## Part of Xberg.io
 
 <CardGrid>
-	<LinkCard title="Xberg" href="https://github.com/xberg-io/xberg" description="Document intelligence: text, tables, metadata from 91+ formats with optional OCR." />
-	<LinkCard title="Xberg Enterprise" href="https://github.com/xberg-io/xberg-enterprise" description="Managed extraction API with SDKs, dashboards, and observability." />
-	<LinkCard title="crawlberg" href="https://github.com/xberg-io/crawlberg" description="Web crawling and scraping with HTML→Markdown and headless-Chrome fallback." />
-	<LinkCard title="html-to-markdown" href="https://github.com/xberg-io/html-to-markdown" description="Fast, lossless HTML→Markdown engine." />
-	<LinkCard title="liter-llm" href="https://github.com/xberg-io/liter-llm" description="Universal LLM API client with native bindings for 14 languages and 143 providers." />
-	<LinkCard title="tree-sitter-language-pack" href="https://github.com/xberg-io/tree-sitter-language-pack" description="Tree-sitter grammars and code-intelligence primitives." />
-	<LinkCard title="alef" href="https://github.com/xberg-io/alef" description="The polyglot binding generator that produces every per-language binding across the 5 polyglot repos." />
+    <LinkCard title="Xberg" href="https://github.com/xberg-io/xberg" description="Document intelligence: text, tables, metadata from 91+ formats with optional OCR." />
+    <LinkCard title="Xberg Enterprise" href="https://github.com/xberg-io/xberg-enterprise" description="Managed extraction API with SDKs, dashboards, and observability." />
+    <LinkCard title="crawlberg" href="https://github.com/xberg-io/crawlberg" description="Web crawling and scraping with HTML→Markdown and headless-Chrome fallback." />
+    <LinkCard title="html-to-markdown" href="https://github.com/xberg-io/html-to-markdown" description="Fast, lossless HTML→Markdown engine." />
+    <LinkCard title="liter-llm" href="https://github.com/xberg-io/liter-llm" description="Universal LLM API client with native bindings for 14 languages and 143 providers." />
+    <LinkCard title="tree-sitter-language-pack" href="https://github.com/xberg-io/tree-sitter-language-pack" description="Tree-sitter grammars and code-intelligence primitives." />
+    <LinkCard title="alef" href="https://github.com/xberg-io/alef" description="The polyglot binding generator that produces every per-language binding across the 5 polyglot repos." />
 </CardGrid>
 
 ## Explore the docs
 
 <CardGrid>
-	<LinkCard title="Get Started" href="/getting-started/quickstart/" description="Install crawlberg and run your first crawl in under five minutes." />
-	<LinkCard title="Guides" href="/guides/crawling/" description="Crawling, scraping, URL discovery, browser automation, WARC output, and deployment." />
-	<LinkCard title="Concepts" href="/concepts/architecture/" description="Public surface, data flow, the binding matrix, feature gates, and the extraction pipeline." />
-	<LinkCard title="Reference" href="/reference/api-rust/" description="Per-language API docs, the configuration schema, type catalogue, and error matrix." />
-	<LinkCard title="CLI & Servers" href="/cli/usage/" description="The crawlberg CLI, REST API server, and MCP server for AI agents." />
-	<LinkCard title="Features" href="/features/" description="Crawl strategies, metadata extraction, browser backends, WARC, MCP, REST." />
+    <LinkCard title="Get Started" href="/getting-started/quickstart/" description="Install crawlberg and run your first crawl in under five minutes." />
+    <LinkCard title="Guides" href="/guides/crawling/" description="Crawling, scraping, URL discovery, browser automation, WARC output, and deployment." />
+    <LinkCard title="Concepts" href="/concepts/architecture/" description="Public surface, data flow, the binding matrix, feature gates, and the extraction pipeline." />
+    <LinkCard title="Reference" href="/reference/api-rust/" description="Per-language API docs, the configuration schema, type catalogue, and error matrix." />
+    <LinkCard title="CLI & Servers" href="/cli/usage/" description="The crawlberg CLI, REST API server, and MCP server for AI agents." />
+    <LinkCard title="Features" href="/features/" description="Crawl strategies, metadata extraction, browser backends, WARC, MCP, REST." />
 </CardGrid>
 
 ## Getting help

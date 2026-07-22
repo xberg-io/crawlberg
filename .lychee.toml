@@ -1,49 +1,49 @@
 
 
 exclude = [
-    "favicon\\.svg",
+  "favicon\\.svg",
 
-    "localhost",
-    "127\\.0\\.0\\.1",
-    "0\\.0\\.0\\.0",
+  "localhost",
+  "127\\.0\\.0\\.1",
+  "0\\.0\\.0\\.0",
 
-    "example\\.com",
-    "example\\.org",
+  "example\\.com",
+  "example\\.org",
 
-    "\\$\\{",
-    "\\{\\{",
-    "%7B%7B",
+  "\\$\\{",
+  "\\{\\{",
+  "%7B%7B",
 
-    "github\\.com/.*/edit/",
+  "github\\.com/.*/edit/",
 
-    "github\\.com/.*/raw/",
+  "github\\.com/.*/raw/",
 
-    "docs\\.crawlberg\\.xberg\\.io",
-    "crawlberg\\.xberg\\.io",
+  "docs\\.crawlberg\\.xberg\\.io",
+  "crawlberg\\.xberg\\.io",
 
-    "pypi\\.org/project/",
+  "pypi\\.org/project/",
 
-    "crates\\.io/crates/",
+  "crates\\.io/crates/",
 
-    "npmjs\\.com/package/",
+  "npmjs\\.com/package/",
 
-    "rubygems\\.org/gems/",
+  "rubygems\\.org/gems/",
 
-    "central\\.sonatype\\.com",
+  "central\\.sonatype\\.com",
 
-    "nuget\\.org/packages/",
+  "nuget\\.org/packages/",
 
-    "hex\\.pm/packages/",
+  "hex\\.pm/packages/",
 
-    "packagist\\.org/packages/",
+  "packagist\\.org/packages/",
 
-    "pkg\\.go\\.dev/",
+  "pkg\\.go\\.dev/",
 
-    "github\\.com/.*/discussions",
+  "github\\.com/.*/discussions",
 
-    "proxy:8080",
-    "ws://localhost",
-    "wss://localhost",
+  "proxy:8080",
+  "ws://localhost",
+  "wss://localhost",
 ]
 
 accept = [200, 204, 301, 302, 429]
