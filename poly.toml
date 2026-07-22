@@ -73,6 +73,9 @@ flate = "flate"
 ser = "ser"
 
 [per-file-ignores]
+# Docker: DL3059 — RUN steps are deliberately separate (cache-mount isolation and
+#   staged CI verification); DL3006 — the `scratch` base image cannot be tagged.
+"docker/Dockerfile*" = ["DL3059", "DL3006"]
 "**/api.py" = ["F401", "I001", "TC006", "UP035"]
 "**/*.pyi" = ["A002", "F401", "I001", "PYI033", "TC006", "UP035"]
 "**/options.py" = ["F401", "I001", "RUF100"]
