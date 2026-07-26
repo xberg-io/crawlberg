@@ -38,7 +38,7 @@ anyhow = "1"
 arc-swap = "1"
 async-trait = "0.1"
 axum = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 blake3 = "1"
 camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
@@ -49,7 +49,7 @@ crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.8" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"
-deno_core = "0.408"
+deno_core = "0.409"
 deno_error = "0.7"
 dirs = "6"
 encoding_rs = "0.8"
@@ -58,12 +58,12 @@ encoding_rs = "0.8"
 ext-php-rs = "0.15.15"
 flate2 = "1"
 futures = "0.3"
-html-to-markdown-rs = { version = "3.8", features = ["full"] }
+html-to-markdown-rs = { version = "3.9", features = ["full"] }
 html5ever = "0.39"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
-liter-llm = { version = "1.9", features = ["native-http"] }
+liter-llm = { version = "1.11", features = ["native-http"] }
 markup5ever = "0.39"
 memchr = "2"
 minijinja = "2"
