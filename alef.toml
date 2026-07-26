@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.42.1"
+alef_version = "0.48.2"
 languages = [
   "python",
   "node",
@@ -89,16 +89,178 @@ path = "crates/crawlberg-cli/Cargo.toml"
 search = 'crawlberg = \{ path = "../crawlberg", version = "=[^"]*"'
 replace = 'crawlberg = { path = "../crawlberg", version = "={version}"'
 
-[workspace.poly.per-file-ignores]
-"scripts/**/*.py" = ["B023", "C901", "D103", "ERA001", "EXE001", "PLC0415", "PLR0912", "PLR0915", "PTH123", "T201"]
-"cli-proxy/**/*.py" = ["ANN", "S310", "T201"]
-"tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
-"crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
-"readme_templates/**/*.md" = ["MD057"]
+[workspace.poly]
+exclude = [
+  "docs-site/src/snippets/**",
+  "**/_generated/**",
+  "**/coverage/**",
+  "**/pkg/**",
+  "**/.next/**",
+  "**/*.min.js",
+  "**/vendored/**",
+  "**/stopwords/**",
+  "**/testdata/**",
+  "e2e/**",
+  "**/*.diff",
+  "**/*.patch",
+  "**/frb_generated.rs",
+  "charts/**",
+]
+
+# Opt-in comment-removal sweep. Preserve doc comments (rustdoc is required on
+# public items), TODO/FIXME (actionable), and SAFETY/license markers. Generated
+# binding output is exempted via per-file-ignores below. ~keep
+[workspace.poly.uncomment]
+enabled = true
+remove-todos = false
+remove-fixme = false
+remove-docs = false
+use-default-ignores = true
+preserve-patterns = ["SAFETY", "SPDX", "Copyright", "License", "licensed under"]
 
 [workspace.poly.typos.extend-words]
+# flate2 crate + PDF FlateDecode filter (THE ORIGINAL BUG: flate -> flat)
 flate = "flate"
+delocate = "delocate"
+thw = "thw"
+arange = "arange"
+mmaped = "mmaped"
+layrnorm = "layrnorm"
+seperator = "seperator"
 ser = "ser"
+ake = "ake"
+algoritmos = "algoritmos"
+kreuzberg = "kreuzberg"
+tesseract = "tesseract"
+onnx = "onnx"
+surrealdb = "surrealdb"
+tbe = "tbe"
+docling = "docling"
+markitdown = "markitdown"
+pymupdf = "pymupdf"
+openwebui = "openwebui"
+webui = "webui"
+rumdl = "rumdl"
+opf = "opf"
+# "Tower"/"lower" substring in pdf/structure/lines.rs #1291 tests + CHANGELOG. ~keep
+ower = "ower"
+hocr = "hocr"
+odf = "odf"
+multline = "multline"
+headerr = "headerr"
+pard = "pard"
+edn = "edn"
+siz = "siz"
+inh = "inh"
+bre = "bre"
+yor = "yor"
+extention = "extention"
+portait = "portait"
+fith = "fith"
+threed = "threed"
+chlidren = "chlidren"
+formated = "formated"
+specifing = "specifing"
+similarily = "similarily"
+execpt = "execpt"
+faiure = "faiure"
+substract = "substract"
+charater = "charater"
+cliper = "cliper"
+splitted = "splitted"
+unparseable = "unparseable"
+relatie = "relatie"
+traineddata = "traineddata"
+tha = "tha"
+ist = "ist"
+internacional = "internacional"
+utiliza = "utiliza"
+caf = "caf"
+hom = "hom"
+ths = "ths"
+ment = "ment"
+mis = "mis"
+helo = "helo"
+ove = "ove"
+tre = "tre"
+thr = "thr"
+programa = "programa"
+cursos = "cursos"
+excepcional = "excepcional"
+ein = "ein"
+legt = "legt"
+
+[workspace.poly.typos.extend-identifiers]
+PyMuPDF = "PyMuPDF"
+MarkItDown = "MarkItDown"
+SurrealDB = "SurrealDB"
+PDFium = "PDFium"
+WebUI = "WebUI"
+traineddata = "traineddata"
+
+[workspace.poly.per-file-ignores]
+# Alef-generated binding output — never hand-clean comments; regeneration owns them. ~keep
+".cargo/config.toml" = ["comment", "doc-comment"]
+"Package.swift" = ["comment", "doc-comment"]
+"packages/**" = ["comment", "doc-comment"]
+"crates/crawlberg-node/**" = ["comment", "doc-comment"]
+"crates/crawlberg-php/**" = ["comment", "doc-comment"]
+"crates/crawlberg-jni/**" = ["comment", "doc-comment"]
+# crawlberg-ffi/py/wasm are MIXED: only src/lib.rs (+ ffi build.rs/cbindgen.toml) is
+# alef-generated; the other modules are hand-written and get the uncomment sweep. ~keep
+"crates/crawlberg-ffi/src/lib.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/build.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/cbindgen.toml" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/include/crawlberg.h" = ["comment", "doc-comment"]
+"crates/crawlberg-py/src/lib.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-wasm/src/lib.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-node/index.js" = ["no-unused-vars"]
+# alef-generated e2e test apps carry a "DO NOT EDIT" header and generator-emitted
+# comments; exempt them from the uncomment sweep (they're still ruff-linted via the
+# builtin "**/test_apps/**" defaults). Distinct glob to avoid a duplicate key. ~keep
+"test_apps/**" = ["comment", "doc-comment"]
+"docker/**" = ["DL3006", "DL3059"]
+"packages/python/**/api.py" = ["RET504"]
+# Test-code relaxations on top of the builtin "**/tests/**" defaults: tests
+# access private members (SLF001), use lazy/local imports (PLC0415), and
+# inject unused pytest fixtures (PT019). Scoped to *.py (a distinct glob from
+# the builtin "**/tests/**" key) since these are ruff-only codes. ~keep
+"**/tests/**/*.py" = ["PT019", "PLC0415", "SLF001"]
+# Example scripts: legitimately print output, aren't packages, and skip full
+# annotations/docstrings. Not a builtin default — declared here in full. ~keep
+"**/examples/**" = ["ANN", "D100", "D103", "I001", "INP001", "PLR2004", "S101", "PLC0415", "SLF001", "T201", "typo"]
+"scripts/**/*.py" = [
+  "B023",
+  "C901",
+  "D101",
+  "D102",
+  "D103",
+  "D415",
+  "E702",
+  "ERA001",
+  "EXE001",
+  "PERF203",
+  "PERF401",
+  "PLC0415",
+  "PLR0912",
+  "PLR0915",
+  "PLW2901",
+  "PT018",
+  "PTH108",
+  "PTH123",
+  "S101",
+  "S108",
+  "S311",
+  "S607",
+  "SIM105",
+  "SIM115",
+  "T201",
+]
+# crawlberg-specific: CLI proxy shim, extra test relaxations, and the headless
+# browser JS bridge. ~keep
+"cli-proxy/**/*.py" = ["ANN", "PLR0917", "S310", "T201"]
+"tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
+"crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
 
 [[crates]]
 name = "crawlberg"
@@ -1356,60 +1518,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.0.8"
+version = ">=1.0.9"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.0.8"
+version = "^1.0.9"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.0.8"
+version = "v1.0.9"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.e2e.registry.packages.csharp]
 name = "Crawlberg"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.0.8"
+version = ">=1.0.9"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.0.8"
+version = ">= 1.0.9"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.0.8"
+version = "~> 1.0.9"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.0.8"
+version = "^1.0.9"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.0.8"
-hash = "crawlberg-1.0.8-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.0.9"
+hash = "crawlberg-1.0.9-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.0.8"
+version = "1.0.9"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

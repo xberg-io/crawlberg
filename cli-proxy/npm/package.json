@@ -12,7 +12,10 @@
   "bin": {
     "crawlberg": "bin/crawlberg.js"
   },
-  "files": ["bin/", "install.js"],
+  "files": [
+    "bin/",
+    "install.js"
+  ],
   "type": "module",
   "publishConfig": {
     "access": "public"

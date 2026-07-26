@@ -418,6 +418,7 @@ func generateCgoFlags(installDir, outputDir string) error {
 	}
 
 	outputPath := filepath.Join(outputDir, "cgo_flags.go")
+	//nolint:gosec // outputPath is a controlled installer path (outputDir + fixed filename)
 	file, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePermissions)
 	if err != nil {
 		return fmt.Errorf("failed to create %s: %w", outputPath, err)

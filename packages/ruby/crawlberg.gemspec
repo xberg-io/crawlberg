@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name = "crawlberg"
-  spec.version = "1.0.8"
+  spec.version = "1.0.9"
   spec.authors       = ["Xberg Team"]
   spec.summary       = "High-performance web crawling engine"
   spec.description   = "High-performance web crawling engine"

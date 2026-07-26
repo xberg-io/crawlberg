@@ -2,6 +2,17 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.9] - 2026-07-26
+
+### Changed
+
+- Regenerate all language bindings on alef 0.48.2.
+- Update dependencies to their latest compatible versions.
+
+### Removed
+
+- Remove unused Java PMD ruleset and stale linter configuration.
+
 ## [1.0.8] - 2026-07-20
 
 ### Fixed

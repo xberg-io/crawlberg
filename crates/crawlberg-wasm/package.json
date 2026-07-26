@@ -1,6 +1,6 @@
 {
   "name": "@xberg-io/crawlberg-wasm",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": false,
   "description": "High-performance web crawling engine",
   "license": "MIT",
@@ -13,7 +13,12 @@
     "access": "public"
   },
   "type": "module",
-  "files": ["pkg", "*.wasm", "*.d.ts", "README.md"],
+  "files": [
+    "pkg",
+    "*.wasm",
+    "*.d.ts",
+    "README.md"
+  ],
   "main": "pkg/nodejs/crawlberg_wasm.js",
   "module": "pkg/web/crawlberg_wasm.js",
   "types": "pkg/nodejs/crawlberg_wasm.d.ts",

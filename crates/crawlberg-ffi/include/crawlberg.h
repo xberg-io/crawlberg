@@ -31,10 +31,11 @@ typedef struct CBERGAuthConfig CBERGAuthConfig;
  */
 typedef struct CBERGBatchCrawlResult CBERGBatchCrawlResult;
 /**
- * Aggregate result of a batch crawl, exposing per-URL results plus precomputed counts.
+ * Aggregate result of a batch crawl, exposing per-URL results plus precomputed
+ * counts.
  *
- * The counts are derived once at construction so every binding language can read them
- * as plain integer fields without re-iterating the `results` vector.
+ * The counts are derived once at construction so every binding language can
+ * read them as plain integer fields without re-iterating the `results` vector.
  */
 typedef struct CBERGBatchCrawlResults CBERGBatchCrawlResults;
 /**
@@ -50,10 +51,11 @@ typedef struct CBERGBatchCrawlStreamRequest CBERGBatchCrawlStreamRequest;
  */
 typedef struct CBERGBatchScrapeResult CBERGBatchScrapeResult;
 /**
- * Aggregate result of a batch scrape, exposing per-URL results plus precomputed counts.
+ * Aggregate result of a batch scrape, exposing per-URL results plus precomputed
+ * counts.
  *
- * The counts are derived once at construction so every binding language can read them
- * as plain integer fields without re-iterating the `results` vector.
+ * The counts are derived once at construction so every binding language can
+ * read them as plain integer fields without re-iterating the `results` vector.
  */
 typedef struct CBERGBatchScrapeResults CBERGBatchScrapeResults;
 /**
@@ -67,7 +69,8 @@ typedef struct CBERGBrowserConfig CBERGBrowserConfig;
 /**
  * Browser-specific extras populated when the native browser backend was used.
  *
- * Available on `ScrapeResult.browser` when `BrowserBackend::Native` handled the request.
+ * Available on `ScrapeResult.browser` when `BrowserBackend::Native` handled the
+ * request.
  */
 typedef struct CBERGBrowserExtras CBERGBrowserExtras;
 /**
@@ -79,8 +82,8 @@ typedef struct CBERGBrowserMode CBERGBrowserMode;
  */
 typedef struct CBERGBrowserWait CBERGBrowserWait;
 /**
- * A single numbered reference in a citation list â produced by the citation
- * extractor when content uses inline ``N``-style markers.
+ * A single numbered reference in a citation list â produced by the
+ * citation extractor when content uses inline ``N``-style markers.
  */
 typedef struct CBERGCitationReference CBERGCitationReference;
 /**
@@ -113,8 +116,9 @@ typedef struct CBERGCrawlEngineHandle CBERGCrawlEngineHandle;
 /**
  * An event emitted during a streaming crawl operation.
  *
- * Not available on `wasm32` targets â streaming requires native concurrency
- * primitives (tokio channels, `JoinSet`) that are not supported on wasm32.
+ * Not available on `wasm32` targets â streaming requires native
+ * concurrency primitives (tokio channels, `JoinSet`) that are not supported on
+ * wasm32.
  *
  * Delivered to bindings through each target's native streaming idiom.
  */
@@ -239,26 +243,34 @@ typedef struct CBERGSitemapUrl CBERGSitemapUrl;
  */
 typedef struct CBERGSsrfPolicy CBERGSsrfPolicy;
 
+/**
+ * Opaque handle owning a tokio runtime and a boxed chat-stream for
+ * iterator-style consumption.
+ *
+ * Created by `cberg_crawl_engine_handle_batch_crawl_stream_start`, advanced by
+ * `cberg_crawl_engine_handle_batch_crawl_stream_next`, destroyed by
+ * `cberg_crawl_engine_handle_batch_crawl_stream_free`. The handle is NOT
+ * thread-safe — callers must ensure only one thread calls `_next` at a time.
+ */
+typedef struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle
+    CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle;
 
 /**
- * Opaque handle owning a tokio runtime and a boxed chat-stream for iterator-style consumption.
+ * Opaque handle owning a tokio runtime and a boxed chat-stream for
+ * iterator-style consumption.
  *
- * Created by `cberg_crawl_engine_handle_batch_crawl_stream_start`, advanced by `cberg_crawl_engine_handle_batch_crawl_stream_next`, destroyed by `cberg_crawl_engine_handle_batch_crawl_stream_free`.
- * The handle is NOT thread-safe — callers must ensure only one thread calls `_next` at a time.
+ * Created by `cberg_crawl_engine_handle_crawl_stream_start`, advanced by
+ * `cberg_crawl_engine_handle_crawl_stream_next`, destroyed by
+ * `cberg_crawl_engine_handle_crawl_stream_free`. The handle is NOT thread-safe
+ * — callers must ensure only one thread calls `_next` at a time.
  */
-typedef struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle;
-
-/**
- * Opaque handle owning a tokio runtime and a boxed chat-stream for iterator-style consumption.
- *
- * Created by `cberg_crawl_engine_handle_crawl_stream_start`, advanced by `cberg_crawl_engine_handle_crawl_stream_next`, destroyed by `cberg_crawl_engine_handle_crawl_stream_free`.
- * The handle is NOT thread-safe — callers must ensure only one thread calls `_next` at a time.
- */
-typedef struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle;
+typedef struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle
+    CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle;
 
 /**
  * Callback invoked for each streamed chunk.
- * `chunk_json` is a JSON-encoded chunk; `user_data` is forwarded from the caller.
+ * `chunk_json` is a JSON-encoded chunk; `user_data` is forwarded from the
+ * caller.
  */
 typedef void (*CBERGCbergStreamCallback)(const char *chunk_json,
                                          void *user_data);
@@ -272,10 +284,10 @@ typedef void (*CBERGCbergStreamCallback)(const char *chunk_json,
 int32_t cberg_last_error_code(void);
 
 /**
- * Return the last error message. The pointer is borrowed and valid until the next FFI call on this thread.
- * # Safety
- * Caller must ensure all pointer arguments are valid or null.
- * The returned pointer is borrowed from thread-local storage and must NOT be freed.
+ * Return the last error message. The pointer is borrowed and valid until the
+ * next FFI call on this thread. # Safety Caller must ensure all pointer
+ * arguments are valid or null. The returned pointer is borrowed from
+ * thread-local storage and must NOT be freed.
  */
 const char *cberg_last_error_context(void);
 
@@ -288,20 +300,18 @@ void cberg_free_string(char *ptr);
 
 /**
  * Free a byte buffer previously returned by this library via out-params.
- * `ptr`, `len`, and `cap` must match the values written by the library function,
- * or the call must pass `ptr = null` (in which case it is a no-op).
+ * `ptr`, `len`, and `cap` must match the values written by the library
+ * function, or the call must pass `ptr = null` (in which case it is a no-op).
  * # Safety
- * Pointer must have been returned by this library (via out_ptr / out_len / out_cap
- * out-params), or be null. The len and cap values must be unchanged since the call.
+ * Pointer must have been returned by this library (via out_ptr / out_len /
+ * out_cap out-params), or be null. The len and cap values must be unchanged
+ * since the call.
  */
-void cberg_free_bytes(uint8_t *ptr,
-                      uintptr_t len,
-                      uintptr_t cap);
+void cberg_free_bytes(uint8_t *ptr, uintptr_t len, uintptr_t cap);
 
 /**
- * Return the library version string. The pointer is static and must NOT be freed.
- * # Safety
- * Caller must ensure all pointer arguments are valid or null.
+ * Return the library version string. The pointer is static and must NOT be
+ * freed. # Safety Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
 const char *cberg_version(void);
@@ -309,16 +319,19 @@ const char *cberg_version(void);
 /**
  * Start a streaming chat completion and return an opaque iterator handle.
  *
- * Returns null and sets `cberg_last_error_code` on failure (null pointers or stream-open error).
- * On success the caller owns the returned pointer and MUST call `cberg_crawl_engine_handle_crawl_stream_free` when done.
+ * Returns null and sets `cberg_last_error_code` on failure (null pointers or
+ * stream-open error). On success the caller owns the returned pointer and MUST
+ * call `cberg_crawl_engine_handle_crawl_stream_free` when done.
  *
  * # Safety
- * `client` must be a non-null valid pointer to a live `crawlberg::CrawlEngineHandle` produced by this library.
- * `req` must be a non-null valid pointer to a live `crawlberg::CrawlStreamRequest` produced by this library.
- * Both pointers must remain valid until this function returns.
+ * `client` must be a non-null valid pointer to a live
+ * `crawlberg::CrawlEngineHandle` produced by this library. `req` must be a
+ * non-null valid pointer to a live `crawlberg::CrawlStreamRequest` produced by
+ * this library. Both pointers must remain valid until this function returns.
  */
-struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *cberg_crawl_engine_handle_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                        const CBERGCrawlStreamRequest *req);
+struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *
+cberg_crawl_engine_handle_crawl_stream_start(
+    const CBERGCrawlEngineHandle *client, const CBERGCrawlStreamRequest *req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -328,39 +341,51 @@ struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *cberg_crawl_engine_ha
  * - Stream error: `cberg_last_error_code()` returns non-zero.
  *
  * The returned pointer is heap-allocated and the caller MUST free it by calling
- * `cberg_crawl_engine_handle_CrawlEvent_free` (or the appropriate type-free function).
+ * `cberg_crawl_engine_handle_CrawlEvent_free` (or the appropriate type-free
+ * function).
  *
  * # Safety
- * `handle` must be a non-null valid pointer previously returned by `cberg_crawl_engine_handle_crawl_stream_start` and not yet
- * freed. Calling `_next` after `_free` is undefined behaviour. The handle must not be shared
+ * `handle` must be a non-null valid pointer previously returned by
+ * `cberg_crawl_engine_handle_crawl_stream_start` and not yet freed. Calling
+ * `_next` after `_free` is undefined behaviour. The handle must not be shared
  * across threads without external synchronisation.
  */
-CBERGCrawlEvent *cberg_crawl_engine_handle_crawl_stream_next(struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
+CBERGCrawlEvent *cberg_crawl_engine_handle_crawl_stream_next(
+    struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
 
 /**
- * Free a stream handle created by `cberg_crawl_engine_handle_crawl_stream_start`.
+ * Free a stream handle created by
+ * `cberg_crawl_engine_handle_crawl_stream_start`.
  *
- * Safe to call with a null pointer (no-op). After this call the handle pointer is invalid.
+ * Safe to call with a null pointer (no-op). After this call the handle pointer
+ * is invalid.
  *
  * # Safety
- * `handle` must either be null or a valid pointer previously returned by `cberg_crawl_engine_handle_crawl_stream_start` and
- * not yet freed. Double-free is undefined behaviour.
+ * `handle` must either be null or a valid pointer previously returned by
+ * `cberg_crawl_engine_handle_crawl_stream_start` and not yet freed. Double-free
+ * is undefined behaviour.
  */
-void cberg_crawl_engine_handle_crawl_stream_free(struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
+void cberg_crawl_engine_handle_crawl_stream_free(
+    struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
 
 /**
  * Start a streaming chat completion and return an opaque iterator handle.
  *
- * Returns null and sets `cberg_last_error_code` on failure (null pointers or stream-open error).
- * On success the caller owns the returned pointer and MUST call `cberg_crawl_engine_handle_batch_crawl_stream_free` when done.
+ * Returns null and sets `cberg_last_error_code` on failure (null pointers or
+ * stream-open error). On success the caller owns the returned pointer and MUST
+ * call `cberg_crawl_engine_handle_batch_crawl_stream_free` when done.
  *
  * # Safety
- * `client` must be a non-null valid pointer to a live `crawlberg::CrawlEngineHandle` produced by this library.
- * `req` must be a non-null valid pointer to a live `crawlberg::BatchCrawlStreamRequest` produced by this library.
- * Both pointers must remain valid until this function returns.
+ * `client` must be a non-null valid pointer to a live
+ * `crawlberg::CrawlEngineHandle` produced by this library. `req` must be a
+ * non-null valid pointer to a live `crawlberg::BatchCrawlStreamRequest`
+ * produced by this library. Both pointers must remain valid until this function
+ * returns.
  */
-struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *cberg_crawl_engine_handle_batch_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                                   const CBERGBatchCrawlStreamRequest *req);
+struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *
+cberg_crawl_engine_handle_batch_crawl_stream_start(
+    const CBERGCrawlEngineHandle *client,
+    const CBERGBatchCrawlStreamRequest *req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -370,25 +395,32 @@ struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *cberg_crawl_engi
  * - Stream error: `cberg_last_error_code()` returns non-zero.
  *
  * The returned pointer is heap-allocated and the caller MUST free it by calling
- * `cberg_crawl_engine_handle_CrawlEvent_free` (or the appropriate type-free function).
+ * `cberg_crawl_engine_handle_CrawlEvent_free` (or the appropriate type-free
+ * function).
  *
  * # Safety
- * `handle` must be a non-null valid pointer previously returned by `cberg_crawl_engine_handle_batch_crawl_stream_start` and not yet
- * freed. Calling `_next` after `_free` is undefined behaviour. The handle must not be shared
- * across threads without external synchronisation.
+ * `handle` must be a non-null valid pointer previously returned by
+ * `cberg_crawl_engine_handle_batch_crawl_stream_start` and not yet freed.
+ * Calling `_next` after `_free` is undefined behaviour. The handle must not be
+ * shared across threads without external synchronisation.
  */
-CBERGCrawlEvent *cberg_crawl_engine_handle_batch_crawl_stream_next(struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
+CBERGCrawlEvent *cberg_crawl_engine_handle_batch_crawl_stream_next(
+    struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
 
 /**
- * Free a stream handle created by `cberg_crawl_engine_handle_batch_crawl_stream_start`.
+ * Free a stream handle created by
+ * `cberg_crawl_engine_handle_batch_crawl_stream_start`.
  *
- * Safe to call with a null pointer (no-op). After this call the handle pointer is invalid.
+ * Safe to call with a null pointer (no-op). After this call the handle pointer
+ * is invalid.
  *
  * # Safety
- * `handle` must either be null or a valid pointer previously returned by `cberg_crawl_engine_handle_batch_crawl_stream_start` and
- * not yet freed. Double-free is undefined behaviour.
+ * `handle` must either be null or a valid pointer previously returned by
+ * `cberg_crawl_engine_handle_batch_crawl_stream_start` and not yet freed.
+ * Double-free is undefined behaviour.
  */
-void cberg_crawl_engine_handle_batch_crawl_stream_free(struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
+void cberg_crawl_engine_handle_batch_crawl_stream_free(
+    struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
 
 /**
  * Create a `ExtractionMeta` from a JSON string. Returns null on failure.
@@ -432,7 +464,8 @@ uint64_t cberg_extraction_meta_prompt_tokens(const CBERGExtractionMeta *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_extraction_meta_completion_tokens(const CBERGExtractionMeta *ptr);
+uint64_t
+cberg_extraction_meta_completion_tokens(const CBERGExtractionMeta *ptr);
 
 /**
  * Get the `model` field from a `ExtractionMeta`.
@@ -446,7 +479,8 @@ char *cberg_extraction_meta_model(const CBERGExtractionMeta *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_extraction_meta_chunks_processed(const CBERGExtractionMeta *ptr);
+uintptr_t
+cberg_extraction_meta_chunks_processed(const CBERGExtractionMeta *ptr);
 
 /**
  * Create a `ProxyConfig` from a JSON string. Returns null on failure.
@@ -597,11 +631,12 @@ uintptr_t cberg_content_config_wrap_width(const CBERGContentConfig *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_include_document_structure(const CBERGContentConfig *ptr);
+int32_t
+cberg_content_config_include_document_structure(const CBERGContentConfig *ptr);
 
 /**
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGContentConfig *cberg_content_config_default(void);
 
@@ -640,7 +675,8 @@ CBERGBrowserMode *cberg_browser_config_mode(const CBERGBrowserConfig *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserBackend *cberg_browser_config_backend(const CBERGBrowserConfig *ptr);
+CBERGBrowserBackend *
+cberg_browser_config_backend(const CBERGBrowserConfig *ptr);
 
 /**
  * Get the `endpoint` field from a `BrowserConfig`.
@@ -710,7 +746,8 @@ char *cberg_browser_config_robots_user_agent(const CBERGBrowserConfig *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_browser_config_capture_network_events(const CBERGBrowserConfig *ptr);
+int32_t
+cberg_browser_config_capture_network_events(const CBERGBrowserConfig *ptr);
 
 /**
  * Get the `session_affinity` field from a `BrowserConfig`.
@@ -720,8 +757,8 @@ int32_t cberg_browser_config_capture_network_events(const CBERGBrowserConfig *pt
 int32_t cberg_browser_config_session_affinity(const CBERGBrowserConfig *ptr);
 
 /**
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGBrowserConfig *cberg_browser_config_default(void);
 
@@ -1022,15 +1059,15 @@ int32_t cberg_crawl_config_save_browser_profile(const CBERGCrawlConfig *ptr);
 CBERGSsrfPolicy *cberg_crawl_config_ssrf(const CBERGCrawlConfig *ptr);
 
 /**
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGCrawlConfig *cberg_crawl_config_default(void);
 
 /**
  * Validate the configuration, returning an error if any values are invalid.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 int32_t cberg_crawl_config_validate(const CBERGCrawlConfig *this_);
 
@@ -1134,7 +1171,8 @@ char *cberg_downloaded_document_filename(const CBERGDownloadedDocument *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_content_hash(const CBERGDownloadedDocument *ptr);
+char *
+cberg_downloaded_document_content_hash(const CBERGDownloadedDocument *ptr);
 
 /**
  * Get the `headers` field from a `DownloadedDocument`.
@@ -1171,7 +1209,8 @@ void cberg_interaction_result_free(CBERGInteractionResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_interaction_result_action_results(const CBERGInteractionResult *ptr);
+char *
+cberg_interaction_result_action_results(const CBERGInteractionResult *ptr);
 
 /**
  * Get the `final_html` field from a `InteractionResult`.
@@ -1406,7 +1445,8 @@ int32_t cberg_scrape_result_auth_header_sent(const CBERGScrapeResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGResponseMeta *cberg_scrape_result_response_meta(const CBERGScrapeResult *ptr);
+CBERGResponseMeta *
+cberg_scrape_result_response_meta(const CBERGScrapeResult *ptr);
 
 /**
  * Get the `assets` field from a `ScrapeResult`.
@@ -1448,14 +1488,16 @@ char *cberg_scrape_result_extracted_data(const CBERGScrapeResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGExtractionMeta *cberg_scrape_result_extraction_meta(const CBERGScrapeResult *ptr);
+CBERGExtractionMeta *
+cberg_scrape_result_extraction_meta(const CBERGScrapeResult *ptr);
 
 /**
  * Get the `downloaded_document` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGDownloadedDocument *cberg_scrape_result_downloaded_document(const CBERGScrapeResult *ptr);
+CBERGDownloadedDocument *
+cberg_scrape_result_downloaded_document(const CBERGScrapeResult *ptr);
 
 /**
  * Get the `browser` field from a `ScrapeResult`.
@@ -1534,7 +1576,8 @@ uintptr_t cberg_crawl_page_result_body_size(const CBERGCrawlPageResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGPageMetadata *cberg_crawl_page_result_metadata(const CBERGCrawlPageResult *ptr);
+CBERGPageMetadata *
+cberg_crawl_page_result_metadata(const CBERGCrawlPageResult *ptr);
 
 /**
  * Get the `links` field from a `CrawlPageResult`.
@@ -1576,7 +1619,8 @@ uintptr_t cberg_crawl_page_result_depth(const CBERGCrawlPageResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_page_result_stayed_on_domain(const CBERGCrawlPageResult *ptr);
+int32_t
+cberg_crawl_page_result_stayed_on_domain(const CBERGCrawlPageResult *ptr);
 
 /**
  * Get the `was_skipped` field from a `CrawlPageResult`.
@@ -1604,7 +1648,8 @@ char *cberg_crawl_page_result_detected_charset(const CBERGCrawlPageResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGMarkdownResult *cberg_crawl_page_result_markdown(const CBERGCrawlPageResult *ptr);
+CBERGMarkdownResult *
+cberg_crawl_page_result_markdown(const CBERGCrawlPageResult *ptr);
 
 /**
  * Get the `extracted_data` field from a `CrawlPageResult`.
@@ -1618,14 +1663,16 @@ char *cberg_crawl_page_result_extracted_data(const CBERGCrawlPageResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGExtractionMeta *cberg_crawl_page_result_extraction_meta(const CBERGCrawlPageResult *ptr);
+CBERGExtractionMeta *
+cberg_crawl_page_result_extraction_meta(const CBERGCrawlPageResult *ptr);
 
 /**
  * Get the `downloaded_document` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGDownloadedDocument *cberg_crawl_page_result_downloaded_document(const CBERGCrawlPageResult *ptr);
+CBERGDownloadedDocument *
+cberg_crawl_page_result_downloaded_document(const CBERGCrawlPageResult *ptr);
 
 /**
  * Get the `browser_used` field from a `CrawlPageResult`.
@@ -1715,10 +1762,11 @@ int32_t cberg_crawl_result_browser_used(const CBERGCrawlResult *ptr);
 
 /**
  * Returns the count of unique normalized URLs encountered during crawling.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
-uintptr_t cberg_crawl_result_unique_normalized_urls(const CBERGCrawlResult *this_);
+uintptr_t
+cberg_crawl_result_unique_normalized_urls(const CBERGCrawlResult *this_);
 
 /**
  * Create a `SitemapUrl` from a JSON string. Returns null on failure.
@@ -2177,7 +2225,8 @@ uintptr_t cberg_downloaded_asset_size(const CBERGDownloadedAsset *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGAssetCategory *cberg_downloaded_asset_asset_category(const CBERGDownloadedAsset *ptr);
+CBERGAssetCategory *
+cberg_downloaded_asset_asset_category(const CBERGDownloadedAsset *ptr);
 
 /**
  * Get the `html_tag` field from a `DownloadedAsset`.
@@ -2796,20 +2845,20 @@ void cberg_crawl_stream_request_free(CBERGCrawlStreamRequest *ptr);
 char *cberg_crawl_stream_request_url(const CBERGCrawlStreamRequest *ptr);
 
 /**
- * Create a `BatchCrawlStreamRequest` from a JSON string. Returns null on failure.
- * # Safety
- * JSON string must be valid UTF-8 and null-terminated.
+ * Create a `BatchCrawlStreamRequest` from a JSON string. Returns null on
+ * failure. # Safety JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_crawl_stream_request_free`.
  */
-CBERGBatchCrawlStreamRequest *cberg_batch_crawl_stream_request_from_json(const char *json);
+CBERGBatchCrawlStreamRequest *
+cberg_batch_crawl_stream_request_from_json(const char *json);
 
 /**
- * Serialize a `BatchCrawlStreamRequest` to a JSON string. Returns null on failure.
- * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
- * The returned string must be freed with `cberg_free_string`.
+ * Serialize a `BatchCrawlStreamRequest` to a JSON string. Returns null on
+ * failure. # Safety `ptr` must be a valid, non-null pointer returned by a
+ * `cberg` function. The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_crawl_stream_request_to_json(const CBERGBatchCrawlStreamRequest *ptr);
+char *cberg_batch_crawl_stream_request_to_json(
+    const CBERGBatchCrawlStreamRequest *ptr);
 
 /**
  * Free a `BatchCrawlStreamRequest` handle.
@@ -2823,7 +2872,8 @@ void cberg_batch_crawl_stream_request_free(CBERGBatchCrawlStreamRequest *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_crawl_stream_request_urls(const CBERGBatchCrawlStreamRequest *ptr);
+char *
+cberg_batch_crawl_stream_request_urls(const CBERGBatchCrawlStreamRequest *ptr);
 
 /**
  * Create a `CitationResult` from a JSON string. Returns null on failure.
@@ -2923,13 +2973,12 @@ void cberg_crawl_engine_handle_free(CBERGCrawlEngineHandle *ptr);
  *
  * Language bindings expose this as the native streaming shape for each
  * target. WASM does not expose native streaming wrappers.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
-int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *client,
-                                               const char *request_json,
-                                               CBERGCbergStreamCallback callback,
-                                               void *user_data);
+int32_t cberg_crawl_engine_handle_crawl_stream(
+    const CBERGCrawlEngineHandle *client, const char *request_json,
+    CBERGCbergStreamCallback callback, void *user_data);
 
 /**
  * Stream a multi-URL crawl, yielding `CrawlEvent`s across all seeds.
@@ -2941,13 +2990,12 @@ int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *cli
  *
  * Language bindings expose this as the native streaming shape for each
  * target. WASM does not expose native streaming wrappers.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
-int32_t cberg_crawl_engine_handle_batch_crawl_stream(const CBERGCrawlEngineHandle *client,
-                                                     const char *request_json,
-                                                     CBERGCbergStreamCallback callback,
-                                                     void *user_data);
+int32_t cberg_crawl_engine_handle_batch_crawl_stream(
+    const CBERGCrawlEngineHandle *client, const char *request_json,
+    CBERGCbergStreamCallback callback, void *user_data);
 
 /**
  * Create a `BatchScrapeResult` from a JSON string. Returns null on failure.
@@ -2984,7 +3032,8 @@ char *cberg_batch_scrape_result_url(const CBERGBatchScrapeResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGScrapeResult *cberg_batch_scrape_result_result(const CBERGBatchScrapeResult *ptr);
+CBERGScrapeResult *
+cberg_batch_scrape_result_result(const CBERGBatchScrapeResult *ptr);
 
 /**
  * Get the `error` field from a `BatchScrapeResult`.
@@ -3028,7 +3077,8 @@ char *cberg_batch_crawl_result_url(const CBERGBatchCrawlResult *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGCrawlResult *cberg_batch_crawl_result_result(const CBERGBatchCrawlResult *ptr);
+CBERGCrawlResult *
+cberg_batch_crawl_result_result(const CBERGBatchCrawlResult *ptr);
 
 /**
  * Get the `error` field from a `BatchCrawlResult`.
@@ -3072,21 +3122,24 @@ char *cberg_batch_scrape_results_results(const CBERGBatchScrapeResults *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_total_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t
+cberg_batch_scrape_results_total_count(const CBERGBatchScrapeResults *ptr);
 
 /**
  * Get the `completed_count` field from a `BatchScrapeResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_completed_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t
+cberg_batch_scrape_results_completed_count(const CBERGBatchScrapeResults *ptr);
 
 /**
  * Get the `failed_count` field from a `BatchScrapeResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_failed_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t
+cberg_batch_scrape_results_failed_count(const CBERGBatchScrapeResults *ptr);
 
 /**
  * Create a `BatchCrawlResults` from a JSON string. Returns null on failure.
@@ -3123,21 +3176,24 @@ char *cberg_batch_crawl_results_results(const CBERGBatchCrawlResults *ptr);
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_total_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t
+cberg_batch_crawl_results_total_count(const CBERGBatchCrawlResults *ptr);
 
 /**
  * Get the `completed_count` field from a `BatchCrawlResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_completed_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t
+cberg_batch_crawl_results_completed_count(const CBERGBatchCrawlResults *ptr);
 
 /**
  * Get the `failed_count` field from a `BatchCrawlResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_failed_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t
+cberg_batch_crawl_results_failed_count(const CBERGBatchCrawlResults *ptr);
 
 /**
  * Create a `SsrfPolicy` from a JSON string. Returns null on failure.
@@ -3177,24 +3233,27 @@ int32_t cberg_ssrf_policy_deny_private(const CBERGSsrfPolicy *ptr);
 uint8_t cberg_ssrf_policy_max_redirects(const CBERGSsrfPolicy *ptr);
 
 /**
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGSsrfPolicy *cberg_ssrf_policy_default(void);
 
 /**
  * Create a policy from environment variables.
  *
- * On native platforms, reads `CRAWLBERG_ALLOW_PRIVATE_NETWORK` â if set to "1" or "true"
- * (case-insensitive), sets `deny_private = false`. Otherwise, defaults to `deny_private = true`.
+ * On native platforms, reads `CRAWLBERG_ALLOW_PRIVATE_NETWORK` â if set to
+ * "1" or "true" (case-insensitive), sets `deny_private = false`. Otherwise,
+ * defaults to `deny_private = true`.
  *
- * On wasm32 targets (browser/Node.js), environment variables are not accessible to the
- * compiled module. Defaults to `deny_private = false` because:
- * - Outbound requests in a browser go through the fetch API, which enforces its own network policies.
+ * On wasm32 targets (browser/Node.js), environment variables are not accessible
+ * to the compiled module. Defaults to `deny_private = false` because:
+ * - Outbound requests in a browser go through the fetch API, which enforces its
+ * own network policies.
  * - Rust-side SSRF checking is unenforceable and redundant in a wasm32 context.
- * - For testing and localhost access, the host's network sandbox is the enforcing boundary.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * - For testing and localhost access, the host's network sandbox is the
+ * enforcing boundary.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGSsrfPolicy *cberg_ssrf_policy_from_env(void);
 
@@ -3207,9 +3266,9 @@ CBERGSsrfPolicy *cberg_ssrf_policy_from_env(void);
 int32_t cberg_browser_mode_from_i32(int32_t value);
 
 /**
- * Convert a `BrowserMode` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `BrowserMode` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_browser_mode_from_str(const char *name);
 
@@ -3222,24 +3281,23 @@ int32_t cberg_browser_mode_from_str(const char *name);
 int32_t cberg_browser_wait_from_i32(int32_t value);
 
 /**
- * Convert a `BrowserWait` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `BrowserWait` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_browser_wait_from_str(const char *name);
 
 /**
- * Convert an integer to a `BrowserBackend` variant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure all pointer arguments are valid or null.
+ * Convert an integer to a `BrowserBackend` variant. Returns -1 on invalid
+ * input. # Safety Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
 int32_t cberg_browser_backend_from_i32(int32_t value);
 
 /**
- * Convert a `BrowserBackend` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `BrowserBackend` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_browser_backend_from_str(const char *name);
 
@@ -3252,9 +3310,9 @@ int32_t cberg_browser_backend_from_str(const char *name);
 int32_t cberg_auth_config_from_i32(int32_t value);
 
 /**
- * Convert a `AuthConfig` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `AuthConfig` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_auth_config_from_str(const char *name);
 
@@ -3267,9 +3325,9 @@ int32_t cberg_auth_config_from_str(const char *name);
 int32_t cberg_link_type_from_i32(int32_t value);
 
 /**
- * Convert a `LinkType` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `LinkType` serde wire value (C string) to its integer discriminant.
+ * Returns -1 on invalid input. # Safety Caller must ensure `ptr` is a valid
+ * pointer to a `c_char` or null.
  */
 int32_t cberg_link_type_from_str(const char *name);
 
@@ -3282,9 +3340,9 @@ int32_t cberg_link_type_from_str(const char *name);
 int32_t cberg_image_source_from_i32(int32_t value);
 
 /**
- * Convert a `ImageSource` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `ImageSource` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_image_source_from_str(const char *name);
 
@@ -3297,9 +3355,9 @@ int32_t cberg_image_source_from_str(const char *name);
 int32_t cberg_feed_type_from_i32(int32_t value);
 
 /**
- * Convert a `FeedType` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `FeedType` serde wire value (C string) to its integer discriminant.
+ * Returns -1 on invalid input. # Safety Caller must ensure `ptr` is a valid
+ * pointer to a `c_char` or null.
  */
 int32_t cberg_feed_type_from_str(const char *name);
 
@@ -3312,9 +3370,9 @@ int32_t cberg_feed_type_from_str(const char *name);
 int32_t cberg_asset_category_from_i32(int32_t value);
 
 /**
- * Convert a `AssetCategory` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `AssetCategory` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_asset_category_from_str(const char *name);
 
@@ -3327,9 +3385,9 @@ int32_t cberg_asset_category_from_str(const char *name);
 int32_t cberg_crawl_event_from_i32(int32_t value);
 
 /**
- * Convert a `CrawlEvent` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `CrawlEvent` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_crawl_event_from_str(const char *name);
 
@@ -3342,31 +3400,30 @@ int32_t cberg_crawl_event_from_str(const char *name);
 int32_t cberg_page_action_from_i32(int32_t value);
 
 /**
- * Convert a `PageAction` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `PageAction` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_page_action_from_str(const char *name);
 
 /**
- * Convert an integer to a `ScrollDirection` variant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure all pointer arguments are valid or null.
+ * Convert an integer to a `ScrollDirection` variant. Returns -1 on invalid
+ * input. # Safety Caller must ensure all pointer arguments are valid or null.
  * Returned pointers must be freed with the appropriate free function.
  */
 int32_t cberg_scroll_direction_from_i32(int32_t value);
 
 /**
- * Convert a `ScrollDirection` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
- * # Safety
- * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ * Convert a `ScrollDirection` serde wire value (C string) to its integer
+ * discriminant. Returns -1 on invalid input. # Safety Caller must ensure `ptr`
+ * is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_scroll_direction_from_str(const char *name);
 
 /**
- * Free a heap-allocated `BrowserMode` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `BrowserMode` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_browser_mode_free(CBERGBrowserMode *ptr);
 
@@ -3389,9 +3446,9 @@ char *cberg_browser_mode_to_json(const CBERGBrowserMode *ptr);
 char *cberg_browser_mode_to_string(const CBERGBrowserMode *ptr);
 
 /**
- * Free a heap-allocated `BrowserWait` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `BrowserWait` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_browser_wait_free(CBERGBrowserWait *ptr);
 
@@ -3414,9 +3471,9 @@ char *cberg_browser_wait_to_json(const CBERGBrowserWait *ptr);
 char *cberg_browser_wait_to_string(const CBERGBrowserWait *ptr);
 
 /**
- * Free a heap-allocated `BrowserBackend` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `BrowserBackend` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_browser_backend_free(CBERGBrowserBackend *ptr);
 
@@ -3439,9 +3496,9 @@ char *cberg_browser_backend_to_json(const CBERGBrowserBackend *ptr);
 char *cberg_browser_backend_to_string(const CBERGBrowserBackend *ptr);
 
 /**
- * Free a heap-allocated `AuthConfig` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `AuthConfig` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_auth_config_free(CBERGAuthConfig *ptr);
 
@@ -3464,9 +3521,9 @@ char *cberg_auth_config_to_json(const CBERGAuthConfig *ptr);
 char *cberg_auth_config_to_string(const CBERGAuthConfig *ptr);
 
 /**
- * Free a heap-allocated `LinkType` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `LinkType` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_link_type_free(CBERGLinkType *ptr);
 
@@ -3489,9 +3546,9 @@ char *cberg_link_type_to_json(const CBERGLinkType *ptr);
 char *cberg_link_type_to_string(const CBERGLinkType *ptr);
 
 /**
- * Free a heap-allocated `ImageSource` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `ImageSource` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_image_source_free(CBERGImageSource *ptr);
 
@@ -3514,9 +3571,9 @@ char *cberg_image_source_to_json(const CBERGImageSource *ptr);
 char *cberg_image_source_to_string(const CBERGImageSource *ptr);
 
 /**
- * Free a heap-allocated `FeedType` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `FeedType` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_feed_type_free(CBERGFeedType *ptr);
 
@@ -3539,9 +3596,9 @@ char *cberg_feed_type_to_json(const CBERGFeedType *ptr);
 char *cberg_feed_type_to_string(const CBERGFeedType *ptr);
 
 /**
- * Free a heap-allocated `AssetCategory` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `AssetCategory` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_asset_category_free(CBERGAssetCategory *ptr);
 
@@ -3564,9 +3621,9 @@ char *cberg_asset_category_to_json(const CBERGAssetCategory *ptr);
 char *cberg_asset_category_to_string(const CBERGAssetCategory *ptr);
 
 /**
- * Free a heap-allocated `CrawlEvent` returned by a pointer-returning FFI function.
- * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Free a heap-allocated `CrawlEvent` returned by a pointer-returning FFI
+ * function. # Safety Pointer must have been returned by this library, or be
+ * null.
  */
 void cberg_crawl_event_free(CBERGCrawlEvent *ptr);
 
@@ -3594,8 +3651,8 @@ char *cberg_crawl_event_to_string(const CBERGCrawlEvent *ptr);
  * `Example (https://example.com)` becomes `Example[1]`
  * with `[1]: https://example.com` in the reference list.
  * Images `!alt (url)` are preserved unchanged.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGCitationResult *cberg_generate_citations(const char *markdown);
 
@@ -3604,58 +3661,59 @@ CBERGCitationResult *cberg_generate_citations(const char *markdown);
  *
  * If `config` is `None`, uses `CrawlConfig.default()`.
  * Returns an error if the configuration is invalid.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGCrawlEngineHandle *cberg_create_engine(const CBERGCrawlConfig *config);
 
 /**
  * Scrape a single URL, returning extracted page data.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGScrapeResult *cberg_scrape(const CBERGCrawlEngineHandle *engine,
                                 const char *url);
 
 /**
- * Crawl a website starting from `url`, following links up to the configured depth.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * Crawl a website starting from `url`, following links up to the configured
+ * depth.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGCrawlResult *cberg_crawl(const CBERGCrawlEngineHandle *engine,
                               const char *url);
 
 /**
  * Discover all pages on a website by following links and sitemaps.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGMapResult *cberg_map_urls(const CBERGCrawlEngineHandle *engine,
                                const char *url);
 
 /**
  * Execute browser actions on a single page.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGInteractionResult *cberg_interact(const CBERGCrawlEngineHandle *engine,
-                                       const char *url,
-                                       const char *actions);
+                                       const char *url, const char *actions);
 
 /**
  * Scrape multiple URLs concurrently.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
-CBERGBatchScrapeResults *cberg_batch_scrape(const CBERGCrawlEngineHandle *engine,
-                                            const char *urls);
+CBERGBatchScrapeResults *
+cberg_batch_scrape(const CBERGCrawlEngineHandle *engine, const char *urls);
 
 /**
- * Crawl multiple seed URLs concurrently, each following links to configured depth.
- * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
- * freed with the appropriate free function.
+ * Crawl multiple seed URLs concurrently, each following links to configured
+ * depth.
+ * \note SAFETY: Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
  */
 CBERGBatchCrawlResults *cberg_batch_crawl(const CBERGCrawlEngineHandle *engine,
                                           const char *urls);
 
-#endif  /* CBERG_H */
+#endif /* CBERG_H */

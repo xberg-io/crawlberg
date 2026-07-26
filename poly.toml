@@ -22,6 +22,20 @@ exclude = [
   "test_documents/**",
   "vendor/**",
   "**/Cargo.toml",
+  "docs-site/src/snippets/**",
+  "**/_generated/**",
+  "**/coverage/**",
+  "**/pkg/**",
+  "**/.next/**",
+  "**/*.min.js",
+  "**/vendored/**",
+  "**/stopwords/**",
+  "**/testdata/**",
+  "e2e/**",
+  "**/*.diff",
+  "**/*.patch",
+  "**/frb_generated.rs",
+  "charts/**",
 ]
 
 [lint.markdown.rumdl]
@@ -31,31 +45,57 @@ disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051
 disable = ["MD012", "MD013", "MD024", "MD033", "MD036", "MD041", "MD046", "MD051", "MD076"]
 
 [lint.python.ruff]
-select = ["ALL"]
+select = [
+  "F",
+  "E",
+  "W",
+  "I",
+  "N",
+  "D",
+  "UP",
+  "ANN",
+  "ASYNC",
+  "S",
+  "B",
+  "A",
+  "C4",
+  "DTZ",
+  "T10",
+  "T20",
+  "ISC",
+  "ICN",
+  "PIE",
+  "PT",
+  "Q",
+  "RSE",
+  "RET",
+  "SIM",
+  "TID",
+  "TC",
+  "ARG",
+  "PTH",
+  "PGH",
+  "PL",
+  "PERF",
+  "FURB",
+  "RUF",
+]
 ignore = [
   "ANN401",
   "ASYNC109",
   "ASYNC110",
-  "BLE001",
-  "COM812",
   "D100",
   "D104",
   "D107",
   "D205",
   "E501",
-  "EM",
-  "FBT",
-  "FIX",
   "ISC001",
-  "PD011",
   "PGH003",
   "PLR2004",
   "PLW0603",
   "S104",
   "S110",
   "S603",
-  "TD",
-  "TRY",
 ]
 mccabe_max_complexity = 15
 pydocstyle_convention = "google"
@@ -69,13 +109,95 @@ ignore = ["strict-assertions", "use-specific-assertions", "no-redundant-variable
 php_version = "8.2"
 
 [lint.typos.extend_words]
+ake = "ake"
+algoritmos = "algoritmos"
+arange = "arange"
+bre = "bre"
+caf = "caf"
+charater = "charater"
+chlidren = "chlidren"
+cliper = "cliper"
+cursos = "cursos"
+delocate = "delocate"
+docling = "docling"
+edn = "edn"
+ein = "ein"
+excepcional = "excepcional"
+execpt = "execpt"
+extention = "extention"
+faiure = "faiure"
+fith = "fith"
 flate = "flate"
+formated = "formated"
+headerr = "headerr"
+helo = "helo"
+hocr = "hocr"
+hom = "hom"
+inh = "inh"
+internacional = "internacional"
+ist = "ist"
+kreuzberg = "kreuzberg"
+layrnorm = "layrnorm"
+legt = "legt"
+markitdown = "markitdown"
+ment = "ment"
+mis = "mis"
+mmaped = "mmaped"
+multline = "multline"
+odf = "odf"
+onnx = "onnx"
+openwebui = "openwebui"
+opf = "opf"
+ove = "ove"
+ower = "ower"
+pard = "pard"
+portait = "portait"
+programa = "programa"
+pymupdf = "pymupdf"
+relatie = "relatie"
+rumdl = "rumdl"
+seperator = "seperator"
 ser = "ser"
+similarily = "similarily"
+siz = "siz"
+specifing = "specifing"
+splitted = "splitted"
+substract = "substract"
+surrealdb = "surrealdb"
+tbe = "tbe"
+tesseract = "tesseract"
+tha = "tha"
+thr = "thr"
+threed = "threed"
+ths = "ths"
+thw = "thw"
+traineddata = "traineddata"
+tre = "tre"
+unparseable = "unparseable"
+utiliza = "utiliza"
+webui = "webui"
+yor = "yor"
+
+[lint.typos.extend_identifiers]
+MarkItDown = "MarkItDown"
+PDFium = "PDFium"
+PyMuPDF = "PyMuPDF"
+SurrealDB = "SurrealDB"
+WebUI = "WebUI"
+traineddata = "traineddata"
+
+[lint.uncomment]
+enabled = true
+remove_todos = false
+remove_fixme = false
+remove_docs = false
+use_default_ignores = true
+preserve_patterns = ["SAFETY", "SPDX", "Copyright", "License", "licensed under"]
+
+[tools.clang-format]
+enabled = true
 
 [per-file-ignores]
-# Docker: DL3059 — RUN steps are deliberately separate (cache-mount isolation and
-#   staged CI verification); DL3006 — the `scratch` base image cannot be tagged.
-"docker/Dockerfile*" = ["DL3059", "DL3006"]
 "**/api.py" = ["F401", "I001", "TC006", "UP035"]
 "**/*.pyi" = ["A002", "F401", "I001", "PYI033", "TC006", "UP035"]
 "**/options.py" = ["F401", "I001", "RUF100"]
@@ -203,10 +325,53 @@ ser = "ser"
   "A001",
   "N801",
 ]
-"cli-proxy/**/*.py" = ["ANN", "S310", "T201"]
+"**/examples/**" = ["ANN", "D100", "D103", "I001", "INP001", "PLR2004", "S101", "PLC0415", "SLF001", "T201", "typo"]
+"**/tests/**/*.py" = ["PT019", "PLC0415", "SLF001"]
+".cargo/config.toml" = ["comment", "doc-comment"]
+"Package.swift" = ["comment", "doc-comment"]
+"cli-proxy/**/*.py" = ["ANN", "PLR0917", "S310", "T201"]
 "crates/crawlberg-browser/js/**" = ["no-unused-vars", "no-unused-expressions"]
-"readme_templates/**/*.md" = ["MD057"]
-"scripts/**/*.py" = ["B023", "C901", "D103", "ERA001", "EXE001", "PLC0415", "PLR0912", "PLR0915", "PTH123", "T201"]
+"crates/crawlberg-ffi/build.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/cbindgen.toml" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/include/crawlberg.h" = ["comment", "doc-comment"]
+"crates/crawlberg-ffi/src/lib.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-jni/**" = ["comment", "doc-comment"]
+"crates/crawlberg-node/**" = ["comment", "doc-comment"]
+"crates/crawlberg-node/index.js" = ["no-unused-vars"]
+"crates/crawlberg-php/**" = ["comment", "doc-comment"]
+"crates/crawlberg-py/src/lib.rs" = ["comment", "doc-comment"]
+"crates/crawlberg-wasm/src/lib.rs" = ["comment", "doc-comment"]
+"docker/**" = ["DL3006", "DL3059"]
+"packages/**" = ["comment", "doc-comment"]
+"packages/python/**/api.py" = ["RET504"]
+"scripts/**/*.py" = [
+  "B023",
+  "C901",
+  "D101",
+  "D102",
+  "D103",
+  "D415",
+  "E702",
+  "ERA001",
+  "EXE001",
+  "PERF203",
+  "PERF401",
+  "PLC0415",
+  "PLR0912",
+  "PLR0915",
+  "PLW2901",
+  "PT018",
+  "PTH108",
+  "PTH123",
+  "S101",
+  "S108",
+  "S311",
+  "S607",
+  "SIM105",
+  "SIM115",
+  "T201",
+]
+"test_apps/**" = ["comment", "doc-comment"]
 "tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
 
 [hooks]
@@ -236,6 +401,20 @@ lint = { exclude = [
   "test_documents/**",
   "vendor/**",
   "**/Cargo.toml",
+  "docs-site/src/snippets/**",
+  "**/_generated/**",
+  "**/coverage/**",
+  "**/pkg/**",
+  "**/.next/**",
+  "**/*.min.js",
+  "**/vendored/**",
+  "**/stopwords/**",
+  "**/testdata/**",
+  "e2e/**",
+  "**/*.diff",
+  "**/*.patch",
+  "**/frb_generated.rs",
+  "charts/**",
 ] }
 fmt = { exclude = [
   "**/*.freezed.dart",
@@ -260,6 +439,20 @@ fmt = { exclude = [
   "test_documents/**",
   "vendor/**",
   "**/Cargo.toml",
+  "docs-site/src/snippets/**",
+  "**/_generated/**",
+  "**/coverage/**",
+  "**/pkg/**",
+  "**/.next/**",
+  "**/*.min.js",
+  "**/vendored/**",
+  "**/stopwords/**",
+  "**/testdata/**",
+  "e2e/**",
+  "**/*.diff",
+  "**/*.patch",
+  "**/frb_generated.rs",
+  "charts/**",
 ] }
 file_safety = { exclude = [
   "**/*.freezed.dart",
@@ -284,10 +477,61 @@ file_safety = { exclude = [
   "test_documents/**",
   "vendor/**",
   "**/Cargo.toml",
+  "docs-site/src/snippets/**",
+  "**/_generated/**",
+  "**/coverage/**",
+  "**/pkg/**",
+  "**/.next/**",
+  "**/*.min.js",
+  "**/vendored/**",
+  "**/stopwords/**",
+  "**/testdata/**",
+  "e2e/**",
+  "**/*.diff",
+  "**/*.patch",
+  "**/frb_generated.rs",
+  "charts/**",
 ] }
 cargo = true
 commit = { stages = ["commit-msg"] }
 
 [hooks.pre-commit.commands.pyrefly]
 run = "pyrefly check packages/python"
+workspace = true
 files = "packages/python/**/*.py"
+
+[hooks.pre-commit.commands.rubocop]
+run = "bundle exec rubocop"
+root = "packages/ruby"
+workspace = true
+files = "packages/ruby/**/*.rb"
+
+[hooks.pre-commit.commands.steep]
+run = "bundle exec steep check"
+root = "packages/ruby"
+workspace = true
+files = "packages/ruby/**/*.rb"
+
+[hooks.pre-commit.commands.golangci-lint]
+run = "golangci-lint run ./..."
+root = "packages/go"
+workspace = true
+files = "packages/go/**/*.go"
+
+[hooks.pre-commit.commands.checkstyle]
+run = "mvn -q checkstyle:check"
+root = "packages/java"
+workspace = true
+files = "packages/java/**/*.java"
+
+[hooks.pre-commit.commands.dart-analyze]
+run = "dart analyze"
+root = "packages/dart"
+workspace = true
+files = "packages/dart/**/*.dart"
+
+[hooks.pre-commit.commands.credo]
+run = "mix credo --strict"
+root = "packages/elixir"
+workspace = true
+files = "packages/elixir/**/*.{ex,exs}"
