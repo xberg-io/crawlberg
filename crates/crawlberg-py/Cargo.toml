@@ -1,6 +1,6 @@
 [package]
 name = "crawlberg-py"
-version = "1.0.9"
+version = "1.0.10"
 edition = "2024"
 license = "MIT"
 description = "High-performance web crawling engine"
@@ -25,7 +25,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module", "pyo3/abi3-py310"]
 
 [dependencies]
-crawlberg = { version = "1.0.9", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
+crawlberg = { version = "1.0.10", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
 futures = "0.3"
 pyo3 = { version = "0.29" }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }

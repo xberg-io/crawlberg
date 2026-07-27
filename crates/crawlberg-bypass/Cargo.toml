@@ -10,7 +10,7 @@ description = "Configurable HTTP-based BypassProvider implementations for crawlb
 
 [dependencies]
 async-trait = { workspace = true }
-crawlberg = { path = "../crawlberg", version = "1.0.9" }
+crawlberg = { path = "../crawlberg", version = "1.0.10" }
 reqwest = { workspace = true }
 saphyr = "0.0.11"
 serde_json = { workspace = true }

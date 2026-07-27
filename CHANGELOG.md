@@ -2,6 +2,16 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.10] - 2026-07-27
+
+### Changed
+
+- Regenerate all language bindings on alef 0.48.4, which fixes Java (Maven)
+  publishing by lowering the maven-enforcer version floor and fixes C# (NuGet)
+  publishing by generating a `runtime.json` template rendered at pack time.
+- Verify Rust dependencies against their latest incompatible versions; all were
+  already current, so no dependency versions changed.
+
 ## [1.0.9] - 2026-07-26
 
 ### Changed
