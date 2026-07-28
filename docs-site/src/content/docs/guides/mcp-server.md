@@ -7,6 +7,23 @@ Crawlberg exposes its crawling capabilities as an
 assistants to scrape, crawl, and map websites through tool calls. The MCP feature is
 gated behind `mcp`.
 
+## Coding-agent plugin
+
+The easiest way to give a coding agent Crawlberg's tools is the [Crawlberg
+plugin](/guides/ai-coding-assistants/). Installed into Claude Code, Cursor, Codex, Gemini
+CLI, Factory Droid, GitHub Copilot CLI, or opencode, it registers an MCP server named
+`crawlberg` for you — no manual client config required.
+
+The plugin launches the server through its bundled `plugin/scripts/mcp-launch.sh`, which
+locates a `crawlberg` binary — a cached copy, one on `PATH`, `npx @xberg-io/crawlberg-cli`,
+`uvx --from crawlberg-cli`, Homebrew, or a release download — and runs `crawlberg mcp`.
+
+For non-agent Python workflows, the same capabilities ship as the **Hermes** plugin:
+
+```bash
+pip install crawlberg-hermes-plugin
+```
+
 ## Starting the MCP server
 
 ### CLI
@@ -280,6 +297,37 @@ Add to your Windsurf MCP configuration:
     "crawlberg": {
       "command": "docker",
       "args": ["run", "-i", "--rm", "crawlberg:latest", "mcp"]
+    }
+  }
+}
+```
+
+### Published CLI (npx / uvx)
+
+If you would rather not install the CLI globally, point the client at the published CLI
+package so it is fetched on demand. Both invoke the same `crawlberg mcp` stdio server.
+
+Via npm (`@xberg-io/crawlberg-cli`):
+
+```json
+{
+  "mcpServers": {
+    "crawlberg": {
+      "command": "npx",
+      "args": ["-y", "@xberg-io/crawlberg-cli", "mcp"]
+    }
+  }
+}
+```
+
+Via PyPI (`crawlberg-cli`):
+
+```json
+{
+  "mcpServers": {
+    "crawlberg": {
+      "command": "uvx",
+      "args": ["--from", "crawlberg-cli", "crawlberg", "mcp"]
     }
   }
 }
