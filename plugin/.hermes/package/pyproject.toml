@@ -1,0 +1,25 @@
+[build-system]
+requires = ['hatchling>=1.27']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'crawlberg-hermes-plugin'
+version = '1.0.10'
+description = 'Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.'
+requires-python = '>=3.11'
+keywords = ['web-scraping', 'crawling', 'html-to-markdown', 'headless-chrome']
+
+[project.entry-points]
+[project.entry-points.'hermes_agent.plugins']
+crawlberg = 'crawlberg_hermes_plugin'
+
+[project.urls]
+Homepage = 'https://xberg.io'
+Repository = 'https://github.com/xberg-io/crawlberg'
+
+[tool]
+[tool.hatch]
+[tool.hatch.build]
+[tool.hatch.build.targets]
+[tool.hatch.build.targets.wheel]
+packages = ['src/crawlberg_hermes_plugin']

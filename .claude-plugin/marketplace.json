@@ -1,0 +1,15 @@
+{
+  "name": "crawlberg",
+  "description": "Web crawling and scraping for coding agents, by Kreuzberg, Inc.",
+  "owner": {
+    "name": "Kreuzberg, Inc.",
+    "email": "contact@xberg.io"
+  },
+  "plugins": [
+    {
+      "name": "crawlberg",
+      "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
+      "source": "./plugin"
+    }
+  ]
+}

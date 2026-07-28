@@ -56,6 +56,8 @@ includes:
 
   version:
     taskfile: .task/tools/version-sync.yml
+  plugin:
+    taskfile: .task/tools/plugin.yml
   docker:
     taskfile: .task/tools/docker.yml
   docs:

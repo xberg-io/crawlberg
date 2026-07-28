@@ -280,6 +280,8 @@ e2e/ruby/.bundle/
 !.agents/skills/cli/SKILL.md
 !.agents/skills/mcp/
 !.agents/skills/mcp/SKILL.md
+!.agents/plugins/
+!.agents/plugins/marketplace.json
 !.claude/
 .claude/*
 !.claude/skills/

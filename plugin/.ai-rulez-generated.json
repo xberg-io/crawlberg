@@ -1,0 +1,144 @@
+{
+  "schema_version": "v1",
+  "source_hash": "blake3:468b539ff0511824bd080cc5b65512ceedb2ab168fdbd7e4d10ddcdf819167c6",
+  "outputs": {
+    ".claude-plugin/plugin.json": {
+      "content_hash": "blake3:b63d7e1c82a0ad67a891631f09ed1ff8e3b245d03e05563f8640e05535a752eb"
+    },
+    ".codex-plugin/plugin.json": {
+      "content_hash": "blake3:e54e9fb0ee11cfd48b96854cec08a36d9def46b42a385634a32d51cd8a8a27c4"
+    },
+    ".cursor-plugin/plugin.json": {
+      "content_hash": "blake3:7913374b9263db0ca07eba94ebb37320982e77eb75a1362b7e180ff7cade3c3c"
+    },
+    ".cursor-plugin/skills/automating-the-browser/SKILL.md": {
+      "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
+    },
+    ".cursor-plugin/skills/crawlberg/SKILL.md": {
+      "content_hash": "blake3:2400d592929aaf450317f228f695638b76d0f7987f5996106372e06b9abce70d"
+    },
+    ".cursor-plugin/skills/crawling-a-site/SKILL.md": {
+      "content_hash": "blake3:87e62f8235715c6d9ff820d40d26b521d5d0e0fb9888f7d04589c7429d28da14"
+    },
+    ".cursor-plugin/skills/headless-fallback/SKILL.md": {
+      "content_hash": "blake3:9ce8ead27ee0f0b76d36ce4a455a5d17936077d6582e737c9b9a7ba46819b686"
+    },
+    ".cursor-plugin/skills/mapping-urls/SKILL.md": {
+      "content_hash": "blake3:f350881f7fc3fae75a1b3aec431fddcb0cd9fd62539b5f6ade1493d4b15a076b"
+    },
+    ".cursor-plugin/skills/scraping-html-to-markdown/SKILL.md": {
+      "content_hash": "blake3:d4aa39402d49ad2eada44eea60c4a03a463b56134d3b869b5119f23d06144211"
+    },
+    ".cursor-plugin/skills/serving-the-api/SKILL.md": {
+      "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
+    },
+    ".factory-plugin/plugin.json": {
+      "content_hash": "blake3:3687cc58a6c5d76c2bace91232b76a724886ef464688c2c854cbed09f2b5ad60"
+    },
+    ".hermes/package/pyproject.toml": {
+      "content_hash": "blake3:0bbd2d9ba472ab6eca349ac92155b93eb306879f9a855446a5f8321eb33d4f53"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/__init__.py": {
+      "content_hash": "blake3:458c3e7cded84175f6fbbb7282febe91fad5fc28df3fb37047c88bfed2c14d8b"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/hermes.py": {
+      "content_hash": "blake3:24c219d28842d306ab1a4dea4970228462ed80a0965bb56f03101c2e82de1b1e"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/plugin.yaml": {
+      "content_hash": "blake3:274d9e6f433a0df2cb49f399bad646ec54626356db15b7351596b2333e99dc80"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/automating-the-browser/SKILL.md": {
+      "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/crawlberg/SKILL.md": {
+      "content_hash": "blake3:2400d592929aaf450317f228f695638b76d0f7987f5996106372e06b9abce70d"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/crawling-a-site/SKILL.md": {
+      "content_hash": "blake3:87e62f8235715c6d9ff820d40d26b521d5d0e0fb9888f7d04589c7429d28da14"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/headless-fallback/SKILL.md": {
+      "content_hash": "blake3:9ce8ead27ee0f0b76d36ce4a455a5d17936077d6582e737c9b9a7ba46819b686"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/mapping-urls/SKILL.md": {
+      "content_hash": "blake3:f350881f7fc3fae75a1b3aec431fddcb0cd9fd62539b5f6ade1493d4b15a076b"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/scraping-html-to-markdown/SKILL.md": {
+      "content_hash": "blake3:d4aa39402d49ad2eada44eea60c4a03a463b56134d3b869b5119f23d06144211"
+    },
+    ".hermes/package/src/crawlberg_hermes_plugin/skills/serving-the-api/SKILL.md": {
+      "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
+    },
+    ".hermes/plugins/crawlberg/__init__.py": {
+      "content_hash": "blake3:458c3e7cded84175f6fbbb7282febe91fad5fc28df3fb37047c88bfed2c14d8b"
+    },
+    ".hermes/plugins/crawlberg/hermes.py": {
+      "content_hash": "blake3:24c219d28842d306ab1a4dea4970228462ed80a0965bb56f03101c2e82de1b1e"
+    },
+    ".hermes/plugins/crawlberg/plugin.yaml": {
+      "content_hash": "blake3:274d9e6f433a0df2cb49f399bad646ec54626356db15b7351596b2333e99dc80"
+    },
+    ".hermes/plugins/crawlberg/skills/automating-the-browser/SKILL.md": {
+      "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
+    },
+    ".hermes/plugins/crawlberg/skills/crawlberg/SKILL.md": {
+      "content_hash": "blake3:2400d592929aaf450317f228f695638b76d0f7987f5996106372e06b9abce70d"
+    },
+    ".hermes/plugins/crawlberg/skills/crawling-a-site/SKILL.md": {
+      "content_hash": "blake3:87e62f8235715c6d9ff820d40d26b521d5d0e0fb9888f7d04589c7429d28da14"
+    },
+    ".hermes/plugins/crawlberg/skills/headless-fallback/SKILL.md": {
+      "content_hash": "blake3:9ce8ead27ee0f0b76d36ce4a455a5d17936077d6582e737c9b9a7ba46819b686"
+    },
+    ".hermes/plugins/crawlberg/skills/mapping-urls/SKILL.md": {
+      "content_hash": "blake3:f350881f7fc3fae75a1b3aec431fddcb0cd9fd62539b5f6ade1493d4b15a076b"
+    },
+    ".hermes/plugins/crawlberg/skills/scraping-html-to-markdown/SKILL.md": {
+      "content_hash": "blake3:d4aa39402d49ad2eada44eea60c4a03a463b56134d3b869b5119f23d06144211"
+    },
+    ".hermes/plugins/crawlberg/skills/serving-the-api/SKILL.md": {
+      "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
+    },
+    ".mcp.json": {
+      "content_hash": "blake3:f718cb4c11eefd1c5949d925d3412bed5250a3352c86029dd9584cc332ac0b06"
+    },
+    ".opencode/plugins/crawlberg.js": {
+      "content_hash": "blake3:ce1f9c841aabffb21311dce8d26479b2d2bba538a24ace5ed6246a918cc50429"
+    },
+    "assets/icon.svg": {
+      "content_hash": "blake3:2559f334b518fbb8c33ba0d97b0abe108b6cbc1e918f2b66f65046f740f24588"
+    },
+    "assets/logo.png": {
+      "content_hash": "blake3:dc62498695d3905dcec06f7efdbdecf346fac66daf775b4d60de2c6e7c833dd7"
+    },
+    "gemini-extension.json": {
+      "content_hash": "blake3:b7a4e1241f9279b175321b67c91f5bf5ffed65862eebf0d4e7edbf474ee4625f"
+    },
+    "kimi.plugin.json": {
+      "content_hash": "blake3:22e19dc6668ed0339029ece4a42d0318044211a21d348478c94f67cfd1ab6a83"
+    },
+    "package.json": {
+      "content_hash": "blake3:2858fe19166f856d854f8dd27269e273a578271b012bf9e7a9b6a2fc89dec951"
+    },
+    "skills/automating-the-browser/SKILL.md": {
+      "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
+    },
+    "skills/crawlberg/SKILL.md": {
+      "content_hash": "blake3:2400d592929aaf450317f228f695638b76d0f7987f5996106372e06b9abce70d"
+    },
+    "skills/crawling-a-site/SKILL.md": {
+      "content_hash": "blake3:87e62f8235715c6d9ff820d40d26b521d5d0e0fb9888f7d04589c7429d28da14"
+    },
+    "skills/headless-fallback/SKILL.md": {
+      "content_hash": "blake3:9ce8ead27ee0f0b76d36ce4a455a5d17936077d6582e737c9b9a7ba46819b686"
+    },
+    "skills/mapping-urls/SKILL.md": {
+      "content_hash": "blake3:f350881f7fc3fae75a1b3aec431fddcb0cd9fd62539b5f6ade1493d4b15a076b"
+    },
+    "skills/scraping-html-to-markdown/SKILL.md": {
+      "content_hash": "blake3:d4aa39402d49ad2eada44eea60c4a03a463b56134d3b869b5119f23d06144211"
+    },
+    "skills/serving-the-api/SKILL.md": {
+      "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
+    }
+  }
+}

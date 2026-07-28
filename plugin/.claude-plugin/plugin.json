@@ -1,0 +1,28 @@
+{
+  "name": "crawlberg",
+  "displayName": "Crawlberg",
+  "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
+  "version": "1.0.10",
+  "author": {
+    "name": "Kreuzberg, Inc.",
+    "email": "contact@xberg.io",
+    "url": "https://xberg.io"
+  },
+  "homepage": "https://xberg.io",
+  "repository": "https://github.com/xberg-io/crawlberg",
+  "license": "MIT",
+  "keywords": [
+    "web-scraping",
+    "crawling",
+    "html-to-markdown",
+    "headless-chrome"
+  ],
+  "mcpServers": {
+    "crawlberg": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launch.sh",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "crawlberg",
+  "version": "1.0.10",
+  "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
+  "author": {
+    "name": "Kreuzberg, Inc.",
+    "email": "contact@xberg.io",
+    "url": "https://xberg.io"
+  },
+  "homepage": "https://xberg.io",
+  "repository": "https://github.com/xberg-io/crawlberg",
+  "license": "MIT",
+  "category": "web-scraping",
+  "keywords": [
+    "web-scraping",
+    "crawling",
+    "html-to-markdown",
+    "headless-chrome"
+  ],
+  "brandColor": "#7C3AED",
+  "icon": "./assets/icon.svg",
+  "logo": "./assets/logo.png"
+}

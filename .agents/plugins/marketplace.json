@@ -1,0 +1,20 @@
+{
+  "name": "crawlberg",
+  "interface": {
+    "displayName": "crawlberg"
+  },
+  "plugins": [
+    {
+      "name": "crawlberg",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "web-scraping"
+    }
+  ]
+}

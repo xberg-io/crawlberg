@@ -105,6 +105,24 @@ exclude = [
   "**/*.patch",
   "**/frb_generated.rs",
   "charts/**",
+  # ai-rulez-generated coding-agent plugin outputs: owned by `ai-rulez generate
+  # --plugin`, never reformatted by poly (would break BLAKE3 provenance). Sources
+  # under plugin/.ai-rulez/ + plugin/scripts/ stay poly-managed. ~keep
+  "plugin/.claude-plugin/**",
+  "plugin/.codex-plugin/**",
+  "plugin/.cursor-plugin/**",
+  "plugin/.factory-plugin/**",
+  "plugin/.opencode/**",
+  "plugin/.hermes/**",
+  "plugin/skills/**",
+  "plugin/.mcp.json",
+  "plugin/gemini-extension.json",
+  "plugin/kimi.plugin.json",
+  "plugin/package.json",
+  "plugin/.ai-rulez-generated.json",
+  ".claude-plugin/marketplace.json",
+  ".agents/plugins/marketplace.json",
+  ".ai-rulez-generated.json",
 ]
 
 # Opt-in comment-removal sweep. Preserve doc comments (rustdoc is required on

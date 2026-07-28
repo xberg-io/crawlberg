@@ -269,14 +269,14 @@ See [CLI README](https://github.com/xberg-io/crawlberg/tree/main/crates/crawlber
 
 ### AI Coding Assistants
 
-Install the Crawlberg plugin from the [`xberg-io/plugins`](https://github.com/xberg-io/plugins) marketplace. It ships the Crawlberg agent skills (site crawling, HTML→Markdown scraping, headless-Chrome fallback) plus the `crawlberg` MCP server, and works with every major coding agent — expand your harness below.
+Install the Crawlberg plugin from [`xberg-io/crawlberg`](https://github.com/xberg-io/crawlberg). It ships the Crawlberg agent skills (site crawling, HTML→Markdown scraping, headless-Chrome fallback) plus the `crawlberg` MCP server, and works with every major coding agent — expand your harness below.
 
 <details open>
 <summary><strong>Claude Code</strong></summary>
 
 ```text
-/plugin marketplace add xberg-io/plugins
-/plugin install crawlberg@xberg
+/plugin marketplace add xberg-io/crawlberg
+/plugin install crawlberg@crawlberg
 ```
 
 </details>
@@ -285,7 +285,7 @@ Install the Crawlberg plugin from the [`xberg-io/plugins`](https://github.com/xb
 <summary><strong>Codex CLI</strong></summary>
 
 ```text
-/plugins add https://github.com/xberg-io/plugins
+/plugins add https://github.com/xberg-io/crawlberg
 ```
 
 Then search for `crawlberg` and select **Install Plugin**.
@@ -295,7 +295,7 @@ Then search for `crawlberg` and select **Install Plugin**.
 <details>
 <summary><strong>Cursor</strong></summary>
 
-Settings → Plugins → Add from URL → `https://github.com/xberg-io/plugins`, then select **crawlberg**.
+Settings → Plugins → Add from URL → `https://github.com/xberg-io/crawlberg`, then select **crawlberg**.
 
 </details>
 
@@ -303,7 +303,7 @@ Settings → Plugins → Add from URL → `https://github.com/xberg-io/plugins`,
 <summary><strong>Gemini CLI</strong></summary>
 
 ```text
-gemini extensions install https://github.com/xberg-io/plugins
+gemini extensions install https://github.com/xberg-io/crawlberg
 ```
 
 </details>
@@ -312,8 +312,8 @@ gemini extensions install https://github.com/xberg-io/plugins
 <summary><strong>Factory Droid</strong></summary>
 
 ```text
-droid plugin marketplace add https://github.com/xberg-io/plugins
-droid plugin install crawlberg@xberg
+droid plugin marketplace add https://github.com/xberg-io/crawlberg
+droid plugin install crawlberg@crawlberg
 ```
 
 </details>
@@ -322,8 +322,8 @@ droid plugin install crawlberg@xberg
 <summary><strong>GitHub Copilot CLI</strong></summary>
 
 ```text
-copilot plugin marketplace add https://github.com/xberg-io/plugins
-copilot plugin install crawlberg@xberg
+copilot plugin marketplace add https://github.com/xberg-io/crawlberg
+copilot plugin install crawlberg@crawlberg
 ```
 
 </details>

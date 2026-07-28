@@ -5,6 +5,10 @@ tasks:
     desc: Sync version from Cargo.toml to all package manifests
     cmds:
       - alef sync-versions
+      # Sync the coding-agent plugin: pin plugin/.ai-rulez/config.toml [plugin].version
+      # to core, then regenerate the per-runtime bundles under plugin/ from it. ~keep
+      - python3 scripts/sync_plugin_version.py
+      - ai-rulez generate --plugin
 
   bump:major:
     desc: Bump major version and sync all packages
