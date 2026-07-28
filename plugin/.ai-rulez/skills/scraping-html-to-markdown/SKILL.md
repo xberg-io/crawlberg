@@ -46,17 +46,21 @@ read, or when the result becomes LLM context downstream.
 
 ### JSON mode
 
-Top-level `PageResult` with:
+Top-level `ScrapeResult` with:
 
-- `url`, `final_url` (after redirects), `status_code`.
-- `markdown`: `{ content, fit_content, warnings }` — `fit_content` is a
-  pruned LLM-optimised variant.
-- `metadata`: Open Graph, Twitter Card, Dublin Core, article tags, JSON-LD,
-  headings (H1–H6), feeds, favicons, hreflang.
-- `links`: arrays for `Internal`, `External`, `Anchor`, and `Document`.
+- `final_url` (after redirects), `status_code`, `content_type`, `body_size`,
+  `detected_charset` — all top-level fields.
+- `markdown`: `{ content, fit_content, tables, warnings }` — `fit_content` is a
+  pruned LLM-optimised variant; `tables` holds structured table data preserved
+  separately from the Markdown text.
+- `metadata`: Open Graph (flat `og_title`/`og_description`/`og_image`), Twitter
+  Card, Dublin Core, article tags, headings (H1–H6), favicons, hreflang.
+- `links`: a flat array of link objects, each with a `link_type` discriminator
+  (`internal`, `external`, `anchor`, `document`) — filter with
+  `.links[] | select(.link_type=="external")`.
 - `images`: `<img>`, `<picture>`, `srcset`, `og:image`.
-- `tables`: structured table data preserved separately from Markdown.
-- `response`: HTTP headers, content type, charset, body size.
+- `feeds`, `json_ld`: top-level arrays of discovered feeds and JSON-LD entries.
+- `response_meta`: HTTP header metadata (server, etag, cache-control, etc.).
 
 Read `result.markdown.content` for the Markdown string when scripting.
 
@@ -76,7 +80,7 @@ Re-run with `--browser-mode always` and see the headless-fallback skill.
 
 `Auto` mode detects 8 WAF vendors and retries through headless Chrome
 automatically. If you forced `--browser-mode never`, the WAF response will
-fall through. Check `response.status_code` — 403/406/503 with WAF headers
+fall through. Check `.status_code` — 403/406/503 with WAF headers
 (`server: cloudflare`, `x-amz-cf-id`, etc.) is the giveaway.
 
 ### Robots.txt blocking the fetch
@@ -115,7 +119,7 @@ crawlberg scrape https://example.com \
 
 ```bash
 crawlberg scrape https://example.com --format json \
-  | jq '.metadata | {title: .og.title, description: .og.description, image: .og.image}'
+  | jq '.metadata | {title: .og_title, description: .og_description, image: .og_image}'
 ```
 
 ## When to reach for crawl or interact instead

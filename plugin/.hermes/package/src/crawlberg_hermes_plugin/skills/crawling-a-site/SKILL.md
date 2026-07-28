@@ -9,8 +9,8 @@ description: >-
 
 <!--
 AI-RULEZ :: GENERATED FILE — DO NOT EDIT
-Content-Hash: blake3:87e62f8235715c6d9ff820d40d26b521d5d0e0fb9888f7d04589c7429d28da14
-Source-Hash: blake3:468b539ff0511824bd080cc5b65512ceedb2ab168fdbd7e4d10ddcdf819167c6
+Content-Hash: blake3:b6e9416fdc29468a20b716d44dc5c6334c361ffd2c9d72fa94b571aa4275e762
+Source-Hash: blake3:bc7c6d3c0ebe647009380997eaf32b3ff474f8bd1f2aa58f759c5ffa091f66cf
 Schema-Version: v1
 -->
 
@@ -93,8 +93,12 @@ crawlberg crawl \
   --depth 2 --max-pages 100 --stay-on-domain --format json
 ```
 
-JSON output for batch is an array of `{ seed_url, result }` entries — each
-`result` is a full crawl payload or `{ error: ... }`.
+JSON output for a multi-seed crawl is a `BatchCrawlResults` object:
+`{ "results": [ { "url", "result", "error" }, … ], "total_count",
+"completed_count", "failed_count" }`. Each entry's `url` is the seed URL,
+`result` is a full crawl payload (or `null` on failure), and `error` is a
+sibling string field (`null` on success). Iterate with
+`.results[] | {url, error}` — not a top-level array.
 
 ## Output
 

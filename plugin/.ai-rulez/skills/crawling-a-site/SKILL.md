@@ -86,8 +86,12 @@ crawlberg crawl \
   --depth 2 --max-pages 100 --stay-on-domain --format json
 ```
 
-JSON output for batch is an array of `{ seed_url, result }` entries — each
-`result` is a full crawl payload or `{ error: ... }`.
+JSON output for a multi-seed crawl is a `BatchCrawlResults` object:
+`{ "results": [ { "url", "result", "error" }, … ], "total_count",
+"completed_count", "failed_count" }`. Each entry's `url` is the seed URL,
+`result` is a full crawl payload (or `null` on failure), and `error` is a
+sibling string field (`null` on success). Iterate with
+`.results[] | {url, error}` — not a top-level array.
 
 ## Output
 
