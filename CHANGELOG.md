@@ -11,7 +11,17 @@ All notable changes to crawlberg are documented here.
   needed; contract and HTTP transport tests pass unchanged.
 - Update the remaining Rust dependencies within range (`schemars`,
   `tokio-stream`, `sse-stream`, `ref-cast`).
-- Regenerate all language bindings on alef 0.48.6.
+- Regenerate all language bindings on alef 0.48.8, which fixes the Swift e2e
+  suite (optional `Vec<Named>` metadata fields such as `headings` are
+  JSON-bridged to a `RustString` getter and are no longer emitted as
+  uncompilable `.count` assertions) and adds a per-RID native runtime project
+  for the C# meta+runtime split.
+
+### Fixed
+
+- Refresh the PHP e2e `composer.lock` so `guzzlehttp/guzzle` resolves to `^8.0`;
+  the lock still pinned 7.x against the `^8.0` constraint, aborting
+  `composer install` before the PHP e2e suite could run.
 
 ## [1.0.10] - 2026-07-27
 
