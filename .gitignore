@@ -189,6 +189,9 @@ temp-test-*
 .codex/
 .gemini/
 .mcp.json
+# ...but the coding-agent plugin bundle's .mcp.json is an ai-rulez-generated
+# output that CI Plugin (`ai-rulez verify --plugin`) requires to be committed.
+!plugin/.mcp.json
 .playwright-mcp/
 AGENTS.md
 CLAUDE.md
