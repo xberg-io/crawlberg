@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/*", "packages/dart/rust", "packages/swift/rust", "tools/benchmark-harness"]
+members = [
+    "crates/*",
+    "packages/dart/rust",
+    "packages/swift/rust",
+    "tools/benchmark-harness",
+]
 exclude = [
     ".claude",
     "e2e/rust",
@@ -12,7 +17,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.10"
+version = "1.0.11"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -44,8 +49,8 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.10" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.10" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.0.11" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.0.11" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"
@@ -92,7 +97,7 @@ regex = "1"
 # native transport off wasm. Native-only features are re-added per-crate under
 # `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
 reqwest = { version = "0.13", default-features = false, features = ["cookies", "gzip", "brotli"] }
-rmcp = { version = "2", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 selectors = "0.39"
 serde = { version = "1", features = ["derive"] }

@@ -22,7 +22,7 @@ ai = ["crawlberg/ai"]
 
 [dependencies]
 clap = { workspace = true }
-crawlberg = { path = "../crawlberg", version = "1.0.10", features = ["native-runtime", "browser"] }
+crawlberg = { path = "../crawlberg", version = "1.0.11", features = ["native-runtime", "browser"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 

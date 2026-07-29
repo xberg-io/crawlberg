@@ -16,7 +16,7 @@ defmodule E2eElixir.MixProject do
       {:rustler_precompiled, "~> 0.9"},
       {:rustler, "~> 0.38", runtime: false},
       {:finch, "~> 0.23"},
-      {:req, "~> 0.6"},
+      {:req, "~> 0.7"},
       {:jason, "~> 1.4"}
     ]
   end

@@ -90,7 +90,7 @@ Via swift-bridge for macOS, iOS, and Linux with native Swift types and async/awa
 ## Installation
 
 ```bash
-.package(url: "https://github.com/xberg-io/crawlberg", exact: "1.0.10")
+.package(url: "https://github.com/xberg-io/crawlberg", exact: "1.0.11")
 ```
 
 ## Agent plugin
@@ -148,7 +148,7 @@ Contributions are welcome! Please see our [Contributing Guide](https://github.co
 
 ## Part of Xberg.dev
 
-- [Xberg](https://github.com/xberg-io/xberg) — document intelligence: text, tables, metadata from 91+ formats with optional OCR.
+- [Xberg](https://github.com/xberg-io/xberg) — document intelligence: text, tables, metadata from 98+ formats with optional OCR.
 - [Xberg Enterprise](https://github.com/xberg-io/xberg-enterprise) — managed extraction API with SDKs, dashboards, and observability.
 - [crawlberg](https://github.com/xberg-io/crawlberg) — web crawling and scraping with HTML→Markdown and headless-Chrome fallback.
 - [html-to-markdown](https://github.com/xberg-io/html-to-markdown) — fast, lossless HTML→Markdown engine.

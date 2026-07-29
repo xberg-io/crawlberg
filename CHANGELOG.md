@@ -2,6 +2,17 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.11] - 2026-07-29
+
+### Changed
+
+- Upgrade `rmcp` (and `rmcp-macros`) from 2.0 to 3.0. The MCP server, param, and
+  error code is source-compatible with the new major, so no adjustments were
+  needed; contract and HTTP transport tests pass unchanged.
+- Update the remaining Rust dependencies within range (`schemars`,
+  `tokio-stream`, `sse-stream`, `ref-cast`).
+- Regenerate all language bindings on alef 0.48.6.
+
 ## [1.0.10] - 2026-07-27
 
 ### Changed

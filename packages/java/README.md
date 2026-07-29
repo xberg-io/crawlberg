@@ -93,7 +93,7 @@ Panama FFM API (Java 21+) for zero-overhead native calls with full type safety.
 <dependency>
     <groupId>io.xberg.crawlberg</groupId>
     <artifactId>crawlberg</artifactId>
-    <version>1.0.10</version>
+    <version>1.0.11</version>
 </dependency>
 
 ```
@@ -165,7 +165,7 @@ Contributions are welcome! Please see our [Contributing Guide](https://github.co
 
 ## Part of Xberg.dev
 
-- [Xberg](https://github.com/xberg-io/xberg) — document intelligence: text, tables, metadata from 91+ formats with optional OCR.
+- [Xberg](https://github.com/xberg-io/xberg) — document intelligence: text, tables, metadata from 98+ formats with optional OCR.
 - [Xberg Enterprise](https://github.com/xberg-io/xberg-enterprise) — managed extraction API with SDKs, dashboards, and observability.
 - [crawlberg](https://github.com/xberg-io/crawlberg) — web crawling and scraping with HTML→Markdown and headless-Chrome fallback.
 - [html-to-markdown](https://github.com/xberg-io/html-to-markdown) — fast, lossless HTML→Markdown engine.
