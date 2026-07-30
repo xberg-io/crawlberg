@@ -1,10 +1,10 @@
 //! Integration tests for the Streamable HTTP MCP transport.
 //!
 //! Regression guard: the MCP [`ServerHandler`] must delegate `tools/list` and
-//! `tools/call` to the generated tool router (via rmcp's `#[tool_handler]`). A
-//! missing delegation still compiles but serves an empty tool list, so these
-//! tests drive the real JSON-RPC protocol over the mounted HTTP service rather
-//! than inspecting the router directly.
+//! `tools/call` to the generated tool router, advertise the SEP-2663 tasks
+//! extension, and serve statelessly (SEP-2567). These tests drive the real
+//! JSON-RPC protocol over the mounted HTTP service rather than inspecting the
+//! router directly.
 
 #![cfg(all(feature = "api", feature = "mcp"))]
 
@@ -15,22 +15,21 @@ use crawlberg::CrawlConfig;
 use tower::ServiceExt;
 
 const ACCEPT: &str = "application/json, text/event-stream";
+const PROTOCOL_VERSION: &str = "2026-07-28";
 
 fn app() -> Router {
     Router::new().nest_service("/mcp", crawlberg::streamable_http_service(CrawlConfig::default()))
 }
 
-async fn post(app: &Router, session: Option<&str>, body: &str) -> (StatusCode, HeaderMap, String) {
-    let mut builder = Request::builder()
+async fn post(app: &Router, body: &str) -> (StatusCode, HeaderMap, String) {
+    let request = Request::builder()
         .method("POST")
         .uri("/mcp")
         .header("host", "localhost")
         .header("content-type", "application/json")
-        .header("accept", ACCEPT);
-    if let Some(sid) = session {
-        builder = builder.header("mcp-session-id", sid);
-    }
-    let request = builder.body(Body::from(body.to_string())).expect("valid request");
+        .header("accept", ACCEPT)
+        .body(Body::from(body.to_string()))
+        .expect("valid request");
 
     let response = app.clone().oneshot(request).await.expect("service responds");
     let status = response.status();
@@ -41,8 +40,15 @@ async fn post(app: &Router, session: Option<&str>, body: &str) -> (StatusCode, H
     (status, headers, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Extract the first JSON-RPC `result`/`error` frame from an SSE response body.
-fn sse_result(body: &str) -> serde_json::Value {
+/// Extract the JSON-RPC `result`/`error` frame from a response body, tolerating
+/// both a plain `application/json` body (stateless `json_response`) and an SSE
+/// `text/event-stream` body (`data:` frames).
+fn json_rpc_result(body: &str) -> serde_json::Value {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body.trim())
+        && (value.get("result").is_some() || value.get("error").is_some())
+    {
+        return value;
+    }
     for line in body.lines() {
         if let Some(rest) = line.strip_prefix("data: ")
             && let Ok(value) = serde_json::from_str::<serde_json::Value>(rest)
@@ -51,45 +57,49 @@ fn sse_result(body: &str) -> serde_json::Value {
             return value;
         }
     }
-    panic!("no JSON-RPC result frame found in SSE body: {body}");
+    panic!("no JSON-RPC result frame found in body: {body}");
 }
 
-async fn initialize(app: &Router) -> String {
-    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#;
-    let (status, headers, _) = post(app, None, init).await;
+/// A `tools/call` request body carrying `meta` in its `_meta` field.
+fn tools_call_body(id: u32, name: &str, meta: serde_json::Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": { "name": name, "arguments": {}, "_meta": meta },
+    })
+    .to_string()
+}
+
+/// Perform the stateless initialize handshake and assert no session is issued.
+async fn initialize(app: &Router) {
+    let init = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"{PROTOCOL_VERSION}","capabilities":{{"extensions":{{"io.modelcontextprotocol/tasks":{{}}}}}},"clientInfo":{{"name":"test","version":"0"}}}}}}"#
+    );
+    let (status, headers, _) = post(app, &init).await;
     assert_eq!(status, StatusCode::OK, "initialize must return 200");
-    let sid = headers
-        .get("mcp-session-id")
-        .expect("initialize must return an Mcp-Session-Id header")
-        .to_str()
-        .expect("session id is valid ascii")
-        .to_string();
-    let _ = post(
-        app,
-        Some(&sid),
-        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-    )
-    .await;
-    sid
+    assert!(
+        headers.get("mcp-session-id").is_none(),
+        "SEP-2567 stateless transport must not issue a session id"
+    );
+}
+
+fn tools_of(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    value["result"]["tools"]
+        .as_array()
+        .expect("tools/list returns a tools array")
+        .clone()
 }
 
 #[tokio::test]
 async fn http_mcp_lists_all_nine_tools() {
     let app = app();
-    let sid = initialize(&app).await;
+    initialize(&app).await;
 
-    let (status, _headers, body) = post(
-        &app,
-        Some(&sid),
-        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
-    )
-    .await;
+    let (status, _headers, body) = post(&app, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#).await;
     assert_eq!(status, StatusCode::OK);
 
-    let value = sse_result(&body);
-    let tools = value["result"]["tools"]
-        .as_array()
-        .expect("tools/list returns a tools array");
+    let tools = tools_of(&json_rpc_result(&body));
     assert_eq!(
         tools.len(),
         9,
@@ -100,16 +110,10 @@ async fn http_mcp_lists_all_nine_tools() {
 #[tokio::test]
 async fn http_mcp_serves_safety_annotations() {
     let app = app();
-    let sid = initialize(&app).await;
+    initialize(&app).await;
 
-    let (_status, _headers, body) = post(
-        &app,
-        Some(&sid),
-        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
-    )
-    .await;
-    let value = sse_result(&body);
-    let tools = value["result"]["tools"].as_array().expect("tools array");
+    let (_status, _headers, body) = post(&app, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#).await;
+    let tools = tools_of(&json_rpc_result(&body));
 
     let find = |name: &str| {
         tools
@@ -130,4 +134,74 @@ async fn http_mcp_serves_safety_annotations() {
 
     let citations = find("generate_citations");
     assert_eq!(citations["annotations"]["openWorldHint"], serde_json::json!(false));
+}
+
+/// SEP-2106: a `tools/call` result carries machine-readable `structuredContent`
+/// alongside the human-readable text block.
+#[tokio::test]
+async fn http_mcp_returns_structured_content() {
+    let app = app();
+    initialize(&app).await;
+
+    let (status, _headers, response) = post(
+        &app,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_version","arguments":{}}}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let value = json_rpc_result(&response);
+    let structured = &value["result"]["structuredContent"];
+    assert!(
+        structured.get("version").and_then(serde_json::Value::as_str).is_some(),
+        "result must carry structuredContent with a version field, got: {value}"
+    );
+    // The human-readable text block is still present for non-structured clients.
+    assert!(
+        value["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("version")),
+        "result must still carry a text block: {value}"
+    );
+}
+
+/// SEP-2663 over the SEP-2567 stateless transport: task-augmented `tools/call`
+/// degrades gracefully to inline execution.
+///
+/// rmcp's stateless Streamable HTTP path does not propagate per-request client
+/// capabilities (it reconstructs `peer_info` with default capabilities), so the
+/// server cannot see the client's tasks capability and must not return a task
+/// handle (which the protocol would reject as a missing-capability error).
+/// Instead the tool runs inline and returns its result directly. Full task
+/// support requires the capability-negotiating stdio transport
+/// (see the `crawlberg-cli` stdio task test).
+#[tokio::test]
+async fn http_mcp_task_augmentation_degrades_to_inline() {
+    let app = app();
+    initialize(&app).await;
+
+    let body = tools_call_body(
+        2,
+        "get_version",
+        serde_json::json!({
+            "io.modelcontextprotocol/tasks": { "ttl": 60000 }
+        }),
+    );
+    let (status, _headers, response) = post(&app, &body).await;
+    assert_eq!(status, StatusCode::OK, "task-augmented call must return 200");
+
+    let value = json_rpc_result(&response);
+    assert!(
+        value.get("error").is_none(),
+        "stateless task augmentation must not error, got: {value}"
+    );
+    assert!(
+        value["result"].get("taskId").is_none(),
+        "stateless transport must run inline, not return a task handle, got: {value}"
+    );
+    let text = value["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        text.contains("version"),
+        "inline result must carry the get_version output: {value}"
+    );
 }

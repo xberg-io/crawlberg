@@ -3,10 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Crawlberg</RootNamespace>
     <PackageId>XbergIo.Crawlberg</PackageId>
-    <Version>1.0.11</Version>
+    <Version>1.0.12</Version>
     <AssemblyVersion>1.0.11.0</AssemblyVersion>
     <FileVersion>1.0.11.0</FileVersion>
-    <InformationalVersion>1.0.11</InformationalVersion>
+    <InformationalVersion>1.0.12</InformationalVersion>
     <Description>High-performance web crawling engine</Description>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <RepositoryUrl>https://github.com/xberg-io/crawlberg</RepositoryUrl>

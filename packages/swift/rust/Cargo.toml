@@ -2,7 +2,7 @@
 # alef:hash:033f5eca7fbc34bfd4671a4317e70b36ebfd9f5f5cf417b942c113c920a71e34
 [package]
 name = "crawlberg-swift"
-version = "1.0.11"
+version = "1.0.12"
 edition = "2024"
 license = "MIT"
 
@@ -32,7 +32,7 @@ bench = false
 [dependencies]
 ahash = "0.8"
 async-trait = "0.1"
-crawlberg = { version = "1.0.11", path = "../../../crates/crawlberg", features = ["browser-chromiumoxide", "interact"] }
+crawlberg = { version = "1.0.12", path = "../../../crates/crawlberg", features = ["browser-chromiumoxide", "interact"] }
 futures-util = "0.3"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

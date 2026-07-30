@@ -377,9 +377,20 @@ enum Commands {
         #[arg(long, default_value = "3000")]
         port: u16,
     },
-    /// Start the MCP server (stdio transport)
+    /// Start the MCP server (stdio transport by default)
     #[cfg(feature = "mcp")]
-    Mcp {},
+    Mcp {
+        /// Serve over Streamable HTTP at `/mcp` instead of stdio
+        /// (requires a build with the `mcp-http` feature)
+        #[arg(long)]
+        http: bool,
+        /// Host address to bind to in `--http` mode
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Port to listen on in `--http` mode
+        #[arg(long, default_value = "3001")]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -799,11 +810,28 @@ async fn main() {
             }
         }
         #[cfg(feature = "mcp")]
-        Commands::Mcp {} => {
-            eprintln!("Starting MCP server (stdio transport)");
-            if let Err(e) = crawlberg::start_mcp_server().await {
-                eprintln!("MCP server error: {e}");
-                std::process::exit(1);
+        Commands::Mcp { http, host, port } => {
+            if http {
+                #[cfg(feature = "mcp-http")]
+                {
+                    eprintln!("Starting MCP server (Streamable HTTP) at http://{host}:{port}/mcp");
+                    if let Err(e) = crawlberg::start_mcp_http_server(&host, port, CrawlConfig::default()).await {
+                        eprintln!("MCP server error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                #[cfg(not(feature = "mcp-http"))]
+                {
+                    let _ = (host, port);
+                    eprintln!("Error: --http requires a build with the `mcp-http` feature");
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("Starting MCP server (stdio transport)");
+                if let Err(e) = crawlberg::start_mcp_server().await {
+                    eprintln!("MCP server error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }

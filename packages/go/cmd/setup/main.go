@@ -41,7 +41,7 @@ import (
 )
 
 const (
-	moduleVersion     = "1.0.11"
+	moduleVersion     = "1.0.12"
 	repoURL           = "https://github.com/xberg-io/crawlberg"
 	assetPrefix       = "crawlberg"
 	ffiLibName        = "crawlberg_ffi"

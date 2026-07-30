@@ -1,6 +1,6 @@
 {
   "name": "@xberg-io/opencode-crawlberg",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
   "keywords": [
     "web-scraping",

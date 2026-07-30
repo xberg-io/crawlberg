@@ -189,7 +189,7 @@ mavenPublishing {
     coordinates(
         groupId = "io.xberg.crawlberg.android",
         artifactId = "crawlberg-android",
-        version = "1.0.11",
+        version = "1.0.12",
     )
 
     pom {

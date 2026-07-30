@@ -3,9 +3,11 @@
 //! This module provides the main MCP server struct and startup functions.
 
 use rmcp::{
-    ServerHandler, ServiceExt,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    RoleServer, ServerHandler, ServiceExt,
+    handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::*,
+    service::RequestContext,
+    task_manager::{TaskExit, TaskManager, TaskOptions},
     tool, tool_handler, tool_router,
     transport::stdio,
 };
@@ -35,6 +37,25 @@ fn parse_format(format: &Option<String>) -> &str {
     }
 }
 
+/// Build a tool result carrying both a human-readable text block and the
+/// machine-readable `structuredContent` (SEP-2106).
+///
+/// `structured` is the JSON value clients can consume programmatically; `text`
+/// is the same information rendered for humans (markdown or pretty JSON). The
+/// `format` parameter selects the text representation only — `structuredContent`
+/// is always populated so schema-aware clients get typed output regardless.
+fn structured_success(structured: serde_json::Value, text: String) -> CallToolResult {
+    let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
+    result.structured_content = Some(structured);
+    result
+}
+
+/// Serialize a value into `structuredContent`, mapping failures to an MCP error.
+fn to_structured<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, rmcp::ErrorData> {
+    serde_json::to_value(value)
+        .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to serialize structured content: {e}"), None))
+}
+
 /// Crawlberg MCP server.
 ///
 /// Provides web scraping, crawling, and mapping capabilities via MCP tools.
@@ -43,6 +64,11 @@ fn parse_format(format: &Option<String>) -> &str {
 /// all tool calls. Per-request parameters override specific fields.
 pub struct CrawlbergMcp {
     tool_router: ToolRouter<CrawlbergMcp>,
+    /// SEP-2663 Tasks extension runtime. `Arc`-backed and cheaply cloneable;
+    /// all clones share the same task store so a task created on one request
+    /// remains observable via `tasks/get` on later (possibly stateless-HTTP)
+    /// requests served by a different `CrawlbergMcp` instance.
+    task_manager: TaskManager,
     /// Default crawl configuration
     config: CrawlConfig,
 }
@@ -51,6 +77,7 @@ impl Clone for CrawlbergMcp {
     fn clone(&self) -> Self {
         Self {
             tool_router: self.tool_router.clone(),
+            task_manager: self.task_manager.clone(),
             config: self.config.clone(),
         }
     }
@@ -65,12 +92,30 @@ impl CrawlbergMcp {
 
     /// Create a new Crawlberg MCP server instance with explicit config.
     ///
+    /// Each instance gets its own [`TaskManager`], which is correct for the
+    /// single long-lived stdio server. HTTP callers that materialize a new
+    /// instance per request should use [`Self::with_config_and_tasks`] to share
+    /// one task store across instances.
+    ///
     /// # Arguments
     ///
     /// * `config` - Default crawl configuration for all tool calls
     pub fn with_config(config: CrawlConfig) -> Self {
+        Self::with_config_and_tasks(config, TaskManager::new())
+    }
+
+    /// Create a new Crawlberg MCP server instance sharing an existing
+    /// [`TaskManager`].
+    ///
+    /// Use this when several instances must observe the same SEP-2663 task
+    /// store — notably the stateless Streamable HTTP transport, which builds a
+    /// fresh instance per request. Passing a shared, `Arc`-backed manager keeps
+    /// a task created on the originating `tools/call` observable on the later
+    /// `tasks/get` / `tasks/update` / `tasks/cancel` requests.
+    pub fn with_config_and_tasks(config: CrawlConfig, task_manager: TaskManager) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            task_manager,
             config,
         }
     }
@@ -122,13 +167,13 @@ impl CrawlbergMcp {
         let engine = self.build_engine(config)?;
         let result = engine.scrape(&params.url).await.map_err(map_crawl_error)?;
 
-        let response = if parse_format(&params.format) == "json" {
+        let text = if parse_format(&params.format) == "json" {
             format_as_json(&result)
         } else {
             format_as_markdown(&result)
         };
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        Ok(structured_success(to_structured(&result)?, text))
     }
 
     /// Crawl a website following links up to a configured depth.
@@ -173,13 +218,13 @@ impl CrawlbergMcp {
         let engine = self.build_engine(config)?;
         let result = engine.crawl(&params.url).await.map_err(map_crawl_error)?;
 
-        let response = if parse_format(&params.format) == "json" {
+        let text = if parse_format(&params.format) == "json" {
             format_crawl_as_json(&result)
         } else {
             format_crawl_as_markdown(&result)
         };
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        Ok(structured_success(to_structured(&result)?, text))
     }
 
     /// Discover all pages on a website via links and sitemaps.
@@ -218,8 +263,8 @@ impl CrawlbergMcp {
         let engine = self.build_engine(config)?;
         let result = engine.map(&params.url).await.map_err(map_crawl_error)?;
 
-        let response = format_map_result(&result);
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        let text = format_map_result(&result);
+        Ok(structured_success(to_structured(&result)?, text))
     }
 
     /// Scrape multiple URLs concurrently.
@@ -255,6 +300,7 @@ impl CrawlbergMcp {
         let is_json = parse_format(&params.format) == "json";
 
         let mut response = String::new();
+        let mut structured = Vec::with_capacity(results.len());
         for (url, result) in &results {
             match result {
                 Ok(scrape_result) => {
@@ -265,14 +311,17 @@ impl CrawlbergMcp {
                         response.push_str(&format_as_markdown(scrape_result));
                     }
                     response.push_str("\n\n---\n\n");
+                    structured
+                        .push(serde_json::json!({ "url": url, "ok": true, "result": to_structured(scrape_result)? }));
                 }
                 Err(e) => {
                     response.push_str(&format!("## {url}\n\n**Error:** {e}\n\n---\n\n"));
+                    structured.push(serde_json::json!({ "url": url, "ok": false, "error": e.to_string() }));
                 }
             }
         }
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        Ok(structured_success(serde_json::Value::Array(structured), response))
     }
 
     /// Crawl multiple seed URLs concurrently.
@@ -326,6 +375,7 @@ impl CrawlbergMcp {
         let is_json = parse_format(&params.format) == "json";
 
         let mut response = String::new();
+        let mut structured = Vec::with_capacity(results.len());
         for (url, result) in &results {
             match result {
                 Ok(crawl_result) => {
@@ -336,14 +386,17 @@ impl CrawlbergMcp {
                         response.push_str(&format_crawl_as_markdown(crawl_result));
                     }
                     response.push_str("\n\n---\n\n");
+                    structured
+                        .push(serde_json::json!({ "url": url, "ok": true, "result": to_structured(crawl_result)? }));
                 }
                 Err(e) => {
                     response.push_str(&format!("## {url}\n\n**Error:** {e}\n\n---\n\n"));
+                    structured.push(serde_json::json!({ "url": url, "ok": false, "error": e.to_string() }));
                 }
             }
         }
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        Ok(structured_success(serde_json::Value::Array(structured), response))
     }
 
     /// Download a document from a URL.
@@ -371,7 +424,7 @@ impl CrawlbergMcp {
         let engine = self.build_engine(config)?;
         let result = engine.scrape(&params.url).await.map_err(map_crawl_error)?;
 
-        let response = if let Some(ref doc) = result.downloaded_document {
+        let structured = if let Some(ref doc) = result.downloaded_document {
             serde_json::json!({
                 "url": doc.url,
                 "mime_type": doc.mime_type,
@@ -379,7 +432,6 @@ impl CrawlbergMcp {
                 "filename": doc.filename,
                 "content_hash": doc.content_hash,
             })
-            .to_string()
         } else {
             serde_json::json!({
                 "url": params.url,
@@ -388,10 +440,10 @@ impl CrawlbergMcp {
                 "body_size": result.body_size,
                 "note": "URL returned HTML content, not a downloadable document"
             })
-            .to_string()
         };
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
+        Ok(structured_success(structured, text))
     }
 
     /// Execute browser actions on a page.
@@ -420,11 +472,10 @@ impl CrawlbergMcp {
 
         let engine = self.build_engine(self.config.clone())?;
         let result = engine.interact(&params.url, &actions).await.map_err(map_crawl_error)?;
-        let response = serde_json::to_string_pretty(&result).map_err(|e| {
-            rmcp::ErrorData::internal_error(format!("Failed to serialize interaction result: {e}"), None)
-        })?;
+        let structured = to_structured(&result)?;
+        let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        Ok(structured_success(structured, text))
     }
 
     /// Convert markdown links into numbered citations.
@@ -446,9 +497,9 @@ impl CrawlbergMcp {
         Parameters(params): Parameters<super::params::GenerateCitationsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let result = crate::citations::generate_citations(&params.markdown);
-        let response = serde_json::to_string_pretty(&result)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("Failed to serialize citations: {e}"), None))?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(response)]))
+        let structured = to_structured(&result)?;
+        let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
+        Ok(structured_success(structured, text))
     }
 
     /// Get the current crawlberg version.
@@ -465,22 +516,108 @@ impl CrawlbergMcp {
         &self,
         Parameters(_): Parameters<super::params::EmptyParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let response = serde_json::json!({
+        let structured = serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
         });
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            serde_json::to_string_pretty(&response)
-                .unwrap_or_else(|e| format!("{{\"error\": \"Failed to serialize version: {e}\"}}")),
-        )]))
+        let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
+        Ok(structured_success(structured, text))
     }
+}
+
+/// Read the SEP-2663 task augmentation from a request's `_meta`.
+///
+/// The service layer moves a request's `_meta` into
+/// [`RequestContext::meta`](rmcp::service::RequestContext), so the augmentation
+/// is read from there rather than from the (now-empty) request params.
+///
+/// Returns `Some(ttl_ms)` when the client asked for task-based execution (the
+/// `io.modelcontextprotocol/tasks` extension key is present); the inner value
+/// is the client-requested TTL in milliseconds, or `None` for "unspecified"
+/// (the manager default applies). Returns `None` when no task was requested.
+fn requested_task_ttl(meta: &rmcp::model::RequestMetaObject) -> Option<Option<u64>> {
+    let augmentation = meta.get(rmcp::model::TASKS_EXTENSION_ID)?;
+    let ttl_ms = augmentation.get("ttl").and_then(serde_json::Value::as_u64);
+    Some(ttl_ms)
 }
 
 #[tool_handler]
 impl ServerHandler for CrawlbergMcp {
+    /// Dispatch a `tools/call`, honoring SEP-2663 task augmentation.
+    ///
+    /// When the client both declares the tasks capability and augments this
+    /// request with the tasks extension, the tool runs as a background task and
+    /// we return a task handle immediately; the client then polls `tasks/get`.
+    /// Otherwise the tool runs inline and returns its result directly (the
+    /// behavior the `#[tool_handler]`-generated `call_tool` would provide).
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        request_context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        let client_supports_tasks = request_context
+            .client_capabilities()
+            .is_some_and(|capabilities| capabilities.supports_tasks());
+        let task_ttl = requested_task_ttl(&request_context.meta);
+
+        // Run inline unless the client both supports and requested a task.
+        let Some(ttl_ms) = task_ttl.filter(|_| client_supports_tasks) else {
+            let context = ToolCallContext::new(self, request, request_context);
+            return self.tool_router.call(context).await;
+        };
+
+        let options = match ttl_ms {
+            Some(ttl_ms) => TaskOptions::new().with_ttl_ms(ttl_ms),
+            None => TaskOptions::new(),
+        };
+        // Own a clone so the spawned operation is `'static`: the tool router is
+        // driven against the moved `server`, borrowed only within the future.
+        let server = self.clone();
+        let task = self.task_manager.spawn(options, move |_task_context| {
+            Box::pin(async move {
+                let context = ToolCallContext::new(&server, request, request_context);
+                match server.tool_router.call(context).await {
+                    Ok(CallToolResponse::Complete(result)) => Ok(result),
+                    Ok(_) => Err(TaskExit::Error(rmcp::ErrorData::internal_error(
+                        "tool produced a non-final response inside a task",
+                        None,
+                    ))),
+                    Err(error) => Err(TaskExit::Error(error)),
+                }
+            })
+        });
+        Ok(CallToolResponse::Task(CreateTaskResult::new(task)))
+    }
+
+    /// SEP-2663 `tasks/get`: report a task's current state.
+    async fn get_task(
+        &self,
+        request: GetTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetTaskResult, rmcp::ErrorData> {
+        self.task_manager.get_task(&request.task_id).map(GetTaskResult::new)
+    }
+
+    /// SEP-2663 `tasks/update`: deliver client responses to in-task input requests.
+    async fn update_task(
+        &self,
+        request: UpdateTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        self.task_manager.update_task(&request.task_id, request.input_responses)
+    }
+
+    /// SEP-2663 `tasks/cancel`: request cooperative cancellation of a task.
+    async fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        self.task_manager.cancel_task(&request.task_id)
+    }
+
     fn get_info(&self) -> ServerInfo {
-        let mut capabilities = ServerCapabilities::default();
-        capabilities.tools = Some(ToolsCapability::default());
+        let capabilities = ServerCapabilities::builder().enable_tools().enable_tasks().build();
 
         let server_info = Implementation::new("crawlberg-mcp", env!("CARGO_PKG_VERSION"))
             .with_title("Crawlberg Web Crawling MCP Server")
@@ -541,6 +678,41 @@ pub async fn start_mcp_server_with_config(config: CrawlConfig) -> Result<(), Box
     Ok(())
 }
 
+/// Start a dedicated MCP server over the Streamable HTTP transport, exposing
+/// the MCP endpoint at `/mcp`.
+///
+/// This serves *only* the MCP transport — unlike [`crate::serve_api`], it mounts
+/// no REST API routes. It backs `crawlberg mcp --http`. The transport is
+/// stateless (SEP-2567) and supports the SEP-2663 Tasks extension across
+/// requests via a shared task store. Blocks until the server shuts down.
+///
+/// # Errors
+///
+/// Returns an error if `host` is not a valid IP address, the address cannot be
+/// bound, or the server encounters a fatal error while running.
+#[cfg(feature = "mcp-http")]
+pub async fn start_mcp_http_server(
+    host: &str,
+    port: u16,
+    config: CrawlConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::net::{IpAddr, SocketAddr};
+
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|e| format!("invalid host address '{host}': {e}"))?;
+    let addr = SocketAddr::new(ip, port);
+
+    let app = axum::Router::new().nest_service("/mcp", streamable_http_service(config));
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("failed to bind {addr}: {e}"))?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
 /// Concrete type of the Streamable HTTP MCP service produced by
 /// [`streamable_http_service`].
 pub type CrawlbergHttpMcpService = rmcp::transport::streamable_http_server::StreamableHttpService<
@@ -560,10 +732,29 @@ pub fn streamable_http_service(config: CrawlConfig) -> CrawlbergHttpMcpService {
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
+    // Share one task store across the per-request instances the service
+    // materializes, so SEP-2663 tasks survive across a client's `tools/call` →
+    // `tasks/get` request sequence even without a session.
+    let task_manager = TaskManager::new();
+
+    // SEP-2567: serve statelessly. Modern (2026-07-28+) clients are always
+    // stateless; disabling legacy session mode drops per-session state for
+    // older clients too. `json_response` returns plain `application/json` for
+    // request/response tools and transparently falls back to SSE when a handler
+    // needs to stream, so it stays compatible with tasks and progress.
+    let mut http_config = StreamableHttpServerConfig::default();
+    http_config.legacy_session_mode = false;
+    http_config.json_response = true;
+
     StreamableHttpService::new(
-        move || Ok::<_, std::io::Error>(CrawlbergMcp::with_config(config.clone())),
+        move || {
+            Ok::<_, std::io::Error>(CrawlbergMcp::with_config_and_tasks(
+                config.clone(),
+                task_manager.clone(),
+            ))
+        },
         std::sync::Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
+        http_config,
     )
 }
 
@@ -574,6 +765,51 @@ mod tests {
 
     /// (name, read_only_hint, destructive_hint, open_world_hint) per tool.
     type ToolHintExpectation = (&'static str, Option<bool>, Option<bool>, Option<bool>);
+
+    /// The server must advertise both the tools capability and the SEP-2663
+    /// tasks extension so clients know they may request task-based execution.
+    #[test]
+    fn get_info_advertises_tools_and_tasks_capabilities() {
+        let capabilities = CrawlbergMcp::new().get_info().capabilities;
+        assert!(capabilities.tools.is_some(), "tools capability must be advertised");
+        assert!(
+            capabilities.supports_tasks(),
+            "SEP-2663 tasks extension capability must be advertised"
+        );
+    }
+
+    /// The SEP-2663 task augmentation is read from the request `_meta`: present
+    /// key means "run as task" (with an optional TTL), absent means inline.
+    #[test]
+    fn requested_task_ttl_reads_augmentation_from_meta() {
+        use rmcp::model::RequestMetaObject;
+
+        let empty = RequestMetaObject::new();
+        assert_eq!(
+            requested_task_ttl(&empty),
+            None,
+            "no augmentation means inline execution"
+        );
+
+        let mut with_ttl = RequestMetaObject::new();
+        with_ttl.insert(
+            rmcp::model::TASKS_EXTENSION_ID.to_string(),
+            serde_json::json!({ "ttl": 30_000 }),
+        );
+        assert_eq!(
+            requested_task_ttl(&with_ttl),
+            Some(Some(30_000)),
+            "tasks extension key with ttl requests a task with that TTL"
+        );
+
+        let mut without_ttl = RequestMetaObject::new();
+        without_ttl.insert(rmcp::model::TASKS_EXTENSION_ID.to_string(), serde_json::json!({}));
+        assert_eq!(
+            requested_task_ttl(&without_ttl),
+            Some(None),
+            "tasks extension key without ttl requests a task with default TTL"
+        );
+    }
 
     /// Every tool must advertise rmcp annotation hints so MCP clients can reason
     /// about safety: `open_world_hint` for web-touching tools, `destructive_hint`

@@ -32,4 +32,6 @@ pub mod format;
 mod params;
 mod server;
 
+#[cfg(feature = "mcp-http")]
+pub use server::start_mcp_http_server;
 pub use server::{CrawlbergHttpMcpService, start_mcp_server, start_mcp_server_with_config, streamable_http_service};

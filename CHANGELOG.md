@@ -2,6 +2,31 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.0.12] - 2026-07-30
+
+### Added
+
+- Leverage the rmcp 3.0 Tasks extension (SEP-2663): the MCP server advertises the
+  `io.modelcontextprotocol/tasks` capability and, when a client both declares it
+  and augments a `tools/call`, runs the tool as a pollable async task
+  (`tasks/get` / `tasks/update` / `tasks/cancel`) instead of blocking. Task
+  support is exercised end-to-end over the stdio transport; on the stateless HTTP
+  transport, which cannot propagate per-request client capabilities, a
+  task-augmented call degrades gracefully to inline execution.
+- `crawlberg mcp --http [--host <h>] [--port <p>]` serves the MCP Streamable HTTP
+  transport directly (stdio remains the default, so existing client manifests are
+  unaffected). Requires the `mcp-http` feature.
+
+### Changed
+
+- MCP tool results now carry machine-readable `structuredContent` (SEP-2106)
+  alongside the human-readable text block, so schema-aware clients get typed
+  output regardless of the `format` parameter.
+- The Streamable HTTP MCP transport is now stateless by default (SEP-2567):
+  `legacy_session_mode` is disabled and `json_response` enabled, with a shared,
+  `Arc`-backed task store so tasks remain observable across requests.
+- Upgrade `base64` from 0.22 to 0.23, aligning with rmcp 3.0's requirement.
+
 ## [1.0.11] - 2026-07-29
 
 ### Changed

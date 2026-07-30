@@ -81,6 +81,8 @@ pub use interact::{
     MAX_ACTIONS, MAX_SCRIPT_LEN, MAX_SCROLL_AMOUNT, MAX_SELECTOR_LEN, MAX_SINGLE_WAIT_MS, MAX_TEXT_LEN,
     MAX_TOTAL_WAIT_SECS, PageAction, ScrollDirection, validate_actions,
 };
+#[cfg(feature = "mcp-http")]
+pub use mcp::start_mcp_http_server;
 #[cfg(feature = "mcp")]
 pub use mcp::{CrawlbergHttpMcpService, start_mcp_server, start_mcp_server_with_config, streamable_http_service};
 pub use net::ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
