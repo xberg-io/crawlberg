@@ -21,6 +21,8 @@ All notable changes to crawlberg are documented here.
   workspace (clippy `print_stdout`/`print_stderr`/`dbg_macro`); `tracing` is the sole diagnostic
   surface, and CLI result output to stdout opts back in per call site
   (`#[expect(clippy::print_stdout)]`). Language bindings were regenerated with alef 0.48.11.
+- **Breaking:** the `telemetry-init` Cargo feature is renamed to `otel` to match the org-wide
+  observability feature name; update `--features telemetry-init` invocations to `--features otel`.
 
 ## [1.0.12] - 2026-07-30
 

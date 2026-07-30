@@ -36,7 +36,7 @@ graph LR
     D --> O
 ```
 
-The middleware stack between the engine and the network applies per-domain rate limiting, conditional caching, and User-Agent rotation, plus OpenTelemetry wiring when `telemetry-init` is enabled. WAF responses can trigger an automatic browser fallback when `BrowserMode::Auto` is set. `interact()` bypasses the crawl/extraction pipeline and keeps one browser page open while it executes `PageAction` values such as click, type, wait, screenshot, JavaScript evaluation, and scrape. Chromiumoxide screenshots are compositor captures; native screenshots are deterministic PNG snapshots derived from the post-action HTML and are intended for inspection, not pixel-perfect Chrome parity. The extraction pipeline is described in detail in [Content Extraction](/concepts/content-extraction/).
+The middleware stack between the engine and the network applies per-domain rate limiting, conditional caching, and User-Agent rotation, plus OpenTelemetry wiring when `otel` is enabled. WAF responses can trigger an automatic browser fallback when `BrowserMode::Auto` is set. `interact()` bypasses the crawl/extraction pipeline and keeps one browser page open while it executes `PageAction` values such as click, type, wait, screenshot, JavaScript evaluation, and scrape. Chromiumoxide screenshots are compositor captures; native screenshots are deterministic PNG snapshots derived from the post-action HTML and are intended for inspection, not pixel-perfect Chrome parity. The extraction pipeline is described in detail in [Content Extraction](/concepts/content-extraction/).
 
 ## Bindings
 
@@ -71,7 +71,7 @@ Cargo features keep the default build minimal. The default feature set is `nativ
 | `browser-native`     | In-process native browser backend for rendering, extras, and network-event capture.         |
 | `interact`           | Compatibility alias for browser-backed page interaction. The public API is always compiled. |
 | `ai`                 | LLM extraction via liter-llm.                                                               |
-| `telemetry-init`     | One-call OTLP tracer/meter/provider setup and W3C propagation.                              |
+| `otel`     | One-call OTLP tracer/meter/provider setup and W3C propagation.                              |
 | `api`                | `serve_api(...)` - Firecrawl v1-compatible REST server.                                     |
 | `mcp`                | `start_mcp_server(...)` - Model Context Protocol server for AI-agent integration.           |
 | `mcp-http`           | MCP over HTTP transport (implies `mcp` + `api`).                                            |

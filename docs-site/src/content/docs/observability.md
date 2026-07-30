@@ -10,7 +10,7 @@ OpenTelemetry provides a vendor-neutral API for instrumenting applications. Craw
 
 ## Quick start with `init_otlp`
 
-Enable the `telemetry-init` feature and call the one-line helper to attach both tracer and meter providers:
+Enable the `otel` feature and call the one-line helper to attach both tracer and meter providers:
 
 ```rust
 use crawlberg::telemetry::{TelemetryConfig, init_otlp};

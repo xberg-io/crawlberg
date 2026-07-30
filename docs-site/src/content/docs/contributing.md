@@ -42,7 +42,7 @@ The default build enables `native-runtime` outside wasm32. Add optional features
 | `api`                | REST API server via Axum                                |
 | `mcp`                | Model Context Protocol server                           |
 | `mcp-http`           | MCP over HTTP (implies `mcp` + `api`)                   |
-| `telemetry-init`     | OpenTelemetry/OTLP initialization helpers               |
+| `otel`     | OpenTelemetry/OTLP initialization helpers               |
 | `interact`           | Compatibility alias for browser-backed page interaction |
 | `warc`               | WARC archive output                                     |
 

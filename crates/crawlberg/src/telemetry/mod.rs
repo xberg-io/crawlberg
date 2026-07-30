@@ -7,7 +7,7 @@
 //! - [`metrics`] — process-wide [`MetricRegistry`] singleton (Cluster 2
 //!   populates it with instrument handles).
 //! - [`init`] — `with_traceparent` / `current_traceparent` (always compiled)
-//!   and the optional `init_otlp` helper (requires `telemetry-init` feature).
+//!   and the optional `init_otlp` helper (requires `otel` feature).
 //! - [`logging`] — pluggable `tracing`-based console logging to stderr
 //!   (requires `logging` feature).
 
@@ -20,7 +20,7 @@ pub mod metrics;
 pub use init::{current_traceparent, with_traceparent};
 pub use metrics::{MetricRegistry, registry};
 
-#[cfg(feature = "telemetry-init")]
+#[cfg(feature = "otel")]
 pub use init::{InitError, TelemetryConfig, TelemetryGuard, init_otlp};
 
 #[cfg(feature = "logging")]

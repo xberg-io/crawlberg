@@ -89,7 +89,7 @@ pub use net::ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 pub use proxy::{ProxyProvider, StaticProxyProvider};
 #[cfg(not(target_arch = "wasm32"))]
 pub use sink::{EventSink, MultiEventSink, TracingEventSink};
-#[cfg(feature = "telemetry-init")]
+#[cfg(feature = "otel")]
 pub use telemetry::{InitError as TelemetryInitError, TelemetryConfig, TelemetryGuard, init_otlp};
 pub use telemetry::{current_traceparent, with_traceparent};
 pub use types::antibot::{AntibotError, AntibotStrategy, Decision, DefaultAntibotStrategy, DynAntibotStrategy};

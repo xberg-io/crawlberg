@@ -2,7 +2,7 @@
 //!
 //! # Feature-gated initialisation
 //!
-//! `init_otlp` is compiled only when the `telemetry-init` feature is active.
+//! `init_otlp` is compiled only when the `otel` feature is active.
 //! Cloud consumers wire their own `TracerProvider` / `MeterProvider` and skip
 //! this feature entirely.
 //!
@@ -45,7 +45,7 @@ impl Injector for SingleHeaderMap {
 /// registered, the call behaves identically to calling `f()` directly —
 /// no panic, no error.
 ///
-/// When `telemetry-init` is active and `init_otlp` has been called, the
+/// When `otel` is active and `init_otlp` has been called, the
 /// W3C TraceContext propagator is registered globally and this function
 /// correctly parses W3C `traceparent` values.  In other deployment
 /// configurations (e.g. cloud consumers that own their own SDK initialisation)
@@ -77,7 +77,7 @@ pub fn current_traceparent() -> Option<String> {
     carrier.0.remove("traceparent")
 }
 
-#[cfg(feature = "telemetry-init")]
+#[cfg(feature = "otel")]
 mod otlp {
     use opentelemetry::KeyValue;
     use opentelemetry::trace::TracerProvider as _;
@@ -193,5 +193,5 @@ mod otlp {
     }
 }
 
-#[cfg(feature = "telemetry-init")]
+#[cfg(feature = "otel")]
 pub use otlp::{InitError, TelemetryConfig, TelemetryGuard, init_otlp};

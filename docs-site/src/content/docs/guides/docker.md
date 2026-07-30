@@ -15,7 +15,7 @@ The default Dockerfile builds the full API server with these features enabled:
 - `mcp` -- Model Context Protocol server
 - `warc` -- WARC 1.1 archival output
 - `ai` -- Deep research agent
-- `telemetry-init` -- Optional OpenTelemetry/OTLP initialization helpers
+- `otel` -- Optional OpenTelemetry/OTLP initialization helpers
 
 The image exposes port 3000 and starts the API server by default.
 
