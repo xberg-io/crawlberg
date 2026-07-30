@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Fixture-replay integration tests for WAF fingerprint detection.
 //!
 //! Each `.http` file under `tests/fixtures/waf/` is parsed into an

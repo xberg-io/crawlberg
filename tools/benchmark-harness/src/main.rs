@@ -1,3 +1,5 @@
+// See lib.rs: unpublished dev tool, stdout/stderr are its output channel.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 //! Benchmark harness CLI entry point.
 
 #[cfg(feature = "memory-profiling")]

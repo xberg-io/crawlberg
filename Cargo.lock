@@ -1332,6 +1332,7 @@ dependencies = [
  "crawlberg",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

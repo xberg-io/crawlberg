@@ -1,10 +1,90 @@
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use crawlberg::telemetry::logging::{LogConfig, LogFormat, try_init};
 use crawlberg::{
     BatchCrawlResults, BatchScrapeResults, BrowserConfig, BrowserMode, CrawlConfig, PageAction, ProxyConfig,
     batch_crawl, batch_scrape, crawl, create_engine, generate_citations, interact, map_urls, scrape,
 };
+
+/// Log level selectable via `--log-level`, independent of `-v`/`-q`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CliLogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl CliLogLevel {
+    fn as_directive(self) -> &'static str {
+        match self {
+            CliLogLevel::Off => "off",
+            CliLogLevel::Error => "error",
+            CliLogLevel::Warn => "warn",
+            CliLogLevel::Info => "info",
+            CliLogLevel::Debug => "debug",
+            CliLogLevel::Trace => "trace",
+        }
+    }
+}
+
+/// Log output format selectable via `--log-format`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum CliLogFormat {
+    #[default]
+    Pretty,
+    Compact,
+    Json,
+}
+
+impl From<CliLogFormat> for LogFormat {
+    fn from(value: CliLogFormat) -> Self {
+        match value {
+            CliLogFormat::Pretty => LogFormat::Pretty,
+            CliLogFormat::Compact => LogFormat::Compact,
+            CliLogFormat::Json => LogFormat::Json,
+        }
+    }
+}
+
+/// Derive the `tracing` `EnvFilter` directives string from `--log-level`, the
+/// `-v`/`--verbose` count, and `-q`/`--quiet`.
+///
+/// `--log-level` takes precedence when given. Otherwise `--quiet` forces
+/// `error`, and `--verbose` escalates from the default `warn` through `info`,
+/// `debug`, and `trace`. The default `warn` level also enables `info` for the
+/// CLI's own lifecycle/progress messages, since the library itself stays at
+/// `warn` by default.
+fn log_directives(log_level: Option<CliLogLevel>, verbose: u8, quiet: bool) -> String {
+    let base = if let Some(level) = log_level {
+        level.as_directive()
+    } else if quiet {
+        "error"
+    } else {
+        match verbose {
+            0 => "warn",
+            1 => "info",
+            2 => "debug",
+            _ => "trace",
+        }
+    };
+
+    if base == "warn" {
+        "warn,crawlberg_cli=info".to_owned()
+    } else {
+        base.to_owned()
+    }
+}
+
+/// Write a line of program output to stdout — the CLI's data channel. Diagnostics
+/// go through `tracing` (stderr); results go here. Exempt from `print_stdout`.
+#[expect(clippy::print_stdout, reason = "stdout is the CLI's data output channel")]
+fn emit(text: &str) {
+    println!("{text}");
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum CliBrowserMode {
@@ -87,17 +167,14 @@ fn print_batch_scrape(results: &BatchScrapeResults, format: &str) {
             if let Some(ref r) = entry.result
                 && let Some(ref md) = r.markdown
             {
-                println!("---\nURL: {}\n---\n{}\n", entry.url, md.content);
+                emit(&format!("---\nURL: {}\n---\n{}\n", entry.url, md.content));
             }
             if let Some(ref e) = entry.error {
-                eprintln!("Error scraping {}: {e}", entry.url);
+                tracing::error!(url = %entry.url, error = %e, "scrape failed");
             }
         }
     } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(results).expect("results are serializable")
-        );
+        emit(&serde_json::to_string_pretty(results).expect("results are serializable"));
     }
 }
 
@@ -111,25 +188,37 @@ fn print_batch_crawl(results: &BatchCrawlResults, format: &str) {
             if let Some(ref r) = entry.result {
                 for page in &r.pages {
                     if let Some(ref md) = page.markdown {
-                        println!("---\nSeed: {}\nURL: {}\n---\n{}\n", entry.url, page.url, md.content);
+                        emit(&format!(
+                            "---\nSeed: {}\nURL: {}\n---\n{}\n",
+                            entry.url, page.url, md.content
+                        ));
                     }
                 }
             }
             if let Some(ref e) = entry.error {
-                eprintln!("Error crawling {}: {e}", entry.url);
+                tracing::error!(url = %entry.url, error = %e, "crawl failed");
             }
         }
     } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(results).expect("results are serializable")
-        );
+        emit(&serde_json::to_string_pretty(results).expect("results are serializable"));
     }
 }
 
 #[derive(Parser)]
 #[command(name = "crawlberg", about = "High-performance web crawler and scraper", version)]
 struct Cli {
+    /// Log level: off, error, warn, info, debug, or trace (overrides -v/-q)
+    #[arg(long, global = true, value_enum)]
+    log_level: Option<CliLogLevel>,
+    /// Log output format
+    #[arg(long, global = true, value_enum, default_value_t = CliLogFormat::Pretty)]
+    log_format: CliLogFormat,
+    /// Increase log verbosity (-v = info, -vv = debug, -vvv = trace)
+    #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+    /// Suppress diagnostics below error level
+    #[arg(short = 'q', long, global = true)]
+    quiet: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -397,6 +486,14 @@ enum Commands {
 async fn main() {
     let cli = Cli::parse();
 
+    let log_config = LogConfig {
+        directives: log_directives(cli.log_level, cli.verbose, cli.quiet),
+        format: cli.log_format.into(),
+        env_override: true,
+        ..Default::default()
+    };
+    let _ = try_init(&log_config);
+
     match cli.command {
         Commands::Scrape {
             url,
@@ -426,7 +523,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -435,19 +532,16 @@ async fn main() {
                 Ok(result) => {
                     if format == "markdown" {
                         if let Some(ref md) = result.markdown {
-                            println!("{}", md.content);
+                            emit(&md.content);
                         } else {
-                            eprintln!("No markdown content available");
+                            tracing::warn!("no markdown content available");
                         }
                     } else {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result).expect("result is serializable")
-                        );
+                        emit(&serde_json::to_string_pretty(&result).expect("result is serializable"));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -490,7 +584,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -502,18 +596,15 @@ async fn main() {
                         if format == "markdown" {
                             for page in &result.pages {
                                 if let Some(ref md) = page.markdown {
-                                    println!("---\nURL: {}\n---\n{}\n", page.url, md.content);
+                                    emit(&format!("---\nURL: {}\n---\n{}\n", page.url, md.content));
                                 }
                             }
                         } else {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&result).expect("result is serializable")
-                            );
+                            emit(&serde_json::to_string_pretty(&result).expect("result is serializable"));
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error: {e}");
+                        tracing::error!("{e}");
                         std::process::exit(1);
                     }
                 }
@@ -521,7 +612,7 @@ async fn main() {
                 match batch_crawl(&handle, urls).await {
                     Ok(results) => print_batch_crawl(&results, &format),
                     Err(e) => {
-                        eprintln!("Error: {e}");
+                        tracing::error!("{e}");
                         std::process::exit(1);
                     }
                 }
@@ -551,7 +642,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -560,17 +651,14 @@ async fn main() {
                 Ok(result) => {
                     if format == "markdown" {
                         for url_entry in &result.urls {
-                            println!("{}", url_entry.url);
+                            emit(&url_entry.url);
                         }
                     } else {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result).expect("result is serializable")
-                        );
+                        emit(&serde_json::to_string_pretty(&result).expect("result is serializable"));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -594,14 +682,14 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
             let parsed_actions: Vec<PageAction> = match serde_json::from_str(&actions) {
                 Ok(value) => value,
                 Err(e) => {
-                    eprintln!("Error: invalid actions JSON: {e}");
+                    tracing::error!("invalid actions JSON: {e}");
                     std::process::exit(1);
                 }
             };
@@ -610,17 +698,14 @@ async fn main() {
             match interact(&handle, &url, parsed_actions).await {
                 Ok(result) => {
                     if format == "markdown" {
-                        println!("{}", result.final_html);
+                        emit(&result.final_html);
                     } else {
                         let wrapped = serde_json::json!({ "interaction": result });
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&wrapped).expect("result is serializable")
-                        );
+                        emit(&serde_json::to_string_pretty(&wrapped).expect("result is serializable"));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -655,7 +740,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -663,7 +748,7 @@ async fn main() {
             match batch_scrape(&handle, urls).await {
                 Ok(results) => print_batch_scrape(&results, &format),
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -706,7 +791,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -714,7 +799,7 @@ async fn main() {
             match batch_crawl(&handle, urls).await {
                 Ok(results) => print_batch_crawl(&results, &format),
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -739,7 +824,7 @@ async fn main() {
             if let Some(config_json) = config_str
                 && let Err(e) = merge_json_config(&mut config, &config_json)
             {
-                eprintln!("Error: invalid config: {e}");
+                tracing::error!("invalid config: {e}");
                 std::process::exit(1);
             }
 
@@ -763,13 +848,10 @@ async fn main() {
                             "note": "URL returned HTML content, not a downloadable document",
                         })
                     };
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&output).expect("output is serializable")
-                    );
+                    emit(&serde_json::to_string_pretty(&output).expect("output is serializable"));
                 }
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -779,7 +861,7 @@ async fn main() {
                 match std::fs::read_to_string(path) {
                     Ok(text) => text,
                     Err(e) => {
-                        eprintln!("Error: cannot read {path}: {e}");
+                        tracing::error!("cannot read {path}: {e}");
                         std::process::exit(1);
                     }
                 }
@@ -787,25 +869,19 @@ async fn main() {
                 input
             };
             let result = generate_citations(&markdown);
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&result).expect("result is serializable")
-            );
+            emit(&serde_json::to_string_pretty(&result).expect("result is serializable"));
         }
         Commands::Version {} => {
             let response = serde_json::json!({ "version": env!("CARGO_PKG_VERSION") });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&response).expect("version is serializable")
-            );
+            emit(&serde_json::to_string_pretty(&response).expect("version is serializable"));
         }
         #[cfg(feature = "api")]
         Commands::Serve { host, port } => {
-            eprintln!("Starting REST API server on {host}:{port}");
+            tracing::info!("starting REST API server on {host}:{port}");
             #[cfg(feature = "mcp")]
-            eprintln!("MCP Streamable HTTP transport available at http://{host}:{port}/mcp");
+            tracing::info!("MCP Streamable HTTP transport available at http://{host}:{port}/mcp");
             if let Err(e) = crawlberg::serve_api(&host, port, CrawlConfig::default()).await {
-                eprintln!("Server error: {e}");
+                tracing::error!("server error: {e}");
                 std::process::exit(1);
             }
         }
@@ -814,22 +890,22 @@ async fn main() {
             if http {
                 #[cfg(feature = "mcp-http")]
                 {
-                    eprintln!("Starting MCP server (Streamable HTTP) at http://{host}:{port}/mcp");
+                    tracing::info!("starting MCP server (Streamable HTTP) at http://{host}:{port}/mcp");
                     if let Err(e) = crawlberg::start_mcp_http_server(&host, port, CrawlConfig::default()).await {
-                        eprintln!("MCP server error: {e}");
+                        tracing::error!("MCP server error: {e}");
                         std::process::exit(1);
                     }
                 }
                 #[cfg(not(feature = "mcp-http"))]
                 {
                     let _ = (host, port);
-                    eprintln!("Error: --http requires a build with the `mcp-http` feature");
+                    tracing::error!("--http requires a build with the `mcp-http` feature");
                     std::process::exit(1);
                 }
             } else {
-                eprintln!("Starting MCP server (stdio transport)");
+                tracing::info!("starting MCP server (stdio transport)");
                 if let Err(e) = crawlberg::start_mcp_server().await {
-                    eprintln!("MCP server error: {e}");
+                    tracing::error!("MCP server error: {e}");
                     std::process::exit(1);
                 }
             }

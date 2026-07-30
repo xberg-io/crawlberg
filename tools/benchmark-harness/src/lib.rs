@@ -1,3 +1,7 @@
+// Unpublished dev tool: its benchmark tables and progress ARE its stdout/stderr
+// output, so it is exempt from the workspace `print_stdout`/`print_stderr` lints
+// rather than routing results through `tracing`.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 //! Benchmark harness library for crawlberg.
 //!
 //! Provides fixtures, adapters, a benchmark runner, quality metrics, and

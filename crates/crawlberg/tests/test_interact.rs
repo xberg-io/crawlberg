@@ -1,3 +1,7 @@
+// Feature-gated test diagnostics; `allow` (not `expect`) so a clippy run with the
+// browser features disabled — where the eprintln is cfg'd out — doesn't warn.
+#![allow(clippy::print_stderr)]
+
 #[cfg(feature = "browser-native")]
 use std::sync::OnceLock;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
