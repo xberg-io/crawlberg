@@ -43,8 +43,19 @@ content = re.sub(r'''url\s+['"][^'"]*['"]''', f'url \'{url}\'', content, count=1
 # have a different shape and don't match the bare `sha256 'hex'` regex.
 content = re.sub(r'''sha256\s+['"][0-9a-f]+['"]''', f'sha256 \'{sha}\'', content, count=1)
 
+# Strip the existing bottle block. Bumping the url without touching the bottle
+# block leaves root_url pinned to the PREVIOUS release while the version moved
+# forward, so Homebrew composes `<old-tag>/crawlberg-<new-version>...bottle.tar.gz`
+# → 404 for every user until the bottle-DSL merge job lands (and if that job fails
+# or is skipped, the formula stays broken). Removing the block here makes the
+# committed intermediate formula always installable — it just builds from source
+# until the merge re-adds a fresh block matching this release.
+bottle_re = re.compile(r"^[ \t]*bottle do\b.*?^[ \t]*end(?:\n|\Z)", re.MULTILINE | re.DOTALL)
+content = bottle_re.sub("", content)
+content = re.sub(r"\n{3,}", "\n\n", content)
+
 open(path, 'w').write(content)
-print(f"Updated source url + sha256 in {path}", file=sys.stderr)
+print(f"Updated source url + sha256 (stripped stale bottle block) in {path}", file=sys.stderr)
 PY
 
 echo "Updated formula: $formula" >&2

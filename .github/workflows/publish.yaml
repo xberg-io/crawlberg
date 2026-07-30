@@ -2327,11 +2327,16 @@ jobs:
   publish-homebrew-bottles:
     name: Merge Homebrew bottle DSL
     needs: [prepare, publish-homebrew-formula, homebrew-bottles]
+    # Run whenever the bottle matrix actually ran (success OR partial failure), not
+    # only on a clean sweep. A single-platform failure must not discard the bottles
+    # that did build: the merge step below rewrites the DSL from whatever manifests
+    # are present, so surviving platforms still get bottles while the failed one
+    # falls back to a source build.
     if: |
       always() &&
       needs.prepare.outputs.dry_run != 'true' &&
       needs.publish-homebrew-formula.result == 'success' &&
-      needs.homebrew-bottles.result == 'success'
+      needs.homebrew-bottles.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -2363,7 +2368,18 @@ jobs:
           pattern: homebrew-bottle-json-*
           merge-multiple: true
 
+      - name: Count bottle manifests
+        id: bottle-manifests
+        run: |
+          count=$(find "${{ github.workspace }}/bottle-json" -name 'crawlberg--*.bottle.json' 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "Found ${count} bottle manifest(s)"
+
+      # When zero bottles built, the formula bump already stripped the bottle block
+      # (update-homebrew-formula.sh), so the published formula installs from source —
+      # skip the merge rather than fail on "no JSON manifests".
       - name: Merge bottle DSL into formula
+        if: ${{ steps.bottle-manifests.outputs.count != '0' }}
         uses: xberg-io/actions/homebrew-merge-bottles@v1
         with:
           tag: ${{ needs.prepare.outputs.tag }}
