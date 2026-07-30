@@ -47,7 +47,7 @@ kotlin {
 
 dependencies {
     // Published Android AAR from Maven Central (verifies artifact resolution)
-    implementation("io.xberg.crawlberg.android:crawlberg-android:1.0.11")
+    implementation("io.xberg.crawlberg.android:crawlberg-android:1.0.12")
     // Jackson for JSON assertion helpers
     testImplementation("com.fasterxml.jackson.core:jackson-annotations:2.19.0")
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.19.0")
@@ -59,7 +59,7 @@ dependencies {
     testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.19.0")
 
     // jspecify for null-safety annotations on wrapped types
-    testImplementation("org.jspecify:jspecify:1.0.0")
+    testImplementation("org.jspecify:jspecify:1.0.1")
 
     // Kotlin coroutines for async test helpers
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
@@ -80,7 +80,7 @@ dependencies {
 tasks.register("verifyAarPublished") {
     description = "Verify the published Android AAR contains jni and classes.jar"
     doLast {
-        val aarCoord = "io.xberg.crawlberg.android:crawlberg-android:1.0.11"
+        val aarCoord = "io.xberg.crawlberg.android:crawlberg-android:1.0.12"
         val (groupId, artifactId, version) = run {
             val parts = aarCoord.split(':')
             Triple(parts[0], parts[1], parts[2])

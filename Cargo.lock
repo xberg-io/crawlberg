@@ -1364,12 +1364,13 @@ name = "crawlberg-jni"
 version = "1.0.12"
 dependencies = [
  "async-trait",
- "base64 0.23.0",
+ "base64 0.22.1",
  "crawlberg",
  "futures-util",
  "jni",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1417,6 +1418,7 @@ dependencies = [
  "ahash 0.8.12",
  "async-trait",
  "crawlberg",
+ "crawlberg-ffi",
  "futures-util",
  "libc",
  "serde",
