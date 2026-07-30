@@ -29,6 +29,7 @@
 
 mod errors;
 pub mod format;
+mod outputs;
 mod params;
 mod server;
 

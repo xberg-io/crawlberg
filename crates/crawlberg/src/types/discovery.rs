@@ -6,6 +6,7 @@ use super::CrawlPageResult;
 
 /// The classification of a link.
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum LinkType {
     /// A link to the same domain.
@@ -38,6 +39,7 @@ impl std::fmt::Debug for LinkType {
 
 /// Information about a link found on a page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct LinkInfo {
     /// The resolved URL of the link.
@@ -54,6 +56,7 @@ pub struct LinkInfo {
 
 /// The source of an image reference.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ImageSource {
     /// An `<img>` tag.
@@ -82,6 +85,7 @@ impl std::fmt::Display for ImageSource {
 
 /// Information about an image found on a page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ImageInfo {
     /// The image URL.
@@ -98,6 +102,7 @@ pub struct ImageInfo {
 
 /// The type of a feed (RSS, Atom, or JSON Feed).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FeedType {
     /// RSS feed.
@@ -111,6 +116,7 @@ pub enum FeedType {
 
 /// Information about a feed link found on a page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FeedInfo {
     /// The feed URL.
@@ -123,6 +129,7 @@ pub struct FeedInfo {
 
 /// A JSON-LD structured data entry found on a page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct JsonLdEntry {
     /// The `@type` value from the JSON-LD object.
@@ -135,6 +142,7 @@ pub struct JsonLdEntry {
 
 /// Information about an HTTP cookie received from a response.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CookieInfo {
     /// The cookie name.
@@ -149,6 +157,7 @@ pub struct CookieInfo {
 
 /// A downloaded asset from a page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DownloadedAsset {
     /// The original URL of the asset.
@@ -167,6 +176,7 @@ pub struct DownloadedAsset {
 
 /// The category of a downloaded asset.
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AssetCategory {
     /// A document file (PDF, DOC, etc.).

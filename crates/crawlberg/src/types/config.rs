@@ -10,6 +10,7 @@ use crate::net::SsrfPolicy;
 
 /// Metadata about an LLM extraction pass.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ExtractionMeta {
     /// Estimated cost of the LLM call in USD.

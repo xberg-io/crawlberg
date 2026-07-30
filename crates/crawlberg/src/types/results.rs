@@ -12,6 +12,7 @@ use super::{
 ///
 /// Available on `ScrapeResult.browser` when `BrowserBackend::Native` handled the request.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 pub struct BrowserExtras {
     /// Return value of `BrowserConfig.eval_script`, if provided.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,6 +33,7 @@ pub struct BrowserExtras {
 /// enabled, it downloads the raw bytes and populates this struct instead of
 /// skipping the resource.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 pub struct DownloadedDocument {
     /// The URL the document was fetched from.
     pub url: String,
@@ -40,6 +42,7 @@ pub struct DownloadedDocument {
     /// Raw document bytes. Skipped during JSON serialization.
     #[serde(skip_serializing)]
     #[cfg_attr(alef, alef(skip))]
+    #[cfg_attr(feature = "mcp", schemars(skip))]
     pub content: Vec<u8>,
     /// Size of the document in bytes.
     pub size: usize,
@@ -54,6 +57,7 @@ pub struct DownloadedDocument {
 
 /// Result of executing a sequence of page interaction actions.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 pub struct InteractionResult {
     /// Results from each executed action.
     pub action_results: Vec<ActionResult>,
@@ -64,11 +68,13 @@ pub struct InteractionResult {
     /// Screenshot taken after all actions, if requested.
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
+    #[cfg_attr(feature = "mcp", schemars(skip))]
     pub screenshot: Option<Vec<u8>>,
 }
 
 /// Result from a single page action execution.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 pub struct ActionResult {
     /// Zero-based index of the action in the sequence.
     pub action_index: usize,
@@ -86,6 +92,7 @@ pub struct ActionResult {
 
 /// The result of a single-page scrape operation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeResult {
     /// The HTTP status code of the response.
@@ -143,6 +150,7 @@ pub struct ScrapeResult {
     /// Screenshot of the page as PNG bytes. Populated when browser is used and capture_screenshot is enabled.
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
+    #[cfg_attr(feature = "mcp", schemars(skip))]
     pub screenshot: Option<Vec<u8>>,
     /// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -155,6 +163,7 @@ pub struct ScrapeResult {
 
 /// The result of crawling a single page during a crawl operation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CrawlPageResult {
     /// The original URL of the page.
@@ -204,6 +213,7 @@ pub struct CrawlPageResult {
 
 /// The result of a multi-page crawl operation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CrawlResult {
     /// The list of crawled pages.
@@ -225,6 +235,7 @@ pub struct CrawlResult {
     /// Normalized URLs encountered during crawling (for deduplication counting).
     #[serde(default, skip_serializing)]
     #[cfg_attr(alef, alef(skip))]
+    #[cfg_attr(feature = "mcp", schemars(skip))]
     pub normalized_urls: Vec<String>,
 }
 
@@ -267,6 +278,7 @@ impl CrawlResult {
 
 /// A URL entry from a sitemap.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SitemapUrl {
     /// The URL.
@@ -281,6 +293,7 @@ pub struct SitemapUrl {
 
 /// The result of a map operation, containing discovered URLs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MapResult {
     /// The list of discovered URLs.
@@ -289,6 +302,7 @@ pub struct MapResult {
 
 /// Rich markdown conversion result from HTML processing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct MarkdownResult {
     /// Converted markdown text.

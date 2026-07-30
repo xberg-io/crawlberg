@@ -2,6 +2,19 @@
 title: "Changelog"
 ---
 
+## [Unreleased]
+
+### Added
+
+- Advertise a typed `outputSchema` (SEP-2106) on every MCP tool, derived from the
+  result types via `schemars` (gated behind the `mcp` feature). This completes the
+  structured-output story: clients now get both the machine-readable
+  `structuredContent` and a schema to validate it against. `download`,
+  `get_version`, and the batch tools serialize dedicated DTOs so their schema and
+  output share one source of truth. Drift tests assert every serialized field is a
+  declared schema property and every required property is emitted, so the schema
+  and `structuredContent` can never diverge.
+
 ## [1.0.12] - 2026-07-30
 
 ### Added

@@ -137,6 +137,7 @@ impl CrawlbergMcp {
     /// for human-readable content.
     #[tool(
         description = "Scrape a single URL and extract content as markdown or JSON. Returns page content, metadata, links, and images.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<crate::types::ScrapeResult>(),
         annotations(
             title = "Scrape URL",
             read_only_hint = true,
@@ -182,6 +183,7 @@ impl CrawlbergMcp {
     /// discovered pages. Use `stay_on_domain: true` to restrict to the same domain.
     #[tool(
         description = "Crawl a website following links. Returns content for all discovered pages up to max_depth/max_pages.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<crate::types::CrawlResult>(),
         annotations(title = "Crawl Website", read_only_hint = true, open_world_hint = true)
     )]
     async fn crawl(
@@ -233,6 +235,7 @@ impl CrawlbergMcp {
     /// change frequency, priority). Use `search` to filter URLs by substring.
     #[tool(
         description = "Discover all pages on a website via links and sitemaps. Returns a list of discovered URLs.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<crate::types::MapResult>(),
         annotations(
             title = "Map Website",
             read_only_hint = true,
@@ -272,6 +275,7 @@ impl CrawlbergMcp {
     /// Efficiently processes multiple URLs in parallel and returns combined results.
     #[tool(
         description = "Scrape multiple URLs concurrently. Returns results for all URLs.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<Vec<super::outputs::BatchScrapeItem>>(),
         annotations(title = "Batch Scrape", read_only_hint = true, open_world_hint = true)
     )]
     async fn batch_scrape(
@@ -300,7 +304,7 @@ impl CrawlbergMcp {
         let is_json = parse_format(&params.format) == "json";
 
         let mut response = String::new();
-        let mut structured = Vec::with_capacity(results.len());
+        let mut items: Vec<super::outputs::BatchScrapeItem> = Vec::with_capacity(results.len());
         for (url, result) in &results {
             match result {
                 Ok(scrape_result) => {
@@ -311,17 +315,26 @@ impl CrawlbergMcp {
                         response.push_str(&format_as_markdown(scrape_result));
                     }
                     response.push_str("\n\n---\n\n");
-                    structured
-                        .push(serde_json::json!({ "url": url, "ok": true, "result": to_structured(scrape_result)? }));
+                    items.push(super::outputs::BatchScrapeItem {
+                        url: url.to_string(),
+                        ok: true,
+                        result: Some(scrape_result.clone()),
+                        error: None,
+                    });
                 }
                 Err(e) => {
                     response.push_str(&format!("## {url}\n\n**Error:** {e}\n\n---\n\n"));
-                    structured.push(serde_json::json!({ "url": url, "ok": false, "error": e.to_string() }));
+                    items.push(super::outputs::BatchScrapeItem {
+                        url: url.to_string(),
+                        ok: false,
+                        result: None,
+                        error: Some(e.to_string()),
+                    });
                 }
             }
         }
 
-        Ok(structured_success(serde_json::Value::Array(structured), response))
+        Ok(structured_success(to_structured(&items)?, response))
     }
 
     /// Crawl multiple seed URLs concurrently.
@@ -329,6 +342,7 @@ impl CrawlbergMcp {
     /// Efficiently crawls multiple websites in parallel and returns combined results.
     #[tool(
         description = "Crawl multiple seed URLs concurrently. Returns crawl results for all seeds.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<Vec<super::outputs::BatchCrawlItem>>(),
         annotations(title = "Batch Crawl", read_only_hint = true, open_world_hint = true)
     )]
     async fn batch_crawl(
@@ -375,7 +389,7 @@ impl CrawlbergMcp {
         let is_json = parse_format(&params.format) == "json";
 
         let mut response = String::new();
-        let mut structured = Vec::with_capacity(results.len());
+        let mut items: Vec<super::outputs::BatchCrawlItem> = Vec::with_capacity(results.len());
         for (url, result) in &results {
             match result {
                 Ok(crawl_result) => {
@@ -386,17 +400,26 @@ impl CrawlbergMcp {
                         response.push_str(&format_crawl_as_markdown(crawl_result));
                     }
                     response.push_str("\n\n---\n\n");
-                    structured
-                        .push(serde_json::json!({ "url": url, "ok": true, "result": to_structured(crawl_result)? }));
+                    items.push(super::outputs::BatchCrawlItem {
+                        url: url.to_string(),
+                        ok: true,
+                        result: Some(crawl_result.clone()),
+                        error: None,
+                    });
                 }
                 Err(e) => {
                     response.push_str(&format!("## {url}\n\n**Error:** {e}\n\n---\n\n"));
-                    structured.push(serde_json::json!({ "url": url, "ok": false, "error": e.to_string() }));
+                    items.push(super::outputs::BatchCrawlItem {
+                        url: url.to_string(),
+                        ok: false,
+                        result: None,
+                        error: Some(e.to_string()),
+                    });
                 }
             }
         }
 
-        Ok(structured_success(serde_json::Value::Array(structured), response))
+        Ok(structured_success(to_structured(&items)?, response))
     }
 
     /// Download a document from a URL.
@@ -405,6 +428,7 @@ impl CrawlbergMcp {
     /// including its MIME type, size, and content hash.
     #[tool(
         description = "Download a document from a URL. Returns metadata about the downloaded file.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<super::outputs::DownloadOutput>(),
         annotations(title = "Download Document", read_only_hint = true, open_world_hint = true)
     )]
     async fn download(
@@ -424,24 +448,27 @@ impl CrawlbergMcp {
         let engine = self.build_engine(config)?;
         let result = engine.scrape(&params.url).await.map_err(map_crawl_error)?;
 
-        let structured = if let Some(ref doc) = result.downloaded_document {
-            serde_json::json!({
-                "url": doc.url,
-                "mime_type": doc.mime_type,
-                "size": doc.size,
-                "filename": doc.filename,
-                "content_hash": doc.content_hash,
-            })
+        let output = if let Some(ref doc) = result.downloaded_document {
+            super::outputs::DownloadOutput {
+                url: doc.url.clone(),
+                mime_type: Some(doc.mime_type.clone().into_owned()),
+                size: Some(doc.size),
+                filename: doc.filename.as_ref().map(|filename| filename.to_string()),
+                content_hash: Some(doc.content_hash.to_string()),
+                ..Default::default()
+            }
         } else {
-            serde_json::json!({
-                "url": params.url,
-                "content_type": result.content_type,
-                "status_code": result.status_code,
-                "body_size": result.body_size,
-                "note": "URL returned HTML content, not a downloadable document"
-            })
+            super::outputs::DownloadOutput {
+                url: params.url.clone(),
+                content_type: Some(result.content_type.clone()),
+                status_code: Some(result.status_code),
+                body_size: Some(result.body_size),
+                note: Some("URL returned HTML content, not a downloadable document".to_string()),
+                ..Default::default()
+            }
         };
 
+        let structured = to_structured(&output)?;
         let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
         Ok(structured_success(structured, text))
     }
@@ -449,6 +476,7 @@ impl CrawlbergMcp {
     /// Execute browser actions on a page.
     #[tool(
         description = "Execute browser actions on a page. Actions may mutate page or application state.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<crate::types::InteractionResult>(),
         annotations(
             title = "Interact",
             read_only_hint = false,
@@ -485,6 +513,7 @@ impl CrawlbergMcp {
     /// scraped markdown.
     #[tool(
         description = "Convert markdown links into numbered citations with an appended reference list.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<crate::citations::CitationResult>(),
         annotations(
             title = "Generate Citations",
             read_only_hint = true,
@@ -505,6 +534,7 @@ impl CrawlbergMcp {
     /// Get the current crawlberg version.
     #[tool(
         description = "Get the current crawlberg library version.",
+        output_schema = rmcp::handler::server::common::schema_for_output::<super::outputs::VersionOutput>(),
         annotations(
             title = "Get Version",
             read_only_hint = true,
@@ -516,10 +546,11 @@ impl CrawlbergMcp {
         &self,
         Parameters(_): Parameters<super::params::EmptyParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let structured = serde_json::json!({
-            "version": env!("CARGO_PKG_VERSION"),
-        });
+        let output = super::outputs::VersionOutput {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        };
 
+        let structured = to_structured(&output)?;
         let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
         Ok(structured_success(structured, text))
     }
@@ -809,6 +840,195 @@ mod tests {
             Some(None),
             "tasks extension key without ttl requests a task with default TTL"
         );
+    }
+
+    /// SEP-2106: every tool must advertise an `outputSchema` so schema-aware
+    /// clients get typed results.
+    #[test]
+    fn every_tool_advertises_an_output_schema() {
+        let tools = CrawlbergMcp::new().tool_router.list_all();
+        for tool in &tools {
+            assert!(
+                tool.output_schema.is_some(),
+                "tool `{}` must advertise an outputSchema (SEP-2106)",
+                tool.name
+            );
+        }
+    }
+
+    /// The advertised `outputSchema` for each tool must not drift from the
+    /// `structuredContent` the tool actually emits: every serialized field must
+    /// be a declared schema property, and every required property must appear in
+    /// the serialized output. Because both the schema and the structured content
+    /// derive from the same types (schemars + serde), this catches any rename or
+    /// skip mismatch between the two derivations.
+    #[test]
+    fn output_schemas_do_not_drift_from_structured_content() {
+        let tools = CrawlbergMcp::new().tool_router.list_all();
+
+        let object_cases: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "scrape",
+                serde_json::to_value(crate::types::ScrapeResult::default()).unwrap(),
+            ),
+            (
+                "crawl",
+                serde_json::to_value(crate::types::CrawlResult::default()).unwrap(),
+            ),
+            ("map", serde_json::to_value(crate::types::MapResult::default()).unwrap()),
+            (
+                "interact",
+                serde_json::to_value(crate::types::InteractionResult::default()).unwrap(),
+            ),
+            (
+                "generate_citations",
+                serde_json::to_value(crate::citations::CitationResult {
+                    content: "text[1]".to_string(),
+                    references: vec![crate::citations::CitationReference {
+                        index: 1,
+                        url: "https://example.com".to_string(),
+                        text: "example".to_string(),
+                    }],
+                })
+                .unwrap(),
+            ),
+            (
+                "get_version",
+                serde_json::to_value(crate::mcp::outputs::VersionOutput {
+                    version: "1.0.0".to_string(),
+                })
+                .unwrap(),
+            ),
+            (
+                "download",
+                serde_json::to_value(crate::mcp::outputs::DownloadOutput {
+                    url: "https://example.com/doc.pdf".to_string(),
+                    mime_type: Some("application/pdf".to_string()),
+                    size: Some(1024),
+                    filename: Some("doc.pdf".to_string()),
+                    content_hash: Some("abc123".to_string()),
+                    content_type: Some("text/html".to_string()),
+                    status_code: Some(200),
+                    body_size: Some(2048),
+                    note: Some("note".to_string()),
+                })
+                .unwrap(),
+            ),
+        ];
+        for (name, sample) in &object_cases {
+            assert_serialized_matches_schema(name, &output_schema_of(&tools, name), sample);
+        }
+
+        let batch_scrape_sample = serde_json::to_value(vec![
+            crate::mcp::outputs::BatchScrapeItem {
+                url: "https://a.com".to_string(),
+                ok: true,
+                result: Some(crate::types::ScrapeResult::default()),
+                error: None,
+            },
+            crate::mcp::outputs::BatchScrapeItem {
+                url: "https://b.com".to_string(),
+                ok: false,
+                result: None,
+                error: Some("boom".to_string()),
+            },
+        ])
+        .unwrap();
+        let scrape_item_schema = resolve_item_schema(&output_schema_of(&tools, "batch_scrape"));
+        for element in batch_scrape_sample.as_array().unwrap() {
+            assert_serialized_matches_schema("batch_scrape", &scrape_item_schema, element);
+        }
+
+        let batch_crawl_sample = serde_json::to_value(vec![
+            crate::mcp::outputs::BatchCrawlItem {
+                url: "https://a.com".to_string(),
+                ok: true,
+                result: Some(crate::types::CrawlResult::default()),
+                error: None,
+            },
+            crate::mcp::outputs::BatchCrawlItem {
+                url: "https://b.com".to_string(),
+                ok: false,
+                result: None,
+                error: Some("boom".to_string()),
+            },
+        ])
+        .unwrap();
+        let crawl_item_schema = resolve_item_schema(&output_schema_of(&tools, "batch_crawl"));
+        for element in batch_crawl_sample.as_array().unwrap() {
+            assert_serialized_matches_schema("batch_crawl", &crawl_item_schema, element);
+        }
+    }
+
+    /// The advertised `outputSchema` JSON object for a tool by name.
+    fn output_schema_of(tools: &[Tool], name: &str) -> serde_json::Map<String, serde_json::Value> {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("tool `{name}` missing from router"));
+        let schema = tool
+            .output_schema
+            .as_ref()
+            .unwrap_or_else(|| panic!("tool `{name}` advertises no outputSchema"));
+        (**schema).clone()
+    }
+
+    /// Resolve the element schema of an array-typed `outputSchema`, following a
+    /// top-level `items` `$ref` into `$defs`.
+    fn resolve_item_schema(
+        array_schema: &serde_json::Map<String, serde_json::Value>,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let items = array_schema
+            .get("items")
+            .expect("array outputSchema must declare `items`");
+        if let Some(reference) = items.get("$ref").and_then(serde_json::Value::as_str) {
+            let name = reference
+                .strip_prefix("#/$defs/")
+                .unwrap_or_else(|| panic!("unexpected $ref form: {reference}"));
+            array_schema
+                .get("$defs")
+                .and_then(|defs| defs.get(name))
+                .and_then(serde_json::Value::as_object)
+                .cloned()
+                .unwrap_or_else(|| panic!("$defs is missing `{name}`"))
+        } else {
+            items
+                .as_object()
+                .cloned()
+                .unwrap_or_else(|| panic!("array `items` is neither a $ref nor an inline object schema"))
+        }
+    }
+
+    /// Assert a serialized object conforms to an object schema: no undeclared
+    /// fields, and all required properties present.
+    fn assert_serialized_matches_schema(
+        name: &str,
+        object_schema: &serde_json::Map<String, serde_json::Value>,
+        sample: &serde_json::Value,
+    ) {
+        let properties: std::collections::BTreeSet<&str> = object_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .map(|props| props.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        let object = sample
+            .as_object()
+            .unwrap_or_else(|| panic!("tool `{name}`: sample structuredContent is not a JSON object"));
+
+        for key in object.keys() {
+            assert!(
+                properties.contains(key.as_str()),
+                "tool `{name}`: serialized field `{key}` is not declared in outputSchema.properties (schema/output drift)"
+            );
+        }
+        if let Some(required) = object_schema.get("required").and_then(serde_json::Value::as_array) {
+            for req in required.iter().filter_map(serde_json::Value::as_str) {
+                assert!(
+                    object.contains_key(req),
+                    "tool `{name}`: outputSchema requires `{req}` but it is absent from serialized output (drift)"
+                );
+            }
+        }
     }
 
     /// Every tool must advertise rmcp annotation hints so MCP clients can reason

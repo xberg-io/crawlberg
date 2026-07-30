@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Article metadata extracted from `article:*` Open Graph tags.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ArticleMetadata {
     /// The article publication time.
@@ -18,6 +19,7 @@ pub struct ArticleMetadata {
 
 /// An hreflang alternate link entry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct HreflangEntry {
     /// The language code (e.g., "en", "fr", "x-default").
@@ -28,6 +30,7 @@ pub struct HreflangEntry {
 
 /// Information about a favicon or icon link.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FaviconInfo {
     /// The icon URL.
@@ -42,6 +45,7 @@ pub struct FaviconInfo {
 
 /// A heading element extracted from the page.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct HeadingInfo {
     /// The heading level (1-6).
@@ -52,6 +56,7 @@ pub struct HeadingInfo {
 
 /// Response metadata extracted from HTTP headers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ResponseMeta {
     /// The ETag header value.
@@ -72,6 +77,7 @@ pub struct ResponseMeta {
 
 /// Metadata extracted from an HTML page's `<meta>` tags and `<title>` element.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PageMetadata {
     /// The page title from the `<title>` element.

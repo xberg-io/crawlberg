@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 
 /// Result of citation conversion.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CitationResult {
     /// Markdown with links replaced by numbered citations.
@@ -20,6 +21,7 @@ pub struct CitationResult {
 /// A single numbered reference in a citation list — produced by the citation
 /// extractor when content uses inline `[N]`-style markers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CitationReference {
     /// 1-based reference number as it appears in the source text.
