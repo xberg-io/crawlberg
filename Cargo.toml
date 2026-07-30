@@ -32,9 +32,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(alef)'] }
 all = { level = "warn", priority = -1 }
 # Diagnostics belong in `tracing` (stderr), not raw stdout/stderr writes. The CLI's
 # actual data output opts back in locally via `#[expect(clippy::print_stdout)]`;
-# build-script `cargo:` directives are exempt natively.
+# build-script `cargo:` directives are exempt natively. ~keep
 print_stdout = "deny"
 print_stderr = "deny"
+dbg_macro = "deny"
 
 [workspace.dependencies]
 ahash = "0.8"
