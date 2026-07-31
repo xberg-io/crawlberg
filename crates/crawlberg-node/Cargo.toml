@@ -1,6 +1,6 @@
 [package]
 name = "crawlberg-node"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 license = "MIT"
 description = "High-performance web crawling engine"
@@ -20,7 +20,7 @@ ignored = ["serde_json", "futures-util"]
 crate-type = ["cdylib"]
 
 [dependencies]
-crawlberg = { version = "1.1.0", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
+crawlberg = { version = "1.1.1", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
 futures-util = "0.3"
 napi = { version = "3", features = ["async", "serde-json"] }
 napi-derive = "3"

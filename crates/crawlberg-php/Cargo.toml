@@ -1,6 +1,6 @@
 [package]
 name = "crawlberg-php"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 license = "MIT"
 description = "High-performance web crawling engine"
@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 extension-module = []
 
 [dependencies]
-crawlberg = { version = "1.1.0", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
+crawlberg = { version = "1.1.1", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
 ext-php-rs = "0.15.15"
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }

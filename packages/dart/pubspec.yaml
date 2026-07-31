@@ -1,6 +1,6 @@
 name: crawlberg
 description: High-performance web crawling engine
-version: 1.1.0
+version: 1.1.1
 repository: https://github.com/xberg-io/crawlberg
 environment:
   sdk: ">=3.11.0 <4.0.0"

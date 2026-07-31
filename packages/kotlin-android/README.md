@@ -77,7 +77,7 @@
 </div>
 
 Android (AAR) bindings for **crawlberg** — a high-performance Rust web crawling engine.
-JNI-based with bundled per-ABI native libraries and a coroutine-friendly Kotlin facade.
+JNI-based with bundled native libraries for all four Android ABIs (arm64-v8a, x86_64, armeabi-v7a, x86) and a coroutine-friendly Kotlin facade.
 JVM consumers should use the canonical `io.xberg.crawlberg:crawlberg` artifact directly.
 
 ## What This Package Provides
@@ -91,7 +91,7 @@ JVM consumers should use the canonical `io.xberg.crawlberg:crawlberg` artifact d
 ## Installation
 
 ```bash
-implementation("io.xberg.crawlberg:crawlberg-android:1.1.0")
+implementation("io.xberg.crawlberg:crawlberg-android:1.1.1")
 
 ```
 

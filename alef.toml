@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.48.12"
+alef_version = "0.48.16"
 languages = [
   "python",
   "node",
@@ -1536,60 +1536,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.1.0"
+version = ">=1.1.1"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.1.0"
+version = "^1.1.1"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.1.0"
+version = "v1.1.1"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.e2e.registry.packages.csharp]
 name = "Crawlberg"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.1.0"
+version = ">=1.1.1"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.1.0"
+version = ">= 1.1.1"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.1.0"
+version = "~> 1.1.1"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.1.0"
+version = "^1.1.1"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.1.0"
-hash = "crawlberg-1.1.0-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.1.1"
+hash = "crawlberg-1.1.1-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.1.0"
+version = "1.1.1"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"
@@ -1798,7 +1798,7 @@ implementation("io.xberg.crawlberg:crawlberg-android:{{ version }}")
 """
 description = """
 Android (AAR) bindings for **crawlberg** — a high-performance Rust web crawling engine.
-JNI-based with bundled per-ABI native libraries and a coroutine-friendly Kotlin facade.
+JNI-based with bundled native libraries for all four Android ABIs (arm64-v8a, x86_64, armeabi-v7a, x86) and a coroutine-friendly Kotlin facade.
 JVM consumers should use the canonical `io.xberg.crawlberg:crawlberg` artifact directly.
 """
 
