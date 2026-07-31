@@ -4,18 +4,17 @@
 <!-- To verify freshness: alef verify --exit-code -->
 
 # crawlberg CLI Reference Use this skill when invoking, documenting, or changing the crawlberg
-
 command-line interface.
 
-- `crawlberg`: High-performance web crawler and scraper
-  - `crawlberg batch-crawl`: Crawl multiple websites concurrently
-  - `crawlberg batch-scrape`: Scrape multiple URLs concurrently
-  - `crawlberg citations`: Convert markdown links into numbered citations
-  - `crawlberg crawl`: Crawl a website following links
-  - `crawlberg download`: Download a document from a URL and report its metadata
-  - `crawlberg interact`: Execute browser actions on a single page
-  - `crawlberg map`: Discover all URLs on a website via sitemaps and link extraction
-  - `crawlberg mcp`: Start the MCP server (stdio transport by default)
-  - `crawlberg scrape`: Scrape a single URL and extract metadata
-  - `crawlberg serve`: Start the REST API server
-  - `crawlberg version`: Print the crawlberg version as JSON
+  - `crawlberg`: High-performance web crawler and scraper
+    - `crawlberg batch-crawl`: Crawl multiple websites concurrently
+    - `crawlberg batch-scrape`: Scrape multiple URLs concurrently
+    - `crawlberg citations`: Convert markdown links into numbered citations
+    - `crawlberg crawl`: Crawl a website following links
+    - `crawlberg download`: Download a document from a URL and report its metadata
+    - `crawlberg interact`: Execute browser actions on a single page
+    - `crawlberg map`: Discover all URLs on a website via sitemaps and link extraction
+    - `crawlberg mcp`: Start the MCP server (stdio transport by default)
+    - `crawlberg scrape`: Scrape a single URL and extract metadata
+    - `crawlberg serve`: Start the REST API server
+    - `crawlberg version`: Print the crawlberg version as JSON

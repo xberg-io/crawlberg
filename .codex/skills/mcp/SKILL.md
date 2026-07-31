@@ -3,16 +3,15 @@
 <!-- To regenerate: alef docs -->
 <!-- To verify freshness: alef verify --exit-code -->
 
-# crawlberg MCP Reference Use this skill when integrating crawlberg through Model Context Protocol tools
-
+# crawlberg MCP Reference Use this skill when integrating crawlberg through Model Context Protocol tools,
 prompts, or resources.
 
-- `batch_crawl`: Crawl multiple seed URLs concurrently. Returns crawl results for all seeds.
-- `batch_scrape`: Scrape multiple URLs concurrently. Returns results for all URLs.
-- `crawl`: Crawl a website following links. Returns content for all discovered pages up to max_depth/max_pages.
-- `download`: Download a document from a URL. Returns metadata about the downloaded file.
-- `generate_citations`: Convert markdown links into numbered citations with an appended reference list.
-- `get_version`: Get the current crawlberg library version.
-- `interact`: Execute browser actions on a page. Actions may mutate page or application state.
-- `map`: Discover all pages on a website via links and sitemaps. Returns a list of discovered URLs.
-- `scrape`: Scrape a single URL and extract content as markdown or JSON. Returns page content, metadata, links, and images.
+  - `batch_crawl`: Crawl multiple seed URLs concurrently. Returns crawl results for all seeds.
+  - `batch_scrape`: Scrape multiple URLs concurrently. Returns results for all URLs.
+  - `crawl`: Crawl a website following links. Returns content for all discovered pages up to max_depth/max_pages.
+  - `download`: Download a document from a URL. Returns metadata about the downloaded file.
+  - `generate_citations`: Convert markdown links into numbered citations with an appended reference list.
+  - `get_version`: Get the current crawlberg library version.
+  - `interact`: Execute browser actions on a page. Actions may mutate page or application state.
+  - `map`: Discover all pages on a website via links and sitemaps. Returns a list of discovered URLs.
+  - `scrape`: Scrape a single URL and extract content as markdown or JSON. Returns page content, metadata, links, and images.
