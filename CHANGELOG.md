@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-31
+
 ### Added
 
 - Advertise a typed `outputSchema` (SEP-2106) on every MCP tool, derived from the
@@ -41,6 +43,11 @@ All notable changes to crawlberg are documented here.
   `tracing` an always-on dependency (its `tracing` Cargo feature is gone) and ships a real OTLP
   export path in its CLI; crawlberg's `otel` forwarding to `liter-llm/otel` (behind `ai`) is
   unaffected.
+
+### Fixed
+
+- The publish workflow no longer leaves the Homebrew formula pointing at a stale bottle when a
+  release republishes the CLI.
 
 ## [1.0.12] - 2026-07-30
 
