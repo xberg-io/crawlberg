@@ -1245,9 +1245,7 @@ dependencies = [
  "minijinja",
  "notify",
  "opentelemetry",
- "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
  "proptest",
  "quick-xml 0.41.0",
  "regex",
@@ -1266,8 +1264,6 @@ dependencies = [
  "tower",
  "tower-http 0.7.0",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "url",
  "utoipa",
  "uuid",
@@ -1330,9 +1326,15 @@ version = "1.0.12"
 dependencies = [
  "clap",
  "crawlberg",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3372,6 +3374,7 @@ dependencies = [
  "futures-core",
  "gcp_auth",
  "memchr",
+ "opentelemetry",
  "pin-project-lite",
  "regex",
  "reqwest",
@@ -3384,6 +3387,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 1.1.3+spec-1.1.0",
+ "tracing",
+ "tracing-opentelemetry",
  "url",
 ]
 

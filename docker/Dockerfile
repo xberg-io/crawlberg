@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/build/target \
     cargo build --release --package crawlberg-cli \
-        --features "crawlberg-cli/api,crawlberg-cli/mcp,crawlberg/api,crawlberg/mcp,crawlberg/warc,crawlberg/ai,crawlberg/tracing,crawlberg/browser,crawlberg/interact" && \
+        --features "crawlberg-cli/api,crawlberg-cli/mcp,crawlberg-cli/otel,crawlberg/api,crawlberg/mcp,crawlberg/warc,crawlberg/ai,crawlberg/browser,crawlberg/interact" && \
     cp target/release/crawlberg /build/crawlberg && \
     strip /build/crawlberg
 

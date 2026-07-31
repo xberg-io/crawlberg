@@ -25,19 +25,18 @@ browser = ["browser-chromiumoxide"]
 browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 ai = ["dep:liter-llm", "dep:minijinja"]
-otel = [
-  "dep:opentelemetry-otlp",
-  "dep:opentelemetry_sdk",
-  "dep:tracing-opentelemetry",
-  "dep:tracing-subscriber",
-]
+# ~keep Emit-only: the library never installs a subscriber/exporter (that is the
+# ~keep CLI's / service's job). `otel` only forwards `liter-llm/otel` so the `ai`
+# ~keep integration's GenAI metrics compile in; crawlberg's own OTel spans, semconv
+# ~keep attributes, and metric instruments are always-on and reach whatever exporter
+# ~keep the consumer installs.
+otel = ["liter-llm?/otel"]
 interact = ["browser"]
-logging = ["dep:tracing-subscriber"]
 mcp = ["dep:rmcp", "dep:schemars"]
 api = ["dep:axum", "dep:tower-http", "dep:utoipa", "dep:uuid", "dep:base64", "native-runtime"]
 mcp-http = ["mcp", "api"]
 warc = ["dep:uuid"]
-full = ["browser", "browser-native", "ai", "otel", "interact", "logging", "mcp", "api", "mcp-http", "warc"]
+full = ["browser", "browser-native", "ai", "otel", "interact", "mcp", "api", "mcp-http", "warc"]
 
 [dependencies]
 ahash = { workspace = true }
@@ -62,9 +61,7 @@ memchr = { workspace = true }
 minijinja = { workspace = true, optional = true }
 notify = { workspace = true }
 opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry-semantic-conventions = { workspace = true }
-opentelemetry_sdk = { workspace = true, optional = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
@@ -81,8 +78,6 @@ toml = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, optional = true }
 tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, optional = true }
 url = { workspace = true }
 utoipa = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }

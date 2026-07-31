@@ -23,6 +23,20 @@ All notable changes to crawlberg are documented here.
   (`#[expect(clippy::print_stdout)]`). Language bindings were regenerated with alef 0.48.11.
 - **Breaking:** the `telemetry-init` Cargo feature is renamed to `otel` to match the org-wide
   observability feature name; update `--features telemetry-init` invocations to `--features otel`.
+- **Breaking:** the `crawlberg` library is now emit-only — it installs no global subscriber or OTLP
+  exporter. The subscriber/OTLP install (`init_otlp`, `TelemetryConfig`, `TelemetryGuard`,
+  `TelemetryInitError`) and the console-logging module (`LogConfig`, `LogFormat`, `try_init`, `layer`)
+  moved to `crawlberg-cli`; the library `logging` feature is removed. The library `otel` feature no
+  longer pulls the exporter/subscriber stack — it only forwards `liter-llm/otel` so the `ai`
+  integration's GenAI metrics compile in. crawlberg's own spans, semantic-convention attributes, and
+  metric instruments remain always-on and flow into whatever exporter the consumer installs. The W3C
+  helpers (`with_traceparent`, `current_traceparent`) are unchanged. Consumers that installed
+  telemetry via the library should use `crawlberg-cli --features otel` (export is activated at runtime
+  by `OTEL_EXPORTER_OTLP_ENDPOINT`) or install their own subscriber.
+- `crawlberg-cli` gains an `otel` feature that installs the OTLP export pipeline for every command
+  (including `serve`), gated at runtime by `OTEL_EXPORTER_OTLP_ENDPOINT`; the console subscriber is
+  installed by default when OTLP is not configured. The server Docker image builds with
+  `crawlberg-cli/otel`.
 
 ## [1.0.12] - 2026-07-30
 

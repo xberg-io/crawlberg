@@ -1,11 +1,13 @@
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use crawlberg::telemetry::logging::{LogConfig, LogFormat, try_init};
 use crawlberg::{
     BatchCrawlResults, BatchScrapeResults, BrowserConfig, BrowserMode, CrawlConfig, PageAction, ProxyConfig,
     batch_crawl, batch_scrape, crawl, create_engine, generate_citations, interact, map_urls, scrape,
 };
+
+mod telemetry;
+use telemetry::{LogConfig, LogFormat};
 
 /// Log level selectable via `--log-level`, independent of `-v`/`-q`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -492,7 +494,8 @@ async fn main() {
         env_override: true,
         ..Default::default()
     };
-    let _ = try_init(&log_config);
+    // ~keep Hold the guard for the whole process so the OTLP providers flush on exit.
+    let _telemetry_guard = telemetry::init(&log_config);
 
     match cli.command {
         Commands::Scrape {

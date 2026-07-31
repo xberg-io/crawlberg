@@ -13,19 +13,36 @@ path = "src/main.rs"
 
 [features]
 default = []
-all = ["api", "mcp", "mcp-http", "warc", "ai"]
+all = ["api", "mcp", "mcp-http", "warc", "ai", "otel"]
 api = ["crawlberg/api"]
 mcp = ["crawlberg/mcp"]
 mcp-http = ["mcp", "api", "crawlberg/mcp-http"]
 warc = ["crawlberg/warc"]
 ai = ["crawlberg/ai"]
+# ~keep The CLI owns subscriber install (libraries emit only). `otel` adds the OTLP
+# ~keep export path (activated at runtime by `OTEL_EXPORTER_OTLP_ENDPOINT`) and
+# ~keep forwards `crawlberg/otel` so the `ai` integration's liter-llm metrics turn on.
+otel = [
+  "crawlberg/otel",
+  "dep:opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
+  "dep:tracing-opentelemetry",
+  "dep:thiserror",
+]
 
 [dependencies]
 clap = { workspace = true }
-crawlberg = { path = "../crawlberg", version = "1.0.12", features = ["native-runtime", "browser", "logging"] }
+crawlberg = { path = "../crawlberg", version = "1.0.12", features = ["native-runtime", "browser"] }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

@@ -9,8 +9,8 @@
 //!
 //! # Level semantics
 //!
-//! crawlberg and its consumers should follow these conventions when choosing
-//! a `tracing` level:
+//! ~keep crawlberg and its consumers follow these conventions when choosing a
+//! ~keep `tracing` level:
 //!
 //! - `error`: an operation failed and the user needs to know (a scrape/crawl
 //!   errored, invalid config, server crash).
@@ -124,10 +124,10 @@ where
 
 /// Install a global `tracing` subscriber built from [`layer`].
 ///
-/// Returns `Err` when a global subscriber is already installed (e.g. a host
-/// called [`crate::telemetry::init_otlp`], or a binding embedder installed its
-/// own subscriber). That is expected and non-fatal: the existing subscriber
-/// wins and callers should ignore the error.
+/// Returns `Err` when a global subscriber is already installed (e.g. the `otel`
+/// OTLP path already ran, or a binding embedder installed its own subscriber).
+/// That is expected and non-fatal: the existing subscriber wins and callers
+/// should ignore the error.
 ///
 /// # Errors
 ///
