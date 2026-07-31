@@ -23,12 +23,12 @@ ai = ["crawlberg/ai"]
 # ~keep export path (activated at runtime by `OTEL_EXPORTER_OTLP_ENDPOINT`) and
 # ~keep forwards `crawlberg/otel` so the `ai` integration's liter-llm metrics turn on.
 otel = [
-  "crawlberg/otel",
-  "dep:opentelemetry",
-  "dep:opentelemetry-otlp",
-  "dep:opentelemetry_sdk",
-  "dep:tracing-opentelemetry",
-  "dep:thiserror",
+    "crawlberg/otel",
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+    "dep:thiserror",
 ]
 
 [dependencies]

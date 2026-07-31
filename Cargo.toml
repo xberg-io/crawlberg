@@ -1,13 +1,18 @@
 [workspace]
-members = ["crates/*", "packages/dart/rust", "packages/swift/rust", "tools/benchmark-harness"]
+members = [
+    "crates/*",
+    "packages/dart/rust",
+    "packages/swift/rust",
+    "tools/benchmark-harness",
+]
 exclude = [
-  ".claude",
-  "e2e/rust",
-  "packages/elixir/native/crawlberg_nif",
-  "packages/ruby/ext/crawlberg_rb",
-  "packages/ruby/ext/src_rb",
-  "packages/ruby/tmp",
-  "packages/ruby/vendor",
+    ".claude",
+    "e2e/rust",
+    "packages/elixir/native/crawlberg_nif",
+    "packages/ruby/ext/crawlberg_rb",
+    "packages/ruby/ext/src_rb",
+    "packages/ruby/tmp",
+    "packages/ruby/vendor",
 ]
 resolver = "2"
 
@@ -113,13 +118,13 @@ tokio-stream = "0.1"
 toml = "1.1"
 tower = { version = "0.5", features = ["timeout", "retry", "limit", "util", "make"] }
 tower-http = { version = "0.7", features = [
-  "cors",
-  "compression-full",
-  "trace",
-  "limit",
-  "catch-panic",
-  "request-id",
-  "sensitive-headers",
+    "cors",
+    "compression-full",
+    "trace",
+    "limit",
+    "catch-panic",
+    "request-id",
+    "sensitive-headers",
 ] }
 tracing = "0.1"
 tracing-opentelemetry = "0.33"

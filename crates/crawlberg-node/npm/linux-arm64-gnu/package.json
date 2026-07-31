@@ -7,10 +7,22 @@
     "url": "git+https://github.com/xberg-io/crawlberg.git"
   },
   "main": "crawlberg-node.linux-arm64-gnu.node",
-  "files": ["crawlberg-node.linux-arm64-gnu.node"],
-  "os": ["linux"],
-  "cpu": ["arm64"],
-  "libc": ["glibc"],
-  "engines": { "node": ">= 22" },
-  "publishConfig": { "access": "public" }
+  "files": [
+    "crawlberg-node.linux-arm64-gnu.node"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "engines": {
+    "node": ">= 22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
