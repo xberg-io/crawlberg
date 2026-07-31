@@ -37,6 +37,10 @@ All notable changes to crawlberg are documented here.
   (including `serve`), gated at runtime by `OTEL_EXPORTER_OTLP_ENDPOINT`; the console subscriber is
   installed by default when OTLP is not configured. The server Docker image builds with
   `crawlberg-cli/otel`.
+- Upgrade `html-to-markdown-rs` 3.9 → 3.10 and `liter-llm` 1.11 → 1.12. `liter-llm` 1.12 makes
+  `tracing` an always-on dependency (its `tracing` Cargo feature is gone) and ships a real OTLP
+  export path in its CLI; crawlberg's `otel` forwarding to `liter-llm/otel` (behind `ai`) is
+  unaffected.
 
 ## [1.0.12] - 2026-07-30
 

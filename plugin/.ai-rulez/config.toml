@@ -4,7 +4,7 @@ description = "Web crawling and scraping with HTML→Markdown and headless-Chrom
 
 [plugin]
 name = "crawlberg"
-version = "1.0.12"
+version = "1.1.0"
 display_name = "Crawlberg"
 description = "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback."
 homepage = "https://xberg.io"
