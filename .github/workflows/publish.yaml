@@ -839,6 +839,19 @@ jobs:
       extra-cargo-args: --features all
       extra-targets: '[{"os": "macos-15-intel", "target": "x86_64-apple-darwin"}]'
 
+  verify-binstall:
+    name: Verify cargo-binstall install
+    needs: [prepare, cli-release]
+    if: ${{ needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.cli-release.result == 'success' }}
+    uses: xberg-io/actions/.github/workflows/reusable-binstall-verify.yml@v1
+    with:
+      package-name: crawlberg-cli
+      binary-name: crawlberg
+      manifest-path: crates/crawlberg-cli
+      checkout-ref: ${{ needs.prepare.outputs.checkout_ref }}
+      smoke-command: |
+        crawlberg --version
+
   cli-musl-binaries:
     name: Build CLI musl binary (${{ matrix.arch }})
     needs: [prepare, check-cli]
@@ -2424,6 +2437,7 @@ jobs:
       - publish-homebrew-formula
       - publish-homebrew-bottles
       - cli-release
+      - verify-binstall
       - upload-go-release
       - upload-c-ffi-release
       - upload-elixir-release
