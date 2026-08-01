@@ -7,9 +7,9 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Command-line web crawler and scraper"
 
-# cargo-binstall support: release assets use a `crawlberg-cli-` prefix that doesn't
-# match binstall's default naming, so pin the download URL and bin-dir explicitly.
-# See https://github.com/cargo-bins/cargo-binstall/blob/main/SUPPORT.md
+# ~keep cargo-binstall support: release assets use a `crawlberg-cli-` prefix that
+# ~keep doesn't match binstall's default naming, so pin the URL and bin-dir explicitly.
+# ~keep See https://github.com/cargo-bins/cargo-binstall/blob/main/SUPPORT.md
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/crawlberg-cli-{ target }{ archive-suffix }"
 bin-dir = "crawlberg-cli-{ target }/{ bin }{ binary-ext }"
