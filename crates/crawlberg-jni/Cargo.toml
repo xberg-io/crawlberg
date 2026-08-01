@@ -22,7 +22,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 crawlberg = { version = "1.1.1", path = "../crawlberg" }
 futures-util = "0.3"
 jni = "0.22"
