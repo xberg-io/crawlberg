@@ -4,6 +4,20 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-01
+
+### Added
+
+- `cargo binstall crawlberg-cli` support — prebuilt CLI binaries can now be installed
+  directly from GitHub Releases without compiling from source. Adds
+  `[package.metadata.binstall]` to the CLI crate plus a release-time `verify-binstall`
+  CI job that installs via `cargo binstall` and smoke-tests the binary across the target
+  matrix.
+
+### Changed
+
+- Updated dependencies.
+
 ## [1.1.0] - 2026-07-31
 
 ### Added

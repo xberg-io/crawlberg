@@ -6,7 +6,7 @@ environment:
   sdk: ">=3.11.0 <4.0.0"
 
 dependencies:
-  crawlberg: ^1.1.1
+  crawlberg: ^1.1.2
   ffi: ^2.2.0
 
 dev_dependencies:

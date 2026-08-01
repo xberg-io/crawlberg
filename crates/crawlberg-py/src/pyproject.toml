@@ -4,7 +4,7 @@ requires = ["maturin>=1,<2"]
 
 [project]
 name = "crawlberg"
-version = "1.1.1"
+version = "1.1.2"
 description = "High-performance web crawling engine"
 keywords = ["crawl", "scrape", "spider", "web"]
 license = "MIT"
