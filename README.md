@@ -260,6 +260,11 @@ cargo install crawlberg-cli
 ```
 
 ```sh
+# Or install the prebuilt binary via cargo-binstall:
+cargo binstall crawlberg-cli
+```
+
+```sh
 brew install xberg-io/tap/crawlberg
 ```
 
