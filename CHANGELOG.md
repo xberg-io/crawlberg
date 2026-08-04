@@ -4,6 +4,18 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-08-04
+
+### Changed
+
+- Regenerated all language bindings on alef 0.51.2 and updated dependencies.
+
+### Fixed
+
+- Ruby: the gem no longer publishes its generated types into the global `Object`
+  namespace (the `Parser` collision with the `parser` gem); generated types stay
+  namespaced under `Crawlberg` (tree-sitter-language-pack #173, via alef 0.51.1).
+
 ## [1.1.2] - 2026-08-01
 
 ### Added
