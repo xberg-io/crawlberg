@@ -4,6 +4,22 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-01
+
+### Added
+
+- `cargo binstall crawlberg-cli` support — prebuilt CLI binaries can now be installed
+  directly from GitHub Releases without compiling from source. Adds
+  `[package.metadata.binstall]` to the CLI crate plus a release-time `verify-binstall`
+  CI job that installs via `cargo binstall` and smoke-tests the binary across the target
+  matrix.
+
+### Changed
+
+- Updated dependencies.
+
+## [1.1.0] - 2026-07-31
+
 ### Added
 
 - Advertise a typed `outputSchema` (SEP-2106) on every MCP tool, derived from the
@@ -14,6 +30,38 @@ title: "Changelog"
   output share one source of truth. Drift tests assert every serialized field is a
   declared schema property and every required property is emitted, so the schema
   and `structuredContent` can never diverge.
+
+### Changed
+
+- Raw `println!`/`eprintln!`/`print!`/`eprint!`/`dbg!` are denied in production code across the whole
+  workspace (clippy `print_stdout`/`print_stderr`/`dbg_macro`); `tracing` is the sole diagnostic
+  surface, and CLI result output to stdout opts back in per call site
+  (`#[expect(clippy::print_stdout)]`). Language bindings were regenerated with alef 0.48.11.
+- **Breaking:** the `telemetry-init` Cargo feature is renamed to `otel` to match the org-wide
+  observability feature name; update `--features telemetry-init` invocations to `--features otel`.
+- **Breaking:** the `crawlberg` library is now emit-only — it installs no global subscriber or OTLP
+  exporter. The subscriber/OTLP install (`init_otlp`, `TelemetryConfig`, `TelemetryGuard`,
+  `TelemetryInitError`) and the console-logging module (`LogConfig`, `LogFormat`, `try_init`, `layer`)
+  moved to `crawlberg-cli`; the library `logging` feature is removed. The library `otel` feature no
+  longer pulls the exporter/subscriber stack — it only forwards `liter-llm/otel` so the `ai`
+  integration's GenAI metrics compile in. crawlberg's own spans, semantic-convention attributes, and
+  metric instruments remain always-on and flow into whatever exporter the consumer installs. The W3C
+  helpers (`with_traceparent`, `current_traceparent`) are unchanged. Consumers that installed
+  telemetry via the library should use `crawlberg-cli --features otel` (export is activated at runtime
+  by `OTEL_EXPORTER_OTLP_ENDPOINT`) or install their own subscriber.
+- `crawlberg-cli` gains an `otel` feature that installs the OTLP export pipeline for every command
+  (including `serve`), gated at runtime by `OTEL_EXPORTER_OTLP_ENDPOINT`; the console subscriber is
+  installed by default when OTLP is not configured. The server Docker image builds with
+  `crawlberg-cli/otel`.
+- Upgrade `html-to-markdown-rs` 3.9 → 3.10 and `liter-llm` 1.11 → 1.12. `liter-llm` 1.12 makes
+  `tracing` an always-on dependency (its `tracing` Cargo feature is gone) and ships a real OTLP
+  export path in its CLI; crawlberg's `otel` forwarding to `liter-llm/otel` (behind `ai`) is
+  unaffected.
+
+### Fixed
+
+- The publish workflow no longer leaves the Homebrew formula pointing at a stale bottle when a
+  release republishes the CLI.
 
 ## [1.0.12] - 2026-07-30
 
