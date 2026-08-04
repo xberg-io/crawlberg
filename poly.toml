@@ -392,7 +392,6 @@ enabled = true
 "test_apps/**" = ["comment", "doc-comment"]
 "tests/**/*.py" = ["PERF203", "PLC0415", "S607"]
 
-# Skip poly's whole-project lint phase in `poly lint` / `task lint`: it runs
 # per-language whole-workspace linters (credo, dart-analyze, golangci-lint,
 # rubocop, steep, checkstyle) that need each language's toolchain, which the
 # shared CI validate job and most dev machines don't all have. They run via the

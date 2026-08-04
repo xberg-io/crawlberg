@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.51.2"
+alef_version = "0.52.0"
 languages = [
   "python",
   "node",
@@ -104,6 +104,9 @@ exclude = [
   "**/*.diff",
   "**/*.patch",
   "**/frb_generated.rs",
+  "**/*_bridge_generated/**",
+  "crates/*-ffi/include/*.h",
+  "packages/go/include/*.h",
   "charts/**",
   # ai-rulez-generated coding-agent plugin outputs: owned by `ai-rulez generate
   # --plugin`, never reformatted by poly (would break BLAKE3 provenance). Sources

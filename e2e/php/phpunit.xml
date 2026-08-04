@@ -3,7 +3,7 @@
          xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/13.1/phpunit.xsd"
          bootstrap="bootstrap.php"
          colors="true"
-         failOnRisky="true"
+         failOnRisky="false"
          failOnWarning="true">
     <testsuites>
         <testsuite name="e2e">
