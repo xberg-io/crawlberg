@@ -12,7 +12,7 @@ defmodule E2eElixir.MixProject do
 
   defp deps do
     [
-    {:crawlberg, "~> 1.1.2"},
+    {:crawlberg, "~> 1.1.3"},
     {:rustler_precompiled, "~> 0.9"},
     {:rustler, "~> 0.38", runtime: false},
     {:finch, "~> 0.23"},

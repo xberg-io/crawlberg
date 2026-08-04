@@ -16,14 +16,14 @@ part 'lib.freezed.dart';
 /// with `[1]: https://example.com` in the reference list.
 /// Images `![alt](url)` are preserved unchanged.
 Future<CitationResult> generateCitations({required String markdown}) =>
-    RustLib.instance.api.crateGenerateCitations(markdown: markdown);
+RustLib.instance.api.crateGenerateCitations(markdown: markdown);
 
 /// Create a new crawl engine with the given configuration.
 ///
 /// If `config` is `null`, uses `CrawlConfig.default()`.
 /// Returns an error if the configuration is invalid.
 Future<CrawlEngineHandle> createEngine({CrawlConfig? config}) =>
-    RustLib.instance.api.crateCreateEngine(config: config);
+RustLib.instance.api.crateCreateEngine(config: config);
 
 /// Scrape a single URL, returning extracted page data.
 Future<ScrapeResult> scrape({
@@ -67,22 +67,22 @@ Future<BatchCrawlResults> batchCrawl({
 }) => RustLib.instance.api.crateBatchCrawl(engine: engine, urls: urls);
 
 Future<ExtractionMeta> createExtractionMetaFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
+RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
 
 Future<ProxyConfig> createProxyConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
+RustLib.instance.api.crateCreateProxyConfigFromJson(json: json);
 
 Future<ContentConfig> createContentConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateContentConfigFromJson(json: json);
+RustLib.instance.api.crateCreateContentConfigFromJson(json: json);
 
 Future<BrowserConfig> createBrowserConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
+RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
 
 Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
+RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
 
 Future<BrowserExtras> createBrowserExtrasFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);
+RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);
 
 Future<DownloadedDocument> createDownloadedDocumentFromJson({
   required String json,
@@ -93,61 +93,61 @@ Future<InteractionResult> createInteractionResultFromJson({
 }) => RustLib.instance.api.crateCreateInteractionResultFromJson(json: json);
 
 Future<ActionResult> createActionResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateActionResultFromJson(json: json);
+RustLib.instance.api.crateCreateActionResultFromJson(json: json);
 
 Future<ScrapeResult> createScrapeResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateScrapeResultFromJson(json: json);
+RustLib.instance.api.crateCreateScrapeResultFromJson(json: json);
 
 Future<CrawlPageResult> createCrawlPageResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCrawlPageResultFromJson(json: json);
+RustLib.instance.api.crateCreateCrawlPageResultFromJson(json: json);
 
 Future<CrawlResult> createCrawlResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCrawlResultFromJson(json: json);
+RustLib.instance.api.crateCreateCrawlResultFromJson(json: json);
 
 Future<SitemapUrl> createSitemapUrlFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateSitemapUrlFromJson(json: json);
+RustLib.instance.api.crateCreateSitemapUrlFromJson(json: json);
 
 Future<MapResult> createMapResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateMapResultFromJson(json: json);
+RustLib.instance.api.crateCreateMapResultFromJson(json: json);
 
 Future<MarkdownResult> createMarkdownResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateMarkdownResultFromJson(json: json);
+RustLib.instance.api.crateCreateMarkdownResultFromJson(json: json);
 
 Future<LinkInfo> createLinkInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateLinkInfoFromJson(json: json);
+RustLib.instance.api.crateCreateLinkInfoFromJson(json: json);
 
 Future<ImageInfo> createImageInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateImageInfoFromJson(json: json);
+RustLib.instance.api.crateCreateImageInfoFromJson(json: json);
 
 Future<FeedInfo> createFeedInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateFeedInfoFromJson(json: json);
+RustLib.instance.api.crateCreateFeedInfoFromJson(json: json);
 
 Future<JsonLdEntry> createJsonLdEntryFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateJsonLdEntryFromJson(json: json);
+RustLib.instance.api.crateCreateJsonLdEntryFromJson(json: json);
 
 Future<CookieInfo> createCookieInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCookieInfoFromJson(json: json);
+RustLib.instance.api.crateCreateCookieInfoFromJson(json: json);
 
 Future<DownloadedAsset> createDownloadedAssetFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateDownloadedAssetFromJson(json: json);
+RustLib.instance.api.crateCreateDownloadedAssetFromJson(json: json);
 
 Future<ArticleMetadata> createArticleMetadataFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateArticleMetadataFromJson(json: json);
+RustLib.instance.api.crateCreateArticleMetadataFromJson(json: json);
 
 Future<HreflangEntry> createHreflangEntryFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateHreflangEntryFromJson(json: json);
+RustLib.instance.api.crateCreateHreflangEntryFromJson(json: json);
 
 Future<FaviconInfo> createFaviconInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateFaviconInfoFromJson(json: json);
+RustLib.instance.api.crateCreateFaviconInfoFromJson(json: json);
 
 Future<HeadingInfo> createHeadingInfoFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateHeadingInfoFromJson(json: json);
+RustLib.instance.api.crateCreateHeadingInfoFromJson(json: json);
 
 Future<ResponseMeta> createResponseMetaFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateResponseMetaFromJson(json: json);
+RustLib.instance.api.crateCreateResponseMetaFromJson(json: json);
 
 Future<PageMetadata> createPageMetadataFromJson({required String json}) =>
-    RustLib.instance.api.crateCreatePageMetadataFromJson(json: json);
+RustLib.instance.api.crateCreatePageMetadataFromJson(json: json);
 
 Future<CrawlStreamRequest> createCrawlStreamRequestFromJson({
   required String json,
@@ -156,10 +156,10 @@ Future<CrawlStreamRequest> createCrawlStreamRequestFromJson({
 Future<BatchCrawlStreamRequest> createBatchCrawlStreamRequestFromJson({
   required String json,
 }) =>
-    RustLib.instance.api.crateCreateBatchCrawlStreamRequestFromJson(json: json);
+RustLib.instance.api.crateCreateBatchCrawlStreamRequestFromJson(json: json);
 
 Future<CitationResult> createCitationResultFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCitationResultFromJson(json: json);
+RustLib.instance.api.crateCreateCitationResultFromJson(json: json);
 
 Future<CitationReference> createCitationReferenceFromJson({
   required String json,
@@ -182,7 +182,7 @@ Future<BatchCrawlResults> createBatchCrawlResultsFromJson({
 }) => RustLib.instance.api.crateCreateBatchCrawlResultsFromJson(json: json);
 
 Future<SsrfPolicy> createSsrfPolicyFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
+RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>
 abstract class CrawlEngineHandle implements RustOpaqueInterface {
@@ -218,22 +218,22 @@ class ActionResult {
 
   @override
   int get hashCode =>
-      actionIndex.hashCode ^
-      actionType.hashCode ^
-      success.hashCode ^
-      data.hashCode ^
-      error.hashCode;
+  actionIndex.hashCode ^
+  actionType.hashCode ^
+  success.hashCode ^
+  data.hashCode ^
+  error.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ActionResult &&
-          runtimeType == other.runtimeType &&
-          actionIndex == other.actionIndex &&
-          actionType == other.actionType &&
-          success == other.success &&
-          data == other.data &&
-          error == other.error;
+  identical(this, other) ||
+  other is ActionResult &&
+  runtimeType == other.runtimeType &&
+  actionIndex == other.actionIndex &&
+  actionType == other.actionType &&
+  success == other.success &&
+  data == other.data &&
+  error == other.error;
 }
 
 /// Article metadata extracted from `article:*` Open Graph tags.
@@ -263,22 +263,22 @@ class ArticleMetadata {
 
   @override
   int get hashCode =>
-      publishedTime.hashCode ^
-      modifiedTime.hashCode ^
-      author.hashCode ^
-      section.hashCode ^
-      tags.hashCode;
+  publishedTime.hashCode ^
+  modifiedTime.hashCode ^
+  author.hashCode ^
+  section.hashCode ^
+  tags.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ArticleMetadata &&
-          runtimeType == other.runtimeType &&
-          publishedTime == other.publishedTime &&
-          modifiedTime == other.modifiedTime &&
-          author == other.author &&
-          section == other.section &&
-          tags == other.tags;
+  identical(this, other) ||
+  other is ArticleMetadata &&
+  runtimeType == other.runtimeType &&
+  publishedTime == other.publishedTime &&
+  modifiedTime == other.modifiedTime &&
+  author == other.author &&
+  section == other.section &&
+  tags == other.tags;
 }
 
 /// The category of a downloaded asset.
@@ -361,12 +361,12 @@ class BatchCrawlResult {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BatchCrawlResult &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          result == other.result &&
-          error == other.error;
+  identical(this, other) ||
+  other is BatchCrawlResult &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  result == other.result &&
+  error == other.error;
 }
 
 /// Aggregate result of a batch crawl, exposing per-URL results plus precomputed counts.
@@ -395,20 +395,20 @@ class BatchCrawlResults {
 
   @override
   int get hashCode =>
-      results.hashCode ^
-      totalCount.hashCode ^
-      completedCount.hashCode ^
-      failedCount.hashCode;
+  results.hashCode ^
+  totalCount.hashCode ^
+  completedCount.hashCode ^
+  failedCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BatchCrawlResults &&
-          runtimeType == other.runtimeType &&
-          results == other.results &&
-          totalCount == other.totalCount &&
-          completedCount == other.completedCount &&
-          failedCount == other.failedCount;
+  identical(this, other) ||
+  other is BatchCrawlResults &&
+  runtimeType == other.runtimeType &&
+  results == other.results &&
+  totalCount == other.totalCount &&
+  completedCount == other.completedCount &&
+  failedCount == other.failedCount;
 }
 
 /// Request to begin a multi-URL streaming crawl.
@@ -428,10 +428,10 @@ class BatchCrawlStreamRequest {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BatchCrawlStreamRequest &&
-          runtimeType == other.runtimeType &&
-          urls == other.urls;
+  identical(this, other) ||
+  other is BatchCrawlStreamRequest &&
+  runtimeType == other.runtimeType &&
+  urls == other.urls;
 }
 
 /// Result from a single URL in a batch scrape operation.
@@ -452,12 +452,12 @@ class BatchScrapeResult {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BatchScrapeResult &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          result == other.result &&
-          error == other.error;
+  identical(this, other) ||
+  other is BatchScrapeResult &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  result == other.result &&
+  error == other.error;
 }
 
 /// Aggregate result of a batch scrape, exposing per-URL results plus precomputed counts.
@@ -486,20 +486,20 @@ class BatchScrapeResults {
 
   @override
   int get hashCode =>
-      results.hashCode ^
-      totalCount.hashCode ^
-      completedCount.hashCode ^
-      failedCount.hashCode;
+  results.hashCode ^
+  totalCount.hashCode ^
+  completedCount.hashCode ^
+  failedCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BatchScrapeResults &&
-          runtimeType == other.runtimeType &&
-          results == other.results &&
-          totalCount == other.totalCount &&
-          completedCount == other.completedCount &&
-          failedCount == other.failedCount;
+  identical(this, other) ||
+  other is BatchScrapeResults &&
+  runtimeType == other.runtimeType &&
+  results == other.results &&
+  totalCount == other.totalCount &&
+  completedCount == other.completedCount &&
+  failedCount == other.failedCount;
 }
 
 /// Browser backend used for JavaScript rendering.
@@ -581,38 +581,38 @@ class BrowserConfig {
 
   @override
   int get hashCode =>
-      mode.hashCode ^
-      backend.hashCode ^
-      endpoint.hashCode ^
-      timeout.hashCode ^
-      wait.hashCode ^
-      waitSelector.hashCode ^
-      extraWait.hashCode ^
-      proxy.hashCode ^
-      blockUrlPatterns.hashCode ^
-      evalScript.hashCode ^
-      robotsUserAgent.hashCode ^
-      captureNetworkEvents.hashCode ^
-      sessionAffinity.hashCode;
+  mode.hashCode ^
+  backend.hashCode ^
+  endpoint.hashCode ^
+  timeout.hashCode ^
+  wait.hashCode ^
+  waitSelector.hashCode ^
+  extraWait.hashCode ^
+  proxy.hashCode ^
+  blockUrlPatterns.hashCode ^
+  evalScript.hashCode ^
+  robotsUserAgent.hashCode ^
+  captureNetworkEvents.hashCode ^
+  sessionAffinity.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BrowserConfig &&
-          runtimeType == other.runtimeType &&
-          mode == other.mode &&
-          backend == other.backend &&
-          endpoint == other.endpoint &&
-          timeout == other.timeout &&
-          wait == other.wait &&
-          waitSelector == other.waitSelector &&
-          extraWait == other.extraWait &&
-          proxy == other.proxy &&
-          blockUrlPatterns == other.blockUrlPatterns &&
-          evalScript == other.evalScript &&
-          robotsUserAgent == other.robotsUserAgent &&
-          captureNetworkEvents == other.captureNetworkEvents &&
-          sessionAffinity == other.sessionAffinity;
+  identical(this, other) ||
+  other is BrowserConfig &&
+  runtimeType == other.runtimeType &&
+  mode == other.mode &&
+  backend == other.backend &&
+  endpoint == other.endpoint &&
+  timeout == other.timeout &&
+  wait == other.wait &&
+  waitSelector == other.waitSelector &&
+  extraWait == other.extraWait &&
+  proxy == other.proxy &&
+  blockUrlPatterns == other.blockUrlPatterns &&
+  evalScript == other.evalScript &&
+  robotsUserAgent == other.robotsUserAgent &&
+  captureNetworkEvents == other.captureNetworkEvents &&
+  sessionAffinity == other.sessionAffinity;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
@@ -638,16 +638,16 @@ class BrowserExtras {
 
   @override
   int get hashCode =>
-      evalResult.hashCode ^ networkEvents.hashCode ^ cookies.hashCode;
+  evalResult.hashCode ^ networkEvents.hashCode ^ cookies.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BrowserExtras &&
-          runtimeType == other.runtimeType &&
-          evalResult == other.evalResult &&
-          networkEvents == other.networkEvents &&
-          cookies == other.cookies;
+  identical(this, other) ||
+  other is BrowserExtras &&
+  runtimeType == other.runtimeType &&
+  evalResult == other.evalResult &&
+  networkEvents == other.networkEvents &&
+  cookies == other.cookies;
 }
 
 /// When to use the headless browser fallback.
@@ -712,12 +712,12 @@ class CitationReference {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CitationReference &&
-          runtimeType == other.runtimeType &&
-          index == other.index &&
-          url == other.url &&
-          text == other.text;
+  identical(this, other) ||
+  other is CitationReference &&
+  runtimeType == other.runtimeType &&
+  index == other.index &&
+  url == other.url &&
+  text == other.text;
 }
 
 /// Result of citation conversion.
@@ -735,11 +735,11 @@ class CitationResult {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CitationResult &&
-          runtimeType == other.runtimeType &&
-          content == other.content &&
-          references == other.references;
+  identical(this, other) ||
+  other is CitationResult &&
+  runtimeType == other.runtimeType &&
+  content == other.content &&
+  references == other.references;
 }
 
 /// Content extraction and conversion configuration.
@@ -812,36 +812,36 @@ class ContentConfig {
 
   @override
   int get hashCode =>
-      outputFormat.hashCode ^
-      preprocessingPreset.hashCode ^
-      removeNavigation.hashCode ^
-      removeForms.hashCode ^
-      stripTags.hashCode ^
-      preserveTags.hashCode ^
-      excludeSelectors.hashCode ^
-      skipImages.hashCode ^
-      maxDepth.hashCode ^
-      wrap.hashCode ^
-      wrapWidth.hashCode ^
-      includeDocumentStructure.hashCode;
+  outputFormat.hashCode ^
+  preprocessingPreset.hashCode ^
+  removeNavigation.hashCode ^
+  removeForms.hashCode ^
+  stripTags.hashCode ^
+  preserveTags.hashCode ^
+  excludeSelectors.hashCode ^
+  skipImages.hashCode ^
+  maxDepth.hashCode ^
+  wrap.hashCode ^
+  wrapWidth.hashCode ^
+  includeDocumentStructure.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ContentConfig &&
-          runtimeType == other.runtimeType &&
-          outputFormat == other.outputFormat &&
-          preprocessingPreset == other.preprocessingPreset &&
-          removeNavigation == other.removeNavigation &&
-          removeForms == other.removeForms &&
-          stripTags == other.stripTags &&
-          preserveTags == other.preserveTags &&
-          excludeSelectors == other.excludeSelectors &&
-          skipImages == other.skipImages &&
-          maxDepth == other.maxDepth &&
-          wrap == other.wrap &&
-          wrapWidth == other.wrapWidth &&
-          includeDocumentStructure == other.includeDocumentStructure;
+  identical(this, other) ||
+  other is ContentConfig &&
+  runtimeType == other.runtimeType &&
+  outputFormat == other.outputFormat &&
+  preprocessingPreset == other.preprocessingPreset &&
+  removeNavigation == other.removeNavigation &&
+  removeForms == other.removeForms &&
+  stripTags == other.stripTags &&
+  preserveTags == other.preserveTags &&
+  excludeSelectors == other.excludeSelectors &&
+  skipImages == other.skipImages &&
+  maxDepth == other.maxDepth &&
+  wrap == other.wrap &&
+  wrapWidth == other.wrapWidth &&
+  includeDocumentStructure == other.includeDocumentStructure;
 }
 
 /// Information about an HTTP cookie received from a response.
@@ -867,17 +867,17 @@ class CookieInfo {
 
   @override
   int get hashCode =>
-      name.hashCode ^ value.hashCode ^ domain.hashCode ^ path.hashCode;
+  name.hashCode ^ value.hashCode ^ domain.hashCode ^ path.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CookieInfo &&
-          runtimeType == other.runtimeType &&
-          name == other.name &&
-          value == other.value &&
-          domain == other.domain &&
-          path == other.path;
+  identical(this, other) ||
+  other is CookieInfo &&
+  runtimeType == other.runtimeType &&
+  name == other.name &&
+  value == other.value &&
+  domain == other.domain &&
+  path == other.path;
 }
 
 /// Configuration for crawl, scrape, and map operations.
@@ -1060,90 +1060,90 @@ class CrawlConfig {
 
   @override
   int get hashCode =>
-      maxDepth.hashCode ^
-      maxPages.hashCode ^
-      maxConcurrent.hashCode ^
-      respectRobotsTxt.hashCode ^
-      softHttpErrors.hashCode ^
-      userAgent.hashCode ^
-      stayOnDomain.hashCode ^
-      allowSubdomains.hashCode ^
-      includePaths.hashCode ^
-      excludePaths.hashCode ^
-      customHeaders.hashCode ^
-      requestTimeout.hashCode ^
-      rateLimitMs.hashCode ^
-      maxRedirects.hashCode ^
-      retryCount.hashCode ^
-      retryCodes.hashCode ^
-      cookiesEnabled.hashCode ^
-      auth.hashCode ^
-      maxBodySize.hashCode ^
-      removeTags.hashCode ^
-      content.hashCode ^
-      mapLimit.hashCode ^
-      mapSearch.hashCode ^
-      downloadAssets.hashCode ^
-      assetTypes.hashCode ^
-      maxAssetSize.hashCode ^
-      browser.hashCode ^
-      proxy.hashCode ^
-      userAgents.hashCode ^
-      captureScreenshot.hashCode ^
-      followDocumentUrls.hashCode ^
-      documentUrlDepth.hashCode ^
-      downloadDocuments.hashCode ^
-      documentMaxSize.hashCode ^
-      documentMimeTypes.hashCode ^
-      warcOutput.hashCode ^
-      browserProfile.hashCode ^
-      saveBrowserProfile.hashCode ^
-      ssrf.hashCode;
+  maxDepth.hashCode ^
+  maxPages.hashCode ^
+  maxConcurrent.hashCode ^
+  respectRobotsTxt.hashCode ^
+  softHttpErrors.hashCode ^
+  userAgent.hashCode ^
+  stayOnDomain.hashCode ^
+  allowSubdomains.hashCode ^
+  includePaths.hashCode ^
+  excludePaths.hashCode ^
+  customHeaders.hashCode ^
+  requestTimeout.hashCode ^
+  rateLimitMs.hashCode ^
+  maxRedirects.hashCode ^
+  retryCount.hashCode ^
+  retryCodes.hashCode ^
+  cookiesEnabled.hashCode ^
+  auth.hashCode ^
+  maxBodySize.hashCode ^
+  removeTags.hashCode ^
+  content.hashCode ^
+  mapLimit.hashCode ^
+  mapSearch.hashCode ^
+  downloadAssets.hashCode ^
+  assetTypes.hashCode ^
+  maxAssetSize.hashCode ^
+  browser.hashCode ^
+  proxy.hashCode ^
+  userAgents.hashCode ^
+  captureScreenshot.hashCode ^
+  followDocumentUrls.hashCode ^
+  documentUrlDepth.hashCode ^
+  downloadDocuments.hashCode ^
+  documentMaxSize.hashCode ^
+  documentMimeTypes.hashCode ^
+  warcOutput.hashCode ^
+  browserProfile.hashCode ^
+  saveBrowserProfile.hashCode ^
+  ssrf.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CrawlConfig &&
-          runtimeType == other.runtimeType &&
-          maxDepth == other.maxDepth &&
-          maxPages == other.maxPages &&
-          maxConcurrent == other.maxConcurrent &&
-          respectRobotsTxt == other.respectRobotsTxt &&
-          softHttpErrors == other.softHttpErrors &&
-          userAgent == other.userAgent &&
-          stayOnDomain == other.stayOnDomain &&
-          allowSubdomains == other.allowSubdomains &&
-          includePaths == other.includePaths &&
-          excludePaths == other.excludePaths &&
-          customHeaders == other.customHeaders &&
-          requestTimeout == other.requestTimeout &&
-          rateLimitMs == other.rateLimitMs &&
-          maxRedirects == other.maxRedirects &&
-          retryCount == other.retryCount &&
-          retryCodes == other.retryCodes &&
-          cookiesEnabled == other.cookiesEnabled &&
-          auth == other.auth &&
-          maxBodySize == other.maxBodySize &&
-          removeTags == other.removeTags &&
-          content == other.content &&
-          mapLimit == other.mapLimit &&
-          mapSearch == other.mapSearch &&
-          downloadAssets == other.downloadAssets &&
-          assetTypes == other.assetTypes &&
-          maxAssetSize == other.maxAssetSize &&
-          browser == other.browser &&
-          proxy == other.proxy &&
-          userAgents == other.userAgents &&
-          captureScreenshot == other.captureScreenshot &&
-          followDocumentUrls == other.followDocumentUrls &&
-          documentUrlDepth == other.documentUrlDepth &&
-          downloadDocuments == other.downloadDocuments &&
-          documentMaxSize == other.documentMaxSize &&
-          documentMimeTypes == other.documentMimeTypes &&
-          warcOutput == other.warcOutput &&
-          browserProfile == other.browserProfile &&
-          saveBrowserProfile == other.saveBrowserProfile &&
-          ssrf == other.ssrf;
+  identical(this, other) ||
+  other is CrawlConfig &&
+  runtimeType == other.runtimeType &&
+  maxDepth == other.maxDepth &&
+  maxPages == other.maxPages &&
+  maxConcurrent == other.maxConcurrent &&
+  respectRobotsTxt == other.respectRobotsTxt &&
+  softHttpErrors == other.softHttpErrors &&
+  userAgent == other.userAgent &&
+  stayOnDomain == other.stayOnDomain &&
+  allowSubdomains == other.allowSubdomains &&
+  includePaths == other.includePaths &&
+  excludePaths == other.excludePaths &&
+  customHeaders == other.customHeaders &&
+  requestTimeout == other.requestTimeout &&
+  rateLimitMs == other.rateLimitMs &&
+  maxRedirects == other.maxRedirects &&
+  retryCount == other.retryCount &&
+  retryCodes == other.retryCodes &&
+  cookiesEnabled == other.cookiesEnabled &&
+  auth == other.auth &&
+  maxBodySize == other.maxBodySize &&
+  removeTags == other.removeTags &&
+  content == other.content &&
+  mapLimit == other.mapLimit &&
+  mapSearch == other.mapSearch &&
+  downloadAssets == other.downloadAssets &&
+  assetTypes == other.assetTypes &&
+  maxAssetSize == other.maxAssetSize &&
+  browser == other.browser &&
+  proxy == other.proxy &&
+  userAgents == other.userAgents &&
+  captureScreenshot == other.captureScreenshot &&
+  followDocumentUrls == other.followDocumentUrls &&
+  documentUrlDepth == other.documentUrlDepth &&
+  downloadDocuments == other.downloadDocuments &&
+  documentMaxSize == other.documentMaxSize &&
+  documentMimeTypes == other.documentMimeTypes &&
+  warcOutput == other.warcOutput &&
+  browserProfile == other.browserProfile &&
+  saveBrowserProfile == other.saveBrowserProfile &&
+  ssrf == other.ssrf;
 }
 
 @freezed
@@ -1152,15 +1152,15 @@ sealed class CrawlError with _$CrawlError {
 
   /// The requested page was not found (HTTP 404).
   const factory CrawlError.notFound({required String field0}) =
-      CrawlError_NotFound;
+  CrawlError_NotFound;
 
   /// The request was unauthorized (HTTP 401).
   const factory CrawlError.unauthorized({required String field0}) =
-      CrawlError_Unauthorized;
+  CrawlError_Unauthorized;
 
   /// The request was forbidden (HTTP 403).
   const factory CrawlError.forbidden({required String field0}) =
-      CrawlError_Forbidden;
+  CrawlError_Forbidden;
 
   /// The request was blocked by a WAF or bot protection (HTTP 403 with WAF indicators).
   ///
@@ -1178,26 +1178,26 @@ sealed class CrawlError with _$CrawlError {
 
   /// The request timed out.
   const factory CrawlError.timeout({required String field0}) =
-      CrawlError_Timeout;
+  CrawlError_Timeout;
 
   /// The request was rate-limited (HTTP 429).
   const factory CrawlError.rateLimited({required String field0}) =
-      CrawlError_RateLimited;
+  CrawlError_RateLimited;
 
   /// A server error occurred (HTTP 5xx).
   const factory CrawlError.serverError({required String field0}) =
-      CrawlError_ServerError;
+  CrawlError_ServerError;
 
   /// A bad gateway error occurred (HTTP 502).
   const factory CrawlError.badGateway({required String field0}) =
-      CrawlError_BadGateway;
+  CrawlError_BadGateway;
 
   /// The resource is permanently gone (HTTP 410).
   const factory CrawlError.gone({required String field0}) = CrawlError_Gone;
 
   /// A connection error occurred.
   const factory CrawlError.connection({required String field0}) =
-      CrawlError_Connection;
+  CrawlError_Connection;
 
   /// A DNS resolution error occurred.
   const factory CrawlError.dns({required String field0}) = CrawlError_Dns;
@@ -1207,23 +1207,23 @@ sealed class CrawlError with _$CrawlError {
 
   /// Data was lost or truncated during transfer.
   const factory CrawlError.dataLoss({required String field0}) =
-      CrawlError_DataLoss;
+  CrawlError_DataLoss;
 
   /// The browser failed to launch, connect, or navigate.
   const factory CrawlError.browserError({required String field0}) =
-      CrawlError_BrowserError;
+  CrawlError_BrowserError;
 
   /// The browser page load or rendering timed out.
   const factory CrawlError.browserTimeout({required String field0}) =
-      CrawlError_BrowserTimeout;
+  CrawlError_BrowserTimeout;
 
   /// The provided configuration is invalid.
   const factory CrawlError.invalidConfig({required String field0}) =
-      CrawlError_InvalidConfig;
+  CrawlError_InvalidConfig;
 
   /// The requested capability is not supported by the active backend or build.
   const factory CrawlError.unsupported({required String field0}) =
-      CrawlError_Unsupported;
+  CrawlError_Unsupported;
 
   /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
   const factory CrawlError.ssrfPolicyViolation({
@@ -1352,54 +1352,54 @@ class CrawlPageResult {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      normalizedUrl.hashCode ^
-      statusCode.hashCode ^
-      contentType.hashCode ^
-      html.hashCode ^
-      bodySize.hashCode ^
-      metadata.hashCode ^
-      links.hashCode ^
-      images.hashCode ^
-      feeds.hashCode ^
-      jsonLd.hashCode ^
-      depth.hashCode ^
-      stayedOnDomain.hashCode ^
-      wasSkipped.hashCode ^
-      isPdf.hashCode ^
-      detectedCharset.hashCode ^
-      markdown.hashCode ^
-      extractedData.hashCode ^
-      extractionMeta.hashCode ^
-      downloadedDocument.hashCode ^
-      browserUsed.hashCode;
+  url.hashCode ^
+  normalizedUrl.hashCode ^
+  statusCode.hashCode ^
+  contentType.hashCode ^
+  html.hashCode ^
+  bodySize.hashCode ^
+  metadata.hashCode ^
+  links.hashCode ^
+  images.hashCode ^
+  feeds.hashCode ^
+  jsonLd.hashCode ^
+  depth.hashCode ^
+  stayedOnDomain.hashCode ^
+  wasSkipped.hashCode ^
+  isPdf.hashCode ^
+  detectedCharset.hashCode ^
+  markdown.hashCode ^
+  extractedData.hashCode ^
+  extractionMeta.hashCode ^
+  downloadedDocument.hashCode ^
+  browserUsed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CrawlPageResult &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          normalizedUrl == other.normalizedUrl &&
-          statusCode == other.statusCode &&
-          contentType == other.contentType &&
-          html == other.html &&
-          bodySize == other.bodySize &&
-          metadata == other.metadata &&
-          links == other.links &&
-          images == other.images &&
-          feeds == other.feeds &&
-          jsonLd == other.jsonLd &&
-          depth == other.depth &&
-          stayedOnDomain == other.stayedOnDomain &&
-          wasSkipped == other.wasSkipped &&
-          isPdf == other.isPdf &&
-          detectedCharset == other.detectedCharset &&
-          markdown == other.markdown &&
-          extractedData == other.extractedData &&
-          extractionMeta == other.extractionMeta &&
-          downloadedDocument == other.downloadedDocument &&
-          browserUsed == other.browserUsed;
+  identical(this, other) ||
+  other is CrawlPageResult &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  normalizedUrl == other.normalizedUrl &&
+  statusCode == other.statusCode &&
+  contentType == other.contentType &&
+  html == other.html &&
+  bodySize == other.bodySize &&
+  metadata == other.metadata &&
+  links == other.links &&
+  images == other.images &&
+  feeds == other.feeds &&
+  jsonLd == other.jsonLd &&
+  depth == other.depth &&
+  stayedOnDomain == other.stayedOnDomain &&
+  wasSkipped == other.wasSkipped &&
+  isPdf == other.isPdf &&
+  detectedCharset == other.detectedCharset &&
+  markdown == other.markdown &&
+  extractedData == other.extractedData &&
+  extractionMeta == other.extractionMeta &&
+  downloadedDocument == other.downloadedDocument &&
+  browserUsed == other.browserUsed;
 }
 
 /// The result of a multi-page crawl operation.
@@ -1441,28 +1441,28 @@ class CrawlResult {
 
   @override
   int get hashCode =>
-      pages.hashCode ^
-      finalUrl.hashCode ^
-      redirectCount.hashCode ^
-      wasSkipped.hashCode ^
-      error.hashCode ^
-      cookies.hashCode ^
-      stayedOnDomain.hashCode ^
-      browserUsed.hashCode;
+  pages.hashCode ^
+  finalUrl.hashCode ^
+  redirectCount.hashCode ^
+  wasSkipped.hashCode ^
+  error.hashCode ^
+  cookies.hashCode ^
+  stayedOnDomain.hashCode ^
+  browserUsed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CrawlResult &&
-          runtimeType == other.runtimeType &&
-          pages == other.pages &&
-          finalUrl == other.finalUrl &&
-          redirectCount == other.redirectCount &&
-          wasSkipped == other.wasSkipped &&
-          error == other.error &&
-          cookies == other.cookies &&
-          stayedOnDomain == other.stayedOnDomain &&
-          browserUsed == other.browserUsed;
+  identical(this, other) ||
+  other is CrawlResult &&
+  runtimeType == other.runtimeType &&
+  pages == other.pages &&
+  finalUrl == other.finalUrl &&
+  redirectCount == other.redirectCount &&
+  wasSkipped == other.wasSkipped &&
+  error == other.error &&
+  cookies == other.cookies &&
+  stayedOnDomain == other.stayedOnDomain &&
+  browserUsed == other.browserUsed;
 }
 
 /// Request to begin a single-URL streaming crawl.
@@ -1481,10 +1481,10 @@ class CrawlStreamRequest {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CrawlStreamRequest &&
-          runtimeType == other.runtimeType &&
-          url == other.url;
+  identical(this, other) ||
+  other is CrawlStreamRequest &&
+  runtimeType == other.runtimeType &&
+  url == other.url;
 }
 
 /// A downloaded asset from a page.
@@ -1518,24 +1518,24 @@ class DownloadedAsset {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      contentHash.hashCode ^
-      mimeType.hashCode ^
-      size.hashCode ^
-      assetCategory.hashCode ^
-      htmlTag.hashCode;
+  url.hashCode ^
+  contentHash.hashCode ^
+  mimeType.hashCode ^
+  size.hashCode ^
+  assetCategory.hashCode ^
+  htmlTag.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DownloadedAsset &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          contentHash == other.contentHash &&
-          mimeType == other.mimeType &&
-          size == other.size &&
-          assetCategory == other.assetCategory &&
-          htmlTag == other.htmlTag;
+  identical(this, other) ||
+  other is DownloadedAsset &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  contentHash == other.contentHash &&
+  mimeType == other.mimeType &&
+  size == other.size &&
+  assetCategory == other.assetCategory &&
+  htmlTag == other.htmlTag;
 }
 
 /// A downloaded non-HTML document (PDF, DOCX, image, code file, etc.).
@@ -1573,24 +1573,24 @@ class DownloadedDocument {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      mimeType.hashCode ^
-      size.hashCode ^
-      filename.hashCode ^
-      contentHash.hashCode ^
-      headers.hashCode;
+  url.hashCode ^
+  mimeType.hashCode ^
+  size.hashCode ^
+  filename.hashCode ^
+  contentHash.hashCode ^
+  headers.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DownloadedDocument &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          mimeType == other.mimeType &&
-          size == other.size &&
-          filename == other.filename &&
-          contentHash == other.contentHash &&
-          headers == other.headers;
+  identical(this, other) ||
+  other is DownloadedDocument &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  mimeType == other.mimeType &&
+  size == other.size &&
+  filename == other.filename &&
+  contentHash == other.contentHash &&
+  headers == other.headers;
 }
 
 /// Metadata about an LLM extraction pass.
@@ -1620,22 +1620,22 @@ class ExtractionMeta {
 
   @override
   int get hashCode =>
-      cost.hashCode ^
-      promptTokens.hashCode ^
-      completionTokens.hashCode ^
-      model.hashCode ^
-      chunksProcessed.hashCode;
+  cost.hashCode ^
+  promptTokens.hashCode ^
+  completionTokens.hashCode ^
+  model.hashCode ^
+  chunksProcessed.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ExtractionMeta &&
-          runtimeType == other.runtimeType &&
-          cost == other.cost &&
-          promptTokens == other.promptTokens &&
-          completionTokens == other.completionTokens &&
-          model == other.model &&
-          chunksProcessed == other.chunksProcessed;
+  identical(this, other) ||
+  other is ExtractionMeta &&
+  runtimeType == other.runtimeType &&
+  cost == other.cost &&
+  promptTokens == other.promptTokens &&
+  completionTokens == other.completionTokens &&
+  model == other.model &&
+  chunksProcessed == other.chunksProcessed;
 }
 
 /// Information about a favicon or icon link.
@@ -1661,17 +1661,17 @@ class FaviconInfo {
 
   @override
   int get hashCode =>
-      url.hashCode ^ rel.hashCode ^ sizes.hashCode ^ mimeType.hashCode;
+  url.hashCode ^ rel.hashCode ^ sizes.hashCode ^ mimeType.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FaviconInfo &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          rel == other.rel &&
-          sizes == other.sizes &&
-          mimeType == other.mimeType;
+  identical(this, other) ||
+  other is FaviconInfo &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  rel == other.rel &&
+  sizes == other.sizes &&
+  mimeType == other.mimeType;
 }
 
 /// Information about a feed link found on a page.
@@ -1692,12 +1692,12 @@ class FeedInfo {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FeedInfo &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          title == other.title &&
-          feedType == other.feedType;
+  identical(this, other) ||
+  other is FeedInfo &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  title == other.title &&
+  feedType == other.feedType;
 }
 
 /// The type of a feed (RSS, Atom, or JSON Feed).
@@ -1727,11 +1727,11 @@ class HeadingInfo {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is HeadingInfo &&
-          runtimeType == other.runtimeType &&
-          level == other.level &&
-          text == other.text;
+  identical(this, other) ||
+  other is HeadingInfo &&
+  runtimeType == other.runtimeType &&
+  level == other.level &&
+  text == other.text;
 }
 
 /// An hreflang alternate link entry.
@@ -1749,11 +1749,11 @@ class HreflangEntry {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is HreflangEntry &&
-          runtimeType == other.runtimeType &&
-          lang == other.lang &&
-          url == other.url;
+  identical(this, other) ||
+  other is HreflangEntry &&
+  runtimeType == other.runtimeType &&
+  lang == other.lang &&
+  url == other.url;
 }
 
 /// Information about an image found on a page.
@@ -1783,22 +1783,22 @@ class ImageInfo {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      alt.hashCode ^
-      width.hashCode ^
-      height.hashCode ^
-      source.hashCode;
+  url.hashCode ^
+  alt.hashCode ^
+  width.hashCode ^
+  height.hashCode ^
+  source.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ImageInfo &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          alt == other.alt &&
-          width == other.width &&
-          height == other.height &&
-          source == other.source;
+  identical(this, other) ||
+  other is ImageInfo &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  alt == other.alt &&
+  width == other.width &&
+  height == other.height &&
+  source == other.source;
 }
 
 /// The source of an image reference.
@@ -1835,16 +1835,16 @@ class InteractionResult {
 
   @override
   int get hashCode =>
-      actionResults.hashCode ^ finalHtml.hashCode ^ finalUrl.hashCode;
+  actionResults.hashCode ^ finalHtml.hashCode ^ finalUrl.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is InteractionResult &&
-          runtimeType == other.runtimeType &&
-          actionResults == other.actionResults &&
-          finalHtml == other.finalHtml &&
-          finalUrl == other.finalUrl;
+  identical(this, other) ||
+  other is InteractionResult &&
+  runtimeType == other.runtimeType &&
+  actionResults == other.actionResults &&
+  finalHtml == other.finalHtml &&
+  finalUrl == other.finalUrl;
 }
 
 /// A JSON-LD structured data entry found on a page.
@@ -1865,12 +1865,12 @@ class JsonLdEntry {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is JsonLdEntry &&
-          runtimeType == other.runtimeType &&
-          schemaType == other.schemaType &&
-          name == other.name &&
-          raw == other.raw;
+  identical(this, other) ||
+  other is JsonLdEntry &&
+  runtimeType == other.runtimeType &&
+  schemaType == other.schemaType &&
+  name == other.name &&
+  raw == other.raw;
 }
 
 /// Information about a link found on a page.
@@ -1900,22 +1900,22 @@ class LinkInfo {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      text.hashCode ^
-      linkType.hashCode ^
-      rel.hashCode ^
-      nofollow.hashCode;
+  url.hashCode ^
+  text.hashCode ^
+  linkType.hashCode ^
+  rel.hashCode ^
+  nofollow.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is LinkInfo &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          text == other.text &&
-          linkType == other.linkType &&
-          rel == other.rel &&
-          nofollow == other.nofollow;
+  identical(this, other) ||
+  other is LinkInfo &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  text == other.text &&
+  linkType == other.linkType &&
+  rel == other.rel &&
+  nofollow == other.nofollow;
 }
 
 /// The classification of a link.
@@ -1945,10 +1945,10 @@ class MapResult {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MapResult &&
-          runtimeType == other.runtimeType &&
-          urls == other.urls;
+  identical(this, other) ||
+  other is MapResult &&
+  runtimeType == other.runtimeType &&
+  urls == other.urls;
 }
 
 /// Rich markdown conversion result from HTML processing.
@@ -1987,24 +1987,24 @@ class MarkdownResult {
 
   @override
   int get hashCode =>
-      content.hashCode ^
-      documentStructure.hashCode ^
-      tables.hashCode ^
-      warnings.hashCode ^
-      citations.hashCode ^
-      fitContent.hashCode;
+  content.hashCode ^
+  documentStructure.hashCode ^
+  tables.hashCode ^
+  warnings.hashCode ^
+  citations.hashCode ^
+  fitContent.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MarkdownResult &&
-          runtimeType == other.runtimeType &&
-          content == other.content &&
-          documentStructure == other.documentStructure &&
-          tables == other.tables &&
-          warnings == other.warnings &&
-          citations == other.citations &&
-          fitContent == other.fitContent;
+  identical(this, other) ||
+  other is MarkdownResult &&
+  runtimeType == other.runtimeType &&
+  content == other.content &&
+  documentStructure == other.documentStructure &&
+  tables == other.tables &&
+  warnings == other.warnings &&
+  citations == other.citations &&
+  fitContent == other.fitContent;
 }
 
 @freezed
@@ -2257,98 +2257,98 @@ class PageMetadata {
 
   @override
   int get hashCode =>
-      title.hashCode ^
-      description.hashCode ^
-      canonicalUrl.hashCode ^
-      keywords.hashCode ^
-      author.hashCode ^
-      viewport.hashCode ^
-      themeColor.hashCode ^
-      generator.hashCode ^
-      robots.hashCode ^
-      htmlLang.hashCode ^
-      htmlDir.hashCode ^
-      ogTitle.hashCode ^
-      ogType.hashCode ^
-      ogImage.hashCode ^
-      ogDescription.hashCode ^
-      ogUrl.hashCode ^
-      ogSiteName.hashCode ^
-      ogLocale.hashCode ^
-      ogVideo.hashCode ^
-      ogAudio.hashCode ^
-      ogLocaleAlternates.hashCode ^
-      twitterCard.hashCode ^
-      twitterTitle.hashCode ^
-      twitterDescription.hashCode ^
-      twitterImage.hashCode ^
-      twitterSite.hashCode ^
-      twitterCreator.hashCode ^
-      dcTitle.hashCode ^
-      dcCreator.hashCode ^
-      dcSubject.hashCode ^
-      dcDescription.hashCode ^
-      dcPublisher.hashCode ^
-      dcDate.hashCode ^
-      dcType.hashCode ^
-      dcFormat.hashCode ^
-      dcIdentifier.hashCode ^
-      dcLanguage.hashCode ^
-      dcRights.hashCode ^
-      article.hashCode ^
-      hreflangs.hashCode ^
-      favicons.hashCode ^
-      headings.hashCode ^
-      wordCount.hashCode;
+  title.hashCode ^
+  description.hashCode ^
+  canonicalUrl.hashCode ^
+  keywords.hashCode ^
+  author.hashCode ^
+  viewport.hashCode ^
+  themeColor.hashCode ^
+  generator.hashCode ^
+  robots.hashCode ^
+  htmlLang.hashCode ^
+  htmlDir.hashCode ^
+  ogTitle.hashCode ^
+  ogType.hashCode ^
+  ogImage.hashCode ^
+  ogDescription.hashCode ^
+  ogUrl.hashCode ^
+  ogSiteName.hashCode ^
+  ogLocale.hashCode ^
+  ogVideo.hashCode ^
+  ogAudio.hashCode ^
+  ogLocaleAlternates.hashCode ^
+  twitterCard.hashCode ^
+  twitterTitle.hashCode ^
+  twitterDescription.hashCode ^
+  twitterImage.hashCode ^
+  twitterSite.hashCode ^
+  twitterCreator.hashCode ^
+  dcTitle.hashCode ^
+  dcCreator.hashCode ^
+  dcSubject.hashCode ^
+  dcDescription.hashCode ^
+  dcPublisher.hashCode ^
+  dcDate.hashCode ^
+  dcType.hashCode ^
+  dcFormat.hashCode ^
+  dcIdentifier.hashCode ^
+  dcLanguage.hashCode ^
+  dcRights.hashCode ^
+  article.hashCode ^
+  hreflangs.hashCode ^
+  favicons.hashCode ^
+  headings.hashCode ^
+  wordCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PageMetadata &&
-          runtimeType == other.runtimeType &&
-          title == other.title &&
-          description == other.description &&
-          canonicalUrl == other.canonicalUrl &&
-          keywords == other.keywords &&
-          author == other.author &&
-          viewport == other.viewport &&
-          themeColor == other.themeColor &&
-          generator == other.generator &&
-          robots == other.robots &&
-          htmlLang == other.htmlLang &&
-          htmlDir == other.htmlDir &&
-          ogTitle == other.ogTitle &&
-          ogType == other.ogType &&
-          ogImage == other.ogImage &&
-          ogDescription == other.ogDescription &&
-          ogUrl == other.ogUrl &&
-          ogSiteName == other.ogSiteName &&
-          ogLocale == other.ogLocale &&
-          ogVideo == other.ogVideo &&
-          ogAudio == other.ogAudio &&
-          ogLocaleAlternates == other.ogLocaleAlternates &&
-          twitterCard == other.twitterCard &&
-          twitterTitle == other.twitterTitle &&
-          twitterDescription == other.twitterDescription &&
-          twitterImage == other.twitterImage &&
-          twitterSite == other.twitterSite &&
-          twitterCreator == other.twitterCreator &&
-          dcTitle == other.dcTitle &&
-          dcCreator == other.dcCreator &&
-          dcSubject == other.dcSubject &&
-          dcDescription == other.dcDescription &&
-          dcPublisher == other.dcPublisher &&
-          dcDate == other.dcDate &&
-          dcType == other.dcType &&
-          dcFormat == other.dcFormat &&
-          dcIdentifier == other.dcIdentifier &&
-          dcLanguage == other.dcLanguage &&
-          dcRights == other.dcRights &&
-          article == other.article &&
-          hreflangs == other.hreflangs &&
-          favicons == other.favicons &&
-          headings == other.headings &&
-          wordCount == other.wordCount;
+  identical(this, other) ||
+  other is PageMetadata &&
+  runtimeType == other.runtimeType &&
+  title == other.title &&
+  description == other.description &&
+  canonicalUrl == other.canonicalUrl &&
+  keywords == other.keywords &&
+  author == other.author &&
+  viewport == other.viewport &&
+  themeColor == other.themeColor &&
+  generator == other.generator &&
+  robots == other.robots &&
+  htmlLang == other.htmlLang &&
+  htmlDir == other.htmlDir &&
+  ogTitle == other.ogTitle &&
+  ogType == other.ogType &&
+  ogImage == other.ogImage &&
+  ogDescription == other.ogDescription &&
+  ogUrl == other.ogUrl &&
+  ogSiteName == other.ogSiteName &&
+  ogLocale == other.ogLocale &&
+  ogVideo == other.ogVideo &&
+  ogAudio == other.ogAudio &&
+  ogLocaleAlternates == other.ogLocaleAlternates &&
+  twitterCard == other.twitterCard &&
+  twitterTitle == other.twitterTitle &&
+  twitterDescription == other.twitterDescription &&
+  twitterImage == other.twitterImage &&
+  twitterSite == other.twitterSite &&
+  twitterCreator == other.twitterCreator &&
+  dcTitle == other.dcTitle &&
+  dcCreator == other.dcCreator &&
+  dcSubject == other.dcSubject &&
+  dcDescription == other.dcDescription &&
+  dcPublisher == other.dcPublisher &&
+  dcDate == other.dcDate &&
+  dcType == other.dcType &&
+  dcFormat == other.dcFormat &&
+  dcIdentifier == other.dcIdentifier &&
+  dcLanguage == other.dcLanguage &&
+  dcRights == other.dcRights &&
+  article == other.article &&
+  hreflangs == other.hreflangs &&
+  favicons == other.favicons &&
+  headings == other.headings &&
+  wordCount == other.wordCount;
 }
 
 /// Proxy configuration for HTTP requests.
@@ -2369,12 +2369,12 @@ class ProxyConfig {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ProxyConfig &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          username == other.username &&
-          password == other.password;
+  identical(this, other) ||
+  other is ProxyConfig &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  username == other.username &&
+  password == other.password;
 }
 
 /// Response metadata extracted from HTTP headers.
@@ -2412,26 +2412,26 @@ class ResponseMeta {
 
   @override
   int get hashCode =>
-      etag.hashCode ^
-      lastModified.hashCode ^
-      cacheControl.hashCode ^
-      server.hashCode ^
-      xPoweredBy.hashCode ^
-      contentLanguage.hashCode ^
-      contentEncoding.hashCode;
+  etag.hashCode ^
+  lastModified.hashCode ^
+  cacheControl.hashCode ^
+  server.hashCode ^
+  xPoweredBy.hashCode ^
+  contentLanguage.hashCode ^
+  contentEncoding.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ResponseMeta &&
-          runtimeType == other.runtimeType &&
-          etag == other.etag &&
-          lastModified == other.lastModified &&
-          cacheControl == other.cacheControl &&
-          server == other.server &&
-          xPoweredBy == other.xPoweredBy &&
-          contentLanguage == other.contentLanguage &&
-          contentEncoding == other.contentEncoding;
+  identical(this, other) ||
+  other is ResponseMeta &&
+  runtimeType == other.runtimeType &&
+  etag == other.etag &&
+  lastModified == other.lastModified &&
+  cacheControl == other.cacheControl &&
+  server == other.server &&
+  xPoweredBy == other.xPoweredBy &&
+  contentLanguage == other.contentLanguage &&
+  contentEncoding == other.contentEncoding;
 }
 
 /// The result of a single-page scrape operation.
@@ -2554,68 +2554,68 @@ class ScrapeResult {
 
   @override
   int get hashCode =>
-      statusCode.hashCode ^
-      finalUrl.hashCode ^
-      contentType.hashCode ^
-      html.hashCode ^
-      bodySize.hashCode ^
-      metadata.hashCode ^
-      links.hashCode ^
-      images.hashCode ^
-      feeds.hashCode ^
-      jsonLd.hashCode ^
-      isAllowed.hashCode ^
-      crawlDelay.hashCode ^
-      noindexDetected.hashCode ^
-      nofollowDetected.hashCode ^
-      xRobotsTag.hashCode ^
-      isPdf.hashCode ^
-      wasSkipped.hashCode ^
-      detectedCharset.hashCode ^
-      authHeaderSent.hashCode ^
-      responseMeta.hashCode ^
-      assets.hashCode ^
-      jsRenderHint.hashCode ^
-      browserUsed.hashCode ^
-      markdown.hashCode ^
-      extractedData.hashCode ^
-      extractionMeta.hashCode ^
-      downloadedDocument.hashCode ^
-      browser.hashCode;
+  statusCode.hashCode ^
+  finalUrl.hashCode ^
+  contentType.hashCode ^
+  html.hashCode ^
+  bodySize.hashCode ^
+  metadata.hashCode ^
+  links.hashCode ^
+  images.hashCode ^
+  feeds.hashCode ^
+  jsonLd.hashCode ^
+  isAllowed.hashCode ^
+  crawlDelay.hashCode ^
+  noindexDetected.hashCode ^
+  nofollowDetected.hashCode ^
+  xRobotsTag.hashCode ^
+  isPdf.hashCode ^
+  wasSkipped.hashCode ^
+  detectedCharset.hashCode ^
+  authHeaderSent.hashCode ^
+  responseMeta.hashCode ^
+  assets.hashCode ^
+  jsRenderHint.hashCode ^
+  browserUsed.hashCode ^
+  markdown.hashCode ^
+  extractedData.hashCode ^
+  extractionMeta.hashCode ^
+  downloadedDocument.hashCode ^
+  browser.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ScrapeResult &&
-          runtimeType == other.runtimeType &&
-          statusCode == other.statusCode &&
-          finalUrl == other.finalUrl &&
-          contentType == other.contentType &&
-          html == other.html &&
-          bodySize == other.bodySize &&
-          metadata == other.metadata &&
-          links == other.links &&
-          images == other.images &&
-          feeds == other.feeds &&
-          jsonLd == other.jsonLd &&
-          isAllowed == other.isAllowed &&
-          crawlDelay == other.crawlDelay &&
-          noindexDetected == other.noindexDetected &&
-          nofollowDetected == other.nofollowDetected &&
-          xRobotsTag == other.xRobotsTag &&
-          isPdf == other.isPdf &&
-          wasSkipped == other.wasSkipped &&
-          detectedCharset == other.detectedCharset &&
-          authHeaderSent == other.authHeaderSent &&
-          responseMeta == other.responseMeta &&
-          assets == other.assets &&
-          jsRenderHint == other.jsRenderHint &&
-          browserUsed == other.browserUsed &&
-          markdown == other.markdown &&
-          extractedData == other.extractedData &&
-          extractionMeta == other.extractionMeta &&
-          downloadedDocument == other.downloadedDocument &&
-          browser == other.browser;
+  identical(this, other) ||
+  other is ScrapeResult &&
+  runtimeType == other.runtimeType &&
+  statusCode == other.statusCode &&
+  finalUrl == other.finalUrl &&
+  contentType == other.contentType &&
+  html == other.html &&
+  bodySize == other.bodySize &&
+  metadata == other.metadata &&
+  links == other.links &&
+  images == other.images &&
+  feeds == other.feeds &&
+  jsonLd == other.jsonLd &&
+  isAllowed == other.isAllowed &&
+  crawlDelay == other.crawlDelay &&
+  noindexDetected == other.noindexDetected &&
+  nofollowDetected == other.nofollowDetected &&
+  xRobotsTag == other.xRobotsTag &&
+  isPdf == other.isPdf &&
+  wasSkipped == other.wasSkipped &&
+  detectedCharset == other.detectedCharset &&
+  authHeaderSent == other.authHeaderSent &&
+  responseMeta == other.responseMeta &&
+  assets == other.assets &&
+  jsRenderHint == other.jsRenderHint &&
+  browserUsed == other.browserUsed &&
+  markdown == other.markdown &&
+  extractedData == other.extractedData &&
+  extractionMeta == other.extractionMeta &&
+  downloadedDocument == other.downloadedDocument &&
+  browser == other.browser;
 }
 
 /// Direction for a scroll action.
@@ -2650,17 +2650,17 @@ class SitemapUrl {
 
   @override
   int get hashCode =>
-      url.hashCode ^ lastmod.hashCode ^ changefreq.hashCode ^ priority.hashCode;
+  url.hashCode ^ lastmod.hashCode ^ changefreq.hashCode ^ priority.hashCode;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is SitemapUrl &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          lastmod == other.lastmod &&
-          changefreq == other.changefreq &&
-          priority == other.priority;
+  identical(this, other) ||
+  other is SitemapUrl &&
+  runtimeType == other.runtimeType &&
+  url == other.url &&
+  lastmod == other.lastmod &&
+  changefreq == other.changefreq &&
+  priority == other.priority;
 }
 
 @freezed
@@ -2669,22 +2669,22 @@ sealed class SsrfError with _$SsrfError {
 
   /// URL denied by SSRF policy: private IP, metadata IP, etc.
   const factory SsrfError.deniedByPolicy({required String reason}) =
-      SsrfError_DeniedByPolicy;
+  SsrfError_DeniedByPolicy;
 
   /// Host not on allowlist when an allowlist is configured.
   const factory SsrfError.notOnAllowlist() = SsrfError_NotOnAllowlist;
 
   /// DNS resolution failed for hostname.
   const factory SsrfError.dnsResolutionFailed({required String field0}) =
-      SsrfError_DnsResolutionFailed;
+  SsrfError_DnsResolutionFailed;
 
   /// Invalid URL format.
   const factory SsrfError.invalidUrl({required String field0}) =
-      SsrfError_InvalidUrl;
+  SsrfError_InvalidUrl;
 
   /// URL scheme not in allowlist (e.g., `ftp://` when only `http`/`https` allowed).
   const factory SsrfError.disallowedScheme({required String field0}) =
-      SsrfError_DisallowedScheme;
+  SsrfError_DisallowedScheme;
 
   /// Too many HTTP redirects encountered during validation.
   const factory SsrfError.tooManyRedirects() = SsrfError_TooManyRedirects;
@@ -2705,9 +2705,9 @@ class SsrfPolicy {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is SsrfPolicy &&
-          runtimeType == other.runtimeType &&
-          denyPrivate == other.denyPrivate &&
-          maxRedirects == other.maxRedirects;
+  identical(this, other) ||
+  other is SsrfPolicy &&
+  runtimeType == other.runtimeType &&
+  denyPrivate == other.denyPrivate &&
+  maxRedirects == other.maxRedirects;
 }
