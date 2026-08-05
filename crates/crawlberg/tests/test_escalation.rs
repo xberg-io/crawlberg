@@ -7,8 +7,8 @@
 //! The browser tier is not exercised here — browser tests require the `browser`
 //! feature and a live Chrome instance.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use crawlberg::{
@@ -60,7 +60,23 @@ impl BypassProvider for CountingMockProvider {
 }
 
 fn build_engine(config: CrawlConfig) -> CrawlEngine {
+    allow_private_network();
     CrawlEngine::builder().config(config).build().unwrap()
+}
+
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the dispatch chain behaviour under test runs.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
 }
 
 /// Extract the markdown text content from a `ScrapeResult`, returning an empty

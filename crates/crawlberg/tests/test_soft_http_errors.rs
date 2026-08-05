@@ -7,12 +7,31 @@
 //! 4. Direct 403 raises when `soft_http_errors` is `false` (default).
 //! 5. Direct 403 returns `Ok(ScrapeResult { status_code: 403 })` when enabled.
 
+use std::sync::OnceLock;
+
 use crawlberg::{BrowserMode, CrawlConfig, CrawlError, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
+/// check rejects the loopback URL before the soft-error semantics under
+/// test are ever reached.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 fn engine_with_config(mut config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     config.browser.mode = BrowserMode::Never;
+    allow_private_network();
     create_engine(Some(config)).expect("engine build must not fail")
 }
 

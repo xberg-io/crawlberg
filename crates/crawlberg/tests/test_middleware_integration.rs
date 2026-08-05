@@ -1,12 +1,30 @@
 //! Integration tests verifying that Tower service layers (UA rotation, caching)
 //! actually affect HTTP requests sent to the server.
 
+use std::sync::OnceLock;
+
 use crawlberg::{CrawlConfig, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the middleware behaviour under test runs.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 #[tokio::test]
 async fn test_ua_rotation_reaches_server() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -45,6 +63,7 @@ async fn test_ua_rotation_reaches_server() {
 
 #[tokio::test]
 async fn test_ua_rotation_cycles_through_agents() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     for i in 0..3 {
@@ -104,6 +123,7 @@ async fn test_ua_rotation_cycles_through_agents() {
 
 #[tokio::test]
 async fn test_cache_layer_avoids_duplicate_fetches() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))

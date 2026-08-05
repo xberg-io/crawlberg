@@ -13,8 +13,8 @@
 //! change. Those gaps must be covered by unit tests inside
 //! `crates/crawlberg/src/defaults/domain_state.rs` or by a future re-export.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use crawlberg::{
@@ -84,7 +84,23 @@ fn build_engine(provider: Arc<CountingMockProvider>, soft_http_errors: bool) -> 
         }),
         ..CrawlConfig::default()
     };
+    allow_private_network();
     CrawlEngine::builder().config(config).build().unwrap()
+}
+
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the escalation semantics under test run.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
 }
 
 /// When `soft_http_errors = true`, a plain 403 (no WAF signal, no challenge

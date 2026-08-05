@@ -1,10 +1,29 @@
 //! Integration tests for WAF/bot-protection detection via actual HTTP responses.
 
+use std::sync::OnceLock;
+
 use crawlberg::{BrowserMode, CrawlConfig, CrawlError, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
+/// check rejects the loopback URL before the WAF detection logic under
+/// test is ever reached.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 fn no_browser_config() -> CrawlConfig {
+    allow_private_network();
     let mut config = CrawlConfig::default();
     config.browser.mode = BrowserMode::Never;
     config

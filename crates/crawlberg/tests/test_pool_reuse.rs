@@ -6,11 +6,26 @@
 //! use `BrowserMode::Always`) and the test asserts construction-once via
 //! `Arc::strong_count`.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crawlberg::{BrowserPool, BrowserPoolConfig, CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the pool-reuse behaviour under test runs.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
 
 /// Construct a pool, hand it to `create_engine` via `CrawlConfig.browser_pool`, then verify:
 /// 1. The `Arc` reference count reflects the pool being held by the engine's config.
@@ -18,6 +33,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 ///    therefore the same pool arc), proving no re-construction per call.
 #[tokio::test]
 async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     for page in ["page1", "page2"] {
@@ -76,6 +92,7 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
 async fn with_browser_pool_builder_method_injects_pool() {
     use crawlberg::CrawlEngine;
 
+    allow_private_network();
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     assert_eq!(Arc::strong_count(&pool), 1, "only caller before builder");
 

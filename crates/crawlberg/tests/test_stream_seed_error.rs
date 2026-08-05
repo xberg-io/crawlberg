@@ -4,14 +4,33 @@
 //! HTTP 500 errors — they returned Ok+Complete without emitting Error because the 5xx was
 //! caught in Phase 1 (resolve_initial_redirects) before reaching process_fetch_result.
 
+use std::sync::OnceLock;
+
 use crawlberg::{CrawlConfig, CrawlEvent, batch_crawl_stream, crawl_stream, create_engine};
 use futures::StreamExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
+/// check rejects the loopback URL before the seed-error streaming behavior
+/// under test is ever reached.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 /// batch_crawl_stream must emit CrawlEvent::Error for each seed URL that returns 500.
 #[tokio::test]
 async fn test_batch_crawl_stream_seed_500_emits_error_event() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -64,6 +83,7 @@ async fn test_batch_crawl_stream_seed_500_emits_error_event() {
 /// crawl_stream must emit CrawlEvent::Error when the single seed URL returns 500.
 #[tokio::test]
 async fn test_crawl_stream_seed_500_emits_error_event() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))

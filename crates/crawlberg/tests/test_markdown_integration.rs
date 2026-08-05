@@ -1,11 +1,29 @@
 //! Integration tests for markdown output: citations, fit_content, and structure.
 
+use std::sync::OnceLock;
+
 use crawlberg::{CrawlConfig, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the markdown behaviour under test runs.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 #[tokio::test]
 async fn test_markdown_output_is_populated() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -48,6 +66,7 @@ async fn test_markdown_output_is_populated() {
 
 #[tokio::test]
 async fn test_markdown_heading_extraction() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))

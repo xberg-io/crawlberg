@@ -4,8 +4,8 @@
 //! drives a `scrape` call against a wiremock server to prove that each
 //! `Decision` variant is handled correctly by the engine.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,7 +17,24 @@ use crawlberg::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
+/// check rejects the loopback URL before the `Decision` dispatch under test
+/// is ever reached.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 fn engine_with(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
+    allow_private_network();
     create_engine(Some(config)).expect("engine build must not fail")
 }
 

@@ -2,6 +2,8 @@
 //! non-HTML documents (PDF, …) into `CrawlPageResult.downloaded_document`,
 //! while plain HTML pages leave that field `None`.
 
+use std::sync::OnceLock;
+
 use crawlberg::{CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -9,8 +11,24 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Minimal PDF payload — the leading `%PDF-` magic plus a trailing `%%EOF`.
 const PDF_BYTES: &[u8] = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF";
 
+static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+/// Opts into the SSRF policy's private-network allowance so wiremock's
+/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
+/// rejects the loopback URL before the document-download behaviour under test runs.
+fn allow_private_network() {
+    ALLOW_PRIVATE.get_or_init(|| {
+        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+        }
+    });
+}
+
 #[tokio::test]
 async fn crawl_loop_downloads_linked_pdf_document() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -70,6 +88,7 @@ async fn crawl_loop_downloads_linked_pdf_document() {
 
 #[tokio::test]
 async fn crawl_loop_leaves_html_pages_without_downloaded_document() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -103,6 +122,7 @@ async fn crawl_loop_leaves_html_pages_without_downloaded_document() {
 
 #[tokio::test]
 async fn crawl_loop_skips_document_download_when_disabled() {
+    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))

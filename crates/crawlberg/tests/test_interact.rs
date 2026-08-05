@@ -266,7 +266,7 @@ async fn native_interact_click_type_wait_scroll_execute_js_and_scrape() {
     assert!(result.final_html.contains("id=\"done\""));
     assert!(result.final_html.contains("data-eval-script=\"ran\""));
     assert!(result.final_html.contains("mousedown,mouseup,click"));
-    assert!(result.final_html.contains("data-name=\"kreuzcraw"));
+    assert!(result.final_html.contains("data-name=\"crawlber"));
     assert!(
         result
             .screenshot
@@ -286,7 +286,7 @@ async fn native_interact_click_type_wait_scroll_execute_js_and_scrape() {
         .as_ref()
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    assert_eq!(backspaced_value, "kreuzcraw");
+    assert_eq!(backspaced_value, "crawlber");
 
     let screenshot_data = result.action_results[9]
         .data
