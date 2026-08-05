@@ -4,6 +4,25 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-08-05
+
+### Fixed
+
+- The Dart package resolves its native library from its own installed location
+  rather than a path derived from the crate name, so loading works from any
+  working directory and under hardened runtimes (alef 0.54.x).
+- CI runs poly's whole-project lint phase. It was skipped entirely, so
+  `golangci-lint`, `rubocop`, `steep`, `dart-analyze`, `credo` and `checkstyle`
+  ran in the git hooks only and CI never saw them.
+- The Rust unit-test script no longer hides failures. A single
+  `if ! { cmd1; cmd2; } | tee log` suppressed `set -e` and collapsed the exit
+  status onto the last command, so ten failing test binaries reported green for
+  weeks. Each cargo invocation is now checked via its own `PIPESTATUS`.
+
+### Changed
+
+- Regenerated all language bindings on alef 0.55.0.
+
 ## [1.1.3] - 2026-08-04
 
 ### Changed
