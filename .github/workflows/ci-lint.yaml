@@ -19,3 +19,14 @@ jobs:
       setup-rust: true
       setup-python: true
       python-version: "3.13"
+      # poly's checkstyle whole-project check runs `mvn checkstyle:check` on
+      # packages/java; checkstyle 13+ needs JDK 21+. ~keep
+      setup-java: true
+      # The remaining whole-project checks poly runs (golangci-lint, rubocop, steep,
+      # dart-analyze, credo) each need their own toolchain. Without them this job
+      # skipped poly's workspace phase entirely, so those five linters ran only in
+      # the git hooks and CI never saw them. ~keep
+      setup-go: true
+      setup-ruby: true
+      setup-dart: true
+      setup-elixir: true
