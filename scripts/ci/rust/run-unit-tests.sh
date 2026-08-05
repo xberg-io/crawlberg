@@ -39,12 +39,24 @@ if ! RUST_BACKTRACE=full cargo test \
   --exclude crawlberg-node \
   --exclude crawlberg-php \
   --exclude crawlberg-wasm \
+  --exclude crawlberg-cli \
   --all-features \
   --verbose 2>&1 | tee -a "$TEST_LOG"; then
   workspace_status="${PIPESTATUS[0]}"
 fi
 
-if [ "$core_status" -ne 0 ] || [ "$workspace_status" -ne 0 ]; then
+# ~keep The CLI is tested on its own with an explicit feature list. Its features
+# forward to the core crate (`mcp = ["crawlberg/mcp"]`), which the workspace run
+# excludes, and `--all-features` does not reliably enable a feature that forwards
+# to an excluded package: the mcp stdio test then either compiles to zero tests or
+# runs against a `crawlberg` binary built without the `mcp` subcommand.
+cli_status=0
+echo "=== cargo test -p crawlberg-cli --features all ==="
+if ! RUST_BACKTRACE=full cargo test -p crawlberg-cli --features all --verbose 2>&1 | tee -a "$TEST_LOG"; then
+  cli_status="${PIPESTATUS[0]}"
+fi
+
+if [ "$core_status" -ne 0 ] || [ "$workspace_status" -ne 0 ] || [ "$cli_status" -ne 0 ]; then
   echo "=== Test execution failed ==="
   echo "Last 50 lines of test output:"
   tail -n 50 "$TEST_LOG"
