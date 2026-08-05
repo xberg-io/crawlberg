@@ -68,8 +68,13 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
 
+      # ~keep --all-features must match the test step: both build the `crawlberg` bin
+      # into the same target dir and CARGO_BIN_EXE_crawlberg resolves to the fixed
+      # target/debug/crawlberg path, so a featureless build here uplifts a binary with
+      # no `mcp` subcommand and the stdio MCP test then spawns that one. It also closes
+      # a lint gap, since feature-gated code was otherwise never linted.
       - name: Run clippy
-        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm -- -D warnings
+        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm --all-features -- -D warnings
         shell: bash
 
       - name: Run tests
