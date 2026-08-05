@@ -1,6 +1,13 @@
 name: CI Lint
 
+# ~keep This workflow was `workflow_dispatch`-only, so lint never ran on a push or a
+# PR — its one and only run was in May 2026 and it failed unnoticed. Triggers match
+# the sibling repos'; no path filter, because poly lints every file type here.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
