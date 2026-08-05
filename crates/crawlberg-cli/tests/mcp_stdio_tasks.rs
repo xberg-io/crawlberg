@@ -11,6 +11,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -19,6 +20,7 @@ struct Server {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
+    stderr: Arc<Mutex<Vec<String>>>,
 }
 
 impl Server {
@@ -27,12 +29,14 @@ impl Server {
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("spawn `crawlberg mcp`");
 
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
+        let stderr = child.stderr.take().expect("child stderr");
+
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -43,7 +47,26 @@ impl Server {
             }
         });
 
-        Self { child, stdin, lines }
+        // Captured (rather than discarded) so a hang or crash can be diagnosed
+        // from the child's actual stderr instead of an opaque `Disconnected`.
+        let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+        let stderr_writer = Arc::clone(&stderr_lines);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                stderr_writer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(line);
+            }
+        });
+
+        Self {
+            child,
+            stdin,
+            lines,
+            stderr: stderr_lines,
+        }
     }
 
     fn send(&mut self, message: serde_json::Value) {
@@ -51,13 +74,22 @@ impl Server {
         self.stdin.flush().expect("flush request");
     }
 
+    fn stderr_snapshot(&self) -> String {
+        self.stderr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .join("\n")
+    }
+
     /// Read framed JSON-RPC lines until one carries the given response id.
     fn read_response(&self, id: i64) -> serde_json::Value {
         loop {
-            let line = self
-                .lines
-                .recv_timeout(READ_TIMEOUT)
-                .expect("server response within timeout");
+            let line = self.lines.recv_timeout(READ_TIMEOUT).unwrap_or_else(|err| {
+                panic!(
+                    "server response within timeout: {err}\n--- child stderr ---\n{}",
+                    self.stderr_snapshot()
+                )
+            });
             if line.trim().is_empty() {
                 continue;
             }
