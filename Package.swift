@@ -34,7 +34,7 @@ let package = Package(
     .binaryTarget(
       name: "RustBridgeBinary",
       url: "https://github.com/xberg-io/crawlberg/releases/download/v1.1.3/Crawlberg-rs.artifactbundle.zip",
-      checksum: "76ac13d16525623ad02ddcf5f8725bf6101269cf0be330e0e64b4bcc1d7529f1"
+      checksum: "__ALEF_SWIFT_CHECKSUM__"
     ),
     // RustBridge: Swift wrapper module owning the swift-bridge generated
     // sources. Depends on RustBridgeC for C type declarations and on
