@@ -111,8 +111,13 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
 
     let result = match result {
         Ok(result) => result,
-        Err(CrawlError::BrowserError(message)) if message.contains("failed to launch browser") => {
-            eprintln!("skipping chromiumoxide interact test because Chrome could not launch: {message}");
+        // ~keep Both variants mean the same thing: this runner has no usable Chrome.
+        // ubuntu-24.04-arm ships none, and chromiumoxide reports that as a config
+        // error at build time rather than a launch failure.
+        Err(CrawlError::BrowserError(message))
+            if message.contains("failed to launch browser") || message.contains("auto detect a chrome executable") =>
+        {
+            eprintln!("skipping chromiumoxide interact test because no usable Chrome was found: {message}");
             return;
         }
         Err(error) => panic!("interact should succeed: {error:?}"),
