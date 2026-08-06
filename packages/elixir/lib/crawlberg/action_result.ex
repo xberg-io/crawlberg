@@ -7,25 +7,25 @@ defmodule Crawlberg.ActionResult do
 
   @typedoc "Result from a single page action execution."
   @type t :: %__MODULE__{
-  action_index: non_neg_integer(),
-  action_type: String.t() | nil,
-  success: boolean(),
-  data: String.t() | nil,
-  error: String.t() | nil
-  }
+          action_index: non_neg_integer(),
+          action_type: String.t() | nil,
+          success: boolean(),
+          data: String.t() | nil,
+          error: String.t() | nil
+        }
 
   defstruct action_index: 0,
-  action_type: nil,
-  success: false,
-  data: nil,
-  error: nil
+            action_type: nil,
+            success: false,
+            data: nil,
+            error: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

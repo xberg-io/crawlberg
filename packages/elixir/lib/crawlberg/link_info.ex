@@ -7,25 +7,25 @@ defmodule Crawlberg.LinkInfo do
 
   @typedoc "Information about a link found on a page."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  text: String.t() | nil,
-  link_type: String.t() | nil,
-  rel: String.t() | nil,
-  nofollow: boolean()
-  }
+          url: String.t() | nil,
+          text: String.t() | nil,
+          link_type: String.t() | nil,
+          rel: String.t() | nil,
+          nofollow: boolean()
+        }
 
   defstruct url: nil,
-  text: nil,
-  link_type: :internal,
-  rel: nil,
-  nofollow: false
+            text: nil,
+            link_type: :internal,
+            rel: nil,
+            nofollow: false
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

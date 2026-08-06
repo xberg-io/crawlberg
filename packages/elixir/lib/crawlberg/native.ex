@@ -6,21 +6,21 @@ defmodule Crawlberg.Native do
   @moduledoc false
 
   use RustlerPrecompiled,
-  otp_app: :crawlberg,
-  crate: "crawlberg_nif",
-  base_url: "https://github.com/xberg-io/crawlberg/releases/download/v#{Mix.Project.config()[:version]}",
-  version: Mix.Project.config()[:version],
-  targets: [
-  "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-unknown-linux-musl",
-  "aarch64-unknown-linux-musl",
-  "aarch64-apple-darwin",
-  "x86_64-apple-darwin",
-  "x86_64-pc-windows-msvc"
-  ],
-  nif_versions: ["2.16", "2.17"],
-  force_build: System.get_env("CRAWLBERG_BUILD") in ["1", "true"] or Mix.env() in [:dev]
+    otp_app: :crawlberg,
+    crate: "crawlberg_nif",
+    base_url: "https://github.com/xberg-io/crawlberg/releases/download/v#{Mix.Project.config()[:version]}",
+    version: Mix.Project.config()[:version],
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ],
+    nif_versions: ["2.16", "2.17"],
+    force_build: System.get_env("CRAWLBERG_BUILD") in ["1", "true"] or Mix.env() in [:dev]
 
   @doc false
   def set_env(_key, _value), do: :erlang.nif_error(:nif_not_loaded)

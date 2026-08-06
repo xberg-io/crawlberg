@@ -7,21 +7,21 @@ defmodule Crawlberg.InteractionResult do
 
   @typedoc "Result of executing a sequence of page interaction actions."
   @type t :: %__MODULE__{
-  action_results: [Crawlberg.ActionResult.t()],
-  final_html: String.t() | nil,
-  final_url: String.t() | nil
-  }
+          action_results: [Crawlberg.ActionResult.t()],
+          final_html: String.t() | nil,
+          final_url: String.t() | nil
+        }
 
   defstruct action_results: [],
-  final_html: nil,
-  final_url: nil
+            final_html: nil,
+            final_url: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

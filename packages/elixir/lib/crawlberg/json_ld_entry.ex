@@ -7,21 +7,21 @@ defmodule Crawlberg.JsonLdEntry do
 
   @typedoc "A JSON-LD structured data entry found on a page."
   @type t :: %__MODULE__{
-  schema_type: String.t() | nil,
-  name: String.t() | nil,
-  raw: String.t() | nil
-  }
+          schema_type: String.t() | nil,
+          name: String.t() | nil,
+          raw: String.t() | nil
+        }
 
   defstruct schema_type: nil,
-  name: nil,
-  raw: nil
+            name: nil,
+            raw: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

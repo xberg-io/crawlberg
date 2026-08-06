@@ -7,23 +7,23 @@ defmodule Crawlberg.SitemapUrl do
 
   @typedoc "A URL entry from a sitemap."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  lastmod: String.t() | nil,
-  changefreq: String.t() | nil,
-  priority: String.t() | nil
-  }
+          url: String.t() | nil,
+          lastmod: String.t() | nil,
+          changefreq: String.t() | nil,
+          priority: String.t() | nil
+        }
 
   defstruct url: nil,
-  lastmod: nil,
-  changefreq: nil,
-  priority: nil
+            lastmod: nil,
+            changefreq: nil,
+            priority: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

@@ -7,25 +7,25 @@ defmodule Crawlberg.ImageInfo do
 
   @typedoc "Information about an image found on a page."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  alt: String.t() | nil,
-  width: non_neg_integer() | nil,
-  height: non_neg_integer() | nil,
-  source: String.t() | nil
-  }
+          url: String.t() | nil,
+          alt: String.t() | nil,
+          width: non_neg_integer() | nil,
+          height: non_neg_integer() | nil,
+          source: String.t() | nil
+        }
 
   defstruct url: nil,
-  alt: nil,
-  width: nil,
-  height: nil,
-  source: :img
+            alt: nil,
+            width: nil,
+            height: nil,
+            source: :img
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

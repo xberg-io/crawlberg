@@ -7,21 +7,21 @@ defmodule Crawlberg.ProxyConfig do
 
   @typedoc "Proxy configuration for HTTP requests."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  username: String.t() | nil,
-  password: String.t() | nil
-  }
+          url: String.t() | nil,
+          username: String.t() | nil,
+          password: String.t() | nil
+        }
 
   defstruct url: nil,
-  username: nil,
-  password: nil
+            username: nil,
+            password: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

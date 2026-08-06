@@ -7,8 +7,8 @@ defmodule Crawlberg.MapResult do
 
   @typedoc "The result of a map operation, containing discovered URLs."
   @type t :: %__MODULE__{
-  urls: [Crawlberg.SitemapUrl.t()]
-  }
+          urls: [Crawlberg.SitemapUrl.t()]
+        }
 
   defstruct urls: []
 
@@ -17,7 +17,7 @@ defmodule Crawlberg.MapResult do
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

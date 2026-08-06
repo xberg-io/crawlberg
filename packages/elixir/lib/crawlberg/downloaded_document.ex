@@ -13,27 +13,27 @@ defmodule Crawlberg.DownloadedDocument do
 
   @typedoc "A downloaded non-HTML document (PDF, DOCX, image, code file, etc.)."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  mime_type: String.t() | nil,
-  size: non_neg_integer(),
-  filename: String.t() | nil,
-  content_hash: String.t() | nil,
-  headers: map()
-  }
+          url: String.t() | nil,
+          mime_type: String.t() | nil,
+          size: non_neg_integer(),
+          filename: String.t() | nil,
+          content_hash: String.t() | nil,
+          headers: map()
+        }
 
   defstruct url: nil,
-  mime_type: nil,
-  size: 0,
-  filename: nil,
-  content_hash: nil,
-  headers: %{}
+            mime_type: nil,
+            size: 0,
+            filename: nil,
+            content_hash: nil,
+            headers: %{}
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

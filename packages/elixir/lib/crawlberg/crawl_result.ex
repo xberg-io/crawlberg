@@ -7,31 +7,31 @@ defmodule Crawlberg.CrawlResult do
 
   @typedoc "The result of a multi-page crawl operation."
   @type t :: %__MODULE__{
-  pages: [Crawlberg.CrawlPageResult.t()],
-  final_url: String.t() | nil,
-  redirect_count: non_neg_integer(),
-  was_skipped: boolean(),
-  error: String.t() | nil,
-  cookies: [Crawlberg.CookieInfo.t()],
-  stayed_on_domain: boolean(),
-  browser_used: boolean()
-  }
+          pages: [Crawlberg.CrawlPageResult.t()],
+          final_url: String.t() | nil,
+          redirect_count: non_neg_integer(),
+          was_skipped: boolean(),
+          error: String.t() | nil,
+          cookies: [Crawlberg.CookieInfo.t()],
+          stayed_on_domain: boolean(),
+          browser_used: boolean()
+        }
 
   defstruct pages: [],
-  final_url: nil,
-  redirect_count: 0,
-  was_skipped: false,
-  error: nil,
-  cookies: [],
-  stayed_on_domain: false,
-  browser_used: false
+            final_url: nil,
+            redirect_count: 0,
+            was_skipped: false,
+            error: nil,
+            cookies: [],
+            stayed_on_domain: false,
+            browser_used: false
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

@@ -7,27 +7,27 @@ defmodule Crawlberg.DownloadedAsset do
 
   @typedoc "A downloaded asset from a page."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  content_hash: String.t() | nil,
-  mime_type: String.t() | nil,
-  size: non_neg_integer(),
-  asset_category: String.t() | nil,
-  html_tag: String.t() | nil
-  }
+          url: String.t() | nil,
+          content_hash: String.t() | nil,
+          mime_type: String.t() | nil,
+          size: non_neg_integer(),
+          asset_category: String.t() | nil,
+          html_tag: String.t() | nil
+        }
 
   defstruct url: nil,
-  content_hash: nil,
-  mime_type: nil,
-  size: 0,
-  asset_category: :image,
-  html_tag: nil
+            content_hash: nil,
+            mime_type: nil,
+            size: 0,
+            asset_category: :image,
+            html_tag: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

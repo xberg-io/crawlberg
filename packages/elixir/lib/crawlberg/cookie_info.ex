@@ -7,23 +7,23 @@ defmodule Crawlberg.CookieInfo do
 
   @typedoc "Information about an HTTP cookie received from a response."
   @type t :: %__MODULE__{
-  name: String.t() | nil,
-  value: String.t() | nil,
-  domain: String.t() | nil,
-  path: String.t() | nil
-  }
+          name: String.t() | nil,
+          value: String.t() | nil,
+          domain: String.t() | nil,
+          path: String.t() | nil
+        }
 
   defstruct name: nil,
-  value: nil,
-  domain: nil,
-  path: nil
+            value: nil,
+            domain: nil,
+            path: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

@@ -45,7 +45,11 @@ defmodule E2e.MarkdownTest do
     test "markdown_crawl_all_pages" do
       engine_config = "{\"max_depth\":1}"
       {:ok, engine} = Crawlberg.create_engine(engine_config)
-      url = System.get_env("MOCK_SERVER_MARKDOWN_CRAWL_ALL_PAGES") || (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/markdown_crawl_all_pages"
+
+      url =
+        System.get_env("MOCK_SERVER_MARKDOWN_CRAWL_ALL_PAGES") ||
+          (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/markdown_crawl_all_pages"
+
       {:ok, result} = Crawlberg.crawl(engine, url)
       # skipped: field 'crawl.pages_crawled' not available on result type
     end
@@ -54,7 +58,10 @@ defmodule E2e.MarkdownTest do
   describe "markdown_fit_content" do
     test "markdown_fit_content" do
       {:ok, engine} = Crawlberg.create_engine(nil)
-      url = System.get_env("MOCK_SERVER_MARKDOWN_FIT_CONTENT") || (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/markdown_fit_content"
+
+      url =
+        System.get_env("MOCK_SERVER_MARKDOWN_FIT_CONTENT") || (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/markdown_fit_content"
+
       {:ok, result} = Crawlberg.scrape(engine, url)
       assert result.status_code == 200
       assert result.markdown.content != ""

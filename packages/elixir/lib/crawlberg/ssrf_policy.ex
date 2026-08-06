@@ -7,19 +7,19 @@ defmodule Crawlberg.SsrfPolicy do
 
   @typedoc "SSRF policy configuration."
   @type t :: %__MODULE__{
-  deny_private: boolean(),
-  max_redirects: non_neg_integer()
-  }
+          deny_private: boolean(),
+          max_redirects: non_neg_integer()
+        }
 
   defstruct deny_private: true,
-  max_redirects: 5
+            max_redirects: 5
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

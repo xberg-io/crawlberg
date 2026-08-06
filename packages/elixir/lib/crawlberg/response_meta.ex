@@ -7,29 +7,29 @@ defmodule Crawlberg.ResponseMeta do
 
   @typedoc "Response metadata extracted from HTTP headers."
   @type t :: %__MODULE__{
-  etag: String.t() | nil,
-  last_modified: String.t() | nil,
-  cache_control: String.t() | nil,
-  server: String.t() | nil,
-  x_powered_by: String.t() | nil,
-  content_language: String.t() | nil,
-  content_encoding: String.t() | nil
-  }
+          etag: String.t() | nil,
+          last_modified: String.t() | nil,
+          cache_control: String.t() | nil,
+          server: String.t() | nil,
+          x_powered_by: String.t() | nil,
+          content_language: String.t() | nil,
+          content_encoding: String.t() | nil
+        }
 
   defstruct etag: nil,
-  last_modified: nil,
-  cache_control: nil,
-  server: nil,
-  x_powered_by: nil,
-  content_language: nil,
-  content_encoding: nil
+            last_modified: nil,
+            cache_control: nil,
+            server: nil,
+            x_powered_by: nil,
+            content_language: nil,
+            content_encoding: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

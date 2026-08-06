@@ -11,21 +11,21 @@ defmodule Crawlberg.BrowserExtras do
 
   @typedoc "Browser-specific extras populated when the native browser backend was used."
   @type t :: %__MODULE__{
-  eval_result: String.t() | nil,
-  network_events: [Crawlberg.ResponseMeta.t()],
-  cookies: [Crawlberg.CookieInfo.t()]
-  }
+          eval_result: String.t() | nil,
+          network_events: [Crawlberg.ResponseMeta.t()],
+          cookies: [Crawlberg.CookieInfo.t()]
+        }
 
   defstruct eval_result: nil,
-  network_events: [],
-  cookies: []
+            network_events: [],
+            cookies: []
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

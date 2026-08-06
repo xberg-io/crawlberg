@@ -12,23 +12,23 @@ defmodule Crawlberg.BatchScrapeResults do
 
   @typedoc "Aggregate result of a batch scrape, exposing per-URL results plus precomputed counts."
   @type t :: %__MODULE__{
-  results: [Crawlberg.BatchScrapeResult.t()],
-  total_count: non_neg_integer(),
-  completed_count: non_neg_integer(),
-  failed_count: non_neg_integer()
-  }
+          results: [Crawlberg.BatchScrapeResult.t()],
+          total_count: non_neg_integer(),
+          completed_count: non_neg_integer(),
+          failed_count: non_neg_integer()
+        }
 
   defstruct results: [],
-  total_count: 0,
-  completed_count: 0,
-  failed_count: 0
+            total_count: 0,
+            completed_count: 0,
+            failed_count: 0
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

@@ -7,25 +7,25 @@ defmodule Crawlberg.ExtractionMeta do
 
   @typedoc "Metadata about an LLM extraction pass."
   @type t :: %__MODULE__{
-  cost: float() | nil,
-  prompt_tokens: non_neg_integer() | nil,
-  completion_tokens: non_neg_integer() | nil,
-  model: String.t() | nil,
-  chunks_processed: non_neg_integer()
-  }
+          cost: float() | nil,
+          prompt_tokens: non_neg_integer() | nil,
+          completion_tokens: non_neg_integer() | nil,
+          model: String.t() | nil,
+          chunks_processed: non_neg_integer()
+        }
 
   defstruct cost: nil,
-  prompt_tokens: nil,
-  completion_tokens: nil,
-  model: nil,
-  chunks_processed: 0
+            prompt_tokens: nil,
+            completion_tokens: nil,
+            model: nil,
+            chunks_processed: 0
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

@@ -7,19 +7,19 @@ defmodule Crawlberg.HeadingInfo do
 
   @typedoc "A heading element extracted from the page."
   @type t :: %__MODULE__{
-  level: non_neg_integer(),
-  text: String.t() | nil
-  }
+          level: non_neg_integer(),
+          text: String.t() | nil
+        }
 
   defstruct level: 0,
-  text: nil
+            text: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

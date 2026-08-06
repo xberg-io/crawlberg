@@ -7,19 +7,19 @@ defmodule Crawlberg.HreflangEntry do
 
   @typedoc "An hreflang alternate link entry."
   @type t :: %__MODULE__{
-  lang: String.t() | nil,
-  url: String.t() | nil
-  }
+          lang: String.t() | nil,
+          url: String.t() | nil
+        }
 
   defstruct lang: nil,
-  url: nil
+            url: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

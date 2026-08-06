@@ -7,21 +7,21 @@ defmodule Crawlberg.FeedInfo do
 
   @typedoc "Information about a feed link found on a page."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  title: String.t() | nil,
-  feed_type: String.t() | nil
-  }
+          url: String.t() | nil,
+          title: String.t() | nil,
+          feed_type: String.t() | nil
+        }
 
   defstruct url: nil,
-  title: nil,
-  feed_type: :rss
+            title: nil,
+            feed_type: :rss
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

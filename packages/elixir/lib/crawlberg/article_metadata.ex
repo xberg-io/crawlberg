@@ -7,25 +7,25 @@ defmodule Crawlberg.ArticleMetadata do
 
   @typedoc "Article metadata extracted from `article:*` Open Graph tags."
   @type t :: %__MODULE__{
-  published_time: String.t() | nil,
-  modified_time: String.t() | nil,
-  author: String.t() | nil,
-  section: String.t() | nil,
-  tags: [String.t()]
-  }
+          published_time: String.t() | nil,
+          modified_time: String.t() | nil,
+          author: String.t() | nil,
+          section: String.t() | nil,
+          tags: [String.t()]
+        }
 
   defstruct published_time: nil,
-  modified_time: nil,
-  author: nil,
-  section: nil,
-  tags: []
+            modified_time: nil,
+            author: nil,
+            section: nil,
+            tags: []
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

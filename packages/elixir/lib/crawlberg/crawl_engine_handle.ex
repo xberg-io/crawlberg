@@ -20,27 +20,27 @@ defmodule Crawlberg.CrawlEngineHandle do
   def crawl_stream(obj, req) do
     case Native.crawlenginehandle_crawl_stream_start(obj.ref, req) do
       {:ok, handle} ->
-      stream =
-      Stream.unfold(handle, fn h ->
-        case Native.crawlenginehandle_crawl_stream_next(h) do
-          {:ok, nil} ->
-          nil
+        stream =
+          Stream.unfold(handle, fn h ->
+            case Native.crawlenginehandle_crawl_stream_next(h) do
+              {:ok, nil} ->
+                nil
 
-          {:ok, chunk_json} when is_binary(chunk_json) ->
-          {Jason.decode!(chunk_json, keys: :atoms), h}
+              {:ok, chunk_json} when is_binary(chunk_json) ->
+                {Jason.decode!(chunk_json, keys: :atoms), h}
 
-          {:ok, chunk} ->
-          {chunk, h}
+              {:ok, chunk} ->
+                {chunk, h}
 
-          {:error, _} ->
-          nil
-        end
-      end)
+              {:error, _} ->
+                nil
+            end
+          end)
 
-      {:ok, stream}
+        {:ok, stream}
 
       {:error, reason} ->
-      {:error, reason}
+        {:error, reason}
     end
   end
 
@@ -48,27 +48,27 @@ defmodule Crawlberg.CrawlEngineHandle do
   def batch_crawl_stream(obj, req) do
     case Native.crawlenginehandle_batch_crawl_stream_start(obj.ref, req) do
       {:ok, handle} ->
-      stream =
-      Stream.unfold(handle, fn h ->
-        case Native.crawlenginehandle_batch_crawl_stream_next(h) do
-          {:ok, nil} ->
-          nil
+        stream =
+          Stream.unfold(handle, fn h ->
+            case Native.crawlenginehandle_batch_crawl_stream_next(h) do
+              {:ok, nil} ->
+                nil
 
-          {:ok, chunk_json} when is_binary(chunk_json) ->
-          {Jason.decode!(chunk_json, keys: :atoms), h}
+              {:ok, chunk_json} when is_binary(chunk_json) ->
+                {Jason.decode!(chunk_json, keys: :atoms), h}
 
-          {:ok, chunk} ->
-          {chunk, h}
+              {:ok, chunk} ->
+                {chunk, h}
 
-          {:error, _} ->
-          nil
-        end
-      end)
+              {:error, _} ->
+                nil
+            end
+          end)
 
-      {:ok, stream}
+        {:ok, stream}
 
       {:error, reason} ->
-      {:error, reason}
+        {:error, reason}
     end
   end
 end

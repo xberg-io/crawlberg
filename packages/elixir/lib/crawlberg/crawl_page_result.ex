@@ -7,57 +7,57 @@ defmodule Crawlberg.CrawlPageResult do
 
   @typedoc "The result of crawling a single page during a crawl operation."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  normalized_url: String.t() | nil,
-  status_code: non_neg_integer(),
-  content_type: String.t() | nil,
-  html: String.t() | nil,
-  body_size: non_neg_integer(),
-  metadata: Crawlberg.PageMetadata.t(),
-  links: [Crawlberg.LinkInfo.t()],
-  images: [Crawlberg.ImageInfo.t()],
-  feeds: [Crawlberg.FeedInfo.t()],
-  json_ld: [Crawlberg.JsonLdEntry.t()],
-  depth: non_neg_integer(),
-  stayed_on_domain: boolean(),
-  was_skipped: boolean(),
-  is_pdf: boolean(),
-  detected_charset: String.t() | nil,
-  markdown: Crawlberg.MarkdownResult.t() | nil,
-  extracted_data: String.t() | nil,
-  extraction_meta: Crawlberg.ExtractionMeta.t() | nil,
-  downloaded_document: Crawlberg.DownloadedDocument.t() | nil,
-  browser_used: boolean()
-  }
+          url: String.t() | nil,
+          normalized_url: String.t() | nil,
+          status_code: non_neg_integer(),
+          content_type: String.t() | nil,
+          html: String.t() | nil,
+          body_size: non_neg_integer(),
+          metadata: Crawlberg.PageMetadata.t(),
+          links: [Crawlberg.LinkInfo.t()],
+          images: [Crawlberg.ImageInfo.t()],
+          feeds: [Crawlberg.FeedInfo.t()],
+          json_ld: [Crawlberg.JsonLdEntry.t()],
+          depth: non_neg_integer(),
+          stayed_on_domain: boolean(),
+          was_skipped: boolean(),
+          is_pdf: boolean(),
+          detected_charset: String.t() | nil,
+          markdown: Crawlberg.MarkdownResult.t() | nil,
+          extracted_data: String.t() | nil,
+          extraction_meta: Crawlberg.ExtractionMeta.t() | nil,
+          downloaded_document: Crawlberg.DownloadedDocument.t() | nil,
+          browser_used: boolean()
+        }
 
   defstruct url: nil,
-  normalized_url: nil,
-  status_code: 0,
-  content_type: nil,
-  html: nil,
-  body_size: 0,
-  metadata: nil,
-  links: [],
-  images: [],
-  feeds: [],
-  json_ld: [],
-  depth: 0,
-  stayed_on_domain: false,
-  was_skipped: false,
-  is_pdf: false,
-  detected_charset: nil,
-  markdown: nil,
-  extracted_data: nil,
-  extraction_meta: nil,
-  downloaded_document: nil,
-  browser_used: false
+            normalized_url: nil,
+            status_code: 0,
+            content_type: nil,
+            html: nil,
+            body_size: 0,
+            metadata: nil,
+            links: [],
+            images: [],
+            feeds: [],
+            json_ld: [],
+            depth: 0,
+            stayed_on_domain: false,
+            was_skipped: false,
+            is_pdf: false,
+            detected_charset: nil,
+            markdown: nil,
+            extracted_data: nil,
+            extraction_meta: nil,
+            downloaded_document: nil,
+            browser_used: false
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

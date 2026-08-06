@@ -10,21 +10,21 @@ defmodule Crawlberg.CitationReference do
 
   @typedoc "A single numbered reference in a citation list — produced by the citation extractor when content uses inline `[N]`-style markers."
   @type t :: %__MODULE__{
-  index: non_neg_integer(),
-  url: String.t() | nil,
-  text: String.t() | nil
-  }
+          index: non_neg_integer(),
+          url: String.t() | nil,
+          text: String.t() | nil
+        }
 
   defstruct index: 0,
-  url: nil,
-  text: nil
+            url: nil,
+            text: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

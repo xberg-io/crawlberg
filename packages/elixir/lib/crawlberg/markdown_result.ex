@@ -7,27 +7,27 @@ defmodule Crawlberg.MarkdownResult do
 
   @typedoc "Rich markdown conversion result from HTML processing."
   @type t :: %__MODULE__{
-  content: String.t() | nil,
-  document_structure: String.t() | nil,
-  tables: [String.t()],
-  warnings: [String.t()],
-  citations: boolean(),
-  fit_content: String.t() | nil
-  }
+          content: String.t() | nil,
+          document_structure: String.t() | nil,
+          tables: [String.t()],
+          warnings: [String.t()],
+          citations: boolean(),
+          fit_content: String.t() | nil
+        }
 
   defstruct content: nil,
-  document_structure: nil,
-  tables: [],
-  warnings: [],
-  citations: false,
-  fit_content: nil
+            document_structure: nil,
+            tables: [],
+            warnings: [],
+            citations: false,
+            fit_content: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

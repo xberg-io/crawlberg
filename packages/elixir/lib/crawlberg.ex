@@ -20,7 +20,13 @@ defmodule Crawlberg do
   @doc "Create a new crawl engine with the given configuration."
   @spec create_engine(String.t() | nil) :: {:ok, reference()} | {:error, atom, String.t()}
   def create_engine(config) do
-  Crawlberg.Native.create_engine((cond do is_nil(config) -> nil; is_binary(config) -> config; true -> Jason.encode!(config) end))
+    Crawlberg.Native.create_engine(
+      cond do
+        is_nil(config) -> nil
+        is_binary(config) -> config
+        true -> Jason.encode!(config)
+      end
+    )
   end
 
   @doc "Scrape a single URL, returning extracted page data."
@@ -72,35 +78,35 @@ defmodule Crawlberg do
   @doc "Streaming `crawl_stream` — returns an `Enumerable` of decoded chunk maps."
   def crawl_stream(client, req) do
     req_json =
-    case req do
-      nil -> nil
-      s when is_binary(s) -> s
-      other -> Jason.encode!(other)
-    end
+      case req do
+        nil -> nil
+        s when is_binary(s) -> s
+        other -> Jason.encode!(other)
+      end
 
     case Crawlberg.Native.crawlenginehandle_crawl_stream_start(client, req_json) do
       {:ok, handle} ->
-      stream =
-      Stream.unfold(handle, fn h ->
-        case Crawlberg.Native.crawlenginehandle_crawl_stream_next(h) do
-          {:ok, nil} ->
-          nil
+        stream =
+          Stream.unfold(handle, fn h ->
+            case Crawlberg.Native.crawlenginehandle_crawl_stream_next(h) do
+              {:ok, nil} ->
+                nil
 
-          {:ok, chunk_json} ->
-          {Jason.decode!(chunk_json, keys: :atoms), h}
+              {:ok, chunk_json} ->
+                {Jason.decode!(chunk_json, keys: :atoms), h}
 
-          {:error, reason} ->
-          raise Crawlberg.StreamError,
-          message: "crawl_stream stream failed: #{inspect(reason)}",
-          reason: reason,
-          adapter: :crawl_stream
-        end
-      end)
+              {:error, reason} ->
+                raise Crawlberg.StreamError,
+                  message: "crawl_stream stream failed: #{inspect(reason)}",
+                  reason: reason,
+                  adapter: :crawl_stream
+            end
+          end)
 
-      {:ok, stream}
+        {:ok, stream}
 
       {:error, reason} ->
-      {:error, reason}
+        {:error, reason}
     end
   end
 
@@ -117,35 +123,35 @@ defmodule Crawlberg do
   @doc "Streaming `batch_crawl_stream` — returns an `Enumerable` of decoded chunk maps."
   def batch_crawl_stream(client, req) do
     req_json =
-    case req do
-      nil -> nil
-      s when is_binary(s) -> s
-      other -> Jason.encode!(other)
-    end
+      case req do
+        nil -> nil
+        s when is_binary(s) -> s
+        other -> Jason.encode!(other)
+      end
 
     case Crawlberg.Native.crawlenginehandle_batch_crawl_stream_start(client, req_json) do
       {:ok, handle} ->
-      stream =
-      Stream.unfold(handle, fn h ->
-        case Crawlberg.Native.crawlenginehandle_batch_crawl_stream_next(h) do
-          {:ok, nil} ->
-          nil
+        stream =
+          Stream.unfold(handle, fn h ->
+            case Crawlberg.Native.crawlenginehandle_batch_crawl_stream_next(h) do
+              {:ok, nil} ->
+                nil
 
-          {:ok, chunk_json} ->
-          {Jason.decode!(chunk_json, keys: :atoms), h}
+              {:ok, chunk_json} ->
+                {Jason.decode!(chunk_json, keys: :atoms), h}
 
-          {:error, reason} ->
-          raise Crawlberg.StreamError,
-          message: "batch_crawl_stream stream failed: #{inspect(reason)}",
-          reason: reason,
-          adapter: :batch_crawl_stream
-        end
-      end)
+              {:error, reason} ->
+                raise Crawlberg.StreamError,
+                  message: "batch_crawl_stream stream failed: #{inspect(reason)}",
+                  reason: reason,
+                  adapter: :batch_crawl_stream
+            end
+          end)
 
-      {:ok, stream}
+        {:ok, stream}
 
       {:error, reason} ->
-      {:error, reason}
+        {:error, reason}
     end
   end
 
@@ -153,10 +159,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -167,10 +173,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -181,10 +187,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -195,10 +201,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -209,10 +215,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -223,11 +229,11 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        :full_page -> "fullPage"
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          :full_page -> "fullPage"
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -238,10 +244,10 @@ defmodule Crawlberg do
     data
     |> Enum.reduce(%{}, fn {k, v}, acc ->
       key =
-      case k do
-        k when is_atom(k) -> Atom.to_string(k)
-        k when is_binary(k) -> k
-      end
+        case k do
+          k when is_atom(k) -> Atom.to_string(k)
+          k when is_binary(k) -> k
+        end
 
       Map.put(acc, key, v)
     end)
@@ -255,7 +261,7 @@ defmodule Crawlberg do
   defp encode_page_action(%{} = m), do: m
 
   defp encode_page_action(other),
-  do: raise(ArgumentError, "expected PageAction (atom, {atom, map}, or map), got: " <> inspect(other))
+    do: raise(ArgumentError, "expected PageAction (atom, {atom, map}, or map), got: " <> inspect(other))
 end
 
 defmodule Crawlberg.StreamError do

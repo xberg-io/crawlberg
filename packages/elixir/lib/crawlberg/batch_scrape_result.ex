@@ -7,21 +7,21 @@ defmodule Crawlberg.BatchScrapeResult do
 
   @typedoc "Result from a single URL in a batch scrape operation."
   @type t :: %__MODULE__{
-  url: String.t() | nil,
-  result: Crawlberg.ScrapeResult.t() | nil,
-  error: String.t() | nil
-  }
+          url: String.t() | nil,
+          result: Crawlberg.ScrapeResult.t() | nil,
+          error: String.t() | nil
+        }
 
   defstruct url: nil,
-  result: nil,
-  error: nil
+            result: nil,
+            error: nil
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

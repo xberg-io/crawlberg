@@ -7,19 +7,19 @@ defmodule Crawlberg.CitationResult do
 
   @typedoc "Result of citation conversion."
   @type t :: %__MODULE__{
-  content: String.t() | nil,
-  references: [Crawlberg.CitationReference.t()]
-  }
+          content: String.t() | nil,
+          references: [Crawlberg.CitationReference.t()]
+        }
 
   defstruct content: nil,
-  references: []
+            references: []
 
   defimpl Jason.Encoder do
     @doc false
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end

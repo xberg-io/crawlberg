@@ -13,8 +13,8 @@ defmodule Crawlberg.BatchCrawlStreamRequest do
 
   @typedoc "Request to begin a multi-URL streaming crawl."
   @type t :: %__MODULE__{
-  urls: [String.t()]
-  }
+          urls: [String.t()]
+        }
 
   defstruct urls: []
 
@@ -23,7 +23,7 @@ defmodule Crawlberg.BatchCrawlStreamRequest do
     def encode(value, opts) do
       value
       |> Map.from_struct()
-    |> Enum.reject(fn {_k, v} -> v == nil end)
+      |> Enum.reject(fn {_k, v} -> v == nil end)
       |> Enum.into(%{})
       |> Jason.Encoder.encode(opts)
     end
