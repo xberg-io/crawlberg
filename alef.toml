@@ -1,5 +1,5 @@
 [workspace]
-alef_version = "0.55.7"
+alef_version = "0.57.1"
 languages = [
   "python",
   "node",
@@ -35,9 +35,6 @@ csharp = "record"
 dart = "dataclass"
 kotlin_android = "data-class"
 
-[workspace.format]
-enabled = false
-
 [workspace.docs]
 reference_output = "docs-site/src/content/docs/reference"
 
@@ -54,15 +51,6 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 
 [workspace.docs.snippets]
 dirs = ["docs-site/src/snippets"]
-
-[workspace.format_overrides.java]
-command = "mvn -f packages/java/pom.xml -B -DskipTests -Dgpg.skip=true -Dskip.rust.ffi=true spotless:apply"
-
-[workspace.format_overrides.elixir]
-command = "cd packages/elixir && mix format"
-
-[workspace.format_overrides.php]
-command = "cd packages/php && vendor/bin/php-cs-fixer fix src/"
 
 [workspace.sync]
 extra_paths = ["package.json", "crates/crawlberg-node/package.json", "crates/crawlberg-py/src/pyproject.toml"]
