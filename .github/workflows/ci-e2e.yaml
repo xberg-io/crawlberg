@@ -169,6 +169,7 @@ jobs:
         uses: xberg-io/actions/setup-rust@v1
         with:
           cache-key-prefix: e2e-${{ matrix.lang }}
+          use-sccache: ${{ matrix.lang == 'rust' || matrix.lang == 'wasm' }}
 
       - name: Download FFI artifacts
         uses: actions/download-artifact@v8
@@ -249,6 +250,8 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
+          cache: true
+          cache-dependency-path: go.work.sum
 
       - name: Setup Ruby
         if: matrix.ruby-version
