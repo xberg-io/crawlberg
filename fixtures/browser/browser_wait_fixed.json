@@ -3,7 +3,7 @@
 	"description": "Browser wait strategy 'fixed' waits for a specific duration after page navigation",
 	"tags": ["browser", "wait", "fixed"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

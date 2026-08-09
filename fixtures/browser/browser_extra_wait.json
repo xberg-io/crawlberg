@@ -3,7 +3,7 @@
 	"description": "Browser extra_wait adds additional time after network_idle to ensure all async operations complete",
 	"tags": ["browser", "wait", "network_idle", "extra_wait"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

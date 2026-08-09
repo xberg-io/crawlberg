@@ -3,7 +3,7 @@
 	"description": "Scroll down on the page and verify success",
 	"tags": ["interaction", "scroll"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

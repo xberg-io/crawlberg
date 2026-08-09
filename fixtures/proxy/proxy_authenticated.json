@@ -3,7 +3,7 @@
 	"description": "Proxy with username and password credentials authenticates successfully",
 	"tags": ["proxy", "auth", "crawl"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Proxy configuration not supported in WASM or Homebrew environments"
 	},
 	"input": {

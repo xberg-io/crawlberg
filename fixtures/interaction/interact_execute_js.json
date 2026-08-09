@@ -3,7 +3,7 @@
 	"description": "Execute JavaScript that returns document.title and verify success with data",
 	"tags": ["interaction", "javascript"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

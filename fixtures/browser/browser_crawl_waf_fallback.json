@@ -3,7 +3,7 @@
 	"description": "Crawl with browser mode 'auto' falls back to browser when encountering WAF 403",
 	"tags": ["browser", "crawl", "error"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Browser rendering not available in WASM; homebrew lacks headless browser"
 	},
 	"input": {

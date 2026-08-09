@@ -3,7 +3,7 @@
 	"description": "Crawl multiple pages with depth=1 and WARC output enabled",
 	"tags": ["warc", "output", "crawl", "multi-page"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "WARC output requires filesystem access"
 	},
 	"input": {

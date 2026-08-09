@@ -3,7 +3,7 @@
 	"description": "Screenshot a specific element via selector and verify image data",
 	"tags": ["interaction", "screenshot"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

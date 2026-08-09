@@ -3,7 +3,7 @@
 	"description": "Configure proxy URL and successfully crawl through it",
 	"tags": ["proxy", "basic", "crawl"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Proxy configuration not supported in WASM or Homebrew environments"
 	},
 	"input": {

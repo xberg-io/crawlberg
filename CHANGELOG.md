@@ -6,6 +6,7 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- E2E fixtures use Alef's canonical `brew` language identifier, allowing strict fixture-driven generation to proceed.
 - Dart: the native loader downloads and caches the library again on a cold cache. It only read
   the versioned cache and then threw a `StateError`, even though `nativeDownloadAndCacheLibrary()`
   was defined and exported for exactly that case. The loader also now searches for the

@@ -3,7 +3,7 @@
 	"description": "Submit 101 actions (exceeds MAX_ACTIONS=100) and verify validation error",
 	"tags": ["interaction", "validation"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

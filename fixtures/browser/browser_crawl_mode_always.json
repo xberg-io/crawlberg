@@ -3,7 +3,7 @@
 	"description": "Crawl with browser mode 'always' follows links using browser rendering",
 	"tags": ["browser", "crawl"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Browser rendering not available in WASM; homebrew lacks headless browser"
 	},
 	"input": {

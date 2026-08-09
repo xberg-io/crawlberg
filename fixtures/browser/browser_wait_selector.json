@@ -3,7 +3,7 @@
 	"description": "Browser wait strategy 'selector' waits for specific CSS selector before considering page loaded",
 	"tags": ["browser", "wait", "selector"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

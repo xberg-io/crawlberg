@@ -3,7 +3,7 @@
 	"description": "Browser profile configuration persists and reuses browser state across crawl sessions",
 	"tags": ["browser", "profile"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

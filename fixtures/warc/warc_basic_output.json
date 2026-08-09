@@ -3,7 +3,7 @@
 	"description": "Scrape single page with WARC output enabled writes to file",
 	"tags": ["warc", "output", "basic", "crawl"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "WARC output requires filesystem access"
 	},
 	"input": {

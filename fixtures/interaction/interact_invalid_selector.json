@@ -3,7 +3,7 @@
 	"description": "Click on a non-existent selector and verify error in action_results",
 	"tags": ["interaction", "error"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

@@ -3,7 +3,7 @@
 	"description": "Browser launch fails when browser mode is always but browser is unavailable",
 	"tags": ["error", "browser"],
 	"skip": {
-		"languages": ["wasm", "homebrew"],
+		"languages": ["wasm", "brew"],
 		"reason": "Requires browser feature and specific environment"
 	},
 	"input": {
