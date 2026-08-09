@@ -319,7 +319,11 @@ jobs:
 
       - name: Install mcp-publisher
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          # ~keep Pinned: releases/latest resolves at run time, so an upstream release
+          # lands in a publish job unreviewed — that is how scythe v0.14.0 broke
+          # xberg-enterprise CI. -f as well as -L, or a 404 pipes an empty body into tar
+          # and the failure surfaces somewhere far less obvious. Bump deliberately.
+          curl -fL "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
 
       - name: Prepare release server metadata
         env:
