@@ -96,7 +96,7 @@ async fn chromiumoxide_fetch_inner(
     let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
     validate_url(&target, &config.ssrf)
         .await
-        .map_err(|e| CrawlError::ssrf_violation(url.to_string(), e.to_string()))?;
+        .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
     if let Some(pool) = pool {
         // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the

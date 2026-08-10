@@ -2,7 +2,8 @@
 //! retry policy that consults a [`DomainStatePort`] for prior block
 //! rates.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -88,7 +89,20 @@ struct DomainSnapshot {
     /// Lowercase WAF vendor identifier, if one has been observed.
     classifier: Option<String>,
     starting_tier: Tier,
+    /// When this domain was last observed, used to expire idle entries.
+    last_touched: Instant,
 }
+
+/// How long a domain's learned state survives without being observed.
+///
+/// ~keep TTL rather than LRU, deliberately: a learned block-rate decays in *meaning*,
+/// not merely in staleness. A domain unseen for an hour should be re-learned from
+/// scratch regardless of how much unrelated traffic ran in between, whereas LRU
+/// eviction order is driven by other domains' request volume — the wrong signal.
+const DOMAIN_STATE_TTL: Duration = Duration::from_secs(3600);
+
+/// Minimum gap between sweeps, keeping eviction amortized O(1) per `observe`.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Process-local domain state backed by an EWMA block-rate model.
 /// `DashMap`-backed, ephemeral — no persistence across restarts.
@@ -99,6 +113,30 @@ struct DomainSnapshot {
 pub struct EwmaDomainState {
     inner: DashMap<String, DomainSnapshot>,
     ewma: EwmaTracker,
+    last_sweep: Mutex<Option<Instant>>,
+}
+
+impl EwmaDomainState {
+    /// Drop domains unobserved for longer than [`DOMAIN_STATE_TTL`].
+    ///
+    /// ~keep Without this the map grows for the life of the process. Runs at most once
+    /// per [`SWEEP_INTERVAL`], so the O(n) `retain` is amortized to O(1) per observation.
+    fn sweep_if_due(&self, now: Instant) {
+        {
+            let mut last_sweep = self.last_sweep.lock().expect("lock poisoned");
+            match *last_sweep {
+                Some(previous) if now.duration_since(previous) < SWEEP_INTERVAL => return,
+                _ => *last_sweep = Some(now),
+            }
+        }
+        let before = self.inner.len();
+        self.inner
+            .retain(|_, snapshot| now.duration_since(snapshot.last_touched) < DOMAIN_STATE_TTL);
+        let evicted = before - self.inner.len();
+        if evicted > 0 {
+            tracing::debug!(evicted, retained = self.inner.len(), "expired idle domain state");
+        }
+    }
 }
 
 impl EwmaDomainState {
@@ -153,11 +191,15 @@ impl DomainStatePort for EwmaDomainState {
             _ => None,
         };
 
+        let now = Instant::now();
+        self.sweep_if_due(now);
+
         let prev = self.inner.get(domain).map(|s| s.clone()).unwrap_or(DomainSnapshot {
             block_ewma: 0.0,
             sample_count: 0,
             classifier: None,
             starting_tier: Tier::Http,
+            last_touched: now,
         });
 
         let next_ewma = self.ewma.update(prev.block_ewma, blocked);
@@ -179,6 +221,7 @@ impl DomainStatePort for EwmaDomainState {
                 sample_count: next_sample_count,
                 classifier: next_classifier,
                 starting_tier: next_starting_tier,
+                last_touched: now,
             },
         );
     }
@@ -436,6 +479,71 @@ mod tests {
         assert!(
             snapshot.is_none(),
             "DNS error must not pollute domain state; got {snapshot:?}"
+        );
+    }
+
+    /// ~keep Time is injected rather than slept: the TTL is an hour, so a sleeping test
+    /// would either take an hour or, if shortened, assert nothing about the real value.
+    #[tokio::test]
+    async fn sweep_drops_idle_domains_and_keeps_live_ones() {
+        let state = EwmaDomainState::new();
+        let now = Instant::now();
+        state.inner.insert(
+            "idle.example".to_owned(),
+            DomainSnapshot {
+                block_ewma: 0.9,
+                sample_count: 10,
+                classifier: None,
+                starting_tier: Tier::Bypass,
+                last_touched: now - DOMAIN_STATE_TTL - Duration::from_secs(1),
+            },
+        );
+        state.inner.insert(
+            "live.example".to_owned(),
+            DomainSnapshot {
+                block_ewma: 0.1,
+                sample_count: 3,
+                classifier: None,
+                starting_tier: Tier::Http,
+                last_touched: now - Duration::from_secs(5),
+            },
+        );
+        *state.last_sweep.lock().expect("lock poisoned") = Some(now - SWEEP_INTERVAL - Duration::from_secs(1));
+
+        state.sweep_if_due(now);
+
+        assert!(
+            !state.inner.contains_key("idle.example"),
+            "a domain unobserved past the TTL must be evicted"
+        );
+        assert!(
+            state.inner.contains_key("live.example"),
+            "a recently-observed domain must survive the sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_is_skipped_until_the_interval_elapses() {
+        let state = EwmaDomainState::new();
+        let now = Instant::now();
+        state.inner.insert(
+            "idle.example".to_owned(),
+            DomainSnapshot {
+                block_ewma: 0.9,
+                sample_count: 10,
+                classifier: None,
+                starting_tier: Tier::Bypass,
+                last_touched: now - DOMAIN_STATE_TTL - Duration::from_secs(1),
+            },
+        );
+        *state.last_sweep.lock().expect("lock poisoned") = Some(now);
+
+        state.sweep_if_due(now);
+
+        assert_eq!(
+            state.inner.len(),
+            1,
+            "an expired entry must survive until a sweep is due, keeping the hot path O(1)"
         );
     }
 

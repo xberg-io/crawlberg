@@ -176,12 +176,11 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
-    let initial_url =
-        url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
+    let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
         .await
-        .map_err(|e| CrawlError::ssrf_violation(url.to_string(), e.to_string()))?;
+        .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
     let mut current_url = initial_url.clone();
     let mut final_url_str: String;
@@ -272,7 +271,7 @@ pub(crate) async fn http_fetch(
                 };
 
                 if let Err(e) = validate_url(&next_url, &config.ssrf).await {
-                    return Err(CrawlError::ssrf_violation(next_url.to_string(), e.to_string()));
+                    return Err(CrawlError::ssrf_violation(&next_url, e.to_string()));
                 }
 
                 redirects_followed += 1;
@@ -284,7 +283,7 @@ pub(crate) async fn http_fetch(
                 // fixtures/schema.json contract) and is not read at runtime — SSRF safety itself is
                 // unaffected because every redirect target is still validated by `validate_url` below.
                 if redirects_followed > config.max_redirects {
-                    return Err(CrawlError::ssrf_violation(next_url.to_string(), "too many redirects".to_string()));
+                    return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
                 }
 
                 current_url = next_url;
@@ -313,10 +312,14 @@ pub(crate) async fn http_fetch(
             500 => return Err(CrawlError::ServerError("server_error".into())),
             502 => return Err(CrawlError::BadGateway("bad_gateway".into())),
             503 => {
-                return Err(CrawlError::ServerError(format!("server_error: {SERVICE_UNAVAILABLE_SUFFIX}")));
+                return Err(CrawlError::ServerError(format!(
+                    "server_error: {SERVICE_UNAVAILABLE_SUFFIX}"
+                )));
             }
             504 => {
-                return Err(CrawlError::ServerError(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")));
+                return Err(CrawlError::ServerError(format!(
+                    "server_error: {GATEWAY_TIMEOUT_SUFFIX}"
+                )));
             }
             _ => {}
         }
@@ -954,6 +957,90 @@ mod tests {
         assert!(
             matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
             "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
+        );
+    }
+
+    fn server_error(suffix: &str) -> CrawlError {
+        CrawlError::ServerError(format!("server_error: {suffix}"))
+    }
+
+    #[test]
+    fn retry_codes_distinguish_the_three_server_error_statuses() {
+        // ~keep Regression: `CrawlError::ServerError` carries a free-form String with no
+        // status field, so 500, 503 and 504 all raise the same variant. Matching on the
+        // variant alone meant configuring a retry for one silently governed all three.
+        // The negative cases below are the ones that fail against the old code — a test
+        // asserting only the positive direction would pass either way.
+        let only_500 = [500_u16];
+        assert!(
+            should_retry_status(&server_error("internal"), &only_500),
+            "a plain 500 must retry when 500 is configured"
+        );
+        assert!(
+            !should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_500),
+            "a 503 must NOT retry when only 500 is configured"
+        );
+        assert!(
+            !should_retry_status(&server_error(GATEWAY_TIMEOUT_SUFFIX), &only_500),
+            "a 504 must NOT retry when only 500 is configured"
+        );
+
+        let only_503 = [503_u16];
+        assert!(
+            should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_503),
+            "a 503 must retry when 503 is configured"
+        );
+        assert!(
+            !should_retry_status(&server_error("internal"), &only_503),
+            "a plain 500 must NOT retry when only 503 is configured"
+        );
+
+        let only_504 = [504_u16];
+        assert!(
+            should_retry_status(&server_error(GATEWAY_TIMEOUT_SUFFIX), &only_504),
+            "a 504 must retry when 504 is configured"
+        );
+        assert!(
+            !should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_504),
+            "a 503 must NOT retry when only 504 is configured"
+        );
+    }
+
+    #[test]
+    fn retry_codes_502_408_and_429_match_their_own_errors_only() {
+        // ~keep Regression: [502, 504, 408] passed validate() but retried on nothing,
+        // because the matcher never mapped those codes to a CrawlError variant at all.
+        let cases: [(u16, CrawlError); 3] = [
+            (502, CrawlError::BadGateway("bad gateway".into())),
+            (408, CrawlError::Timeout("timeout".into())),
+            (429, CrawlError::RateLimited("slow down".into())),
+        ];
+
+        for (code, error) in &cases {
+            assert!(
+                should_retry_status(error, &[*code]),
+                "{code} must retry its own error, got no retry for {error:?}"
+            );
+            for (other, _) in &cases {
+                if other != code {
+                    assert!(
+                        !should_retry_status(error, &[*other]),
+                        "{error:?} must NOT retry when only {other} is configured"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retry_codes_never_retry_an_unconfigured_or_unrelated_error() {
+        assert!(
+            !should_retry_status(&server_error("internal"), &[]),
+            "an empty retry_codes list must never retry"
+        );
+        assert!(
+            !should_retry_status(&CrawlError::NotFound("missing".into()), &[500, 502, 503, 504, 408, 429]),
+            "a 404 must not retry even with every retryable code configured"
         );
     }
 
