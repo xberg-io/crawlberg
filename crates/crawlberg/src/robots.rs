@@ -295,4 +295,178 @@ mod tests {
             "`Disallow: /` must block all paths"
         );
     }
+
+    #[test]
+    fn specific_user_agent_block_beats_wildcard_block() {
+        let body = "User-agent: *\nDisallow: /private\n\nUser-agent: crawlberg\nDisallow: /crawlberg-only\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/crawlberg-only".to_string()],
+            "the specific `crawlberg` block must be selected, got disallow: {:?}",
+            rules.disallow
+        );
+        assert!(
+            !rules.is_wildcard_block,
+            "a specific match must not be flagged as using the wildcard block"
+        );
+        assert!(
+            is_path_allowed("/private", &rules),
+            "/private is only disallowed in the wildcard block, which must not apply here"
+        );
+        assert!(
+            !is_path_allowed("/crawlberg-only", &rules),
+            "/crawlberg-only is disallowed in the matched specific block"
+        );
+    }
+
+    #[test]
+    fn non_matching_user_agent_falls_back_to_wildcard_block() {
+        let body = "User-agent: *\nDisallow: /private\n\nUser-agent: googlebot\nDisallow: /google-only\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/private".to_string()],
+            "no block matches \"crawlberg\" specifically, so the wildcard block must be used, \
+             got disallow: {:?}",
+            rules.disallow
+        );
+        assert!(
+            rules.is_wildcard_block,
+            "falling back to `User-agent: *` must set is_wildcard_block"
+        );
+    }
+
+    #[test]
+    fn crawl_delay_is_parsed_from_the_selected_block() {
+        let body = "User-agent: *\nCrawl-delay: 5\nDisallow: /private\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.crawl_delay,
+            Some(5),
+            "Crawl-delay: 5 must be parsed as Some(5), got {:?}",
+            rules.crawl_delay
+        );
+    }
+
+    #[test]
+    fn crawl_delay_falls_back_to_wildcard_when_specific_block_has_none() {
+        let body = "User-agent: *\nCrawl-delay: 7\n\nUser-agent: crawlberg\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.crawl_delay,
+            Some(7),
+            "the specific `crawlberg` block has no Crawl-delay, so it must fall back to the \
+             wildcard block's Crawl-delay of 7, got {:?}",
+            rules.crawl_delay
+        );
+    }
+
+    #[test]
+    fn request_rate_is_parsed_as_crawl_delay_in_seconds() {
+        let body = "User-agent: *\nRequest-rate: 1/10\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.crawl_delay,
+            Some(10),
+            "Request-rate: 1/10 means 1 request per 10 seconds, so crawl_delay must be \
+             Some(10), got {:?}",
+            rules.crawl_delay
+        );
+    }
+
+    #[test]
+    fn explicit_crawl_delay_takes_precedence_over_request_rate() {
+        let body = "User-agent: *\nCrawl-delay: 3\nRequest-rate: 1/10\nDisallow: /x\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.crawl_delay,
+            Some(3),
+            "an explicit Crawl-delay must not be overwritten by a later Request-rate \
+             directive, got {:?}",
+            rules.crawl_delay
+        );
+    }
+
+    #[test]
+    fn sitemap_directives_are_extracted_regardless_of_matched_block() {
+        let body = "Sitemap: https://example.com/sitemap1.xml\nUser-agent: *\nDisallow: /private\nSitemap: https://example.com/sitemap2.xml\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.sitemaps,
+            vec![
+                "https://example.com/sitemap1.xml".to_string(),
+                "https://example.com/sitemap2.xml".to_string(),
+            ],
+            "both Sitemap directives must be collected in file order, got {:?}",
+            rules.sitemaps
+        );
+    }
+
+    #[test]
+    fn comments_are_stripped_before_parsing_directives() {
+        let body = "# full line comment\nUser-agent: * # trailing comment\nDisallow: /private # also a comment\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/private".to_string()],
+            "comment text after `#` must be stripped, leaving just the directive value, got \
+             {:?}",
+            rules.disallow
+        );
+    }
+
+    #[test]
+    fn wildcard_mid_pattern_matches_any_substring_in_between() {
+        assert!(
+            !is_path_allowed("/foo/bar/baz", &rules(&[], &["/foo/*/baz"], true)),
+            "the Disallow rule /foo/*/baz should match /foo/bar/baz via the mid-pattern \
+             wildcard, so the path must be disallowed"
+        );
+        assert!(
+            is_path_allowed("/foo/other/quux", &rules(&[], &["/foo/*/baz"], true)),
+            "/foo/*/baz must not match a path that lacks the trailing /baz segment, so the \
+             path must remain allowed"
+        );
+    }
+
+    #[test]
+    fn dollar_anchor_requires_exact_end_of_path() {
+        let robots = rules(&[], &["/private$"], true);
+
+        assert!(
+            !is_path_allowed("/private", &robots),
+            "/private$ must disallow the exact path /private"
+        );
+        assert!(
+            is_path_allowed("/private/more", &robots),
+            "/private$ must not match /private/more because $ anchors the end of the string"
+        );
+    }
+
+    #[test]
+    fn wildcard_and_dollar_anchor_combine() {
+        let robots = rules(&[], &["/*.pdf$"], true);
+
+        assert!(
+            !is_path_allowed("/files/report.pdf", &robots),
+            "/*.pdf$ must disallow any path ending in .pdf"
+        );
+        assert!(
+            is_path_allowed("/files/report.pdf.bak", &robots),
+            "/*.pdf$ must not match a path where .pdf is not the final suffix"
+        );
+        assert!(
+            is_path_allowed("/files/report.txt", &robots),
+            "/*.pdf$ must not match a path that does not contain .pdf at all"
+        );
+    }
 }

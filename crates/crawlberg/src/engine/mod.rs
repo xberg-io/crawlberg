@@ -11,6 +11,7 @@ use opentelemetry::KeyValue;
 use std::sync::Arc;
 
 use crate::error::CrawlError;
+use crate::telemetry::attributes::URL_FULL;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn escalation_reason_label(reason: &crate::types::EscalationReason) -> &'static str {
@@ -703,7 +704,10 @@ impl CrawlEngine {
     /// - `BrowserMode::Auto` + JS detected: after extraction, if `js_render_hint` is
     ///   `true` and the browser has not been used yet, re-fetches with headless Chrome
     ///   and re-runs the extraction pipeline on the rendered HTML.
+    #[tracing::instrument(name = "crawl.engine.scrape", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
+        let redacted_url = crate::net::redact_url_credentials(url);
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
 
         // ~keep Short-circuit native BrowserMode::Always so browser_extras survive fetch_response conversion.
@@ -851,16 +855,28 @@ impl CrawlEngine {
     /// The public API is always available. Runtime execution depends on the
     /// configured browser backend and the browser backend features compiled
     /// into the crate.
+    // ~keep `actions` may carry user-typed form text (TypeText), so it is skipped
+    // ~keep rather than recorded; only its length is cheap and safe to trace.
+    #[tracing::instrument(
+        name = "crawl.engine.interact",
+        skip(self, actions),
+        fields(url.full = tracing::field::Empty, action_count = actions.len())
+    )]
     pub async fn interact(
         &self,
         url: &str,
         actions: &[crate::interact::PageAction],
     ) -> Result<InteractionResult, CrawlError> {
+        let redacted_url = crate::net::redact_url_credentials(url);
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         crate::interact::run(self, url, actions).await
     }
 
     /// Discover all pages on a website by following links and sitemaps.
+    #[tracing::instrument(name = "crawl.engine.map", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn map(&self, url: &str) -> Result<MapResult, CrawlError> {
+        let redacted_url = crate::net::redact_url_credentials(url);
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
         crate::map::map(url, &self.config).await
     }
@@ -940,9 +956,12 @@ impl CrawlEngine {
     /// `allow_subdomains`, `include_paths`, `exclude_paths`, and the configured
     /// `CrawlStrategy`. No concurrency primitives are used — each page is awaited
     /// sequentially, which is correct for the wasm single-threaded executor.
+    #[tracing::instrument(name = "crawl.engine.crawl", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
         use std::collections::HashSet;
 
+        let redacted_url = crate::net::redact_url_credentials(url);
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
 
         let parsed_seed = url::Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
@@ -1018,7 +1037,9 @@ impl CrawlEngine {
                     break;
                 }
                 Err(crate::budget::BudgetError::Backend(msg)) => {
-                    tracing::error!(target: "crawlberg.budget", error = %msg, "budget backend error; treating as exhausted");
+                    // ~keep Degraded, not data loss: the crawl still returns whatever pages
+                    // ~keep were already fetched, so this belongs at WARN, not ERROR.
+                    tracing::warn!(target: "crawlberg.budget", error = %msg, "budget backend error; treating as exhausted");
                     break;
                 }
             }
@@ -1182,6 +1203,7 @@ impl CrawlEngine {
     }
 
     /// Scrape multiple URLs sequentially (no concurrency on wasm).
+    #[tracing::instrument(name = "crawl.engine.batch_scrape", skip(self, urls), fields(url_count = urls.len()))]
     pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
         let mut results = Vec::with_capacity(urls.len());
         for url in urls {
@@ -1192,6 +1214,7 @@ impl CrawlEngine {
     }
 
     /// Crawl multiple seed URLs sequentially (no concurrency on wasm).
+    #[tracing::instrument(name = "crawl.engine.batch", skip(self, urls), fields(crawl.seed_count = urls.len()))]
     pub async fn batch_crawl(&self, urls: &[&str]) -> Vec<(String, Result<CrawlResult, CrawlError>)> {
         let mut results = Vec::with_capacity(urls.len());
         for url in urls {
@@ -1205,6 +1228,75 @@ impl CrawlEngine {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    /// Minimal `Subscriber` that captures every field recorded on any span,
+    /// used to assert on `#[tracing::instrument]` field values without adding
+    /// a `tracing-subscriber` dev-dependency.
+    #[derive(Default)]
+    struct FieldCapture(std::sync::Mutex<Vec<(String, String)>>);
+
+    impl FieldCapture {
+        fn visitor(&self) -> impl tracing::field::Visit + '_ {
+            struct V<'a>(&'a FieldCapture);
+            impl tracing::field::Visit for V<'_> {
+                fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                    self.0
+                        .0
+                        .lock()
+                        .unwrap()
+                        .push((field.name().to_string(), format!("{value:?}")));
+                }
+            }
+            V(self)
+        }
+    }
+
+    struct CapturingSubscriber(std::sync::Arc<FieldCapture>);
+
+    impl tracing::Subscriber for CapturingSubscriber {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            span.record(&mut self.0.visitor());
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+            values.record(&mut self.0.visitor());
+        }
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, _event: &tracing::Event<'_>) {}
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// Regression test: `CrawlEngine::scrape`'s `crawl.engine.scrape` span must record
+    /// the `url.full` field with credentials redacted (see `crate::net::redact_url_credentials`),
+    /// regardless of whether the fetch itself succeeds.
+    #[tokio::test]
+    async fn scrape_span_records_redacted_url() {
+        let captured = std::sync::Arc::new(FieldCapture::default());
+        let subscriber = CapturingSubscriber(captured.clone());
+        let engine = CrawlEngine::builder().build().expect("engine build must not fail");
+
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let _ = engine.scrape("http://user:hunter2@127.0.0.1:1/").await;
+        drop(_guard);
+
+        let fields = captured.0.lock().unwrap();
+        let (_, value) = fields
+            .iter()
+            .find(|(name, _)| name == "url.full")
+            .unwrap_or_else(|| panic!("expected a url.full span field to be recorded, got {fields:?}"));
+        assert!(
+            !value.contains("hunter2"),
+            "redacted url.full must not leak the password, got {value}"
+        );
+        assert!(
+            value.contains("127.0.0.1"),
+            "redacted url.full should retain the host, got {value}"
+        );
+    }
 
     /// Verify that a connection-refused error propagates with [network:connection] tag
     /// rather than being swallowed by browser fallback. The engine's BrowserMode::Auto

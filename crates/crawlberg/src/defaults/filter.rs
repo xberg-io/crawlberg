@@ -123,9 +123,15 @@ mod tests {
 
     #[test]
     fn test_score_matching_term() {
+        // ~keep "rust" occurs twice in an 8-token doc; TF-saturation score is
+        // freq*(k1+1)/(freq+k1) = 2*2.5/3.5 = 10/7, divided by 1 query term.
         let terms = vec!["rust".to_string()];
         let score = score_page("Rust is a great language. Rust is fast.", &terms, 1.5, 0.75);
-        assert!(score > 0.0);
+        let expected = 10.0 / 7.0;
+        assert!(
+            (score - expected).abs() < 1e-9,
+            "expected TF-saturation score {expected} for freq=2, k1=1.5, got {score}"
+        );
     }
 
     #[test]

@@ -317,3 +317,101 @@ mod proxy_credential_tests {
         String::from_utf8(out).expect("decoded bytes must be valid UTF-8")
     }
 }
+
+#[cfg(test)]
+mod native_worker_hang_tests {
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeBrowserExecutorConfig};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::run;
+    use crate::interact::actions::PageAction;
+    use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
+
+    static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+
+    fn allow_private_network() {
+        ALLOW_PRIVATE.get_or_init(|| {
+            // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
+            #[allow(unsafe_code)]
+            unsafe {
+                std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
+            }
+        });
+    }
+
+    fn native_test_config() -> CrawlConfig {
+        allow_private_network();
+        CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::default()
+        }
+    }
+
+    /// Proves both halves of the task-1 diagnosis with one deterministic, non-Chrome scenario — the
+    /// native backend never launches a real browser subprocess; scripts run through an in-process
+    /// `deno_core` V8 isolate, so no `/Applications/Google Chrome.app` dependency is needed here:
+    ///
+    /// 1. The caller of `native::run` does not hang forever on a non-terminating `ExecuteJs` — the
+    ///    short external timeout below fires promptly, because it is polled on the *calling* task's
+    ///    OS thread, which is distinct from the dedicated worker thread that actually runs the script.
+    /// 2. The worker's dedicated OS thread is genuinely NOT reclaimed. A trivial follow-up job
+    ///    submitted to the same single-worker executor also never completes, because that worker
+    ///    stays permanently blocked inside the synchronous `JsRuntime::execute_script` call the first
+    ///    script triggers. `execute_action`'s own `tokio::time::timeout(ACTION_TIMEOUT, ...)` wrap in
+    ///    `crawlberg-browser/src/adapter.rs` never gets a chance to act: `NativePageAction::ExecuteJs`
+    ///    resolves via `page.evaluate_result(script)`, a plain synchronous call with no `.await` point,
+    ///    so polling that branch never returns control to the worker's executor to check the timer. ~keep
+    #[tokio::test]
+    async fn hung_execute_js_permanently_pins_the_native_worker_thread() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<html><body>hang test</body></html>")
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&mock)
+            .await;
+
+        let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
+            .expect("single-worker executor should start");
+        let config = native_test_config();
+        let url = mock.uri();
+
+        let hang_actions = vec![PageAction::ExecuteJs {
+            script: "while (true) {}".to_owned(),
+        }];
+        let hang_outcome =
+            tokio::time::timeout(Duration::from_secs(5), run(&url, &hang_actions, &config, &executor)).await;
+        assert!(
+            hang_outcome.is_err(),
+            "caller must not hang forever awaiting a non-terminating ExecuteJs action, got {hang_outcome:?}"
+        );
+
+        let followup_actions = vec![PageAction::Scrape];
+        let followup_outcome =
+            tokio::time::timeout(Duration::from_secs(5), run(&url, &followup_actions, &config, &executor)).await;
+        assert!(
+            followup_outcome.is_err(),
+            "a trivial follow-up job on the same single-worker executor must also fail to complete: the sole \
+             worker OS thread should still be pinned inside the hung ExecuteJs script if ACTION_TIMEOUT failed \
+             to reclaim it, got {followup_outcome:?}"
+        );
+
+        // ~keep The worker OS thread never returns from the hung V8 call, so `NativeBrowserExecutor`'s
+        // ~keep `Drop` (which joins every worker thread) would block this test process forever. Leak the
+        // ~keep executor deliberately instead of letting it drop — this mirrors the real leak the test
+        // ~keep demonstrates and keeps the test binary from hanging on exit.
+        std::mem::forget(executor);
+    }
+}

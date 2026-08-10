@@ -257,7 +257,10 @@ mod tests {
         let err = CrawlError::RateLimited("429".into());
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         match directive {
-            RetryDirective::Retry { backoff_ms } => assert!(backoff_ms >= 100),
+            RetryDirective::Retry { backoff_ms } => assert_eq!(
+                backoff_ms, 100,
+                "attempt=0 must back off for exactly 2^0 * 100 = 100ms, got {backoff_ms}"
+            ),
             other => panic!("expected Retry, got {other:?}"),
         }
     }
@@ -329,10 +332,16 @@ mod tests {
     async fn backoff_grows_then_caps() {
         let policy = SimpleRetryPolicy::new().with_max_backoff_ms(1000);
         let err = CrawlError::Timeout("slow".into());
+        let expected_backoff_ms = [100u64, 200u64];
         for attempt in 0..2 {
-            if let RetryDirective::Retry { backoff_ms } = policy.decide(&outcome_with_error(err.clone(), attempt)).await
-            {
-                assert!(backoff_ms <= 1000);
+            match policy.decide(&outcome_with_error(err.clone(), attempt)).await {
+                RetryDirective::Retry { backoff_ms } => assert_eq!(
+                    backoff_ms, expected_backoff_ms[attempt as usize],
+                    "attempt={attempt}: expected backoff 2^{attempt} * 100 = \
+                     {}, got {backoff_ms}",
+                    expected_backoff_ms[attempt as usize]
+                ),
+                other => panic!("attempt={attempt}: expected Retry, got {other:?}"),
             }
         }
     }

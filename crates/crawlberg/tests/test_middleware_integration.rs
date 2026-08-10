@@ -47,7 +47,12 @@ async fn test_ua_rotation_reaches_server() {
     assert!(result.is_ok(), "should succeed: {:?}", result.err());
 
     let received = mock.received_requests().await.unwrap();
-    assert!(!received.is_empty());
+    assert_eq!(
+        received.len(),
+        1,
+        "a single scrape() call must produce exactly one request, got: {:?}",
+        received.iter().map(|r| r.url.path()).collect::<Vec<_>>()
+    );
     let ua_values: Vec<_> = received[0]
         .headers
         .get_all("user-agent")

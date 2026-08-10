@@ -11,7 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::Instrument as _;
 
 use crate::error::CrawlError;
-use crate::telemetry::attributes::CRAWL_SEED_COUNT;
+use crate::telemetry::attributes::{CRAWL_SEED_COUNT, URL_FULL};
 use crate::types::*;
 
 use super::CrawlEngine;
@@ -44,7 +44,10 @@ impl CrawlEngine {
     /// Uses the engine's [`CrawlStrategy`](crate::traits::CrawlStrategy) and
     /// [`Frontier`](crate::traits::Frontier) traits to control URL selection order
     /// and deduplication.
+    #[tracing::instrument(name = "crawl.engine.crawl", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
+        let redacted_url = crate::net::redact_url_credentials(url);
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.with_isolated_frontier().crawl_with_sender(url, None).await
     }
 
@@ -52,32 +55,37 @@ impl CrawlEngine {
     ///
     /// Uses the engine's trait implementations (strategy, frontier, etc.) for the crawl.
     pub fn crawl_stream(&self, url: &str) -> ReceiverStream<CrawlEvent> {
+        let redacted_url = crate::net::redact_url_credentials(url);
+        let span = tracing::info_span!("crawl.engine.crawl_stream", { URL_FULL } = %redacted_url);
         let url = url.to_owned();
         let engine = self.with_isolated_frontier();
 
         let channel_size = self.config.max_concurrent.unwrap_or(4) * STREAM_BUFFER_MULTIPLIER;
         let (tx, rx) = tokio::sync::mpsc::channel(channel_size);
 
-        tokio::spawn(async move {
-            match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                Ok(_result) => {}
-                Err(e) => {
-                    let error_event = CrawlEvent::Error {
-                        url: url.clone(),
-                        error: e.to_string(),
-                    };
-                    let _ = tx.send(error_event.clone()).await;
-                    if let Some(ref sink) = engine.event_sink {
-                        sink.emit(error_event).await;
-                    }
-                    let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
-                    let _ = tx.send(complete_event.clone()).await;
-                    if let Some(ref sink) = engine.event_sink {
-                        sink.emit(complete_event).await;
+        tokio::spawn(
+            async move {
+                match engine.crawl_with_sender(&url, Some(tx.clone())).await {
+                    Ok(_result) => {}
+                    Err(e) => {
+                        let error_event = CrawlEvent::Error {
+                            url: url.clone(),
+                            error: e.to_string(),
+                        };
+                        let _ = tx.send(error_event.clone()).await;
+                        if let Some(ref sink) = engine.event_sink {
+                            sink.emit(error_event).await;
+                        }
+                        let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
+                        let _ = tx.send(complete_event.clone()).await;
+                        if let Some(ref sink) = engine.event_sink {
+                            sink.emit(complete_event).await;
+                        }
                     }
                 }
             }
-        });
+            .instrument(span),
+        );
 
         ReceiverStream::new(rx)
     }
@@ -140,6 +148,7 @@ impl CrawlEngine {
     ///
     /// Unlike the standalone `batch::batch_scrape`, this method routes each URL
     /// through the engine's middleware chain, rate limiter, and cache.
+    #[tracing::instrument(name = "crawl.engine.batch_scrape", skip(self, urls), fields(url_count = urls.len()))]
     pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
         self.run_batch(urls, |engine, url| async move { engine.scrape(&url).await })
             .await
@@ -161,44 +170,48 @@ impl CrawlEngine {
 
     /// Crawl multiple seed URLs and stream events from all crawls.
     pub fn batch_crawl_stream(&self, urls: &[&str]) -> ReceiverStream<CrawlEvent> {
+        let span = tracing::info_span!("crawl.engine.batch_crawl_stream", url_count = urls.len());
         let urls: Vec<String> = urls.iter().map(|u| u.to_string()).collect();
         let engine = self.clone();
         let channel_size = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT) * STREAM_BUFFER_MULTIPLIER;
         let (tx, rx) = tokio::sync::mpsc::channel(channel_size);
 
-        tokio::spawn(async move {
-            let max_concurrent = engine.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
-            let semaphore = Arc::new(Semaphore::new(max_concurrent));
-            let mut join_set = JoinSet::new();
+        tokio::spawn(
+            async move {
+                let max_concurrent = engine.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
+                let semaphore = Arc::new(Semaphore::new(max_concurrent));
+                let mut join_set = JoinSet::new();
 
-            for url in urls {
-                let engine = engine.with_isolated_frontier();
-                let tx = tx.clone();
-                let permit = match semaphore.clone().acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => break,
-                };
+                for url in urls {
+                    let engine = engine.with_isolated_frontier();
+                    let tx = tx.clone();
+                    let permit = match semaphore.clone().acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    };
 
-                join_set.spawn(async move {
-                    let _permit = permit;
-                    match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                        Ok(_result) => {}
-                        Err(e) => {
-                            let error_event = CrawlEvent::Error {
-                                url: url.clone(),
-                                error: e.to_string(),
-                            };
-                            let _ = tx.send(error_event.clone()).await;
-                            if let Some(ref sink) = engine.event_sink {
-                                sink.emit(error_event).await;
+                    join_set.spawn(async move {
+                        let _permit = permit;
+                        match engine.crawl_with_sender(&url, Some(tx.clone())).await {
+                            Ok(_result) => {}
+                            Err(e) => {
+                                let error_event = CrawlEvent::Error {
+                                    url: url.clone(),
+                                    error: e.to_string(),
+                                };
+                                let _ = tx.send(error_event.clone()).await;
+                                if let Some(ref sink) = engine.event_sink {
+                                    sink.emit(error_event).await;
+                                }
                             }
                         }
-                    }
-                });
-            }
+                    });
+                }
 
-            while join_set.join_next().await.is_some() {}
-        });
+                while join_set.join_next().await.is_some() {}
+            }
+            .instrument(span),
+        );
 
         ReceiverStream::new(rx)
     }

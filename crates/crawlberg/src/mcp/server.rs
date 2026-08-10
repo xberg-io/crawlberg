@@ -149,7 +149,7 @@ impl CrawlbergMcp {
         &self,
         Parameters(params): Parameters<super::params::ScrapeParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use super::errors::map_crawl_error;
+        use super::errors::crawl_error_to_tool_result;
         use super::format::{format_as_json, format_as_markdown};
 
         validate_url(&params.url)?;
@@ -169,7 +169,10 @@ impl CrawlbergMcp {
         };
 
         let engine = self.build_engine(config)?;
-        let result = engine.scrape(&params.url).await.map_err(map_crawl_error)?;
+        let result = match engine.scrape(&params.url).await {
+            Ok(result) => result,
+            Err(error) => return crawl_error_to_tool_result(error),
+        };
 
         let text = if parse_format(&params.format) == "json" {
             format_as_json(&result)
@@ -193,7 +196,7 @@ impl CrawlbergMcp {
         &self,
         Parameters(params): Parameters<super::params::CrawlParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use super::errors::map_crawl_error;
+        use super::errors::crawl_error_to_tool_result;
         use super::format::{format_crawl_as_json, format_crawl_as_markdown};
 
         validate_url(&params.url)?;
@@ -221,7 +224,10 @@ impl CrawlbergMcp {
         }
 
         let engine = self.build_engine(config)?;
-        let result = engine.crawl(&params.url).await.map_err(map_crawl_error)?;
+        let result = match engine.crawl(&params.url).await {
+            Ok(result) => result,
+            Err(error) => return crawl_error_to_tool_result(error),
+        };
 
         let text = if parse_format(&params.format) == "json" {
             format_crawl_as_json(&result)
@@ -250,7 +256,7 @@ impl CrawlbergMcp {
         &self,
         Parameters(params): Parameters<super::params::MapParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use super::errors::map_crawl_error;
+        use super::errors::crawl_error_to_tool_result;
         use super::format::format_map_result;
 
         validate_url(&params.url)?;
@@ -267,7 +273,10 @@ impl CrawlbergMcp {
         }
 
         let engine = self.build_engine(config)?;
-        let result = engine.map(&params.url).await.map_err(map_crawl_error)?;
+        let result = match engine.map(&params.url).await {
+            Ok(result) => result,
+            Err(error) => return crawl_error_to_tool_result(error),
+        };
 
         let text = format_map_result(&result);
         Ok(structured_success(to_structured(&result)?, text))
@@ -438,7 +447,7 @@ impl CrawlbergMcp {
         &self,
         Parameters(params): Parameters<super::params::DownloadParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use super::errors::map_crawl_error;
+        use super::errors::crawl_error_to_tool_result;
 
         validate_url(&params.url)?;
 
@@ -449,7 +458,10 @@ impl CrawlbergMcp {
         }
 
         let engine = self.build_engine(config)?;
-        let result = engine.scrape(&params.url).await.map_err(map_crawl_error)?;
+        let result = match engine.scrape(&params.url).await {
+            Ok(result) => result,
+            Err(error) => return crawl_error_to_tool_result(error),
+        };
 
         let output = if let Some(ref doc) = result.downloaded_document {
             super::outputs::DownloadOutput {
@@ -491,7 +503,7 @@ impl CrawlbergMcp {
         &self,
         Parameters(params): Parameters<super::params::InteractParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use super::errors::map_crawl_error;
+        use super::errors::crawl_error_to_tool_result;
 
         validate_url(&params.url)?;
         let actions = params
@@ -502,7 +514,10 @@ impl CrawlbergMcp {
             .map_err(|e| rmcp::ErrorData::invalid_params(format!("invalid action payload: {e}"), None))?;
 
         let engine = self.build_engine(self.config.clone())?;
-        let result = engine.interact(&params.url, &actions).await.map_err(map_crawl_error)?;
+        let result = match engine.interact(&params.url, &actions).await {
+            Ok(result) => result,
+            Err(error) => return crawl_error_to_tool_result(error),
+        };
         let structured = to_structured(&result)?;
         let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
 

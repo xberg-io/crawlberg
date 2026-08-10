@@ -201,7 +201,13 @@ mod adaptive_tests {
         let s = AdaptiveStrategy::new(5, 0.05);
         s.record_page("rust programming language systems memory");
         let state = s.term_history.lock().expect("lock poisoned");
-        assert!(state.all_terms.len() >= 4);
+        assert_eq!(
+            state.all_terms.len(),
+            5,
+            "all 5 tokens (each longer than 2 chars) are distinct and must all be recorded, got \
+             {:?}",
+            state.all_terms
+        );
         assert_eq!(state.window.len(), 1);
     }
 
