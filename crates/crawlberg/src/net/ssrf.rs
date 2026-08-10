@@ -52,7 +52,6 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 /// [`Exact`]: HostMatcher::Exact
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(alef, alef(skip))]
 pub enum HostMatcher {
     /// Exact hostname match (case-insensitive).
     Exact {
@@ -230,11 +229,7 @@ pub struct SsrfPolicy {
     ///
     /// An empty allowlist therefore denies nothing by itself — it simply leaves
     /// `deny_private` and the deny-list in sole control.
-    ///
-    /// Skipped from language bindings pending the generator rollout; see
-    /// <https://github.com/xberg-io/crawlberg/issues/37>.
     #[serde(default)]
-    #[cfg_attr(alef, alef(skip))]
     pub allowlist: Vec<HostMatcher>,
 
     /// Maximum number of HTTP redirects to follow during validation.
