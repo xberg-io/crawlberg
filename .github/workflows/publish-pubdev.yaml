@@ -31,7 +31,7 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        uses: xberg-io/actions/prepare-release-metadata@v1
+        uses: xberg-io/actions/prepare-release-metadata@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
   check-pub:
     name: Check pub.dev for existing version
@@ -41,7 +41,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@v1
+        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           registry: pub
           package: crawlberg
@@ -87,7 +87,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@v1
+      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           cache-key-prefix: dart-native-${{ matrix.rid }}
 
@@ -138,10 +138,10 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@v1
+      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Rebuild Dart bindings and codegen on primary platform
-        uses: xberg-io/actions/build-dart-package@v1
+        uses: xberg-io/actions/build-dart-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         id: build
         with:
           package-dir: packages/dart/rust
@@ -187,6 +187,6 @@ jobs:
           name: dart-package
           path: packages/dart
 
-      - uses: xberg-io/actions/publish-pub@v1
+      - uses: xberg-io/actions/publish-pub@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           package-dir: packages/dart

@@ -44,10 +44,10 @@ jobs:
         abi: [arm64-v8a, x86_64]
     steps:
       - uses: actions/checkout@v6
-      - uses: xberg-io/actions/setup-rust@v1
+      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           cache-key-prefix: ci-mobile-android-${{ matrix.abi }}
-      - uses: xberg-io/actions/setup-android-ndk@v1
+      - uses: xberg-io/actions/setup-android-ndk@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
       - name: cargo ndk check crawlberg-dart
         run: cargo ndk --target ${{ matrix.abi }} --platform 21 -- check -p crawlberg-dart
       - name: cargo ndk check crawlberg-ffi
@@ -68,12 +68,12 @@ jobs:
             target: x86_64-linux-android
     steps:
       - uses: actions/checkout@v6
-      - uses: xberg-io/actions/setup-rust@v1
+      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-kotlin-android-${{ matrix.abi }}
-      - uses: xberg-io/actions/setup-android-ndk@v1
-      - uses: xberg-io/actions/build-android-natives@v1
+      - uses: xberg-io/actions/setup-android-ndk@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-android-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           crate-name: crawlberg-ffi
           lib-name: crawlberg_ffi
@@ -85,10 +85,16 @@ jobs:
           cp -v "dist/android-natives/${{ matrix.abi }}/libcrawlberg_ffi.so" \
                 "packages/kotlin-android/src/main/jniLibs/${{ matrix.abi }}/"
         shell: bash
-      - uses: xberg-io/actions/setup-gradle@v1
+      - uses: xberg-io/actions/setup-gradle@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
       - name: Assemble AAR
         working-directory: packages/kotlin-android
         run: gradle assembleDebug --no-daemon
+      # JVM unit tests build their own host-platform JNI library on the fly
+      # (buildHostJni/copyHostJni Gradle tasks) via `cargo build --manifest-path
+      # ../../crates/crawlberg-jni/Cargo.toml`, so no extra staging is needed here.
+      - name: Run JVM unit tests
+        working-directory: packages/kotlin-android
+        run: gradle test --no-daemon
 
   ios-check:
     name: iOS cargo check (${{ matrix.target }})
@@ -101,7 +107,7 @@ jobs:
         target: [aarch64-apple-ios, aarch64-apple-ios-sim]
     steps:
       - uses: actions/checkout@v6
-      - uses: xberg-io/actions/setup-rust@v1
+      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-ios-${{ matrix.target }}

@@ -67,18 +67,18 @@ jobs:
           submodules: recursive
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@v1
+        uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           cache-key-prefix: build-ffi-${{ matrix.target }}
           target: ${{ matrix.target }}
 
       - name: Build FFI library
-        uses: xberg-io/actions/build-rust-ffi@v1
+        uses: xberg-io/actions/build-rust-ffi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           crate-name: crawlberg-ffi
 
       - name: Build CLI
-        uses: xberg-io/actions/build-rust-cli@v1
+        uses: xberg-io/actions/build-rust-cli@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           package-name: crawlberg-cli
           binary-name: crawlberg
@@ -158,6 +158,9 @@ jobs:
           - lang: zig
             zig-version: "0.16.0"
             test-cmd: "task zig:e2e:test"
+          - lang: kotlin_android
+            gradle: true
+            test-cmd: "task kotlin-android:e2e:test"
           - lang: brew
             test-cmd: "task brew:e2e:test"
     steps:
@@ -166,7 +169,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@v1
+        uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           cache-key-prefix: e2e-${{ matrix.lang }}
           use-sccache: ${{ matrix.lang == 'rust' || matrix.lang == 'wasm' }}
@@ -236,14 +239,14 @@ jobs:
 
       - name: Setup Python
         if: matrix.python-version
-        uses: xberg-io/actions/setup-python-env@v1
+        uses: xberg-io/actions/setup-python-env@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           python-version: ${{ matrix.python-version }}
           cache-prefix: e2e-py-${{ matrix.python-version }}
 
       - name: Setup Node
         if: matrix.node-version
-        uses: xberg-io/actions/setup-node-workspace@v1
+        uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Setup Go
         if: matrix.go-version
@@ -276,7 +279,7 @@ jobs:
 
       - name: Setup PHP
         if: matrix.php-version
-        uses: xberg-io/actions/setup-php@v1
+        uses: xberg-io/actions/setup-php@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           php-version: ${{ matrix.php-version }}
           tools: composer
@@ -284,7 +287,7 @@ jobs:
 
       - name: Setup Elixir
         if: matrix.elixir-version
-        uses: xberg-io/actions/setup-elixir@v1
+        uses: xberg-io/actions/setup-elixir@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           elixir-version: ${{ matrix.elixir-version }}
           otp-version: ${{ matrix.otp-version }}
@@ -297,7 +300,7 @@ jobs:
 
       - name: Setup Swift
         if: matrix.swift-version
-        uses: xberg-io/actions/setup-swift@v1
+        uses: xberg-io/actions/setup-swift@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           swift-version: ${{ matrix.swift-version }}
 
@@ -315,16 +318,20 @@ jobs:
 
       - name: Setup Zig
         if: matrix.zig-version
-        uses: xberg-io/actions/setup-zig@v1
+        uses: xberg-io/actions/setup-zig@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           version: ${{ matrix.zig-version }}
 
       - name: Setup wasm-pack
         if: matrix.lang == 'wasm'
-        uses: xberg-io/actions/setup-wasm-pack@v1
+        uses: xberg-io/actions/setup-wasm-pack@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+
+      - name: Setup Gradle
+        if: matrix.gradle
+        uses: xberg-io/actions/setup-gradle@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@v1
+        uses: xberg-io/actions/setup-chrome@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Setup library paths for FFI bindings
         if: |
@@ -343,7 +350,7 @@ jobs:
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@v1
+        uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Compile Ruby native extension
         if: matrix.lang == 'ruby'

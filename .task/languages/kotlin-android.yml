@@ -74,7 +74,26 @@ tasks:
       - cmd: rm -rf build .gradle
         platforms: [linux, darwin]
 
+  e2e:generate:
+    desc: Generate kotlin-android E2E tests from fixtures
+    cmds:
+      - cmd: bash scripts/task/e2e-generate.sh kotlin_android
+        platforms: [linux, darwin]
+      - cmd: echo "E2E generation not yet supported on Windows - use WSL or CI"
+        platforms: [windows]
+
   e2e:test:
+    desc: >
+      Run kotlin-android E2E tests as host JVM unit tests (no emulator
+      required) against the AAR's JVM-side wrapper plus a host-built JNI
+      library, mirroring the java/csharp e2e:test convention. Tests live in
+      e2e/kotlin_android (generated from fixtures) and read MOCK_SERVER_URL
+      from the environment, auto-spawning a mock server if unset.
+    dir: e2e/kotlin_android
+    cmds:
+      - gradle test --no-daemon
+
+  e2e:test:instrumented:
     desc: >
       Run kotlin-android instrumented e2e tests on a running emulator.
       Requires ANDROID_HOME (and an emulator already started, e.g. via
@@ -96,14 +115,8 @@ tasks:
       - adb wait-for-device
       - gradle connectedDebugAndroidTest --no-daemon -Pmock_server_url={{.MOCK_SERVER_URL | default "http://10.0.2.2:8765"}}
 
-  e2e:test:skip-if-no-sdk:
-    desc: >
-      Umbrella-safe variant of e2e:test — skips silently when ANDROID_HOME
-      is unset so umbrella e2e tasks work on machines without the SDK.
+  e2e:verify:
+    desc: Regenerate and validate kotlin-android E2E suite (generate + test)
     cmds:
-      - cmd: |
-          if [ -z "$ANDROID_HOME" ]; then
-            echo "kotlin-android:e2e:test — ANDROID_HOME unset, skipping."
-            exit 0
-          fi
-          task kotlin-android:e2e:test
+      - task: e2e:generate
+      - task: e2e:test

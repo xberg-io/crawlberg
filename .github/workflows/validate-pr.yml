@@ -6,5 +6,5 @@ on:
 
 jobs:
   validate:
-    uses: xberg-io/actions/.github/workflows/reusable-validate-pr.yml@v1
+    uses: xberg-io/actions/.github/workflows/reusable-validate-pr.yml@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
     secrets: inherit

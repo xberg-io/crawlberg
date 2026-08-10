@@ -60,7 +60,7 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        uses: xberg-io/actions/prepare-release-metadata@v1
+        uses: xberg-io/actions/prepare-release-metadata@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           tag: ${{ inputs.tag }}
           ref: ${{ inputs.ref }}
@@ -167,7 +167,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=publish-docker-${{ matrix.arch }}
 
       - name: Check Docker image size
-        uses: xberg-io/actions/check-docker-image-size@v1
+        uses: xberg-io/actions/check-docker-image-size@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           image: crawlberg-test:latest
           warn-mb: "200"

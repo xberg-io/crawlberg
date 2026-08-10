@@ -21,7 +21,7 @@ jobs:
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
-    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@v1
+    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
     with:
       setup-rust: true
       setup-python: true

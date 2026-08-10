@@ -167,7 +167,7 @@ tasks:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
       - cargo fmt --all
-      - cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm
+      - cargo clippy --workspace --fix --allow-dirty --allow-staged
 
   lint:check:
     desc: Check Rust code linting without modifications
@@ -176,7 +176,7 @@ tasks:
     cmds:
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
-      - cargo clippy --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm -- -D warnings -A clippy::inherent_to_string
+      - cargo clippy --workspace -- -D warnings -A clippy::inherent_to_string
 
   format:
     desc: Format Rust code with modifications (cargo fmt)
