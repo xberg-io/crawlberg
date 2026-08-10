@@ -400,9 +400,9 @@ pub struct CrawlConfig {
     /// SSRF policy for outbound network requests. Default: deny private networks,
     /// allow http/https only, max 5 redirects.
     ///
-    /// Phase 1: `deny_private` and `max_redirects` are exposed to all language
-    /// bindings. `allowlist` is skipped (see `SsrfPolicy` fields) and will be
-    /// added in a follow-up when `HostMatcher`'s tagged-enum FFI form is decided.
+    /// `deny_private` and `max_redirects` are exposed to all language bindings.
+    /// `allowlist` is still skipped pending the generator rollout; see
+    /// <https://github.com/xberg-io/crawlberg/issues/37>.
     #[serde(default = "SsrfPolicy::from_env")]
     pub ssrf: SsrfPolicy,
     /// Pluggable dispatch components: bypass provider, escalation strategy,

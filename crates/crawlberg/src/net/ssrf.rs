@@ -28,39 +28,137 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// Hostname/IP allowlist matcher for SSRF policy.
 ///
-/// Phase 1: skipped from language bindings — untagged-enum FFI representation
-/// is not yet finalized. Expose in a follow-up alongside the `allowlist` field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+/// Serializes as an internally-tagged object so each variant is distinguishable on the
+/// wire and round-trips losslessly:
+///
+/// ```json
+/// {"type": "exact",  "value": "api.example.com"}
+/// {"type": "suffix", "value": ".example.com"}
+/// {"type": "cidr",   "value": "10.0.0.0/8"}
+/// ```
+///
+/// A bare JSON string is still accepted on deserialization and resolves to [`Exact`],
+/// preserving configs written against the previous untagged representation.
+///
+/// [`Exact`]: HostMatcher::Exact
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(alef, alef(skip))]
 pub enum HostMatcher {
     /// Exact hostname match (case-insensitive).
-    Exact(String),
+    Exact {
+        /// The hostname to match.
+        value: String,
+    },
     /// Suffix match: ".xberg.io" matches "api.xberg.io" and "xberg.io".
-    Suffix(String),
-    /// CIDR match: "10.0.0.0/8" matches IP addresses in that range. Stored as string, parsed on use.
-    Cidr(String),
+    Suffix {
+        /// The dot-prefixed suffix to match. A leading dot is optional.
+        value: String,
+    },
+    /// CIDR match: "10.0.0.0/8" matches IP addresses in that range.
+    Cidr {
+        /// The CIDR block. Validated when built through [`HostMatcher::cidr`] or
+        /// deserialization.
+        value: String,
+    },
 }
 
 impl HostMatcher {
+    /// Build an exact hostname matcher.
+    pub fn exact(host: impl Into<String>) -> Self {
+        HostMatcher::Exact { value: host.into() }
+    }
+
+    /// Build a suffix matcher. A leading dot is optional: `".example.com"` and
+    /// `"example.com"` behave identically.
+    pub fn suffix(suffix: impl Into<String>) -> Self {
+        HostMatcher::Suffix { value: suffix.into() }
+    }
+
+    /// Build a CIDR matcher, rejecting a malformed block.
+    ///
+    /// Validating here rather than at match time keeps a typo from degrading into a
+    /// silent "does not match", which for an allowlist would fail in the permissive
+    /// direction for every other rule that depends on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SsrfError::InvalidCidr`] if `cidr` does not parse as an IPv4 or IPv6
+    /// network.
+    pub fn cidr(cidr: impl Into<String>) -> Result<Self, SsrfError> {
+        let value = cidr.into();
+        match value.parse::<IpNet>() {
+            Ok(_) => Ok(HostMatcher::Cidr { value }),
+            Err(e) => Err(SsrfError::InvalidCidr(format!("{value}: {e}"))),
+        }
+    }
+
     /// Test if this matcher matches the given hostname.
+    ///
+    /// `Cidr` never matches a hostname: it is an IP-space rule, and a hostname is only
+    /// resolved to IPs by [`validate_url`].
     pub fn matches_host(&self, host: &str) -> bool {
         match self {
-            HostMatcher::Exact(h) => h.eq_ignore_ascii_case(host),
-            HostMatcher::Suffix(s) => {
-                let suffix_clean = s.trim_start_matches('.').to_ascii_lowercase();
+            HostMatcher::Exact { value } => value.eq_ignore_ascii_case(host),
+            HostMatcher::Suffix { value } => {
+                let suffix_clean = value.trim_start_matches('.').to_ascii_lowercase();
                 let host_lower = host.to_ascii_lowercase();
                 host_lower == suffix_clean || host_lower.ends_with(&format!(".{suffix_clean}"))
             }
-            HostMatcher::Cidr(_) => false,
+            HostMatcher::Cidr { .. } => false,
         }
     }
 
     /// Test if this matcher matches the given IP address.
+    ///
+    /// `Exact` and `Suffix` never match a literal IP; allowlisting an address requires
+    /// a `Cidr` matcher.
     pub fn matches_ip(&self, ip: &IpAddr) -> bool {
         match self {
-            HostMatcher::Exact(_) | HostMatcher::Suffix(_) => false,
-            HostMatcher::Cidr(cidr_str) => cidr_str.parse::<IpNet>().map(|net| net.contains(ip)).unwrap_or(false),
+            HostMatcher::Exact { .. } | HostMatcher::Suffix { .. } => false,
+            HostMatcher::Cidr { value } => match value.parse::<IpNet>() {
+                Ok(net) => net.contains(ip),
+                Err(e) => {
+                    // ~keep Reachable only via a struct literal bypassing HostMatcher::cidr;
+                    // deny, but say so, because a silent false is an allowlist hole.
+                    tracing::warn!(cidr = %value, error = %e, "ignoring malformed CIDR allowlist entry");
+                    false
+                }
+            },
+        }
+    }
+}
+
+/// Wire form accepted for [`HostMatcher`]: either the tagged object or a legacy bare
+/// string. Kept separate from `HostMatcher` so the tagged arm can run CIDR validation
+/// before a value exists.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HostMatcherWire {
+    Legacy(String),
+    Tagged(TaggedHostMatcher),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum TaggedHostMatcher {
+    Exact { value: String },
+    Suffix { value: String },
+    Cidr { value: String },
+}
+
+impl<'de> Deserialize<'de> for HostMatcher {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match HostMatcherWire::deserialize(deserializer)? {
+            HostMatcherWire::Legacy(value) => Ok(HostMatcher::Exact { value }),
+            HostMatcherWire::Tagged(TaggedHostMatcher::Exact { value }) => Ok(HostMatcher::Exact { value }),
+            HostMatcherWire::Tagged(TaggedHostMatcher::Suffix { value }) => Ok(HostMatcher::Suffix { value }),
+            HostMatcherWire::Tagged(TaggedHostMatcher::Cidr { value }) => {
+                HostMatcher::cidr(value).map_err(serde::de::Error::custom)
+            }
         }
     }
 }
@@ -79,6 +177,10 @@ pub enum SsrfError {
     /// Host not on allowlist when an allowlist is configured.
     #[error("host not on allowlist")]
     NotOnAllowlist,
+
+    /// Allowlist entry is not a parseable CIDR block.
+    #[error("invalid CIDR in SSRF allowlist: {0}")]
+    InvalidCidr(String),
 
     /// DNS resolution failed for hostname.
     #[error("dns resolution failed: {0}")]
@@ -104,11 +206,24 @@ pub struct SsrfPolicy {
     #[serde(default = "default_deny_private")]
     pub deny_private: bool,
 
-    /// Allowed hostnames and IP ranges. Empty means deny all unless `deny_private` is false.
+    /// Hostnames and IP ranges permitted regardless of `deny_private`.
     ///
-    /// Phase 1: skipped from language bindings — `HostMatcher`'s untagged-enum
-    /// FFI form is not yet decided. Expose in a follow-up once the tagged-enum
-    /// representation is finalized.
+    /// The allowlist is an *override* of `deny_private`, not an intersection with it.
+    /// Precedence, in order:
+    ///
+    /// 1. `deny_private == false` permits everything; the allowlist is not consulted.
+    /// 2. A hostname matching an `Exact` or `Suffix` entry is permitted immediately,
+    ///    *before* DNS resolution — so the deny-list is never applied to it. This trusts
+    ///    the host string: a name that resolves into private space is still permitted.
+    /// 3. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
+    ///    in the default deny-list.
+    /// 4. Otherwise the default deny-list decides.
+    ///
+    /// An empty allowlist therefore denies nothing by itself — it simply leaves
+    /// `deny_private` and the deny-list in sole control.
+    ///
+    /// Skipped from language bindings pending the generator rollout; see
+    /// <https://github.com/xberg-io/crawlberg/issues/37>.
     #[serde(default)]
     #[cfg_attr(alef, alef(skip))]
     pub allowlist: Vec<HostMatcher>,
@@ -206,11 +321,14 @@ impl SsrfPolicy {
 
 /// Validate a URL against the SSRF policy.
 ///
-/// 1. Parses the URL and validates the scheme.
-/// 2. If the host is a literal IP, validates that IP directly.
-/// 3. Otherwise, resolves the hostname via DNS and validates all resolved IPs.
-/// 4. If an allowlist is configured, ensures the host or at least one resolved IP matches.
-/// 5. If `deny_private` is true, rejects any IP in the default deny list unless allowlisted.
+/// 1. Validates the scheme against `policy.scheme_allowlist`.
+/// 2. If the host is a literal IP, decides on that IP alone and returns.
+/// 3. Otherwise, if the hostname matches an `Exact`/`Suffix` allowlist entry, permits it
+///    without resolving — see [`SsrfPolicy::allowlist`] for why that shortcut exists.
+/// 4. Otherwise resolves the hostname and requires *every* resolved IP to be permitted.
+///
+/// An allowlist is permissive only: a host that matches nothing is not rejected for that
+/// reason, it simply falls through to the `deny_private` deny-list.
 ///
 /// DNS rebinding mitigation: all resolved IPs are validated; if ANY resolved IP violates
 /// the policy, the URL is rejected.
@@ -365,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_host_matcher_exact() {
-        let matcher = HostMatcher::Exact("example.com".to_string());
+        let matcher = HostMatcher::exact("example.com");
         assert!(matcher.matches_host("example.com"));
         assert!(matcher.matches_host("EXAMPLE.COM"));
         assert!(!matcher.matches_host("api.example.com"));
@@ -373,16 +491,113 @@ mod tests {
 
     #[test]
     fn test_host_matcher_suffix() {
-        let matcher = HostMatcher::Suffix(".example.com".to_string());
+        let matcher = HostMatcher::suffix(".example.com");
         assert!(matcher.matches_host("api.example.com"));
         assert!(matcher.matches_host("example.com"));
         assert!(matcher.matches_host("API.EXAMPLE.COM"));
         assert!(!matcher.matches_host("notexample.com"));
 
-        let matcher_no_dot = HostMatcher::Suffix("example.com".to_string());
+        let matcher_no_dot = HostMatcher::suffix("example.com");
         assert!(matcher_no_dot.matches_host("example.com"));
         assert!(matcher_no_dot.matches_host("api.example.com"));
         assert!(!matcher_no_dot.matches_host("notexample.com"));
+    }
+
+    #[test]
+    fn test_host_matcher_cidr_matches_only_ips_in_range() {
+        let matcher = HostMatcher::cidr("10.0.0.0/8").expect("literal CIDR is valid");
+        assert!(
+            matcher.matches_ip(&"10.5.6.7".parse::<IpAddr>().unwrap()),
+            "10.5.6.7 is inside 10.0.0.0/8"
+        );
+        assert!(
+            !matcher.matches_ip(&"11.0.0.1".parse::<IpAddr>().unwrap()),
+            "11.0.0.1 is outside 10.0.0.0/8"
+        );
+        assert!(
+            !matcher.matches_host("10.0.0.1"),
+            "a CIDR matcher is IP-space only and must never match a host string"
+        );
+    }
+
+    #[test]
+    fn host_matcher_cidr_rejects_malformed_block() {
+        // ~keep A silent non-match here would be an allowlist hole, not a no-op.
+        let err = HostMatcher::cidr("10.0.0.0/99").expect_err("prefix length 99 is not valid");
+        assert!(
+            matches!(err, SsrfError::InvalidCidr(ref message) if message.contains("10.0.0.0/99")),
+            "error must name the offending block, got {err:?}"
+        );
+
+        let err = HostMatcher::cidr("not-a-cidr").expect_err("garbage must not parse");
+        assert!(
+            matches!(err, SsrfError::InvalidCidr(_)),
+            "expected InvalidCidr, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn host_matcher_round_trips_through_tagged_json() {
+        let cases = [
+            (
+                HostMatcher::exact("api.example.com"),
+                r#"{"type":"exact","value":"api.example.com"}"#,
+            ),
+            (
+                HostMatcher::suffix(".example.com"),
+                r#"{"type":"suffix","value":".example.com"}"#,
+            ),
+            (
+                HostMatcher::cidr("10.0.0.0/8").expect("literal CIDR is valid"),
+                r#"{"type":"cidr","value":"10.0.0.0/8"}"#,
+            ),
+        ];
+
+        for (matcher, expected_json) in cases {
+            let encoded = serde_json::to_string(&matcher).expect("matcher must serialize");
+            assert_eq!(encoded, expected_json, "unexpected wire form for {matcher:?}");
+
+            let decoded: HostMatcher = serde_json::from_str(&encoded).expect("matcher must deserialize");
+            assert_eq!(decoded, matcher, "round trip changed the matcher");
+        }
+    }
+
+    #[test]
+    fn host_matcher_accepts_legacy_bare_string_as_exact() {
+        // ~keep The pre-tagged representation serialized every variant as a bare string.
+        let decoded: HostMatcher = serde_json::from_str(r#""api.example.com""#).expect("legacy form must deserialize");
+        assert_eq!(
+            decoded,
+            HostMatcher::exact("api.example.com"),
+            "a bare string must resolve to Exact"
+        );
+    }
+
+    #[test]
+    fn host_matcher_deserialization_rejects_malformed_cidr() {
+        let err = serde_json::from_str::<HostMatcher>(r#"{"type":"cidr","value":"10.0.0.0/99"}"#)
+            .expect_err("malformed CIDR must not deserialize");
+        assert!(
+            err.to_string().contains("10.0.0.0/99"),
+            "deserialization error must name the offending block, got: {err}"
+        );
+    }
+
+    #[test]
+    fn ssrf_policy_round_trips_a_populated_allowlist() {
+        let mut policy = SsrfPolicy::default();
+        policy.allowlist.push(HostMatcher::suffix(".internal.example.com"));
+        policy
+            .allowlist
+            .push(HostMatcher::cidr("10.0.0.0/8").expect("literal CIDR is valid"));
+
+        let encoded = serde_json::to_string(&policy).expect("policy must serialize");
+        let decoded: SsrfPolicy = serde_json::from_str(&encoded).expect("policy must deserialize");
+
+        assert_eq!(
+            decoded.allowlist, policy.allowlist,
+            "allowlist must survive a JSON round trip"
+        );
     }
 
     #[test]
@@ -645,7 +860,9 @@ mod tests {
     #[tokio::test]
     async fn validate_url_cidr_allowlist_permits_private() {
         let mut policy = SsrfPolicy::default();
-        policy.allowlist.push(HostMatcher::Cidr("10.0.0.0/8".to_string()));
+        policy
+            .allowlist
+            .push(HostMatcher::cidr("10.0.0.0/8").expect("literal CIDR is valid"));
         let url = "http://10.5.6.7/".parse::<url::Url>().unwrap();
         validate_url(&url, &policy)
             .await
@@ -656,7 +873,7 @@ mod tests {
     async fn validate_url_exact_allowlist_does_not_match_literal_ip() {
         // ~keep Exact matchers are hostname-only; CIDR is required for literal IP allowlisting.
         let mut policy = SsrfPolicy::default();
-        policy.allowlist.push(HostMatcher::Exact("10.0.0.1".to_string()));
+        policy.allowlist.push(HostMatcher::exact("10.0.0.1"));
         let url = "http://10.0.0.1/".parse::<url::Url>().unwrap();
         let err = validate_url(&url, &policy).await.unwrap_err();
         assert!(
@@ -672,7 +889,7 @@ mod tests {
 
     #[test]
     fn validate_url_suffix_no_leading_dot_does_not_match_substring() {
-        let matcher = HostMatcher::Suffix("example.com".to_string());
+        let matcher = HostMatcher::suffix("example.com");
         assert!(
             !matcher.matches_host("notexample.com"),
             "Suffix(\"example.com\") must not match \"notexample.com\""

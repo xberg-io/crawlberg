@@ -58,16 +58,30 @@ Allowlist specific hosts while keeping the rest of the policy strict:
 use crawlberg::{CrawlConfigBuilder, HostMatcher};
 
 let config = CrawlConfigBuilder::default()
-    .ssrf_allowlist_host(HostMatcher::Suffix(".internal.xberg.io".into()))
-    .ssrf_allowlist_host(HostMatcher::Cidr("10.42.0.0/16".into()))
+    .ssrf_allowlist_host(HostMatcher::suffix(".internal.xberg.io"))
+    .ssrf_allowlist_host(HostMatcher::cidr("10.42.0.0/16")?)
     .build();
 ```
 
+`HostMatcher::cidr` returns `Result` — a malformed block is rejected when you build it,
+rather than silently never matching.
+
 | Matcher | Matches |
 |---------|---------|
-| `Exact("api.example.com")` | the exact hostname, case-insensitive |
-| `Suffix(".example.com")` | `api.example.com`, `example.com` — but **not** `notexample.com` |
-| `Cidr("10.42.0.0/16")` | resolved IPs inside the CIDR; also permits literal-IP URLs whose IP is inside |
+| `HostMatcher::exact("api.example.com")` | the exact hostname, case-insensitive |
+| `HostMatcher::suffix(".example.com")` | `api.example.com`, `example.com` — but **not** `notexample.com` |
+| `HostMatcher::cidr("10.42.0.0/16")` | resolved IPs inside the CIDR; also permits literal-IP URLs whose IP is inside |
+
+In JSON or TOML config, a matcher is a tagged object:
+
+```json
+{"ssrf": {"allowlist": [
+  {"type": "suffix", "value": ".internal.xberg.io"},
+  {"type": "cidr", "value": "10.42.0.0/16"}
+]}}
+```
+
+A bare string is still accepted and is treated as `exact`.
 
 Allowlist entries permit access regardless of the default denylist. A
 mismatch between hostname allowlist and resolved IPs (e.g. `Exact("svc.internal")`

@@ -108,6 +108,84 @@ async fn crawl_succeeds_when_allow_private_set() {
     );
 }
 
+/// A CIDR allowlist entry must carry a real scrape() through the Tower stack, not
+/// merely satisfy validate_url. This is the configuration the allowlist exists for:
+/// reach exactly one private host while deny_private stays on for everything else.
+///
+/// Serial because it builds a CrawlConfig via `SsrfPolicy::from_env`, and the env-bypass
+/// tests below mutate `CRAWLBERG_ALLOW_PRIVATE_NETWORK` process-wide.
+#[tokio::test]
+#[serial_test::serial]
+async fn crawl_succeeds_through_scrape_with_cidr_allowlist() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>ok</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .ssrf_allowlist_host(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"))
+        .build();
+
+    assert!(
+        config.ssrf.deny_private,
+        "the point of this test is that deny_private stays on"
+    );
+
+    let result = scrape(&engine(config), &mock.uri()).await;
+    assert!(
+        result.is_ok(),
+        "an allowlisted loopback range must permit a real scrape: {:?}",
+        result.err()
+    );
+}
+
+/// The allowlist must stay narrow: allowlisting one private range must not
+/// re-permit a different private address. Pins the negative half of the feature.
+#[tokio::test]
+async fn crawl_refuses_private_host_outside_the_allowlist() {
+    let mut policy = default_policy();
+    policy
+        .allowlist
+        .push(HostMatcher::cidr("10.0.0.0/8").expect("literal CIDR is valid"));
+
+    let err = validate_url(&url("http://192.168.1.1/"), &policy)
+        .await
+        .expect_err("192.168.1.1 is not inside the allowlisted 10.0.0.0/8");
+
+    assert!(
+        matches!(
+            err,
+            SsrfError::DeniedByPolicy {
+                reason: "private_network"
+            }
+        ),
+        "expected DeniedByPolicy(private_network), got {err:?}"
+    );
+}
+
+/// A Suffix matcher takes the pre-DNS early return, a different code path from the
+/// CIDR check against resolved addresses.
+///
+/// Deliberately uses a hostname that does not resolve: passing proves the allowlist
+/// short-circuits *before* resolution, and keeps the test off the network. The
+/// non-matching half is covered deterministically by the `matches_host` unit tests.
+#[tokio::test]
+async fn crawl_permits_hostname_matched_by_suffix_allowlist() {
+    let mut policy = default_policy();
+    policy.allowlist.push(HostMatcher::suffix(".internal.invalid"));
+
+    validate_url(&url("http://svc.internal.invalid/"), &policy)
+        .await
+        .expect("a suffix-allowlisted host must be permitted without resolving");
+}
+
 /// When 127.0.0.0/8 is on the SSRF allowlist, validate_url must permit a
 /// 127.x.x.x address even though deny_private remains true.
 #[tokio::test]
@@ -125,7 +203,9 @@ async fn crawl_succeeds_with_cidr_allowlist() {
         .await;
 
     let mut policy = SsrfPolicy::default();
-    policy.allowlist.push(HostMatcher::Cidr("127.0.0.0/8".to_string()));
+    policy
+        .allowlist
+        .push(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"));
 
     validate_url(&url(&mock.uri()), &policy)
         .await
@@ -237,7 +317,9 @@ async fn redirect_to_private_outside_allowlist_refused() {
         .await;
 
     let mut policy = SsrfPolicy::default();
-    policy.allowlist.push(HostMatcher::Cidr("127.0.0.0/8".to_string()));
+    policy
+        .allowlist
+        .push(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"));
 
     validate_url(&url(&mock.uri()), &policy)
         .await

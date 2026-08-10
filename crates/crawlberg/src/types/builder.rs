@@ -272,6 +272,19 @@ impl CrawlConfigBuilder {
     }
 
     /// Add a hostname or IP range to the SSRF policy allowlist.
+    ///
+    /// Entries override `deny_private` for whatever they match; see
+    /// [`SsrfPolicy::allowlist`](crate::SsrfPolicy::allowlist) for the full precedence.
+    ///
+    /// ```
+    /// use crawlberg::{CrawlConfigBuilder, HostMatcher};
+    ///
+    /// let config = CrawlConfigBuilder::default()
+    ///     .ssrf_allowlist_host(HostMatcher::suffix(".internal.example.com"))
+    ///     .ssrf_allowlist_host(HostMatcher::cidr("10.42.0.0/16")?)
+    ///     .build();
+    /// # Ok::<(), crawlberg::SsrfError>(())
+    /// ```
     pub fn ssrf_allowlist_host(mut self, matcher: HostMatcher) -> Self {
         self.inner.ssrf.allowlist.push(matcher);
         self
