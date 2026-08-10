@@ -3,7 +3,7 @@
 	"description": "Type text into an input field and verify success",
 	"tags": ["interaction", "type"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

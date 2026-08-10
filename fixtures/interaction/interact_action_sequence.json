@@ -3,7 +3,7 @@
 	"description": "Execute a sequence of multiple actions (click, type, click) and verify all succeed with correct indices",
 	"tags": ["interaction", "sequence"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

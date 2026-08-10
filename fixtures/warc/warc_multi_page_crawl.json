@@ -4,7 +4,7 @@
 	"tags": ["warc", "output", "crawl", "multi-page"],
 	"skip": {
 		"languages": ["wasm", "brew"],
-		"reason": "WARC output requires filesystem access"
+		"reason": "WARC output requires the non-default warc feature"
 	},
 	"input": {
 		"mock_responses": [

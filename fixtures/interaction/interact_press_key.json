@@ -3,7 +3,7 @@
 	"description": "Press a keyboard key (Enter) and verify success",
 	"tags": ["interaction", "press"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

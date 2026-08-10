@@ -3,7 +3,7 @@
 	"description": "Execute default Scrape action and verify extracted content",
 	"tags": ["interaction", "scrape"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

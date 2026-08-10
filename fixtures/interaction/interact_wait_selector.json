@@ -3,7 +3,7 @@
 	"description": "Wait for a CSS selector that exists on the page",
 	"tags": ["interaction", "wait"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

@@ -3,7 +3,7 @@
 	"description": "Click a button element and verify success",
 	"tags": ["interaction", "click"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {
