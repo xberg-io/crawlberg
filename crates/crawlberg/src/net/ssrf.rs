@@ -9,21 +9,30 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::LazyLock;
 
+/// Private / metadata / loopback CIDRs that are denied by default, as source strings.
+///
+/// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
+/// `crate::net::browser_policy` asserts the two have not drifted.
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "0.0.0.0/8",
+    "224.0.0.0/4",
+    "::1/128",
+    "fe80::/10",
+    "fc00::/7",
+    "ff00::/8",
+];
+
 /// Private / metadata / loopback CIDRs that are denied by default.
 static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
-    vec![
-        "127.0.0.0/8".parse().unwrap(),
-        "10.0.0.0/8".parse().unwrap(),
-        "172.16.0.0/12".parse().unwrap(),
-        "192.168.0.0/16".parse().unwrap(),
-        "169.254.0.0/16".parse().unwrap(),
-        "0.0.0.0/8".parse().unwrap(),
-        "224.0.0.0/4".parse().unwrap(),
-        "::1/128".parse().unwrap(),
-        "fe80::/10".parse().unwrap(),
-        "fc00::/7".parse().unwrap(),
-        "ff00::/8".parse().unwrap(),
-    ]
+    DEFAULT_DENY_NET_CIDRS
+        .iter()
+        .map(|cidr| cidr.parse().expect("literal CIDR"))
+        .collect()
 });
 
 /// Hostname/IP allowlist matcher for SSRF policy.

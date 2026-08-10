@@ -118,7 +118,7 @@ async fn native_browser_fetch_inner(
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: None,
+        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
         allow_file_access: false,
     };
 
