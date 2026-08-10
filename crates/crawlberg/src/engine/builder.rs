@@ -257,6 +257,9 @@ impl CrawlEngineBuilder {
             build_native_browser_executor(&config)?
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let event_sink = attach_warc_sink(&config, self.event_sink)?;
+
         Ok(CrawlEngine {
             config,
             frontier: self
@@ -273,7 +276,7 @@ impl CrawlEngineBuilder {
             content_filter: self.content_filter.unwrap_or_else(|| Arc::new(defaults::NoopFilter)),
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
-            event_sink: self.event_sink,
+            event_sink,
             page_budget: self
                 .page_budget
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
@@ -282,6 +285,41 @@ impl CrawlEngineBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
         })
+    }
+}
+
+/// Attach a WARC-writing sink when `config.warc_output` is set.
+///
+/// ~keep `warc_output` is exposed by every language binding and was previously read
+/// by nothing, so a caller that set it got a successful crawl and no file. When the
+/// `warc` feature is compiled out the request cannot be honoured at all, so it warns
+/// rather than failing silently — the one thing this must never do again is accept
+/// the option and do nothing without saying so.
+#[cfg(not(target_arch = "wasm32"))]
+fn attach_warc_sink(
+    config: &CrawlConfig,
+    existing: Option<Arc<dyn EventSink>>,
+) -> Result<Option<Arc<dyn EventSink>>, CrawlError> {
+    let Some(path) = config.warc_output.as_ref() else {
+        return Ok(existing);
+    };
+
+    #[cfg(not(feature = "warc"))]
+    {
+        tracing::warn!(
+            path = %path.display(),
+            "warc_output is set but this build has the `warc` feature disabled; no WARC file will be written"
+        );
+        Ok(existing)
+    }
+
+    #[cfg(feature = "warc")]
+    {
+        let warc_sink: Arc<dyn EventSink> = Arc::new(crate::warc::WarcEventSink::new(path)?);
+        Ok(Some(match existing {
+            Some(existing) => Arc::new(crate::sink::MultiEventSink::new(vec![existing, warc_sink])),
+            None => warc_sink,
+        }))
     }
 }
 

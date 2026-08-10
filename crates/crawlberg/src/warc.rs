@@ -9,10 +9,14 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::CrawlError;
+use crate::sink::EventSink;
+use crate::types::CrawlEvent;
 
 /// The WARC version header prefix written at the start of every record.
 const WARC_VERSION: &str = "WARC/1.1";
@@ -107,6 +111,56 @@ impl WarcWriter {
         self.writer
             .flush()
             .map_err(|e| CrawlError::Other(format!("flush WARC file: {e}")))
+    }
+}
+
+/// [`EventSink`] adapter that streams crawled pages into a [`WarcWriter`].
+///
+/// This is the piece that makes [`WarcWriter`] reachable from a live crawl:
+/// attach it via `CrawlEngineBuilder::event_sink` (or fan it into a
+/// `MultiEventSink` alongside other sinks) and every [`CrawlEvent::Page`] is
+/// translated into one WARC `response` record. Non-page events are ignored.
+///
+/// `CrawlPageResult` does not preserve raw response headers, so records carry
+/// only `Content-Type`; `WARC-Date` is stamped at emit time rather than at
+/// original fetch time, since that timestamp is not threaded through
+/// `CrawlPageResult` either. Write failures are logged via `tracing::error!`
+/// and do not interrupt the crawl — `EventSink::emit` has no error channel
+/// back to the crawl loop, matching how every other sink implementation in
+/// this crate handles failures.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct WarcEventSink {
+    writer: Mutex<WarcWriter>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl WarcEventSink {
+    /// Create a sink that writes WARC records to `path`, emitting a
+    /// `warcinfo` record first so downstream tooling can identify the
+    /// producing software.
+    pub(crate) fn new(path: &Path) -> Result<Self, CrawlError> {
+        let mut writer = WarcWriter::new(path)?;
+        writer.write_warcinfo(concat!("crawlberg/", env!("CARGO_PKG_VERSION")), "crawlberg")?;
+        Ok(Self {
+            writer: Mutex::new(writer),
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl EventSink for WarcEventSink {
+    async fn emit(&self, event: CrawlEvent) {
+        let CrawlEvent::Page { result } = event else {
+            return;
+        };
+
+        let headers = [("Content-Type", result.content_type.as_str())];
+        let body = result.html.as_bytes();
+        let mut writer = self.writer.lock().await;
+        if let Err(error) = writer.write_response(&result.url, result.status_code, &headers, body, Utc::now()) {
+            tracing::error!(url = %result.url, %error, "failed to write WARC response record");
+        }
     }
 }
 
@@ -229,6 +283,96 @@ mod tests {
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.contains("Content-Type: text/html\r\n"));
         assert!(text.contains("\r\n\r\n<html></html>"));
+    }
+
+    fn page_result(url: &str, status_code: u16, content_type: &str, html: &str) -> crate::types::CrawlPageResult {
+        crate::types::CrawlPageResult {
+            url: url.to_owned(),
+            status_code,
+            content_type: content_type.to_owned(),
+            html: html.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn warc_event_sink_writes_page_events_as_response_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crawl.warc");
+        let sink = WarcEventSink::new(&path).expect("sink creation should succeed");
+
+        let event = CrawlEvent::Page {
+            result: Box::new(page_result(
+                "https://example.com/a",
+                200,
+                "text/html",
+                "<html>hi</html>",
+            )),
+        };
+        sink.emit(event).await;
+        sink.writer.lock().await.writer.flush().unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("WARC-Type: warcinfo"),
+            "constructor must write a warcinfo record"
+        );
+        assert!(
+            contents.contains("WARC-Type: response"),
+            "page event must produce a response record"
+        );
+        assert!(contents.contains("WARC-Target-URI: https://example.com/a"));
+        assert!(contents.contains("HTTP/1.1 200 OK"));
+        assert!(contents.contains("Content-Type: text/html"));
+        assert!(contents.contains("<html>hi</html>"));
+    }
+
+    #[tokio::test]
+    async fn warc_event_sink_ignores_non_page_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crawl.warc");
+        let sink = WarcEventSink::new(&path).expect("sink creation should succeed");
+
+        sink.emit(CrawlEvent::Complete { pages_crawled: 3 }).await;
+        sink.emit(CrawlEvent::Error {
+            url: "https://example.com/broken".to_owned(),
+            error: "timeout".to_owned(),
+        })
+        .await;
+        sink.writer.lock().await.writer.flush().unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !contents.contains("WARC-Type: response"),
+            "non-page events must not produce response records"
+        );
+    }
+
+    #[tokio::test]
+    async fn warc_event_sink_writes_multiple_page_events_sequentially() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crawl.warc");
+        let sink = WarcEventSink::new(&path).expect("sink creation should succeed");
+
+        for i in 0..3 {
+            let event = CrawlEvent::Page {
+                result: Box::new(page_result(
+                    &format!("https://example.com/{i}"),
+                    200,
+                    "text/html",
+                    "<p></p>",
+                )),
+            };
+            sink.emit(event).await;
+        }
+        sink.writer.lock().await.writer.flush().unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let response_count = contents.matches("WARC-Type: response").count();
+        assert_eq!(response_count, 3, "expected 3 response records, got {response_count}");
+        for i in 0..3 {
+            assert!(contents.contains(&format!("WARC-Target-URI: https://example.com/{i}")));
+        }
     }
 
     #[test]

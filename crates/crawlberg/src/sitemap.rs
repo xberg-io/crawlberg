@@ -188,12 +188,24 @@ pub(crate) async fn fetch_sitemap_tree(
     .await
 }
 
+/// Maximum sitemap-index nesting depth followed before giving up on a branch.
+///
+/// Bounds worst-case fetch work independently of the visited-set cycle guard,
+/// since a long acyclic chain of indexes would otherwise pass the cycle check
+/// while still growing unbounded.
+const MAX_SITEMAP_INDEX_DEPTH: u32 = 10;
+
 /// Process an already-fetched sitemap response body, following sitemap index
 /// references if needed. Avoids re-fetching a URL that was already retrieved.
 ///
 /// `filter` and `limit` bound the result incrementally: entries that do not
 /// match `filter` are discarded as they are parsed, and both child-sitemap
 /// fetching and per-child parsing stop once `limit` matching URLs are collected.
+///
+/// Nested sitemap indexes (an index that itself points at another index) are
+/// followed recursively, bounded by [`MAX_SITEMAP_INDEX_DEPTH`] and a visited
+/// set of already-fetched URLs so a self-referential sitemap cannot loop
+/// forever.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn process_sitemap_response(
     sitemap_url: &str,
@@ -204,6 +216,39 @@ pub(crate) async fn process_sitemap_response(
     client: &reqwest::Client,
     filter: &MapFilter,
     limit: Option<usize>,
+) -> Vec<SitemapUrl> {
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(sitemap_url.to_owned());
+    process_sitemap_response_inner(
+        sitemap_url,
+        body,
+        body_bytes,
+        content_type,
+        config,
+        client,
+        filter,
+        limit,
+        0,
+        &mut visited,
+    )
+    .await
+}
+
+/// Recursive worker behind [`process_sitemap_response`]. See that function's
+/// docs for the general contract; `depth` and `visited` are the recursion
+/// guards threaded through nested sitemap-index fetches.
+#[allow(clippy::too_many_arguments)]
+async fn process_sitemap_response_inner(
+    sitemap_url: &str,
+    body: &str,
+    body_bytes: &[u8],
+    content_type: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+    filter: &MapFilter,
+    limit: Option<usize>,
+    depth: u32,
+    visited: &mut std::collections::HashSet<String>,
 ) -> Vec<SitemapUrl> {
     let decompressed;
     let xml_body = if content_type.contains("gzip") || content_type.contains("x-gzip") {
@@ -220,53 +265,7 @@ pub(crate) async fn process_sitemap_response(
 
     let reached_limit = |len: usize| limit.is_some_and(|limit| len >= limit);
 
-    if is_sitemap_index(xml_body) {
-        let child_urls = parse_sitemap_index(xml_body);
-        let base = Url::parse(sitemap_url).ok();
-        let mut all_urls = Vec::new();
-        let max_children = 100;
-        for child_url in child_urls.iter().take(max_children) {
-            if reached_limit(all_urls.len()) {
-                break;
-            }
-            let resolved = if let Some(ref base_parsed) = base {
-                if Url::parse(child_url).is_ok() {
-                    rewrite_url_host(child_url, base_parsed)
-                } else {
-                    resolve_redirect(sitemap_url, child_url)
-                }
-            } else {
-                child_url.clone()
-            };
-            let child_resp = match http_fetch(&resolved, config, &std::collections::HashMap::new(), client).await {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let child_body = &child_resp.body;
-            let child_decompressed;
-            let child_xml = if child_resp.content_type.contains("gzip") {
-                match decompress_gzip(&child_resp.body_bytes) {
-                    Ok(d) => {
-                        child_decompressed = d;
-                        &child_decompressed
-                    }
-                    Err(_) => child_body,
-                }
-            } else {
-                child_body
-            };
-            for entry in parse_sitemap_xml(child_xml) {
-                if !filter.matches(&entry.url) {
-                    continue;
-                }
-                all_urls.push(entry);
-                if reached_limit(all_urls.len()) {
-                    break;
-                }
-            }
-        }
-        all_urls
-    } else {
+    if !is_sitemap_index(xml_body) {
         let mut urls = Vec::new();
         for entry in parse_sitemap_xml(xml_body) {
             if !filter.matches(&entry.url) {
@@ -277,8 +276,73 @@ pub(crate) async fn process_sitemap_response(
                 break;
             }
         }
-        urls
+        return urls;
     }
+
+    if depth >= MAX_SITEMAP_INDEX_DEPTH {
+        tracing::warn!(
+            sitemap_url = %sitemap_url,
+            depth,
+            max_depth = MAX_SITEMAP_INDEX_DEPTH,
+            "skipping sitemap index tier: max nesting depth exceeded"
+        );
+        return Vec::new();
+    }
+
+    let child_urls = parse_sitemap_index(xml_body);
+    let base = Url::parse(sitemap_url).ok();
+    let mut all_urls = Vec::new();
+    let max_children = 100;
+    for child_url in child_urls.iter().take(max_children) {
+        if reached_limit(all_urls.len()) {
+            break;
+        }
+        let resolved = if let Some(ref base_parsed) = base {
+            if Url::parse(child_url).is_ok() {
+                rewrite_url_host(child_url, base_parsed)
+            } else {
+                resolve_redirect(sitemap_url, child_url)
+            }
+        } else {
+            child_url.clone()
+        };
+
+        if !visited.insert(resolved.clone()) {
+            tracing::warn!(
+                sitemap_url = %resolved,
+                "skipping sitemap index tier: cycle detected (already visited)"
+            );
+            continue;
+        }
+
+        let child_resp = match http_fetch(&resolved, config, &std::collections::HashMap::new(), client).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let remaining = limit.map(|limit| limit.saturating_sub(all_urls.len()));
+
+        let child_entries = Box::pin(process_sitemap_response_inner(
+            &resolved,
+            &child_resp.body,
+            &child_resp.body_bytes,
+            &child_resp.content_type,
+            config,
+            client,
+            filter,
+            remaining,
+            depth + 1,
+            visited,
+        ))
+        .await;
+
+        for entry in child_entries {
+            all_urls.push(entry);
+            if reached_limit(all_urls.len()) {
+                break;
+            }
+        }
+    }
+    all_urls
 }
 
 /// Decompress gzip-encoded data into a UTF-8 string.
@@ -302,6 +366,140 @@ mod tests {
     use super::*;
     use crate::map::MapFilter;
     use crate::types::CrawlConfig;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A `CrawlConfig` that allows fetching the wiremock server on `127.0.0.1`
+    /// without tripping SSRF private-network protections.
+    fn local_test_config() -> CrawlConfig {
+        CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        }
+    }
+
+    fn sitemap_index_xml(child_locs: &[&str]) -> String {
+        let mut body =
+            String::from(r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
+        for loc in child_locs {
+            body.push_str(&format!("<sitemap><loc>{loc}</loc></sitemap>"));
+        }
+        body.push_str("</sitemapindex>");
+        body
+    }
+
+    async fn mount_xml(mock: &MockServer, route: &str, body: String) {
+        let response = ResponseTemplate::new(200)
+            .set_body_string(body)
+            .append_header("content-type", "application/xml");
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(response)
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_follows_nested_sitemap_index() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        // ~keep root index -> child index -> grandchild urlset (two tiers of nesting).
+        mount_xml(&mock, "/root.xml", sitemap_index_xml(&[&format!("{base}/child.xml")])).await;
+        mount_xml(
+            &mock,
+            "/child.xml",
+            sitemap_index_xml(&[&format!("{base}/grandchild.xml")]),
+        )
+        .await;
+        mount_xml(&mock, "/grandchild.xml", urlset(2)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(&format!("{base}/root.xml"), &config, &client, &filter, None).await;
+
+        assert_eq!(
+            urls.len(),
+            2,
+            "URLs from a doubly-nested sitemap index (index -> index -> urlset) must not be dropped, got {urls:?}"
+        );
+        assert!(
+            urls.iter().all(|u| u.url.contains("example.com/page-")),
+            "expected grandchild urlset entries, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_terminates_on_self_referential_cycle() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_xml(&mock, "/cycle.xml", sitemap_index_xml(&[&format!("{base}/cycle.xml")])).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(&format!("{base}/cycle.xml"), &config, &client, &filter, None).await;
+
+        assert!(
+            urls.is_empty(),
+            "a self-referential sitemap index must terminate with no URLs, not loop forever, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_terminates_on_mutual_cycle() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_xml(&mock, "/a.xml", sitemap_index_xml(&[&format!("{base}/b.xml")])).await;
+        mount_xml(&mock, "/b.xml", sitemap_index_xml(&[&format!("{base}/a.xml")])).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(&format!("{base}/a.xml"), &config, &client, &filter, None).await;
+
+        assert!(
+            urls.is_empty(),
+            "a mutual two-hop sitemap index cycle must terminate with no URLs, not loop forever, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_stops_at_max_index_depth() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        // ~keep Chain of MAX_SITEMAP_INDEX_DEPTH + 2 distinct index tiers ending in a
+        // ~keep real urlset leaf, so the leaf is only reachable by exceeding the cap.
+        let chain_len = MAX_SITEMAP_INDEX_DEPTH as usize + 2;
+        for level in 0..chain_len {
+            let next = if level + 1 < chain_len {
+                format!("{base}/level{}.xml", level + 1)
+            } else {
+                format!("{base}/leaf.xml")
+            };
+            mount_xml(&mock, &format!("/level{level}.xml"), sitemap_index_xml(&[&next])).await;
+        }
+        mount_xml(&mock, "/leaf.xml", urlset(1)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(&format!("{base}/level0.xml"), &config, &client, &filter, None).await;
+
+        assert!(
+            urls.is_empty(),
+            "a sitemap-index chain deeper than MAX_SITEMAP_INDEX_DEPTH must be cut off \
+             before reaching the leaf, got {urls:?}"
+        );
+    }
 
     fn urlset(count: usize) -> String {
         let mut body =

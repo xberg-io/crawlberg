@@ -4,6 +4,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -11,6 +13,18 @@ use async_trait::async_trait;
 use crate::error::CrawlError;
 use crate::traits::CrawlCache;
 use crate::types::CachedPage;
+
+/// Maximum serialized size of a single cached entry (10 MiB).
+///
+/// Response bodies are attacker/origin-controlled; without a cap a single
+/// oversized response could fill the cache disk.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_ENTRY_SIZE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Monotonic counter mixed into temp-file names so concurrent writers for the
+/// same key never collide, even within the same nanosecond.
+#[cfg(not(target_arch = "wasm32"))]
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Filesystem-backed response cache.
 ///
@@ -69,6 +83,62 @@ impl DiskCache {
     }
 }
 
+/// Build an unpredictable temp-file path alongside `path`, so an attacker who
+/// knows a cache key (and thus the deterministic final path) cannot pre-create
+/// a symlink at the name this write will actually use.
+#[cfg(not(target_arch = "wasm32"))]
+fn unique_temp_path(path: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("cache.json");
+    path.with_file_name(format!("{file_name}.{}.{nanos}.{counter}.tmp", std::process::id()))
+}
+
+/// Write `data` to `final_path` via `tmp_path`, without ever following a
+/// symlink that may already occupy either path.
+///
+/// - `create_new(true)` (`O_CREAT | O_EXCL`) makes the temp-file open fail
+///   instead of following a pre-existing symlink at `tmp_path`.
+/// - On unix the file is created with mode `0600` directly (no separate
+///   `chmod` window), since cached bodies can carry session cookies or
+///   authenticated content.
+/// - `fs::rename` replaces whatever directory entry sits at `final_path`
+///   (including a symlink) without dereferencing it, so the final publish
+///   step is symlink-safe even if `final_path` itself was pre-planted.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_cache_entry_to(tmp_path: &Path, final_path: &Path, data: &str) -> Result<(), CrawlError> {
+    use std::io::Write as _;
+
+    let mut open_options = std::fs::OpenOptions::new();
+    open_options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        open_options.mode(0o600);
+    }
+
+    let mut file = open_options
+        .open(tmp_path)
+        .map_err(|e| CrawlError::Other(format!("cache temp file create error: {e}")))?;
+    file.write_all(data.as_bytes())
+        .map_err(|e| CrawlError::Other(format!("cache write error: {e}")))?;
+    drop(file);
+
+    std::fs::rename(tmp_path, final_path).map_err(|e| {
+        let _ = std::fs::remove_file(tmp_path);
+        CrawlError::Other(format!("cache rename error: {e}"))
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_cache_entry(path: &Path, data: &str) -> Result<(), CrawlError> {
+    let tmp_path = unique_temp_path(path);
+    write_cache_entry_to(&tmp_path, path, data)
+}
+
 #[cfg(test)]
 pub(crate) fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -119,6 +189,16 @@ impl CrawlCache for DiskCache {
         let path = self.cache_path(key);
         let data = serde_json::to_string(page).map_err(|e| CrawlError::Other(format!("cache serialize error: {e}")))?;
 
+        if data.len() > MAX_ENTRY_SIZE_BYTES {
+            tracing::warn!(
+                url = %page.url,
+                entry_size_bytes = data.len(),
+                max_entry_size_bytes = MAX_ENTRY_SIZE_BYTES,
+                "skipping disk cache write: entry exceeds size limit"
+            );
+            return Ok(());
+        }
+
         let max_entries = self.max_entries;
         let cache_dir = self.cache_dir.clone();
 
@@ -149,9 +229,7 @@ impl CrawlCache for DiskCache {
                 }
             }
 
-            let tmp_path = path.with_extension("tmp");
-            std::fs::write(&tmp_path, data).map_err(|e| CrawlError::Other(format!("cache write error: {e}")))?;
-            std::fs::rename(&tmp_path, &path).map_err(|e| CrawlError::Other(format!("cache rename error: {e}")))
+            write_cache_entry(&path, &data)
         })
         .await
         .unwrap_or(Ok(()))
@@ -332,6 +410,108 @@ mod tests {
         let page = make_page("http://example.com");
         cache.set("http://example.com", &page).await.unwrap();
         assert!(cache.has("http://example.com").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_disk_cache_rejects_oversized_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = DiskCache::new(dir.path(), 3600, 0).unwrap();
+
+        let mut page = make_page("http://example.com/huge");
+        page.body = "x".repeat(MAX_ENTRY_SIZE_BYTES + 1);
+
+        cache
+            .set("http://example.com/huge", &page)
+            .await
+            .expect("oversized entry should be skipped, not error");
+
+        let result = cache.get("http://example.com/huge").await.unwrap();
+        assert!(result.is_none(), "oversized entry must not be written to disk");
+
+        let count = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(
+            count, 0,
+            "no cache file should exist after an oversized write, found {count}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_disk_cache_file_has_restrictive_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = DiskCache::new(dir.path(), 3600, 0).unwrap();
+
+        let page = make_page("http://example.com/secret");
+        cache.set("http://example.com/secret", &page).await.unwrap();
+
+        let path = cache.cache_path("http://example.com/secret");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "cache file must be owner-only readable/writable, got {mode:o}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_disk_cache_write_does_not_follow_preexisting_tmp_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = DiskCache::new(dir.path(), 3600, 0).unwrap();
+
+        let url = "http://example.com/attack";
+        let hash = DiskCache::cache_key(url);
+        // ~keep The legacy (pre-fix) temp-file name was fully deterministic from the
+        // ~keep cache key, so an attacker who knows the target URL could pre-plant a
+        // ~keep symlink there before the crawl ever runs.
+        let legacy_tmp_path = dir.path().join(format!("{hash}.tmp"));
+
+        let canary_dir = tempfile::tempdir().unwrap();
+        let canary_path = canary_dir.path().join("canary.txt");
+        std::fs::write(&canary_path, "original-canary-contents").unwrap();
+        std::os::unix::fs::symlink(&canary_path, &legacy_tmp_path).unwrap();
+
+        let page = make_page(url);
+        cache
+            .set(url, &page)
+            .await
+            .expect("cache set should succeed despite a pre-existing symlink at the legacy tmp path");
+
+        let canary_contents = std::fs::read_to_string(&canary_path).unwrap();
+        assert_eq!(
+            canary_contents, "original-canary-contents",
+            "symlink target must not be written through"
+        );
+
+        let retrieved = cache
+            .get(url)
+            .await
+            .unwrap()
+            .expect("entry should be cached via a safe, unpredictable temp path");
+        assert_eq!(retrieved.url, url);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_cache_entry_to_rejects_existing_symlink_at_tmp_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let canary_dir = tempfile::tempdir().unwrap();
+        let canary_path = canary_dir.path().join("canary.txt");
+        std::fs::write(&canary_path, "original").unwrap();
+
+        let tmp_path = dir.path().join("entry.json.tmp");
+        let final_path = dir.path().join("entry.json");
+        std::os::unix::fs::symlink(&canary_path, &tmp_path).unwrap();
+
+        let result = write_cache_entry_to(&tmp_path, &final_path, "malicious-payload");
+        assert!(result.is_err(), "write must fail rather than follow the symlink");
+
+        let canary_contents = std::fs::read_to_string(&canary_path).unwrap();
+        assert_eq!(
+            canary_contents, "original",
+            "symlink target must not be written through"
+        );
     }
 
     #[tokio::test]
