@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
@@ -59,6 +60,15 @@ pub struct NativeBrowserConfig {
     pub robots_user_agent: Option<String>,
     /// Capture the full network event stream into the result.
     pub capture_network_events: bool,
+    /// SSRF policy for every request this render makes — navigation, sub-resources,
+    /// page-initiated fetch/XHR and dynamic `import()`.
+    ///
+    /// `None` falls back to [`DefaultSsrfValidator`], which enforces the default
+    /// deny-list only. `crawlberg` always supplies the crawl's configured policy.
+    pub ssrf: Option<Arc<dyn SsrfValidator>>,
+    /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
+    /// not be able to point the browser at local files.
+    pub allow_file_access: bool,
 }
 
 impl Default for NativeBrowserConfig {
@@ -77,6 +87,8 @@ impl Default for NativeBrowserConfig {
             wait_selector: None,
             robots_user_agent: None,
             capture_network_events: false,
+            ssrf: None,
+            allow_file_access: false,
         }
     }
 }
@@ -508,11 +520,17 @@ async fn interact_url_local(
 }
 
 async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
-    let mut context = BrowserContext::with_full_options(
+    let ssrf: Arc<dyn SsrfValidator> = config
+        .ssrf
+        .clone()
+        .unwrap_or_else(|| Arc::new(DefaultSsrfValidator::from_env()));
+    let mut context = BrowserContext::with_ssrf(
         "crawlberg".to_string(),
         config.proxy_url.clone(),
         config.stealth,
         config.user_agent.clone(),
+        ssrf,
+        config.allow_file_access,
     );
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {

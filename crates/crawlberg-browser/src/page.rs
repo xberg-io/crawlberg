@@ -108,9 +108,12 @@ impl Page {
         #[cfg(feature = "stealth")]
         let stealth_client = if context.stealth {
             // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
-            Some(Arc::new(StealthHttpClient::with_proxy(
+            // ~keep Share the plain client's SSRF policy: the stealth path is an
+            // alternate transport, not an alternate policy.
+            Some(Arc::new(StealthHttpClient::with_ssrf(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
+                http_client.ssrf.clone(),
             )))
         } else {
             None
@@ -177,7 +180,11 @@ impl Page {
         }
 
         // ~keep Thread the context proxy into ES modules and JS fetch/XHR so page JS honors upstream proxy settings.
-        let mut rt = BrowserJsRuntime::with_base_url_and_proxy(&self.url_string(), self.context.proxy_url.clone());
+        let mut rt = BrowserJsRuntime::with_base_url_proxy_and_ssrf(
+            &self.url_string(),
+            self.context.proxy_url.clone(),
+            self.http_client.ssrf.clone(),
+        );
         rt.set_url(&self.url_string());
         rt.set_title(&self.title);
 

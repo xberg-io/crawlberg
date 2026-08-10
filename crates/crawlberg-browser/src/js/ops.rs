@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
@@ -48,6 +49,9 @@ pub struct JsOpState {
     pub blocked_urls: Vec<String>,
     pub cookie_jar: Option<Arc<CookieJar>>,
     pub http_client: Option<Arc<HttpClient>>,
+    /// SSRF policy applied to page-initiated fetch/XHR. Never optional: the JS bridge
+    /// builds its own reqwest client, so a missing policy here would be a silent hole.
+    pub ssrf: Arc<dyn SsrfValidator>,
     pub pending_navigation: Option<(String, String, String)>,
     pub intercept_tx: Option<tokio::sync::mpsc::UnboundedSender<InterceptedRequest>>,
     pub intercept_counter: u64,
@@ -63,6 +67,7 @@ impl JsOpState {
             blocked_urls: Vec::new(),
             cookie_jar: None,
             http_client: None,
+            ssrf: Arc::new(DefaultSsrfValidator::from_env()),
             pending_navigation: None,
             intercept_tx: None,
             intercept_counter: 0,
@@ -378,8 +383,19 @@ async fn op_fetch_url(
 ) -> Result<String, deno_error::JsErrorBox> {
     tracing::debug!("op_fetch_url called: {} {} (intercept check pending)", method, url);
 
-    if let Ok(parsed_url) = url::Url::parse(&url)
-        && let Err(e) = validate_fetch_url(&parsed_url)
+    // ~keep Clone the validator out of the RefCell before awaiting; re-entrant page JS
+    // would otherwise hit a BorrowMutError while this op is suspended.
+    let ssrf = {
+        let state_borrow = state.borrow();
+        let gs = state_borrow.borrow::<SharedState>().clone();
+        let validator = gs.borrow().ssrf.clone();
+        drop(gs);
+        validator
+    };
+
+    let parsed_url = url::Url::parse(&url).ok();
+    if let Some(ref parsed_url) = parsed_url
+        && let Err(e) = validate_fetch_url(parsed_url, &ssrf).await
     {
         return Ok(serde_json::json!({
             "status": 0,
@@ -620,7 +636,7 @@ async fn op_fetch_url(
         };
 
         // ~keep Re-validate every redirect target against the SSRF policy.
-        if let Err(reason) = validate_fetch_url(&next_url) {
+        if let Err(reason) = validate_fetch_url(&next_url, &ssrf).await {
             return Ok(serde_json::json!({
                 "status": 0,
                 "body": "",
@@ -716,8 +732,8 @@ fn glob_match(pattern: &str, url: &str) -> bool {
     url == pattern
 }
 
-fn validate_fetch_url(url: &url::Url) -> Result<(), String> {
-    crate::net::ssrf::validate_url(url)
+async fn validate_fetch_url(url: &url::Url, ssrf: &Arc<dyn SsrfValidator>) -> Result<(), String> {
+    ssrf.validate(url).await
 }
 
 #[op2]

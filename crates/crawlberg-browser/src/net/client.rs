@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::net::cookies::CookieJar;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
-use crate::net::ssrf;
+use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 #[derive(Debug, Clone)]
 pub struct Response {
@@ -62,10 +62,6 @@ pub enum ResourceType {
 pub type RequestCallback = Arc<dyn Fn(&RequestInfo) + Send + Sync>;
 pub type ResponseCallback = Arc<dyn Fn(&RequestInfo, &Response) + Send + Sync>;
 
-fn validate_url(url: &Url) -> Result<(), NetError> {
-    ssrf::validate_url(url).map_err(NetError::Network)
-}
-
 async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
     let path = url
         .to_file_path()
@@ -104,6 +100,10 @@ async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
 pub struct HttpClient {
     client: tokio::sync::OnceCell<Client>,
     proxy_url: Option<String>,
+    /// SSRF policy applied to the initial URL and every redirect hop.
+    pub ssrf: Arc<dyn SsrfValidator>,
+    /// Whether `file://` URLs may be fetched. Off unless the embedder opts in.
+    pub allow_file_access: bool,
     pub cookie_jar: Arc<CookieJar>,
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
@@ -124,9 +124,24 @@ impl HttpClient {
     }
 
     pub fn with_options(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Self {
+        Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()), false)
+    }
+
+    /// Build a client with an explicit SSRF policy.
+    ///
+    /// `crawlberg` uses this to inject the crawl's configured policy — including its
+    /// allowlist — in place of the deny-list-only default.
+    pub fn with_ssrf(
+        cookie_jar: Arc<CookieJar>,
+        proxy_url: Option<&str>,
+        ssrf: Arc<dyn SsrfValidator>,
+        allow_file_access: bool,
+    ) -> Self {
         HttpClient {
             client: tokio::sync::OnceCell::new(),
             proxy_url: proxy_url.map(|s| s.to_string()),
+            ssrf,
+            allow_file_access,
             cookie_jar,
             user_agent: RwLock::new(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
@@ -167,6 +182,25 @@ impl HttpClient {
         self.proxy_url.as_deref()
     }
 
+    /// Apply the SSRF policy to `url`.
+    ///
+    /// `file://` is decided here rather than inside the validator: it is a local-access
+    /// question, not a network-egress one, and the injected crawlberg validator rejects
+    /// the scheme outright.
+    async fn validate_url(&self, url: &Url) -> Result<(), NetError> {
+        if url.scheme() == "file" {
+            return if self.allow_file_access {
+                Ok(())
+            } else {
+                Err(NetError::SsrfDenied(
+                    "file:// access is disabled; enable allow_file_access to permit it".to_string(),
+                ))
+            };
+        }
+
+        self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)
+    }
+
     pub async fn fetch(&self, url: &Url) -> Result<Response, NetError> {
         self.fetch_with_method(Method::GET, url, None).await
     }
@@ -182,7 +216,7 @@ impl HttpClient {
         url: &Url,
         initial_body: Option<Vec<u8>>,
     ) -> Result<Response, NetError> {
-        validate_url(url)?;
+        self.validate_url(url).await?;
 
         if url.scheme() == "file" {
             return fetch_file_url(url).await;
@@ -328,7 +362,7 @@ impl HttpClient {
                 let next_url = current_url
                     .join(location_str)
                     .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))?;
-                validate_url(&next_url)?;
+                self.validate_url(&next_url).await?;
                 redirects.push(current_url.clone());
                 current_url = next_url;
                 if status == reqwest::StatusCode::MOVED_PERMANENTLY
@@ -398,4 +432,149 @@ pub enum NetError {
 
     #[error("Request blocked: {0}")]
     Blocked(String),
+
+    /// Refused by the SSRF policy, as opposed to failing in transport.
+    #[error("SSRF policy denied the request: {0}")]
+    SsrfDenied(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Records every URL it is asked about, so a test can prove the policy was
+    /// actually consulted rather than bypassed.
+    #[derive(Debug, Default)]
+    struct RecordingValidator {
+        seen: Mutex<Vec<String>>,
+        deny: Option<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl SsrfValidator for RecordingValidator {
+        async fn validate(&self, url: &Url) -> Result<(), String> {
+            self.seen.lock().expect("lock").push(url.to_string());
+            match &self.deny {
+                Some(needle) if url.as_str().contains(needle.as_str()) => Err("denied by test policy".to_string()),
+                _ => Ok(()),
+            }
+        }
+    }
+
+    /// Serves one canned response per accepted connection.
+    async fn spawn_server(response: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn client_with(validator: Arc<RecordingValidator>) -> HttpClient {
+        HttpClient::with_ssrf(Arc::new(CookieJar::new()), None, validator, false)
+    }
+
+    #[tokio::test]
+    async fn injected_validator_permits_loopback_without_any_env_var() {
+        // ~keep The whole point of injection: reaching a private address is a policy
+        // decision, not a process-wide environment toggle.
+        let base = spawn_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi").await;
+        let validator = Arc::new(RecordingValidator::default());
+        let client = client_with(validator.clone());
+
+        let response = client
+            .fetch(&base.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("an allow-all injected policy must permit loopback");
+
+        assert_eq!(response.status, 200, "expected the canned 200 response");
+        assert_eq!(
+            validator.seen.lock().expect("lock").len(),
+            1,
+            "the injected validator must be consulted exactly once for a non-redirected fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_validator_denial_blocks_the_fetch() {
+        let base = spawn_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi").await;
+        let validator = Arc::new(RecordingValidator {
+            seen: Mutex::new(Vec::new()),
+            deny: Some("127.0.0.1".to_string()),
+        });
+
+        let err = client_with(validator)
+            .fetch(&base.parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("a denying policy must block the fetch");
+
+        assert!(
+            matches!(err, NetError::SsrfDenied(_)),
+            "denial must be distinguishable from a transport failure, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirect_targets_are_revalidated() {
+        // ~keep Hop 1 being permitted says nothing about where the chain ends up.
+        let base =
+            spawn_server("HTTP/1.1 302 Found\r\nLocation: http://10.0.0.1/admin\r\nContent-Length: 0\r\n\r\n").await;
+        let validator = Arc::new(RecordingValidator {
+            seen: Mutex::new(Vec::new()),
+            deny: Some("10.0.0.1".to_string()),
+        });
+        let client = client_with(validator.clone());
+
+        let err = client
+            .fetch(&base.parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the redirect target must be refused");
+
+        assert!(
+            matches!(err, NetError::SsrfDenied(_)),
+            "expected SsrfDenied for the redirect target, got {err:?}"
+        );
+        let seen = validator.seen.lock().expect("lock");
+        assert_eq!(
+            seen.len(),
+            2,
+            "both the initial URL and the redirect target must be checked"
+        );
+        assert!(
+            seen[1].contains("10.0.0.1"),
+            "the second check must be the redirect target, got {:?}",
+            seen[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn file_urls_are_refused_unless_explicitly_allowed() {
+        let validator = Arc::new(RecordingValidator::default());
+        let denied = client_with(validator.clone());
+        let err = denied
+            .fetch(&"file:///etc/passwd".parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("file access must be off by default");
+
+        assert!(
+            matches!(err, NetError::SsrfDenied(_)),
+            "expected SsrfDenied for file://, got {err:?}"
+        );
+        assert!(
+            validator.seen.lock().expect("lock").is_empty(),
+            "file:// is decided before the network policy is consulted"
+        );
+    }
 }

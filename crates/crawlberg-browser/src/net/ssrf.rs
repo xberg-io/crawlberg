@@ -1,13 +1,14 @@
-//! SSRF policy validation for the browser layer.
+//! SSRF validation for the browser layer.
 //!
-//! This module duplicates the deny-list and validation logic from the core
-//! `crawlberg::net::ssrf` module to avoid a circular dependency (crawlberg
-//! optionally depends on crawlberg-browser). The constants are kept in sync
-//! by convention.
+//! This crate cannot depend on `crawlberg` (the dependency runs the other way, behind
+//! the optional `browser-native` feature), so the real [`crawlberg::net::ssrf`] policy
+//! cannot be named here. Instead the policy is *injected*: [`SsrfValidator`] is the
+//! seam, and `crawlberg` supplies an implementation backed by the real `SsrfPolicy`,
+//! allowlist included.
 //!
-//! Browser-specific mitigations:
-//! - DNS-rebinding defense via hostname string matching (before DNS resolution).
-//! - File-scheme bypass for test support.
+//! [`DefaultSsrfValidator`] is the standalone fallback used when nobody injects one —
+//! it re-implements only the default deny-list, never the allowlist matching, so there
+//! is exactly one implementation of the security-relevant matching logic in the stack.
 
 use std::net::IpAddr;
 use std::sync::LazyLock;
@@ -15,90 +16,215 @@ use std::sync::LazyLock;
 use ipnet::IpNet;
 use url::Url;
 
-/// Private / metadata / loopback CIDRs that are denied by default.
-/// Must be kept in sync with `crawlberg::net::ssrf::DEFAULT_DENY_NETS`.
+/// Private / metadata / loopback CIDRs denied by [`DefaultSsrfValidator`].
+///
+/// Kept in sync with `crawlberg::net::ssrf::DEFAULT_DENY_NETS` by the parity test in
+/// that module, which compares it against [`DEFAULT_DENY_NET_CIDRS`].
 static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
-    vec![
-        "127.0.0.0/8".parse().unwrap(),
-        "10.0.0.0/8".parse().unwrap(),
-        "172.16.0.0/12".parse().unwrap(),
-        "192.168.0.0/16".parse().unwrap(),
-        "169.254.0.0/16".parse().unwrap(),
-        "0.0.0.0/8".parse().unwrap(),
-        "224.0.0.0/4".parse().unwrap(),
-        "::1/128".parse().unwrap(),
-        "fe80::/10".parse().unwrap(),
-        "fc00::/7".parse().unwrap(),
-        "ff00::/8".parse().unwrap(),
-    ]
+    DEFAULT_DENY_NET_CIDRS
+        .iter()
+        .map(|c| c.parse().expect("literal CIDR"))
+        .collect()
 });
 
-/// Validate an IP address against the SSRF policy.
-fn is_ip_denied(ip: IpAddr) -> bool {
-    for net in DEFAULT_DENY_NETS.iter() {
-        if net.contains(&ip) {
-            return true;
-        }
-    }
-    false
+/// The deny-list as source strings, exported so `crawlberg` can assert the two copies
+/// have not drifted.
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "0.0.0.0/8",
+    "224.0.0.0/4",
+    "::1/128",
+    "fe80::/10",
+    "fc00::/7",
+    "ff00::/8",
+];
+
+/// Decides whether the browser layer may fetch a URL.
+///
+/// Errors are plain strings: naming a typed error would require pulling `crawlberg`'s
+/// `SsrfError` into this crate, which is the dependency this seam exists to avoid. The
+/// stable denial-reason substrings from the core policy survive in the message.
+#[async_trait::async_trait]
+pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
+    /// Return `Ok(())` if `url` may be fetched.
+    async fn validate(&self, url: &Url) -> Result<(), String>;
 }
 
-/// Validate a URL for SSRF risks, with browser-specific mitigations.
+/// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
 ///
-/// Returns `Ok(())` if the URL is safe to fetch, or an error message otherwise.
-///
-/// # Logic
-///
-/// 1. Allows `file://` unconditionally (browser-specific for test support).
-/// 2. Checks scheme is `http` or `https`.
-/// 3. For IP addresses, rejects those in deny-list ranges.
-/// 4. For domain names, string-matches `localhost` / `.localhost` (DNS-rebinding mitigation).
-/// 5. Respects `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var to bypass checks.
-pub fn validate_url(url: &Url) -> Result<(), String> {
-    let scheme = url.scheme();
+/// Anything that is not an explicit affirmative denies, so a typo or an empty value
+/// cannot silently disable the policy.
+fn parse_allow_private(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1") | Some("true")
+    )
+}
 
-    if scheme == "file" {
-        return Ok(());
+/// Deny-list-only validator used when the embedding application injects nothing.
+///
+/// This is never the validator in a `crawlberg` crawl — `crawlberg` always injects one
+/// carrying the configured policy — so it only governs direct use of this crate.
+#[derive(Debug)]
+pub struct DefaultSsrfValidator {
+    deny_private: bool,
+}
+
+impl DefaultSsrfValidator {
+    /// Build a validator, reading the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
+    pub fn from_env() -> Self {
+        let raw = std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK").ok();
+        Self {
+            deny_private: !parse_allow_private(raw.as_deref()),
+        }
+    }
+}
+
+impl Default for DefaultSsrfValidator {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+#[async_trait::async_trait]
+impl SsrfValidator for DefaultSsrfValidator {
+    async fn validate(&self, url: &Url) -> Result<(), String> {
+        let scheme = url.scheme();
+        // ~keep Scheme is checked before the private-network override: allowing private
+        // addresses is not a reason to start speaking ftp:// or gopher://.
+        if scheme != "http" && scheme != "https" {
+            return Err(format!(
+                "Forbidden URL scheme '{scheme}' - only http and https are allowed"
+            ));
+        }
+
+        if !self.deny_private {
+            return Ok(());
+        }
+
+        // ~keep Localhost names are blocked before DNS to close rebinding gaps between
+        // validation and request time. This validator does not resolve; the injected
+        // crawlberg one does, and closes the gap properly.
+        match url.host() {
+            Some(url::Host::Ipv4(ip)) if is_ip_denied(ip.into()) => {
+                Err(format!("Access to private/internal IP address {ip} is not allowed"))
+            }
+            Some(url::Host::Ipv6(ip)) if is_ip_denied(ip.into()) => {
+                Err(format!("Access to private/internal IPv6 address {ip} is not allowed"))
+            }
+            Some(url::Host::Domain(domain)) if is_localhost_name(domain) => {
+                Err(format!("Localhost rebinding attack blocked: {domain}"))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn is_ip_denied(ip: IpAddr) -> bool {
+    DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
+}
+
+fn is_localhost_name(domain: &str) -> bool {
+    let lower = domain.to_ascii_lowercase();
+    lower == "localhost" || lower.ends_with(".localhost")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> Url {
+        s.parse().expect("valid URL")
     }
 
-    let allow_private_network = std::env::var_os("CRAWLBERG_ALLOW_PRIVATE_NETWORK").is_some();
-    if allow_private_network {
-        return Ok(());
+    async fn validate(target: &str, deny_private: bool) -> Result<(), String> {
+        DefaultSsrfValidator { deny_private }.validate(&url(target)).await
     }
 
-    if scheme != "http" && scheme != "https" {
-        return Err(format!(
-            "Forbidden URL scheme '{}' - only http, https, and file are allowed",
-            scheme
-        ));
+    #[test]
+    fn parse_allow_private_only_accepts_explicit_affirmatives() {
+        // ~keep Regression: this used to be `env_var_os(..).is_some()`, so
+        // CRAWLBERG_ALLOW_PRIVATE_NETWORK=0 disabled SSRF checking entirely.
+        for affirmative in ["1", "true", "TRUE", " true "] {
+            assert!(
+                parse_allow_private(Some(affirmative)),
+                "{affirmative:?} must enable the private-network override"
+            );
+        }
+
+        for negative in ["0", "false", "FALSE", "", "banana", "2"] {
+            assert!(
+                !parse_allow_private(Some(negative)),
+                "{negative:?} must NOT enable the private-network override"
+            );
+        }
+
+        assert!(!parse_allow_private(None), "an unset variable must deny");
     }
 
-    if let Some(host) = url.host() {
-        match host {
-            url::Host::Ipv4(ip) => {
-                let ip_addr: IpAddr = ip.into();
-                if is_ip_denied(ip_addr) {
-                    return Err(format!("Access to private/internal IP address {} is not allowed", ip));
-                }
-            }
-            url::Host::Ipv6(ip) => {
-                let ip_addr: IpAddr = ip.into();
-                if is_ip_denied(ip_addr) {
-                    return Err(format!("Access to private/internal IPv6 address {} is not allowed", ip));
-                }
-            }
-            url::Host::Domain(domain) => {
-                let lower_domain = domain.to_lowercase();
-
-                // ~keep Block localhost names before DNS to close rebinding gaps between validation and request time.
-                if lower_domain == "localhost" || lower_domain.ends_with(".localhost") {
-                    return Err(format!("Localhost rebinding attack blocked: {}", domain));
-                }
-
-                // ~keep Literal IP string checks are redundant here because typed IP hosts hit the range checks above.
-            }
+    #[tokio::test]
+    async fn default_validator_denies_private_and_metadata_addresses() {
+        for denied in [
+            "http://127.0.0.1/",
+            "http://10.1.2.3/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://[fc00::1]/",
+        ] {
+            assert!(
+                validate(denied, true).await.is_err(),
+                "{denied} must be denied by the default validator"
+            );
         }
     }
 
-    Ok(())
+    #[tokio::test]
+    async fn default_validator_permits_public_addresses() {
+        validate("http://1.1.1.1/", true)
+            .await
+            .expect("a public address must be permitted");
+    }
+
+    #[tokio::test]
+    async fn default_validator_denies_localhost_by_name() {
+        for denied in ["http://localhost/", "http://api.localhost/"] {
+            assert!(
+                validate(denied, true).await.is_err(),
+                "{denied} must be blocked before resolution"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_denies_non_http_schemes_even_when_private_is_allowed() {
+        // ~keep The old code returned Ok early on the env override, which also
+        // re-enabled every non-http scheme.
+        for denied in ["ftp://example.com/", "file:///etc/passwd", "gopher://example.com/"] {
+            assert!(
+                validate(denied, false).await.is_err(),
+                "{denied} must be denied on scheme regardless of the private-network override"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn allowing_private_networks_permits_loopback() {
+        validate("http://127.0.0.1/", false)
+            .await
+            .expect("loopback must be permitted when private networks are allowed");
+    }
+
+    #[test]
+    fn deny_net_cidrs_all_parse() {
+        assert_eq!(
+            DEFAULT_DENY_NETS.len(),
+            DEFAULT_DENY_NET_CIDRS.len(),
+            "every exported CIDR string must parse into the deny-list"
+        );
+    }
 }

@@ -118,6 +118,8 @@ async fn native_browser_fetch_inner(
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
+        ssrf: None,
+        allow_file_access: false,
     };
 
     let timeout = config.browser.timeout;

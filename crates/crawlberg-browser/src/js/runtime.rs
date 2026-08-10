@@ -40,10 +40,27 @@ impl BrowserJsRuntime {
     /// through `proxy_url` (#139). `None` is equivalent to `with_base_url`
     /// (direct connection).
     pub fn with_base_url_and_proxy(base_url: &str, proxy_url: Option<String>) -> Self {
+        Self::with_base_url_proxy_and_ssrf(
+            base_url,
+            proxy_url,
+            std::sync::Arc::new(crate::net::ssrf::DefaultSsrfValidator::from_env()),
+        )
+    }
+
+    /// Construct a runtime whose module loader *and* op state both carry `ssrf`.
+    ///
+    /// The module loader is built here, so a validator set afterwards via
+    /// [`Self::set_ssrf_validator`] would not reach dynamic `import()`.
+    pub fn with_base_url_proxy_and_ssrf(
+        base_url: &str,
+        proxy_url: Option<String>,
+        ssrf: std::sync::Arc<dyn crate::net::ssrf::SsrfValidator>,
+    ) -> Self {
         let state = Rc::new(RefCell::new(JsOpState::new()));
+        state.borrow_mut().ssrf = ssrf.clone();
         let state_clone = state.clone();
 
-        let module_loader = Rc::new(BrowserModuleLoader::with_proxy(base_url, proxy_url));
+        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf));
 
         let mut runtime = JsRuntime::new(RuntimeOptions {
             extensions: vec![build_extension()],
@@ -76,6 +93,14 @@ impl BrowserJsRuntime {
 
     pub fn set_http_client(&self, client: std::sync::Arc<crate::net::HttpClient>) {
         self.state.borrow_mut().http_client = Some(client);
+    }
+
+    /// Apply an SSRF policy to page-initiated `fetch`/XHR and dynamic `import()`.
+    ///
+    /// The JS bridge builds its own HTTP client, so it does not inherit the policy set
+    /// on [`crate::net::HttpClient`] and must be told separately.
+    pub fn set_ssrf_validator(&self, validator: std::sync::Arc<dyn crate::net::ssrf::SsrfValidator>) {
+        self.state.borrow_mut().ssrf = validator;
     }
 
     pub fn set_dom(&self, dom: DomTree) {

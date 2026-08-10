@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 
 use deno_core::ModuleLoadOptions;
 use deno_core::ModuleLoadReferrer;
@@ -9,12 +10,17 @@ use deno_core::ModuleSourceCode;
 use deno_core::ModuleSpecifier;
 use deno_core::error::ModuleLoaderError;
 
+use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
+
 pub struct BrowserModuleLoader {
     pub base_url: String,
     /// Proxy URL threaded through to every dynamic ES-module fetch (#139).
     /// `None` keeps the pre-#139 direct-connection behaviour for callers
     /// that haven't been updated.
     pub proxy_url: Option<String>,
+    /// SSRF policy applied to every dynamic `import()`. Page JS chooses these URLs,
+    /// so they are as untrusted as any other page-initiated fetch.
+    pub ssrf: Arc<dyn SsrfValidator>,
 }
 
 impl BrowserModuleLoader {
@@ -23,9 +29,14 @@ impl BrowserModuleLoader {
     }
 
     pub fn with_proxy(base_url: &str, proxy_url: Option<String>) -> Self {
+        Self::with_ssrf(base_url, proxy_url, Arc::new(DefaultSsrfValidator::from_env()))
+    }
+
+    pub fn with_ssrf(base_url: &str, proxy_url: Option<String>, ssrf: Arc<dyn SsrfValidator>) -> Self {
         BrowserModuleLoader {
             base_url: base_url.to_string(),
             proxy_url,
+            ssrf,
         }
     }
 }
@@ -58,8 +69,15 @@ impl ModuleLoader for BrowserModuleLoader {
     ) -> ModuleLoadResponse {
         let url = module_specifier.to_string();
         let proxy_url = self.proxy_url.clone();
+        let ssrf = self.ssrf.clone();
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {
+            let parsed =
+                ModuleSpecifier::parse(&url).map_err(|e| io_err(format!("Invalid module URL {}: {}", url, e)))?;
+            ssrf.validate(&parsed)
+                .await
+                .map_err(|e| io_err(format!("Module {} blocked by SSRF policy: {}", url, e)))?;
+
             let mut builder = reqwest::Client::builder();
             if let Some(ref proxy) = proxy_url {
                 match reqwest::Proxy::all(proxy) {

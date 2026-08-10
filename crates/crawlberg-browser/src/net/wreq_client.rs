@@ -16,6 +16,8 @@ use url::Url;
 use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
 use crate::net::cookies::CookieJar;
+#[cfg(feature = "stealth")]
+use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 #[cfg(feature = "stealth")]
 pub const STEALTH_USER_AGENT: &str =
@@ -24,6 +26,8 @@ pub const STEALTH_USER_AGENT: &str =
 #[cfg(feature = "stealth")]
 pub struct StealthHttpClient {
     client: wreq::Client,
+    /// SSRF policy applied to the initial URL and every redirect hop.
+    pub ssrf: Arc<dyn SsrfValidator>,
     pub cookie_jar: Arc<CookieJar>,
     pub extra_headers: RwLock<HashMap<String, String>>,
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
@@ -36,6 +40,11 @@ impl StealthHttpClient {
     }
 
     pub fn with_proxy(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Self {
+        Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()))
+    }
+
+    /// Build a stealth client with an explicit SSRF policy.
+    pub fn with_ssrf(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>, ssrf: Arc<dyn SsrfValidator>) -> Self {
         let cert_store = wreq::tls::trust::CertStore::builder()
             .set_default_paths()
             .build()
@@ -62,6 +71,7 @@ impl StealthHttpClient {
 
         StealthHttpClient {
             client,
+            ssrf,
             cookie_jar,
             extra_headers: RwLock::new(HashMap::new()),
             in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -69,6 +79,8 @@ impl StealthHttpClient {
     }
 
     pub async fn fetch(&self, url: &Url) -> Result<Response, NetError> {
+        self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)?;
+
         let mut current_url = url.clone();
         let mut redirects = Vec::new();
 
@@ -114,6 +126,9 @@ impl StealthHttpClient {
                 let next_url = current_url
                     .join(location_str)
                     .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))?;
+                // ~keep Re-validate every hop: the first URL being permitted says
+                // nothing about where a redirect chain ends up.
+                self.ssrf.validate(&next_url).await.map_err(NetError::SsrfDenied)?;
                 redirects.push(current_url.clone());
                 current_url = next_url;
                 continue;

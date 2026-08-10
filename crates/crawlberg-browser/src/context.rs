@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient, RobotsCache};
 
 pub struct BrowserContext {
@@ -42,8 +43,27 @@ impl BrowserContext {
     }
 
     pub fn with_full_options(id: String, proxy_url: Option<String>, stealth: bool, user_agent: Option<String>) -> Self {
+        Self::with_ssrf(
+            id,
+            proxy_url,
+            stealth,
+            user_agent,
+            Arc::new(DefaultSsrfValidator::from_env()),
+            false,
+        )
+    }
+
+    /// Build a context whose HTTP client, stealth client and JS realm all share `ssrf`.
+    pub fn with_ssrf(
+        id: String,
+        proxy_url: Option<String>,
+        stealth: bool,
+        user_agent: Option<String>,
+        ssrf: Arc<dyn SsrfValidator>,
+        allow_file_access: bool,
+    ) -> Self {
         let cookie_jar = Arc::new(CookieJar::new());
-        let client = HttpClient::with_options(cookie_jar.clone(), proxy_url.as_deref());
+        let client = HttpClient::with_ssrf(cookie_jar.clone(), proxy_url.as_deref(), ssrf, allow_file_access);
         let resolved_ua = user_agent.unwrap_or_else(|| {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
                 .to_string()
@@ -62,7 +82,7 @@ impl BrowserContext {
             robots_cache: Arc::new(RobotsCache::new()),
             obey_robots: false,
             stealth,
-            allow_file_access: false,
+            allow_file_access,
         }
     }
 
