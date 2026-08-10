@@ -530,7 +530,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match scrape(&handle, &url).await {
                 Ok(result) => {
                     if format == "markdown" {
@@ -591,7 +597,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
 
             if urls.len() == 1 {
                 match crawl(&handle, &urls[0]).await {
@@ -649,7 +661,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match map_urls(&handle, &url).await {
                 Ok(result) => {
                     if format == "markdown" {
@@ -697,7 +715,13 @@ async fn main() {
                 }
             };
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match interact(&handle, &url, parsed_actions).await {
                 Ok(result) => {
                     if format == "markdown" {
@@ -747,7 +771,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match batch_scrape(&handle, urls).await {
                 Ok(results) => print_batch_scrape(&results, &format),
                 Err(e) => {
@@ -798,7 +828,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match batch_crawl(&handle, urls).await {
                 Ok(results) => print_batch_crawl(&results, &format),
                 Err(e) => {
@@ -831,7 +867,13 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let handle = create_engine(Some(config)).expect("failed to create crawl engine");
+            let handle = match create_engine(Some(config)) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to create crawl engine: {e}");
+                    std::process::exit(1);
+                }
+            };
             match scrape(&handle, &url).await {
                 Ok(result) => {
                     let output = if let Some(ref doc) = result.downloaded_document {
