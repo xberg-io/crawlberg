@@ -154,7 +154,10 @@ impl CrawlbergMcp {
 
         validate_url(&params.url)?;
 
-        let config = self.config.clone();
+        let mut config = self.config.clone();
+        if let Some(true) = params.only_main_content {
+            config.content.preprocessing_preset = "aggressive".to_owned();
+        }
 
         #[cfg(feature = "browser")]
         let config = {
@@ -720,7 +723,9 @@ pub async fn start_mcp_server_with_config(config: CrawlConfig) -> Result<(), Box
 /// # Errors
 ///
 /// Returns an error if `host` is not a valid IP address, the address cannot be
-/// bound, or the server encounters a fatal error while running.
+/// bound, requires authentication that isn't configured (see
+/// [`mcp_http_allow_insecure_bind`]), or the server encounters a fatal error
+/// while running.
 #[cfg(feature = "mcp-http")]
 pub async fn start_mcp_http_server(
     host: &str,
@@ -732,9 +737,30 @@ pub async fn start_mcp_http_server(
     let ip: IpAddr = host
         .parse()
         .map_err(|e| format!("invalid host address '{host}': {e}"))?;
-    let addr = SocketAddr::new(ip, port);
 
-    let app = axum::Router::new().nest_service("/mcp", streamable_http_service(config));
+    // ~keep This is a second, independent HTTP listener alongside the REST API
+    // ~keep (see `api::startup::ensure_bind_is_safe` for the same policy there):
+    // ~keep an unauthenticated crawler reachable from the network is an abuse
+    // ~keep vector, so a non-loopback bind requires a token or an explicit opt-out.
+    let auth_token = mcp_http_auth_token();
+    if auth_token.is_none() && !ip.is_loopback() && !mcp_http_allow_insecure_bind() {
+        return Err(format!(
+            "refusing to bind {ip} without authentication: set {token_env}, bind to a loopback \
+             address (127.0.0.1/::1), or set {allow_env}=1 to explicitly opt out",
+            token_env = crate::api::AUTH_TOKEN_ENV,
+            allow_env = crate::api::ALLOW_INSECURE_BIND_ENV,
+        )
+        .into());
+    }
+
+    let addr = SocketAddr::new(ip, port);
+    let mut app = axum::Router::new().nest_service("/mcp", streamable_http_service(config));
+    if let Some(token) = auth_token {
+        app = app.layer(axum::middleware::from_fn(move |req, next| {
+            let token = token.clone();
+            require_mcp_bearer_token(token, req, next)
+        }));
+    }
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -742,6 +768,47 @@ pub async fn start_mcp_http_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Read [`crate::api::AUTH_TOKEN_ENV`] for the standalone MCP HTTP transport.
+/// Shares the same env var (and hence the same credential) as the REST API's
+/// auth, since both are HTTP surfaces exposing the same crawl engine.
+#[cfg(feature = "mcp-http")]
+fn mcp_http_auth_token() -> Option<std::sync::Arc<str>> {
+    std::env::var(crate::api::AUTH_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.is_empty())
+        .map(std::sync::Arc::from)
+}
+
+/// Read [`crate::api::ALLOW_INSECURE_BIND_ENV`]. Accepts `1` or `true` (case-insensitive).
+#[cfg(feature = "mcp-http")]
+fn mcp_http_allow_insecure_bind() -> bool {
+    std::env::var(crate::api::ALLOW_INSECURE_BIND_ENV)
+        .map(|value| value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Enforce the configured bearer token on every request to the standalone MCP
+/// HTTP transport (`crawlberg mcp --http`), mirroring the REST API's check.
+#[cfg(feature = "mcp-http")]
+async fn require_mcp_bearer_token(
+    token: std::sync::Arc<str>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let provided = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+
+    match provided {
+        Some(candidate) if candidate.as_bytes() == token.as_bytes() => next.run(req).await,
+        _ => (axum::http::StatusCode::UNAUTHORIZED, "missing or invalid bearer token").into_response(),
+    }
 }
 
 /// Concrete type of the Streamable HTTP MCP service produced by

@@ -205,3 +205,78 @@ async fn http_mcp_task_augmentation_degrades_to_inline() {
         "inline result must carry the get_version output: {value}"
     );
 }
+
+/// Error taxonomy boundary case: a malformed client request (bad URL scheme)
+/// must surface as JSON-RPC `INVALID_PARAMS` (-32602), not `INTERNAL_ERROR`
+/// (-32603). Proven end-to-end through the real HTTP/JSON-RPC pipeline, not
+/// just the internal mapping function.
+#[tokio::test]
+async fn http_mcp_rejects_malformed_scrape_url_as_invalid_params() {
+    let app = app();
+    initialize(&app).await;
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "scrape", "arguments": { "url": "not-a-url" } },
+    })
+    .to_string();
+    let (status, _headers, response) = post(&app, &body).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "JSON-RPC errors are still transported over HTTP 200"
+    );
+
+    let value = json_rpc_result(&response);
+    assert_eq!(
+        value["error"]["code"],
+        serde_json::json!(-32602),
+        "a malformed url must be INVALID_PARAMS, not INTERNAL_ERROR: {value}"
+    );
+}
+
+/// Error taxonomy boundary case: an unknown tool name must not be reported as
+/// an internal server error.
+#[tokio::test]
+async fn http_mcp_unknown_tool_name_is_not_internal_error() {
+    let app = app();
+    initialize(&app).await;
+
+    let body = tools_call_body(2, "not_a_real_tool", serde_json::json!({}));
+    let (status, _headers, response) = post(&app, &body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let value = json_rpc_result(&response);
+    let code = value["error"]["code"].as_i64().unwrap_or(0);
+    assert_ne!(
+        code, -32603,
+        "an unknown tool name must not surface as INTERNAL_ERROR: {value}"
+    );
+}
+
+/// Error taxonomy boundary case: an out-of-range `max_pages` must be rejected
+/// as a client request problem, not executed or reported as an internal error.
+#[tokio::test]
+async fn http_mcp_crawl_rejects_zero_max_pages_as_invalid_params() {
+    let app = app();
+    initialize(&app).await;
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "crawl", "arguments": { "url": "https://example.com", "max_pages": 0 } },
+    })
+    .to_string();
+    let (status, _headers, response) = post(&app, &body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let value = json_rpc_result(&response);
+    assert_eq!(
+        value["error"]["code"],
+        serde_json::json!(-32602),
+        "max_pages: 0 must be rejected as INVALID_PARAMS: {value}"
+    );
+}

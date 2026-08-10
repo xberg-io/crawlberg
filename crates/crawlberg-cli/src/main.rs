@@ -458,7 +458,14 @@ enum Commands {
     },
     /// Print the crawlberg version as JSON
     Version {},
-    /// Start the REST API server
+    /// Start the REST API server.
+    ///
+    /// Unauthenticated by default. Set CRAWLBERG_API_TOKEN to require a bearer
+    /// token on every request except /health. Binding a non-loopback --host
+    /// (the "0.0.0.0" default included) without a token refuses to start;
+    /// set CRAWLBERG_API_ALLOW_INSECURE=1 to explicitly opt out. See also
+    /// CRAWLBERG_API_CORS_ORIGINS, CRAWLBERG_API_MAX_PAGES,
+    /// CRAWLBERG_API_MAX_BATCH_URLS, and CRAWLBERG_API_MAX_CONCURRENT_JOBS.
     #[cfg(feature = "api")]
     Serve {
         /// Host address to bind to
@@ -468,7 +475,11 @@ enum Commands {
         #[arg(long, default_value = "3000")]
         port: u16,
     },
-    /// Start the MCP server (stdio transport by default)
+    /// Start the MCP server (stdio transport by default).
+    ///
+    /// In --http mode, the same CRAWLBERG_API_TOKEN / CRAWLBERG_API_ALLOW_INSECURE
+    /// env vars documented on `serve` apply: a non-loopback --host without a
+    /// token refuses to start.
     #[cfg(feature = "mcp")]
     Mcp {
         /// Serve over Streamable HTTP at `/mcp` instead of stdio

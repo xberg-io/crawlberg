@@ -16,6 +16,9 @@ pub struct ScrapeParams {
     /// Force browser rendering instead of HTTP fetch
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_browser: Option<bool>,
+    /// Whether to extract only the main content of the page
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_main_content: Option<bool>,
 }
 
 /// Request parameters for multi-page crawling.
@@ -141,6 +144,7 @@ mod tests {
         assert_eq!(params.url, "https://example.com");
         assert_eq!(params.format, None);
         assert_eq!(params.use_browser, None);
+        assert_eq!(params.only_main_content, None);
     }
 
     #[test]

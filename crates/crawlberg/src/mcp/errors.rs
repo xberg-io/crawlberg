@@ -8,9 +8,14 @@ use rmcp::ErrorData as McpError;
 /// Map CrawlError variants to MCP error responses with appropriate error codes.
 ///
 /// This function ensures different error types are properly differentiated in MCP responses:
-/// - `InvalidConfig` → `INVALID_PARAMS` (-32602)
-/// - Network/connection errors → `INTERNAL_ERROR` (-32603) with descriptive context
-/// - All other errors → `INTERNAL_ERROR` (-32603)
+/// - `InvalidConfig`, `Unsupported`, `SsrfPolicyViolation` → `INVALID_PARAMS` (-32602): the
+///   caller's request itself is malformed or policy-rejected.
+/// - `NotFound`, `Gone` → `RESOURCE_NOT_FOUND` (-32002): the target resource does not (or no
+///   longer) exists. This is the JSON-RPC/MCP-reserved code for exactly this case, distinct
+///   from a generic server failure.
+/// - Everything else (upstream auth/rate-limit/server responses, transport/browser failures) →
+///   `INTERNAL_ERROR` (-32603): the request was well-formed but execution failed for a reason
+///   the caller cannot resolve by changing their input.
 ///
 /// The error message is preserved to aid debugging.
 #[doc(hidden)]
@@ -18,7 +23,7 @@ pub fn map_crawl_error(error: CrawlError) -> McpError {
     match error {
         CrawlError::InvalidConfig(msg) => McpError::invalid_params(format!("Invalid configuration: {msg}"), None),
 
-        CrawlError::NotFound(msg) => McpError::internal_error(format!("Not found: {msg}"), None),
+        CrawlError::NotFound(msg) => McpError::resource_not_found(format!("Not found: {msg}"), None),
 
         CrawlError::Unauthorized(msg) => McpError::internal_error(format!("Unauthorized: {msg}"), None),
 
@@ -36,7 +41,7 @@ pub fn map_crawl_error(error: CrawlError) -> McpError {
 
         CrawlError::BadGateway(msg) => McpError::internal_error(format!("Bad gateway: {msg}"), None),
 
-        CrawlError::Gone(msg) => McpError::internal_error(format!("Resource gone: {msg}"), None),
+        CrawlError::Gone(msg) => McpError::resource_not_found(format!("Resource gone: {msg}"), None),
 
         CrawlError::Connection(msg) => McpError::internal_error(format!("Connection error: {msg}"), None),
 
@@ -75,12 +80,77 @@ mod tests {
     }
 
     #[test]
-    fn test_map_not_found_to_internal_error() {
+    fn test_map_not_found_to_resource_not_found() {
         let error = CrawlError::NotFound("https://example.com/missing".to_string());
         let mcp_error = map_crawl_error(error);
 
-        assert_eq!(mcp_error.code.0, -32603);
+        assert_eq!(
+            mcp_error.code.0, -32002,
+            "NotFound must map to the RESOURCE_NOT_FOUND code, got {}",
+            mcp_error.code.0
+        );
         assert!(mcp_error.message.contains("Not found"));
+    }
+
+    #[test]
+    fn test_map_gone_to_resource_not_found() {
+        let error = CrawlError::Gone("https://example.com/retired".to_string());
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(
+            mcp_error.code.0, -32002,
+            "Gone must map to the RESOURCE_NOT_FOUND code, got {}",
+            mcp_error.code.0
+        );
+        assert!(mcp_error.message.contains("Resource gone"));
+    }
+
+    #[test]
+    fn test_map_unauthorized_to_internal_error() {
+        let error = CrawlError::Unauthorized("no credentials".to_string());
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(
+            mcp_error.code.0, -32603,
+            "Unauthorized is an upstream condition, not a malformed request"
+        );
+    }
+
+    #[test]
+    fn test_map_rate_limited_to_internal_error() {
+        let error = CrawlError::RateLimited("too many requests".to_string());
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(
+            mcp_error.code.0, -32603,
+            "RateLimited is an upstream condition, not a malformed request"
+        );
+    }
+
+    #[test]
+    fn test_map_unsupported_to_invalid_params() {
+        let error = CrawlError::Unsupported("feature X".to_string());
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(
+            mcp_error.code.0, -32602,
+            "Unsupported reflects a caller request we cannot fulfil"
+        );
+    }
+
+    #[test]
+    fn test_map_ssrf_policy_violation_to_invalid_params() {
+        let error = CrawlError::SsrfPolicyViolation {
+            url: "http://169.254.169.254/".to_string(),
+            reason: "link-local address blocked".to_string(),
+        };
+        let mcp_error = map_crawl_error(error);
+
+        assert_eq!(
+            mcp_error.code.0, -32602,
+            "SsrfPolicyViolation rejects the caller-supplied URL"
+        );
+        assert!(mcp_error.message.contains("169.254.169.254"));
     }
 
     #[test]

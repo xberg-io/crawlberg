@@ -130,6 +130,17 @@ impl JobRegistry {
         self.jobs.retain(|_, state| state.created_at().elapsed() < max_age);
     }
 
+    /// Count jobs that are still active (`Pending` or `InProgress`).
+    ///
+    /// Used to enforce a hard ceiling on concurrently running crawl/batch jobs
+    /// before a new one is accepted.
+    pub fn active_count(&self) -> usize {
+        self.jobs
+            .iter()
+            .filter(|entry| matches!(entry.value(), JobState::Pending { .. } | JobState::InProgress { .. }))
+            .count()
+    }
+
     /// Spawn a background task that periodically evicts expired jobs.
     ///
     /// The task runs every 60 seconds and removes jobs older than `max_age`.
@@ -147,5 +158,54 @@ impl JobRegistry {
 impl Default for JobRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_count_counts_only_pending_and_in_progress_jobs() {
+        let registry = JobRegistry::new();
+        let pending = registry.create_job();
+        let in_progress = registry.create_job();
+        let completed = registry.create_job();
+        let failed = registry.create_job();
+
+        registry.update(
+            &in_progress,
+            JobState::InProgress {
+                pages_completed: 1,
+                created_at: Instant::now(),
+            },
+        );
+        registry.update(
+            &completed,
+            JobState::CrawlCompleted {
+                result: Box::new(CrawlResult::default()),
+                created_at: Instant::now(),
+            },
+        );
+        registry.update(
+            &failed,
+            JobState::Failed {
+                message: "boom".to_string(),
+                created_at: Instant::now(),
+            },
+        );
+
+        assert_eq!(
+            registry.active_count(),
+            2,
+            "expected only the pending and in-progress jobs to count as active"
+        );
+
+        registry.cancel(&pending);
+        assert_eq!(
+            registry.active_count(),
+            1,
+            "cancelling the pending job must drop it from active_count"
+        );
     }
 }

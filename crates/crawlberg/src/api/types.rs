@@ -56,6 +56,9 @@ pub struct CrawlRequest {
     /// Whether to extract only the main content.
     #[serde(default)]
     pub only_main_content: Option<bool>,
+    /// Whether to restrict crawling to the same domain as the seed URL.
+    #[serde(default)]
+    pub stay_on_domain: Option<bool>,
 }
 
 /// Request body for `POST /v1/map`.
@@ -73,6 +76,9 @@ pub struct MapRequest {
     /// Filter URLs by search term.
     #[serde(default)]
     pub search: Option<String>,
+    /// Whether to respect robots.txt directives while discovering URLs.
+    #[serde(default)]
+    pub respect_robots_txt: Option<bool>,
 }
 
 /// Request body for `POST /v1/batch/scrape`.
@@ -89,6 +95,9 @@ pub struct BatchScrapeRequest {
     /// Whether to extract only the main content.
     #[serde(default)]
     pub only_main_content: Option<bool>,
+    /// Maximum number of URLs to scrape concurrently.
+    #[serde(default)]
+    pub concurrency: Option<usize>,
 }
 
 /// Request body for `POST /v1/download`.

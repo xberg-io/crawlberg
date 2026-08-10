@@ -27,3 +27,11 @@ mod state;
 mod types;
 
 pub use startup::serve_with_config;
+
+// ~keep Re-exported (only under `mcp-http`, its sole consumer) so
+// ~keep `mcp::server::start_mcp_http_server` (a second, independent HTTP listener
+// ~keep that feature implies `api` for) can read the same env var names for its own
+// ~keep auth/bind-safety check rather than duplicating the literals and risking the
+// ~keep two auth surfaces drifting apart.
+#[cfg(feature = "mcp-http")]
+pub(crate) use state::{ALLOW_INSECURE_BIND_ENV, AUTH_TOKEN_ENV};

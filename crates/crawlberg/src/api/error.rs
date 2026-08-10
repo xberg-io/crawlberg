@@ -40,6 +40,18 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", message)
     }
 
+    /// Create a 401 Unauthorized error, for requests missing or presenting an
+    /// invalid bearer token when authentication is enabled.
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message)
+    }
+
+    /// Create a 429 Too Many Requests error, for requests rejected by a
+    /// server-side resource ceiling (e.g. the concurrent job limit).
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", message)
+    }
+
     /// Create a 500 Internal Server Error.
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "SERVER_ERROR", message)

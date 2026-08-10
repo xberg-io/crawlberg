@@ -1,6 +1,7 @@
 //! API request handlers.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Json,
@@ -67,6 +68,82 @@ fn validate_url(url: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Reject a `max_pages` value that is zero or exceeds the server's configured ceiling,
+/// instead of accepting it and letting the crawl run unbounded (or fail deep inside the engine).
+fn validate_max_pages(pages: usize, ceiling: usize) -> Result<(), ApiError> {
+    if pages == 0 || pages > ceiling {
+        return Err(ApiError::bad_request(format!(
+            "max_pages must be between 1 and {ceiling} (got {pages})"
+        )));
+    }
+    Ok(())
+}
+
+/// Reject new job creation once the server is at its concurrent job ceiling,
+/// rather than silently queuing unbounded background work.
+fn ensure_job_capacity(state: &ApiState) -> Result<(), ApiError> {
+    let active = state.jobs.active_count();
+    let ceiling = state.security.max_concurrent_jobs;
+    if active >= ceiling {
+        return Err(ApiError::too_many_requests(format!(
+            "server is at its concurrent job ceiling ({active}/{ceiling}); retry later"
+        )));
+    }
+    Ok(())
+}
+
+/// Top-level `ScrapeResult` fields selectable via a request's `formats` array.
+/// Any other value is rejected at the boundary rather than silently ignored.
+const SELECTABLE_SCRAPE_FIELDS: &[&str] = &["markdown", "html", "links", "images", "metadata", "json_ld"];
+
+/// Response fields always kept when filtering by `formats`, since they are
+/// response bookkeeping rather than selectable page content.
+const ALWAYS_KEPT_SCRAPE_FIELDS: &[&str] = &["status_code", "final_url", "content_type", "body_size"];
+
+/// Validate a `formats` array against [`SELECTABLE_SCRAPE_FIELDS`].
+fn validate_formats(formats: &[String]) -> Result<(), ApiError> {
+    for format in formats {
+        if !SELECTABLE_SCRAPE_FIELDS.contains(&format.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "unsupported format `{format}`; expected one of {SELECTABLE_SCRAPE_FIELDS:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Restrict a serialized `ScrapeResult` object to the requested `formats` (plus
+/// [`ALWAYS_KEPT_SCRAPE_FIELDS`]). A `None` `formats` leaves the value untouched,
+/// preserving the historical full-object response for callers that don't opt in.
+fn filter_scrape_formats(value: &mut serde_json::Value, formats: &Option<Vec<String>>) {
+    let Some(formats) = formats else { return };
+    let Some(object) = value.as_object_mut() else { return };
+    object.retain(|key, _| ALWAYS_KEPT_SCRAPE_FIELDS.contains(&key.as_str()) || formats.iter().any(|f| f == key));
+}
+
+/// Apply `ScrapeRequest` overrides that have a corresponding engine config knob,
+/// and reject overrides that don't (`include_tags` has no engine-side equivalent
+/// today) rather than silently accepting and ignoring them.
+fn apply_scrape_overrides(config: &mut CrawlConfig, req: &ScrapeRequest) -> Result<(), ApiError> {
+    if let Some(ref tags) = req.include_tags
+        && !tags.is_empty()
+    {
+        return Err(ApiError::bad_request(
+            "include_tags is not supported by this server; omit it or use exclude_tags instead",
+        ));
+    }
+    if let Some(true) = req.only_main_content {
+        config.content.preprocessing_preset = "aggressive".to_owned();
+    }
+    if let Some(ref tags) = req.exclude_tags {
+        config.content.exclude_selectors.extend(tags.iter().cloned());
+    }
+    if let Some(timeout_ms) = req.timeout {
+        config.request_timeout = Duration::from_millis(timeout_ms);
+    }
+    Ok(())
+}
+
 /// `POST /v1/scrape`
 #[utoipa::path(
     post,
@@ -84,9 +161,18 @@ pub async fn scrape_handler(
     Json(req): Json<ScrapeRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
+    if let Some(ref formats) = req.formats {
+        validate_formats(formats)?;
+    }
 
-    let result = state.engine.scrape(&req.url).await?;
-    let value = serde_json::to_value(&result).map_err(|e| ApiError::internal(format!("serialization error: {e}")))?;
+    let mut config = state.engine.config.clone();
+    apply_scrape_overrides(&mut config, &req)?;
+    let engine = rebuild_engine_with_config(&state.engine, config)?;
+
+    let result = engine.scrape(&req.url).await?;
+    let mut value =
+        serde_json::to_value(&result).map_err(|e| ApiError::internal(format!("serialization error: {e}")))?;
+    filter_scrape_formats(&mut value, &req.formats);
 
     Ok(Json(ApiResponse::ok(value)))
 }
@@ -107,13 +193,30 @@ pub async fn crawl_handler(
     Json(req): Json<CrawlRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
+    if let Some(pages) = req.max_pages {
+        validate_max_pages(pages, state.security.max_pages_ceiling)?;
+    }
+    ensure_job_capacity(&state)?;
+
+    let mut config = state.engine.config.clone();
+    apply_crawl_overrides(&mut config, &req);
+    let crawl_engine = rebuild_engine_with_config(&state.engine, config)?;
 
     let job_id = state.jobs.create_job();
-    let jobs = state.jobs.clone();
-    let engine = state.engine.clone();
-    let url = req.url.clone();
+    spawn_crawl_job(job_id, state.jobs.clone(), crawl_engine, req.url.clone());
 
-    let mut config = engine.config.clone();
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(JobCreatedResponse {
+            success: true,
+            id: job_id.to_string(),
+        }),
+    ))
+}
+
+/// Apply `CrawlRequest` overrides to a crawl config. Mirrors the fields
+/// `scrape`/`map` honor so REST exposes the same crawl-shaping knobs consistently.
+fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) {
     if let Some(depth) = req.max_depth {
         config.max_depth = Some(depth);
     }
@@ -129,9 +232,14 @@ pub async fn crawl_handler(
     if let Some(ref excludes) = req.exclude_paths {
         config.exclude_paths = excludes.clone();
     }
+    if let Some(stay) = req.stay_on_domain {
+        config.stay_on_domain = stay;
+    }
+}
 
-    let crawl_engine = rebuild_engine_with_config(&engine, config)?;
-
+/// Spawn the background task that runs a crawl job to completion and records
+/// its result (or failure) in the job registry.
+fn spawn_crawl_job(job_id: Uuid, jobs: Arc<super::jobs::JobRegistry>, engine: crate::engine::CrawlEngine, url: String) {
     let created_at = std::time::Instant::now();
     tokio::spawn(async move {
         jobs.update(
@@ -142,7 +250,7 @@ pub async fn crawl_handler(
             },
         );
 
-        match crawl_engine.crawl(&url).await {
+        match engine.crawl(&url).await {
             Ok(result) => {
                 jobs.update(
                     &job_id,
@@ -163,14 +271,6 @@ pub async fn crawl_handler(
             }
         }
     });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(JobCreatedResponse {
-            success: true,
-            id: job_id.to_string(),
-        }),
-    ))
 }
 
 /// `GET /v1/crawl/{id}`
@@ -247,7 +347,14 @@ pub async fn map_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let mut result = state.engine.map(&req.url).await?;
+    let mut result = if let Some(respect_robots_txt) = req.respect_robots_txt {
+        let mut config = state.engine.config.clone();
+        config.respect_robots_txt = respect_robots_txt;
+        let engine = rebuild_engine_with_config(&state.engine, config)?;
+        engine.map(&req.url).await?
+    } else {
+        state.engine.map(&req.url).await?
+    };
 
     if let Some(ref search) = req.search {
         let term = search.to_lowercase();
@@ -281,12 +388,47 @@ pub async fn batch_scrape_handler(
     if req.urls.is_empty() {
         return Err(ApiError::bad_request("urls must not be empty"));
     }
+    if req.urls.len() > state.security.max_batch_urls {
+        return Err(ApiError::bad_request(format!(
+            "urls exceeds the server batch ceiling of {} URLs (got {})",
+            state.security.max_batch_urls,
+            req.urls.len()
+        )));
+    }
+    if let Some(ref formats) = req.formats {
+        validate_formats(formats)?;
+    }
+    ensure_job_capacity(&state)?;
+
+    let mut config = state.engine.config.clone();
+    if let Some(true) = req.only_main_content {
+        config.content.preprocessing_preset = "aggressive".to_owned();
+    }
+    if let Some(concurrency) = req.concurrency {
+        config.max_concurrent = Some(concurrency);
+    }
+    let engine = rebuild_engine_with_config(&state.engine, config)?;
 
     let job_id = state.jobs.create_job();
-    let jobs = state.jobs.clone();
-    let engine = state.engine.clone();
-    let urls = req.urls.clone();
+    spawn_batch_scrape_job(job_id, state.jobs.clone(), engine, req.urls.clone());
 
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(JobCreatedResponse {
+            success: true,
+            id: job_id.to_string(),
+        }),
+    ))
+}
+
+/// Spawn the background task that runs a batch scrape job to completion and
+/// records the combined results in the job registry.
+fn spawn_batch_scrape_job(
+    job_id: Uuid,
+    jobs: Arc<super::jobs::JobRegistry>,
+    engine: crate::engine::CrawlEngine,
+    urls: Vec<String>,
+) {
     let created_at = std::time::Instant::now();
     tokio::spawn(async move {
         jobs.update(
@@ -313,14 +455,6 @@ pub async fn batch_scrape_handler(
             },
         );
     });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(JobCreatedResponse {
-            success: true,
-            id: job_id.to_string(),
-        }),
-    ))
 }
 
 /// `GET /v1/batch/scrape/{id}`
@@ -369,7 +503,15 @@ pub async fn download_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let result = state.engine.scrape(&req.url).await?;
+    let result = if let Some(max_size) = req.max_size {
+        let mut config = state.engine.config.clone();
+        config.download_documents = true;
+        config.document_max_size = Some(max_size);
+        let engine = rebuild_engine_with_config(&state.engine, config)?;
+        engine.scrape(&req.url).await?
+    } else {
+        state.engine.scrape(&req.url).await?
+    };
 
     let value = serde_json::to_value(&result).map_err(|e| ApiError::internal(format!("serialization error: {e}")))?;
 
