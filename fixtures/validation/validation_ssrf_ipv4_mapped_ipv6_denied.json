@@ -1,0 +1,31 @@
+{
+	"id": "validation_ssrf_ipv4_mapped_ipv6_denied",
+	"description": "SSRF policy rejects an IPv4 loopback address embedded in an IPv6 literal",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-ssrf-ipv4-mapped-ipv6-denied",
+		"title": "SSRF policy rejects an IPv4 loopback address embedded in an IPv6 literal"
+	},
+	"tags": ["validation", "ssrf", "ipv6"],
+	"skip": {
+		"languages": [],
+		"reason": "Suite-wide CRAWLBERG_ALLOW_PRIVATE_NETWORK=true overrides deny_private after config deserialization. Behavior is covered by Rust unit tests in crates/crawlberg/src/net/ssrf.rs."
+	},
+	"input": {
+		"url": "http://[::ffff:127.0.0.1]/",
+		"config": {
+			"ssrf": {
+				"deny_private": true
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "error"
+		},
+		{
+			"type": "error",
+			"value": "ssrf_policy_violation"
+		}
+	]
+}

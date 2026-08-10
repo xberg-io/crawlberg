@@ -1,0 +1,31 @@
+{
+	"id": "validation_ssrf_nat64_loopback_denied",
+	"description": "SSRF policy rejects an IPv4 loopback address embedded in the well-known NAT64 prefix",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-ssrf-nat64-loopback-denied",
+		"title": "SSRF policy rejects an IPv4 loopback address embedded in the well-known NAT64 prefix"
+	},
+	"tags": ["validation", "ssrf", "ipv6", "nat64"],
+	"skip": {
+		"languages": [],
+		"reason": "Suite-wide CRAWLBERG_ALLOW_PRIVATE_NETWORK=true overrides deny_private after config deserialization. Behavior is covered by Rust unit tests in crates/crawlberg/src/net/ssrf.rs."
+	},
+	"input": {
+		"url": "http://[64:ff9b::7f00:1]/",
+		"config": {
+			"ssrf": {
+				"deny_private": true
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "error"
+		},
+		{
+			"type": "error",
+			"value": "ssrf_policy_violation"
+		}
+	]
+}

@@ -1,0 +1,50 @@
+{
+	"id": "validation_ssrf_allowlisted_loopback",
+	"description": "SSRF allowlist permits a loopback mock server while private-network protection remains enabled",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-ssrf-allowlisted-loopback",
+		"title": "SSRF allowlist permits a loopback mock server while private-network protection remains enabled"
+	},
+	"tags": ["validation", "ssrf", "allowlist"],
+	"skip": {
+		"languages": [],
+		"reason": "Suite-wide CRAWLBERG_ALLOW_PRIVATE_NETWORK=true overrides deny_private after config deserialization, so this cannot prove the allowlist until that override is removed."
+	},
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html"
+				},
+				"body_inline": "<html><head><title>Allowlisted</title></head><body>SSRF allowlist</body></html>"
+			}
+		],
+		"config": {
+			"respect_robots_txt": false,
+			"ssrf": {
+				"deny_private": true,
+				"allowlist": [
+					{
+						"type": "cidr",
+						"value": "127.0.0.0/8"
+					}
+				],
+				"max_redirects": 5
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "status_code",
+			"value": 200
+		},
+		{
+			"type": "equals",
+			"field": "metadata.title",
+			"value": "Allowlisted"
+		}
+	]
+}

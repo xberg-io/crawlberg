@@ -85,6 +85,7 @@
 						"max_depth": { "type": "integer", "minimum": 0 },
 						"max_pages": { "type": "integer", "minimum": 1 },
 						"respect_robots_txt": { "type": "boolean" },
+						"soft_http_errors": { "type": "boolean" },
 						"request_timeout": {
 							"type": "integer",
 							"minimum": 0,
@@ -106,6 +107,7 @@
 						"max_redirects": { "type": "integer", "minimum": 0 },
 						"max_body_size": { "type": "integer", "minimum": 0, "description": "Max body size in bytes" },
 						"max_concurrent": { "type": "integer", "minimum": 1 },
+						"rate_limit_ms": { "type": "integer", "minimum": 0 },
 						"custom_headers": { "type": "object", "additionalProperties": { "type": "string" } },
 						"cookies_enabled": { "type": "boolean" },
 						"auth": {
@@ -147,6 +149,26 @@
 						"content": { "type": "object", "description": "Content extraction configuration" },
 						"map_search": { "type": "string", "description": "Search keyword filter for map results" },
 						"map_limit": { "type": "integer", "minimum": 1, "description": "Limit number of map results" },
+						"download_assets": { "type": "boolean" },
+						"asset_types": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"enum": [
+									"document",
+									"image",
+									"audio",
+									"video",
+									"font",
+									"stylesheet",
+									"script",
+									"archive",
+									"data",
+									"other"
+								]
+							}
+						},
+						"max_asset_size": { "type": "integer", "minimum": 0 },
 						"browser": {
 							"type": "object",
 							"description": "Browser config for headless rendering",
@@ -182,6 +204,7 @@
 							}
 						},
 						"user_agents": { "type": "array", "items": { "type": "string" } },
+						"capture_screenshot": { "type": "boolean" },
 						"proxy": {
 							"type": "object",
 							"properties": {
@@ -202,6 +225,8 @@
 							"minimum": 0,
 							"description": "Max document size in bytes"
 						},
+						"follow_document_urls": { "type": "boolean" },
+						"document_url_depth": { "type": "integer", "minimum": 0 },
 						"warc_output": { "type": "string", "description": "Path to write WARC output file" },
 						"browser_profile": {
 							"type": "string",
@@ -210,6 +235,26 @@
 						"save_browser_profile": {
 							"type": "boolean",
 							"description": "Save changes back to browser profile"
+						},
+						"ssrf": {
+							"type": "object",
+							"properties": {
+								"deny_private": { "type": "boolean" },
+								"allowlist": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"required": ["type", "value"],
+										"properties": {
+											"type": { "type": "string", "enum": ["exact", "suffix", "cidr"] },
+											"value": { "type": "string" }
+										},
+										"additionalProperties": false
+									}
+								},
+								"max_redirects": { "type": "integer", "minimum": 0, "maximum": 255 }
+							},
+							"additionalProperties": false
 						}
 					}
 				},

@@ -1,0 +1,37 @@
+{
+	"id": "content_non_ascii_body_limit",
+	"description": "Truncates a non-ASCII body at a UTF-8 character boundary",
+	"docs": {
+		"topic": "content",
+		"stem": "content-non-ascii-body-limit",
+		"title": "Truncates a non-ASCII body at a UTF-8 character boundary"
+	},
+	"tags": ["content", "limits", "unicode"],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/plain; charset=utf-8"
+				},
+				"body_inline": "éclair"
+			}
+		],
+		"config": {
+			"max_body_size": 1,
+			"respect_robots_txt": false
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "status_code",
+			"value": 200
+		},
+		{
+			"type": "equals",
+			"field": "content.body_size",
+			"value": 0
+		}
+	]
+}
