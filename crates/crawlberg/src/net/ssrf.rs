@@ -419,10 +419,37 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
 /// Test if an IP address is permitted by the SSRF policy.
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
+/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
+///
+/// `ipnet`'s `contains` only matches within an address family, so `::ffff:127.0.0.1`
+/// would be tested against the IPv6 deny-nets only and sail past `127.0.0.0/8`. On a
+/// dual-stack host the kernel routes such an address to the IPv4 destination, so
+/// without this the deny-list is bypassable by writing the literal in IPv6 form.
+///
+/// Covers the IPv4-mapped form (`::ffff:a.b.c.d`) and the NAT64 well-known prefix
+/// (`64:ff9b::/96`, RFC 6052), which embeds an IPv4 address the same way.
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    let IpAddr::V6(v6) = ip else { return ip };
+
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return IpAddr::V4(v4);
+    }
+
+    let segments = v6.segments();
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
+        let octets = v6.octets();
+        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
+    }
+
+    ip
+}
+
 fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
     if !policy.deny_private {
         return true;
     }
+
+    let ip = canonicalize_ip(ip);
 
     if policy.allowlist.iter().any(|m| m.matches_ip(&ip)) {
         return true;
@@ -433,7 +460,9 @@ fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
 
 /// Classify a private IP into a category for error messaging.
 fn classify_private_ip(ip: IpAddr) -> &'static str {
-    match ip {
+    // ~keep Classify the address actually routed to, so ::ffff:127.0.0.1 reports
+    // "loopback" rather than falling through to the generic IPv6 arm.
+    match canonicalize_ip(ip) {
         IpAddr::V4(ipv4) => {
             let octets = ipv4.octets();
             match octets[0] {
@@ -1032,5 +1061,48 @@ mod tests {
             "https scheme must survive JSON round-trip; got {:?}",
             restored.scheme_allowlist
         );
+    }
+
+    #[tokio::test]
+    async fn validate_url_denies_ipv4_mapped_ipv6_literals() {
+        // ~keep Regression: ipnet's contains() only matches within an address family, so
+        // ::ffff:127.0.0.1 was tested against the IPv6 nets only and was PERMITTED.
+        // A dual-stack host routes it to 127.0.0.1, making it a real loopback bypass.
+        for (target, expected_reason) in [
+            ("http://[::ffff:127.0.0.1]/", "loopback"),
+            ("http://[::ffff:169.254.169.254]/", "link_local"),
+            ("http://[::ffff:10.0.0.1]/", "private_network"),
+            ("http://[::ffff:192.168.1.1]/", "private_network"),
+        ] {
+            let url = target.parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &SsrfPolicy::default())
+                .await
+                .expect_err(&format!("{target} must be denied"));
+            assert!(
+                matches!(err, SsrfError::DeniedByPolicy { reason } if reason == expected_reason),
+                "{target} must be denied as {expected_reason}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_denies_nat64_embedded_private_addresses() {
+        // ~keep RFC 6052 well-known prefix embeds an IPv4 address the same way.
+        let url = "http://[64:ff9b::7f00:1]/".parse::<url::Url>().expect("valid URL");
+        let err = validate_url(&url, &SsrfPolicy::default())
+            .await
+            .expect_err("64:ff9b::7f00:1 embeds 127.0.0.1 and must be denied");
+        assert!(
+            matches!(err, SsrfError::DeniedByPolicy { reason: "loopback" }),
+            "expected loopback denial for a NAT64-embedded loopback address, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_url_still_permits_genuine_public_ipv6() {
+        let url = "http://[2606:4700:4700::1111]/".parse::<url::Url>().expect("valid URL");
+        validate_url(&url, &SsrfPolicy::default())
+            .await
+            .expect("a public IPv6 address must remain permitted");
     }
 }

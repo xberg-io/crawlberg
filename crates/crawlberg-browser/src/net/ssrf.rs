@@ -124,7 +124,29 @@ impl SsrfValidator for DefaultSsrfValidator {
     }
 }
 
+/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
+///
+/// Mirrors `crawlberg::net::ssrf::canonicalize_ip`. Without it, `::ffff:127.0.0.1` is
+/// only tested against the IPv6 deny-nets and slips past `127.0.0.0/8`, while a
+/// dual-stack host routes it straight to loopback.
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    let IpAddr::V6(v6) = ip else { return ip };
+
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return IpAddr::V4(v4);
+    }
+
+    let segments = v6.segments();
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
+        let octets = v6.octets();
+        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
+    }
+
+    ip
+}
+
 fn is_ip_denied(ip: IpAddr) -> bool {
+    let ip = canonicalize_ip(ip);
     DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
 }
 
@@ -175,6 +197,11 @@ mod tests {
             "http://169.254.169.254/latest/meta-data/",
             "http://[::1]/",
             "http://[fc00::1]/",
+            // ~keep IPv4-mapped IPv6 forms route to IPv4 on a dual-stack host, so they
+            // must be denied by the IPv4 nets rather than slipping past the IPv6 ones.
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[64:ff9b::7f00:1]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
