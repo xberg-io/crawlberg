@@ -790,10 +790,8 @@ impl CrawlEngine {
 
         let mut body = fetch.body;
 
-        if let Some(max_size) = self.config.max_body_size
-            && body.len() > max_size
-        {
-            body.truncate(max_size);
+        if let Some(max_size) = self.config.max_body_size {
+            crate::http::truncate_body_at_char_boundary(&mut body, max_size);
         }
         let body_size = body.len();
 
@@ -899,11 +897,13 @@ impl CrawlEngine {
                 return Ok(true);
             }
         } else {
-            let page_event = CrawlEvent::Page {
-                result: Box::new(page.clone()),
-            };
+            // ~keep Only clone the page when a sink will actually consume it; a plain
+            // crawl() has no sink and would otherwise deep-copy every page and drop it.
             if let Some(ref sink) = self.event_sink {
-                sink.emit(page_event).await;
+                sink.emit(CrawlEvent::Page {
+                    result: Box::new(page.clone()),
+                })
+                .await;
             }
             state.pages.push(page);
             if state.pages.len() >= max_pages {

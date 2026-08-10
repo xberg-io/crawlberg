@@ -385,6 +385,7 @@ pub struct CrawlConfig {
     #[serde(default)]
     pub document_url_depth: Option<u32>,
     /// Whether to download non-HTML documents (PDF, DOCX, images, code, etc.) instead of skipping them.
+    /// Defaults to `true` — unlike `download_assets` and `capture_screenshot`, which default to `false`.
     pub download_documents: bool,
     /// Maximum size in bytes for document downloads. Defaults to 50 MB.
     pub document_max_size: Option<usize>,

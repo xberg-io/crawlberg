@@ -63,11 +63,9 @@ pub(crate) async fn scrape_from_crawl_response(
     let is_pdf = is_pdf_content(&content_type, &body);
 
     let mut body_size = body.len();
-    if let Some(max_size) = config.max_body_size
-        && body.len() > max_size
-    {
-        body.truncate(max_size);
-        body_size = max_size;
+    if let Some(max_size) = config.max_body_size {
+        crate::http::truncate_body_at_char_boundary(&mut body, max_size);
+        body_size = body.len();
     }
 
     let x_robots_tag = resp.headers.get("x-robots-tag").and_then(|v| v.first().cloned());

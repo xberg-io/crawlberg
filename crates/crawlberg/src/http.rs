@@ -28,6 +28,22 @@ pub struct BrowserExtras {
     pub cookies: Vec<crate::types::CookieInfo>,
 }
 
+/// Truncate `body` to at most `max_size` bytes without splitting a UTF-8 character.
+///
+/// `String::truncate` panics when the index is not a char boundary. `max_size` comes
+/// from `CrawlConfig::max_body_size`, so on any non-ASCII page an unlucky byte count
+/// would otherwise panic the crawl.
+pub(crate) fn truncate_body_at_char_boundary(body: &mut String, max_size: usize) {
+    if body.len() <= max_size {
+        return;
+    }
+    let mut boundary = max_size;
+    while boundary > 0 && !body.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    body.truncate(boundary);
+}
+
 /// An HTTP response with status, headers, and body content.
 ///
 /// Exposed as `pub` so that [`crate::types::WafClassifier`] implementations —
@@ -587,5 +603,32 @@ mod tests {
             "final_url must contain the requested path, got: {}",
             resp.final_url
         );
+    }
+
+    #[test]
+    fn truncate_body_never_splits_a_utf8_character() {
+        // ~keep Regression: String::truncate panics on a non-char-boundary index, and
+        // max_body_size is user-supplied, so any non-ASCII page could panic the crawl.
+        let original = "héllo wörld";
+        for max_size in 0..=original.len() {
+            let mut body = original.to_string();
+            truncate_body_at_char_boundary(&mut body, max_size);
+            assert!(
+                body.len() <= max_size,
+                "truncation to {max_size} produced {} bytes",
+                body.len()
+            );
+            assert!(
+                original.starts_with(&body),
+                "truncation to {max_size} must yield a prefix, got {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_body_leaves_short_bodies_untouched() {
+        let mut body = "abc".to_string();
+        truncate_body_at_char_boundary(&mut body, 100);
+        assert_eq!(body, "abc", "a body under the limit must not be modified");
     }
 }
