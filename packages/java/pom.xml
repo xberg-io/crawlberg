@@ -55,7 +55,7 @@
     <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
     <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
     <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
-    <checkstyle.version>13.9.0</checkstyle.version>
+    <checkstyle.version>13.10.0</checkstyle.version>
     <gpg.skip>true</gpg.skip>
   </properties>
 

@@ -745,6 +745,21 @@ void *__swift_bridge__$Vec_BrowserBackend$get_mut(void *vec_ptr,
 uintptr_t __swift_bridge__$Vec_BrowserBackend$len(void *vec_ptr);
 void *__swift_bridge__$Vec_BrowserBackend$as_ptr(void *vec_ptr);
 
+typedef struct DocumentContentEncoding DocumentContentEncoding;
+void __swift_bridge__$DocumentContentEncoding$_free(void *self);
+
+void *__swift_bridge__$Vec_DocumentContentEncoding$new(void);
+void __swift_bridge__$Vec_DocumentContentEncoding$drop(void *vec_ptr);
+void __swift_bridge__$Vec_DocumentContentEncoding$push(void *vec_ptr,
+                                                       void *item_ptr);
+void *__swift_bridge__$Vec_DocumentContentEncoding$pop(void *vec_ptr);
+void *__swift_bridge__$Vec_DocumentContentEncoding$get(void *vec_ptr,
+                                                       uintptr_t index);
+void *__swift_bridge__$Vec_DocumentContentEncoding$get_mut(void *vec_ptr,
+                                                           uintptr_t index);
+uintptr_t __swift_bridge__$Vec_DocumentContentEncoding$len(void *vec_ptr);
+void *__swift_bridge__$Vec_DocumentContentEncoding$as_ptr(void *vec_ptr);
+
 typedef struct AuthConfig AuthConfig;
 void __swift_bridge__$AuthConfig$_free(void *self);
 
@@ -842,6 +857,18 @@ void *__swift_bridge__$Vec_ScrollDirection$get_mut(void *vec_ptr,
                                                    uintptr_t index);
 uintptr_t __swift_bridge__$Vec_ScrollDirection$len(void *vec_ptr);
 void *__swift_bridge__$Vec_ScrollDirection$as_ptr(void *vec_ptr);
+
+typedef struct HostMatcher HostMatcher;
+void __swift_bridge__$HostMatcher$_free(void *self);
+
+void *__swift_bridge__$Vec_HostMatcher$new(void);
+void __swift_bridge__$Vec_HostMatcher$drop(void *vec_ptr);
+void __swift_bridge__$Vec_HostMatcher$push(void *vec_ptr, void *item_ptr);
+void *__swift_bridge__$Vec_HostMatcher$pop(void *vec_ptr);
+void *__swift_bridge__$Vec_HostMatcher$get(void *vec_ptr, uintptr_t index);
+void *__swift_bridge__$Vec_HostMatcher$get_mut(void *vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_HostMatcher$len(void *vec_ptr);
+void *__swift_bridge__$Vec_HostMatcher$as_ptr(void *vec_ptr);
 
 typedef struct CrawlEngineHandle CrawlEngineHandle;
 void __swift_bridge__$CrawlEngineHandle$_free(void *self);
@@ -956,28 +983,12 @@ void *__swift_bridge__$BrowserConfig$eval_script(void *self);
 void *__swift_bridge__$BrowserConfig$robots_user_agent(void *self);
 bool __swift_bridge__$BrowserConfig$capture_network_events(void *self);
 bool __swift_bridge__$BrowserConfig$session_affinity(void *self);
-void *__swift_bridge__$CrawlConfig$new(
-    struct __private__OptionUsize max_depth,
-    struct __private__OptionUsize max_pages,
-    struct __private__OptionUsize max_concurrent, bool respect_robots_txt,
-    bool soft_http_errors, void *user_agent, bool stay_on_domain,
-    bool allow_subdomains, void *include_paths, void *exclude_paths,
-    void *custom_headers, uint64_t request_timeout,
-    struct __private__OptionU64 rate_limit_ms, uintptr_t max_redirects,
-    uintptr_t retry_count, void *retry_codes, bool cookies_enabled, void *auth,
-    struct __private__OptionUsize max_body_size, void *remove_tags,
-    void *content, struct __private__OptionUsize map_limit, void *map_search,
-    bool download_assets, void *asset_types,
-    struct __private__OptionUsize max_asset_size, void *browser, void *proxy,
-    void *user_agents, bool capture_screenshot, bool follow_document_urls,
-    struct __private__OptionU32 document_url_depth, bool download_documents,
-    struct __private__OptionUsize document_max_size, void *document_mime_types,
-    void *warc_output, void *browser_profile, bool save_browser_profile,
-    void *ssrf);
 struct __private__OptionUsize
 __swift_bridge__$CrawlConfig$max_depth(void *self);
 struct __private__OptionUsize
 __swift_bridge__$CrawlConfig$max_pages(void *self);
+struct __private__OptionUsize
+__swift_bridge__$CrawlConfig$max_links_per_page(void *self);
 struct __private__OptionUsize
 __swift_bridge__$CrawlConfig$max_concurrent(void *self);
 bool __swift_bridge__$CrawlConfig$respect_robots_txt(void *self);
@@ -1018,10 +1029,14 @@ bool __swift_bridge__$CrawlConfig$download_documents(void *self);
 struct __private__OptionUsize
 __swift_bridge__$CrawlConfig$document_max_size(void *self);
 void *__swift_bridge__$CrawlConfig$document_mime_types(void *self);
+void *__swift_bridge__$CrawlConfig$document_output_dir(void *self);
+void *__swift_bridge__$CrawlConfig$document_content_encoding(void *self);
 void *__swift_bridge__$CrawlConfig$warc_output(void *self);
 void *__swift_bridge__$CrawlConfig$browser_profile(void *self);
 bool __swift_bridge__$CrawlConfig$save_browser_profile(void *self);
 void *__swift_bridge__$CrawlConfig$ssrf(void *self);
+struct __private__OptionBool
+__swift_bridge__$CrawlConfig$ssrf_deny_private_explicit(void *self);
 struct __private__ResultPtrAndPtr
 __swift_bridge__$crawl_config_validate_from_json(void *json);
 void *__swift_bridge__$BrowserExtras$new(void *eval_result,
@@ -1029,21 +1044,22 @@ void *__swift_bridge__$BrowserExtras$new(void *eval_result,
 void *__swift_bridge__$BrowserExtras$eval_result(void *self);
 void *__swift_bridge__$BrowserExtras$network_events(void *self);
 void *__swift_bridge__$BrowserExtras$cookies(void *self);
-void *__swift_bridge__$DownloadedDocument$new(void *url, void *mime_type,
-                                              uintptr_t size, void *filename,
-                                              void *content_hash,
-                                              void *headers);
 void *__swift_bridge__$DownloadedDocument$url(void *self);
 void *__swift_bridge__$DownloadedDocument$mime_type(void *self);
 uintptr_t __swift_bridge__$DownloadedDocument$size(void *self);
 void *__swift_bridge__$DownloadedDocument$filename(void *self);
 void *__swift_bridge__$DownloadedDocument$content_hash(void *self);
 void *__swift_bridge__$DownloadedDocument$headers(void *self);
+bool __swift_bridge__$DownloadedDocument$truncated(void *self);
+void *__swift_bridge__$DownloadedDocument$content_path(void *self);
+void *__swift_bridge__$DownloadedDocument$content_base64(void *self);
 void *__swift_bridge__$InteractionResult$new(void *action_results,
-                                             void *final_html, void *final_url);
+                                             void *final_html, void *final_url,
+                                             void *screenshot_base64);
 void *__swift_bridge__$InteractionResult$action_results(void *self);
 void *__swift_bridge__$InteractionResult$final_html(void *self);
 void *__swift_bridge__$InteractionResult$final_url(void *self);
+void *__swift_bridge__$InteractionResult$screenshot_base64(void *self);
 void *__swift_bridge__$ActionResult$new(uintptr_t action_index,
                                         void *action_type, bool success,
                                         void *data, void *error);
@@ -1060,8 +1076,8 @@ void *__swift_bridge__$ScrapeResult$new(
     bool is_pdf, bool was_skipped, void *detected_charset,
     bool auth_header_sent, void *response_meta, void *assets,
     bool js_render_hint, bool browser_used, void *markdown,
-    void *extracted_data, void *extraction_meta, void *downloaded_document,
-    void *browser);
+    void *extracted_data, void *extraction_meta, void *screenshot_base64,
+    void *downloaded_document, void *browser);
 uint16_t __swift_bridge__$ScrapeResult$status_code(void *self);
 void *__swift_bridge__$ScrapeResult$final_url(void *self);
 void *__swift_bridge__$ScrapeResult$content_type(void *self);
@@ -1089,6 +1105,7 @@ bool __swift_bridge__$ScrapeResult$browser_used(void *self);
 void *__swift_bridge__$ScrapeResult$markdown(void *self);
 void *__swift_bridge__$ScrapeResult$extracted_data(void *self);
 void *__swift_bridge__$ScrapeResult$extraction_meta(void *self);
+void *__swift_bridge__$ScrapeResult$screenshot_base64(void *self);
 void *__swift_bridge__$ScrapeResult$downloaded_document(void *self);
 void *__swift_bridge__$ScrapeResult$browser(void *self);
 void *__swift_bridge__$CrawlPageResult$new(
@@ -1225,19 +1242,6 @@ void *__swift_bridge__$ResponseMeta$server(void *self);
 void *__swift_bridge__$ResponseMeta$x_powered_by(void *self);
 void *__swift_bridge__$ResponseMeta$content_language(void *self);
 void *__swift_bridge__$ResponseMeta$content_encoding(void *self);
-void *__swift_bridge__$PageMetadata$new(
-    void *title, void *description, void *canonical_url, void *keywords,
-    void *author, void *viewport, void *theme_color, void *generator,
-    void *robots, void *html_lang, void *html_dir, void *og_title,
-    void *og_type, void *og_image, void *og_description, void *og_url,
-    void *og_site_name, void *og_locale, void *og_video, void *og_audio,
-    void *og_locale_alternates, void *twitter_card, void *twitter_title,
-    void *twitter_description, void *twitter_image, void *twitter_site,
-    void *twitter_creator, void *dc_title, void *dc_creator, void *dc_subject,
-    void *dc_description, void *dc_publisher, void *dc_date, void *dc_type,
-    void *dc_format, void *dc_identifier, void *dc_language, void *dc_rights,
-    void *article, void *hreflangs, void *favicons, void *headings,
-    struct __private__OptionUsize word_count);
 void *__swift_bridge__$PageMetadata$title(void *self);
 void *__swift_bridge__$PageMetadata$description(void *self);
 void *__swift_bridge__$PageMetadata$canonical_url(void *self);
@@ -1320,12 +1324,15 @@ void *__swift_bridge__$BatchCrawlResults$results(void *self);
 uintptr_t __swift_bridge__$BatchCrawlResults$total_count(void *self);
 uintptr_t __swift_bridge__$BatchCrawlResults$completed_count(void *self);
 uintptr_t __swift_bridge__$BatchCrawlResults$failed_count(void *self);
-void *__swift_bridge__$SsrfPolicy$new(bool deny_private, uint8_t max_redirects);
+void *__swift_bridge__$SsrfPolicy$new(bool deny_private, void *allowlist,
+                                      uint8_t max_redirects);
 bool __swift_bridge__$SsrfPolicy$deny_private(void *self);
+void *__swift_bridge__$SsrfPolicy$allowlist(void *self);
 uint8_t __swift_bridge__$SsrfPolicy$max_redirects(void *self);
 void *__swift_bridge__$BrowserMode$to_string(void *self);
 void *__swift_bridge__$BrowserWait$to_string(void *self);
 void *__swift_bridge__$BrowserBackend$to_string(void *self);
+void *__swift_bridge__$DocumentContentEncoding$to_string(void *self);
 void *__swift_bridge__$AuthConfig$to_string(void *self);
 void *__swift_bridge__$LinkType$to_string(void *self);
 void *__swift_bridge__$ImageSource$to_string(void *self);
@@ -1334,6 +1341,7 @@ void *__swift_bridge__$AssetCategory$to_string(void *self);
 void *__swift_bridge__$CrawlEvent$to_string(void *self);
 void *__swift_bridge__$PageAction$to_string(void *self);
 void *__swift_bridge__$ScrollDirection$to_string(void *self);
+void *__swift_bridge__$HostMatcher$to_string(void *self);
 void __swift_bridge__$crawl_engine_handle_noop(void *client);
 void *__swift_bridge__$generate_citations(void *markdown);
 struct __private__ResultPtrAndPtr __swift_bridge__$create_engine(void *config);
@@ -1438,6 +1446,8 @@ __swift_bridge__$browser_wait_from_json(void *json);
 struct __private__ResultPtrAndPtr
 __swift_bridge__$browser_backend_from_json(void *json);
 struct __private__ResultPtrAndPtr
+__swift_bridge__$document_content_encoding_from_json(void *json);
+struct __private__ResultPtrAndPtr
 __swift_bridge__$auth_config_from_json(void *json);
 struct __private__ResultPtrAndPtr
 __swift_bridge__$link_type_from_json(void *json);
@@ -1490,6 +1500,7 @@ void *__swift_bridge__$__alef_phantom_vec_ssrf_policy(void);
 void *__swift_bridge__$__alef_phantom_vec_browser_mode(void);
 void *__swift_bridge__$__alef_phantom_vec_browser_wait(void);
 void *__swift_bridge__$__alef_phantom_vec_browser_backend(void);
+void *__swift_bridge__$__alef_phantom_vec_document_content_encoding(void);
 void *__swift_bridge__$__alef_phantom_vec_auth_config(void);
 void *__swift_bridge__$__alef_phantom_vec_link_type(void);
 void *__swift_bridge__$__alef_phantom_vec_image_source(void);
@@ -1497,6 +1508,7 @@ void *__swift_bridge__$__alef_phantom_vec_feed_type(void);
 void *__swift_bridge__$__alef_phantom_vec_asset_category(void);
 void *__swift_bridge__$__alef_phantom_vec_page_action(void);
 void *__swift_bridge__$__alef_phantom_vec_scroll_direction(void);
+void *__swift_bridge__$__alef_phantom_vec_host_matcher(void);
 void *__swift_bridge__$__alef_phantom_vec_crawl_stream_request(void);
 void *__swift_bridge__$__alef_phantom_vec_batch_crawl_stream_request(void);
 void *__swift_bridge__$__alef_phantom_vec_crawl_event(void);

@@ -1523,6 +1523,7 @@ const _: fn() = || {
         let CrawlConfig = None::<crate::CrawlConfig>.unwrap();
         let _: Option<i64> = CrawlConfig.max_depth;
         let _: Option<i64> = CrawlConfig.max_pages;
+        let _: Option<i64> = CrawlConfig.max_links_per_page;
         let _: Option<i64> = CrawlConfig.max_concurrent;
         let _: bool = CrawlConfig.respect_robots_txt;
         let _: bool = CrawlConfig.soft_http_errors;
@@ -1556,10 +1557,13 @@ const _: fn() = || {
         let _: bool = CrawlConfig.download_documents;
         let _: Option<i64> = CrawlConfig.document_max_size;
         let _: Vec<String> = CrawlConfig.document_mime_types;
+        let _: Option<String> = CrawlConfig.document_output_dir;
+        let _: Option<crate::DocumentContentEncoding> = CrawlConfig.document_content_encoding;
         let _: Option<String> = CrawlConfig.warc_output;
         let _: Option<String> = CrawlConfig.browser_profile;
         let _: bool = CrawlConfig.save_browser_profile;
         let _: crate::SsrfPolicy = CrawlConfig.ssrf;
+        let _: Option<bool> = CrawlConfig.ssrf_deny_private_explicit;
     }
     match None::<crate::CrawlError>.unwrap() {
         crate::CrawlError::NotFound { field0 } => {
@@ -1690,6 +1694,9 @@ const _: fn() = || {
         let _: Option<String> = DownloadedDocument.filename;
         let _: String = DownloadedDocument.content_hash;
         let _: std::collections::HashMap<String, String> = DownloadedDocument.headers;
+        let _: bool = DownloadedDocument.truncated;
+        let _: Option<String> = DownloadedDocument.content_path;
+        let _: Option<String> = DownloadedDocument.content_base64;
     }
     {
         let ExtractionMeta = None::<crate::ExtractionMeta>.unwrap();
@@ -1717,6 +1724,17 @@ const _: fn() = || {
         let _: i64 = HeadingInfo.level;
         let _: String = HeadingInfo.text;
     }
+    match None::<crate::HostMatcher>.unwrap() {
+        crate::HostMatcher::Exact { value } => {
+            let _: String = value;
+        }
+        crate::HostMatcher::Suffix { value } => {
+            let _: String = value;
+        }
+        crate::HostMatcher::Cidr { value } => {
+            let _: String = value;
+        }
+    }
     {
         let HreflangEntry = None::<crate::HreflangEntry>.unwrap();
         let _: String = HreflangEntry.lang;
@@ -1735,6 +1753,7 @@ const _: fn() = || {
         let _: Vec<crate::ActionResult> = InteractionResult.action_results;
         let _: String = InteractionResult.final_html;
         let _: String = InteractionResult.final_url;
+        let _: Option<String> = InteractionResult.screenshot_base64;
     }
     {
         let JsonLdEntry = None::<crate::JsonLdEntry>.unwrap();
@@ -1885,6 +1904,7 @@ const _: fn() = || {
         let _: Option<crate::MarkdownResult> = ScrapeResult.markdown;
         let _: Option<String> = ScrapeResult.extracted_data;
         let _: Option<crate::ExtractionMeta> = ScrapeResult.extraction_meta;
+        let _: Option<String> = ScrapeResult.screenshot_base64;
         let _: Option<crate::DownloadedDocument> = ScrapeResult.downloaded_document;
         let _: Option<crate::BrowserExtras> = ScrapeResult.browser;
     }
@@ -1900,6 +1920,9 @@ const _: fn() = || {
             let _: String = reason;
         }
         crate::SsrfError::NotOnAllowlist => {}
+        crate::SsrfError::InvalidCidr { field0 } => {
+            let _: String = field0;
+        }
         crate::SsrfError::DnsResolutionFailed { field0 } => {
             let _: String = field0;
         }
@@ -1914,6 +1937,7 @@ const _: fn() = || {
     {
         let SsrfPolicy = None::<crate::SsrfPolicy>.unwrap();
         let _: bool = SsrfPolicy.deny_private;
+        let _: Vec<crate::HostMatcher> = SsrfPolicy.allowlist;
         let _: i64 = SsrfPolicy.max_redirects;
     }
 };
@@ -2306,6 +2330,7 @@ impl SseDecode for crate::CrawlConfig {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_maxDepth = <Option<i64>>::sse_decode(deserializer);
         let mut var_maxPages = <Option<i64>>::sse_decode(deserializer);
+        let mut var_maxLinksPerPage = <Option<i64>>::sse_decode(deserializer);
         let mut var_maxConcurrent = <Option<i64>>::sse_decode(deserializer);
         let mut var_respectRobotsTxt = <bool>::sse_decode(deserializer);
         let mut var_softHttpErrors = <bool>::sse_decode(deserializer);
@@ -2339,13 +2364,17 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_downloadDocuments = <bool>::sse_decode(deserializer);
         let mut var_documentMaxSize = <Option<i64>>::sse_decode(deserializer);
         let mut var_documentMimeTypes = <Vec<String>>::sse_decode(deserializer);
+        let mut var_documentOutputDir = <Option<String>>::sse_decode(deserializer);
+        let mut var_documentContentEncoding = <Option<crate::DocumentContentEncoding>>::sse_decode(deserializer);
         let mut var_warcOutput = <Option<String>>::sse_decode(deserializer);
         let mut var_browserProfile = <Option<String>>::sse_decode(deserializer);
         let mut var_saveBrowserProfile = <bool>::sse_decode(deserializer);
         let mut var_ssrf = <crate::SsrfPolicy>::sse_decode(deserializer);
+        let mut var_ssrfDenyPrivateExplicit = <Option<bool>>::sse_decode(deserializer);
         return crate::CrawlConfig {
             max_depth: var_maxDepth,
             max_pages: var_maxPages,
+            max_links_per_page: var_maxLinksPerPage,
             max_concurrent: var_maxConcurrent,
             respect_robots_txt: var_respectRobotsTxt,
             soft_http_errors: var_softHttpErrors,
@@ -2379,10 +2408,13 @@ impl SseDecode for crate::CrawlConfig {
             download_documents: var_downloadDocuments,
             document_max_size: var_documentMaxSize,
             document_mime_types: var_documentMimeTypes,
+            document_output_dir: var_documentOutputDir,
+            document_content_encoding: var_documentContentEncoding,
             warc_output: var_warcOutput,
             browser_profile: var_browserProfile,
             save_browser_profile: var_saveBrowserProfile,
             ssrf: var_ssrf,
+            ssrf_deny_private_explicit: var_ssrfDenyPrivateExplicit,
         };
     }
 }
@@ -2595,6 +2627,17 @@ impl SseDecode for crate::CrawlStreamRequest {
     }
 }
 
+impl SseDecode for crate::DocumentContentEncoding {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::DocumentContentEncoding::Base64,
+            _ => unreachable!("Invalid variant for DocumentContentEncoding: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::DownloadedAsset {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2624,6 +2667,9 @@ impl SseDecode for crate::DownloadedDocument {
         let mut var_filename = <Option<String>>::sse_decode(deserializer);
         let mut var_contentHash = <String>::sse_decode(deserializer);
         let mut var_headers = <std::collections::HashMap<String, String>>::sse_decode(deserializer);
+        let mut var_truncated = <bool>::sse_decode(deserializer);
+        let mut var_contentPath = <Option<String>>::sse_decode(deserializer);
+        let mut var_contentBase64 = <Option<String>>::sse_decode(deserializer);
         return crate::DownloadedDocument {
             url: var_url,
             mime_type: var_mimeType,
@@ -2631,6 +2677,9 @@ impl SseDecode for crate::DownloadedDocument {
             filename: var_filename,
             content_hash: var_contentHash,
             headers: var_headers,
+            truncated: var_truncated,
+            content_path: var_contentPath,
+            content_base64: var_contentBase64,
         };
     }
 }
@@ -2715,6 +2764,30 @@ impl SseDecode for crate::HeadingInfo {
     }
 }
 
+impl SseDecode for crate::HostMatcher {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_value = <String>::sse_decode(deserializer);
+                return crate::HostMatcher::Exact { value: var_value };
+            }
+            1 => {
+                let mut var_value = <String>::sse_decode(deserializer);
+                return crate::HostMatcher::Suffix { value: var_value };
+            }
+            2 => {
+                let mut var_value = <String>::sse_decode(deserializer);
+                return crate::HostMatcher::Cidr { value: var_value };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseDecode for crate::HreflangEntry {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2779,10 +2852,12 @@ impl SseDecode for crate::InteractionResult {
         let mut var_actionResults = <Vec<crate::ActionResult>>::sse_decode(deserializer);
         let mut var_finalHtml = <String>::sse_decode(deserializer);
         let mut var_finalUrl = <String>::sse_decode(deserializer);
+        let mut var_screenshotBase64 = <Option<String>>::sse_decode(deserializer);
         return crate::InteractionResult {
             action_results: var_actionResults,
             final_html: var_finalHtml,
             final_url: var_finalUrl,
+            screenshot_base64: var_screenshotBase64,
         };
     }
 }
@@ -2977,6 +3052,18 @@ impl SseDecode for Vec<crate::HeadingInfo> {
     }
 }
 
+impl SseDecode for Vec<crate::HostMatcher> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::HostMatcher>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::HreflangEntry> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3158,6 +3245,17 @@ impl SseDecode for Option<crate::AuthConfig> {
     }
 }
 
+impl SseDecode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<bool>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::BrowserExtras> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3185,6 +3283,17 @@ impl SseDecode for Option<crate::CrawlResult> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::CrawlResult>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::DocumentContentEncoding> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::DocumentContentEncoding>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -3550,6 +3659,7 @@ impl SseDecode for crate::ScrapeResult {
         let mut var_markdown = <Option<crate::MarkdownResult>>::sse_decode(deserializer);
         let mut var_extractedData = <Option<String>>::sse_decode(deserializer);
         let mut var_extractionMeta = <Option<crate::ExtractionMeta>>::sse_decode(deserializer);
+        let mut var_screenshotBase64 = <Option<String>>::sse_decode(deserializer);
         let mut var_downloadedDocument = <Option<crate::DownloadedDocument>>::sse_decode(deserializer);
         let mut var_browser = <Option<crate::BrowserExtras>>::sse_decode(deserializer);
         return crate::ScrapeResult {
@@ -3579,6 +3689,7 @@ impl SseDecode for crate::ScrapeResult {
             markdown: var_markdown,
             extracted_data: var_extractedData,
             extraction_meta: var_extractionMeta,
+            screenshot_base64: var_screenshotBase64,
             downloaded_document: var_downloadedDocument,
             browser: var_browser,
         };
@@ -3627,17 +3738,21 @@ impl SseDecode for crate::SsrfError {
             }
             2 => {
                 let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::SsrfError::DnsResolutionFailed { field0: var_field0 };
+                return crate::SsrfError::InvalidCidr { field0: var_field0 };
             }
             3 => {
                 let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::SsrfError::InvalidUrl { field0: var_field0 };
+                return crate::SsrfError::DnsResolutionFailed { field0: var_field0 };
             }
             4 => {
                 let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::SsrfError::DisallowedScheme { field0: var_field0 };
+                return crate::SsrfError::InvalidUrl { field0: var_field0 };
             }
             5 => {
+                let mut var_field0 = <String>::sse_decode(deserializer);
+                return crate::SsrfError::DisallowedScheme { field0: var_field0 };
+            }
+            6 => {
                 return crate::SsrfError::TooManyRedirects;
             }
             _ => {
@@ -3651,9 +3766,11 @@ impl SseDecode for crate::SsrfPolicy {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_denyPrivate = <bool>::sse_decode(deserializer);
+        let mut var_allowlist = <Vec<crate::HostMatcher>>::sse_decode(deserializer);
         let mut var_maxRedirects = <i64>::sse_decode(deserializer);
         return crate::SsrfPolicy {
             deny_private: var_denyPrivate,
+            allowlist: var_allowlist,
             max_redirects: var_maxRedirects,
         };
     }
@@ -4116,6 +4233,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
         [
             self.0.max_depth.into_into_dart().into_dart(),
             self.0.max_pages.into_into_dart().into_dart(),
+            self.0.max_links_per_page.into_into_dart().into_dart(),
             self.0.max_concurrent.into_into_dart().into_dart(),
             self.0.respect_robots_txt.into_into_dart().into_dart(),
             self.0.soft_http_errors.into_into_dart().into_dart(),
@@ -4149,10 +4267,13 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.download_documents.into_into_dart().into_dart(),
             self.0.document_max_size.into_into_dart().into_dart(),
             self.0.document_mime_types.into_into_dart().into_dart(),
+            self.0.document_output_dir.into_into_dart().into_dart(),
+            self.0.document_content_encoding.into_into_dart().into_dart(),
             self.0.warc_output.into_into_dart().into_dart(),
             self.0.browser_profile.into_into_dart().into_dart(),
             self.0.save_browser_profile.into_into_dart().into_dart(),
             self.0.ssrf.into_into_dart().into_dart(),
+            self.0.ssrf_deny_private_explicit.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4322,6 +4443,21 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::CrawlStreamRequest>> fo
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::DocumentContentEncoding> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::DocumentContentEncoding::Base64 => 0.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::DocumentContentEncoding> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::DocumentContentEncoding>> for crate::DocumentContentEncoding {
+    fn into_into_dart(self) -> FrbWrapper<crate::DocumentContentEncoding> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::DownloadedAsset> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4351,6 +4487,9 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::DownloadedDocument> {
             self.0.filename.into_into_dart().into_dart(),
             self.0.content_hash.into_into_dart().into_dart(),
             self.0.headers.into_into_dart().into_dart(),
+            self.0.truncated.into_into_dart().into_dart(),
+            self.0.content_path.into_into_dart().into_dart(),
+            self.0.content_base64.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4449,6 +4588,25 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::HeadingInfo>> for crate
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::HostMatcher> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::HostMatcher::Exact { value } => [0.into_dart(), value.into_into_dart().into_dart()].into_dart(),
+            crate::HostMatcher::Suffix { value } => [1.into_dart(), value.into_into_dart().into_dart()].into_dart(),
+            crate::HostMatcher::Cidr { value } => [2.into_dart(), value.into_into_dart().into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::HostMatcher> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::HostMatcher>> for crate::HostMatcher {
+    fn into_into_dart(self) -> FrbWrapper<crate::HostMatcher> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::HreflangEntry> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4508,6 +4666,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::InteractionResult> {
             self.0.action_results.into_into_dart().into_dart(),
             self.0.final_html.into_into_dart().into_dart(),
             self.0.final_url.into_into_dart().into_dart(),
+            self.0.screenshot_base64.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4775,6 +4934,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ScrapeResult> {
             self.0.markdown.into_into_dart().into_dart(),
             self.0.extracted_data.into_into_dart().into_dart(),
             self.0.extraction_meta.into_into_dart().into_dart(),
+            self.0.screenshot_base64.into_into_dart().into_dart(),
             self.0.downloaded_document.into_into_dart().into_dart(),
             self.0.browser.into_into_dart().into_dart(),
         ]
@@ -4829,14 +4989,17 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::SsrfError> {
                 [0.into_dart(), reason.into_into_dart().into_dart()].into_dart()
             }
             crate::SsrfError::NotOnAllowlist => [1.into_dart()].into_dart(),
-            crate::SsrfError::DnsResolutionFailed { field0 } => {
+            crate::SsrfError::InvalidCidr { field0 } => {
                 [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::SsrfError::InvalidUrl { field0 } => [3.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::SsrfError::DisallowedScheme { field0 } => {
-                [4.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::SsrfError::DnsResolutionFailed { field0 } => {
+                [3.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::SsrfError::TooManyRedirects => [5.into_dart()].into_dart(),
+            crate::SsrfError::InvalidUrl { field0 } => [4.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
+            crate::SsrfError::DisallowedScheme { field0 } => {
+                [5.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::SsrfError::TooManyRedirects => [6.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -4854,6 +5017,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::SsrfPolicy> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.0.deny_private.into_into_dart().into_dart(),
+            self.0.allowlist.into_into_dart().into_dart(),
             self.0.max_redirects.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -5165,6 +5329,7 @@ impl SseEncode for crate::CrawlConfig {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<i64>>::sse_encode(self.max_depth, serializer);
         <Option<i64>>::sse_encode(self.max_pages, serializer);
+        <Option<i64>>::sse_encode(self.max_links_per_page, serializer);
         <Option<i64>>::sse_encode(self.max_concurrent, serializer);
         <bool>::sse_encode(self.respect_robots_txt, serializer);
         <bool>::sse_encode(self.soft_http_errors, serializer);
@@ -5198,10 +5363,13 @@ impl SseEncode for crate::CrawlConfig {
         <bool>::sse_encode(self.download_documents, serializer);
         <Option<i64>>::sse_encode(self.document_max_size, serializer);
         <Vec<String>>::sse_encode(self.document_mime_types, serializer);
+        <Option<String>>::sse_encode(self.document_output_dir, serializer);
+        <Option<crate::DocumentContentEncoding>>::sse_encode(self.document_content_encoding, serializer);
         <Option<String>>::sse_encode(self.warc_output, serializer);
         <Option<String>>::sse_encode(self.browser_profile, serializer);
         <bool>::sse_encode(self.save_browser_profile, serializer);
         <crate::SsrfPolicy>::sse_encode(self.ssrf, serializer);
+        <Option<bool>>::sse_encode(self.ssrf_deny_private_explicit, serializer);
     }
 }
 
@@ -5366,6 +5534,21 @@ impl SseEncode for crate::CrawlStreamRequest {
     }
 }
 
+impl SseEncode for crate::DocumentContentEncoding {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::DocumentContentEncoding::Base64 => 0,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::DownloadedAsset {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5387,6 +5570,9 @@ impl SseEncode for crate::DownloadedDocument {
         <Option<String>>::sse_encode(self.filename, serializer);
         <String>::sse_encode(self.content_hash, serializer);
         <std::collections::HashMap<String, String>>::sse_encode(self.headers, serializer);
+        <bool>::sse_encode(self.truncated, serializer);
+        <Option<String>>::sse_encode(self.content_path, serializer);
+        <Option<String>>::sse_encode(self.content_base64, serializer);
     }
 }
 
@@ -5452,6 +5638,29 @@ impl SseEncode for crate::HeadingInfo {
     }
 }
 
+impl SseEncode for crate::HostMatcher {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::HostMatcher::Exact { value } => {
+                <i32>::sse_encode(0, serializer);
+                <String>::sse_encode(value, serializer);
+            }
+            crate::HostMatcher::Suffix { value } => {
+                <i32>::sse_encode(1, serializer);
+                <String>::sse_encode(value, serializer);
+            }
+            crate::HostMatcher::Cidr { value } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(value, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseEncode for crate::HreflangEntry {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5509,6 +5718,7 @@ impl SseEncode for crate::InteractionResult {
         <Vec<crate::ActionResult>>::sse_encode(self.action_results, serializer);
         <String>::sse_encode(self.final_html, serializer);
         <String>::sse_encode(self.final_url, serializer);
+        <Option<String>>::sse_encode(self.screenshot_base64, serializer);
     }
 }
 
@@ -5670,6 +5880,16 @@ impl SseEncode for Vec<crate::HeadingInfo> {
     }
 }
 
+impl SseEncode for Vec<crate::HostMatcher> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::HostMatcher>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::HreflangEntry> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5819,6 +6039,16 @@ impl SseEncode for Option<crate::AuthConfig> {
     }
 }
 
+impl SseEncode for Option<bool> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <bool>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::BrowserExtras> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5845,6 +6075,16 @@ impl SseEncode for Option<crate::CrawlResult> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::CrawlResult>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::DocumentContentEncoding> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::DocumentContentEncoding>::sse_encode(value, serializer);
         }
     }
 }
@@ -6127,6 +6367,7 @@ impl SseEncode for crate::ScrapeResult {
         <Option<crate::MarkdownResult>>::sse_encode(self.markdown, serializer);
         <Option<String>>::sse_encode(self.extracted_data, serializer);
         <Option<crate::ExtractionMeta>>::sse_encode(self.extraction_meta, serializer);
+        <Option<String>>::sse_encode(self.screenshot_base64, serializer);
         <Option<crate::DownloadedDocument>>::sse_encode(self.downloaded_document, serializer);
         <Option<crate::BrowserExtras>>::sse_encode(self.browser, serializer);
     }
@@ -6169,20 +6410,24 @@ impl SseEncode for crate::SsrfError {
             crate::SsrfError::NotOnAllowlist => {
                 <i32>::sse_encode(1, serializer);
             }
-            crate::SsrfError::DnsResolutionFailed { field0 } => {
+            crate::SsrfError::InvalidCidr { field0 } => {
                 <i32>::sse_encode(2, serializer);
                 <String>::sse_encode(field0, serializer);
             }
-            crate::SsrfError::InvalidUrl { field0 } => {
+            crate::SsrfError::DnsResolutionFailed { field0 } => {
                 <i32>::sse_encode(3, serializer);
                 <String>::sse_encode(field0, serializer);
             }
-            crate::SsrfError::DisallowedScheme { field0 } => {
+            crate::SsrfError::InvalidUrl { field0 } => {
                 <i32>::sse_encode(4, serializer);
                 <String>::sse_encode(field0, serializer);
             }
-            crate::SsrfError::TooManyRedirects => {
+            crate::SsrfError::DisallowedScheme { field0 } => {
                 <i32>::sse_encode(5, serializer);
+                <String>::sse_encode(field0, serializer);
+            }
+            crate::SsrfError::TooManyRedirects => {
+                <i32>::sse_encode(6, serializer);
             }
             _ => {
                 unimplemented!("");
@@ -6195,6 +6440,7 @@ impl SseEncode for crate::SsrfPolicy {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.deny_private, serializer);
+        <Vec<crate::HostMatcher>>::sse_encode(self.allowlist, serializer);
         <i64>::sse_encode(self.max_redirects, serializer);
     }
 }

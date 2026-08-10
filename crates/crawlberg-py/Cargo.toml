@@ -33,5 +33,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 
-[lints]
-workspace = true
+[lints.clippy]
+# src/lib.rs is alef-generated. The pyo3 `__new__` template emits
+# `match s { "x" => return Ok(..), _ => {} }` per enum variant, which collapses into a
+# single_match when the enum has exactly ONE variant (DocumentContentEncoding). alef's dart
+# and swift templates already ship these in their generated `#![allow(..)]` headers; the
+# pyo3 template does not yet. NOTE: alef rewrites this file as a scaffold, so a regen drops
+# this block — re-add it until alef emits the allows itself. ~keep
+collapsible_match = "allow"
+single_match = "allow"

@@ -96,6 +96,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw);
+
+  @protected
   BrowserExtras dco_decode_box_autoadd_browser_extras(dynamic raw);
 
   @protected
@@ -109,6 +112,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlStreamRequest dco_decode_box_autoadd_crawl_stream_request(dynamic raw);
+
+  @protected
+  DocumentContentEncoding dco_decode_box_autoadd_document_content_encoding(
+    dynamic raw,
+  );
 
   @protected
   DownloadedDocument dco_decode_box_autoadd_downloaded_document(dynamic raw);
@@ -180,6 +188,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrawlStreamRequest dco_decode_crawl_stream_request(dynamic raw);
 
   @protected
+  DocumentContentEncoding dco_decode_document_content_encoding(dynamic raw);
+
+  @protected
   DownloadedAsset dco_decode_downloaded_asset(dynamic raw);
 
   @protected
@@ -202,6 +213,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   HeadingInfo dco_decode_heading_info(dynamic raw);
+
+  @protected
+  HostMatcher dco_decode_host_matcher(dynamic raw);
 
   @protected
   HreflangEntry dco_decode_hreflang_entry(dynamic raw);
@@ -267,6 +281,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<HeadingInfo> dco_decode_list_heading_info(dynamic raw);
 
   @protected
+  List<HostMatcher> dco_decode_list_host_matcher(dynamic raw);
+
+  @protected
   List<HreflangEntry> dco_decode_list_hreflang_entry(dynamic raw);
 
   @protected
@@ -312,6 +329,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AuthConfig? dco_decode_opt_box_autoadd_auth_config(dynamic raw);
 
   @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
+
+  @protected
   BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw);
 
   @protected
@@ -319,6 +339,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlResult? dco_decode_opt_box_autoadd_crawl_result(dynamic raw);
+
+  @protected
+  DocumentContentEncoding? dco_decode_opt_box_autoadd_document_content_encoding(
+    dynamic raw,
+  );
 
   @protected
   DownloadedDocument? dco_decode_opt_box_autoadd_downloaded_document(
@@ -483,6 +508,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   BrowserExtras sse_decode_box_autoadd_browser_extras(
     SseDeserializer deserializer,
   );
@@ -500,6 +528,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlStreamRequest sse_decode_box_autoadd_crawl_stream_request(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DocumentContentEncoding sse_decode_box_autoadd_document_content_encoding(
     SseDeserializer deserializer,
   );
 
@@ -585,6 +618,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  DocumentContentEncoding sse_decode_document_content_encoding(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DownloadedAsset sse_decode_downloaded_asset(SseDeserializer deserializer);
 
   @protected
@@ -609,6 +647,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   HeadingInfo sse_decode_heading_info(SseDeserializer deserializer);
+
+  @protected
+  HostMatcher sse_decode_host_matcher(SseDeserializer deserializer);
 
   @protected
   HreflangEntry sse_decode_hreflang_entry(SseDeserializer deserializer);
@@ -688,6 +729,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<HeadingInfo> sse_decode_list_heading_info(SseDeserializer deserializer);
 
   @protected
+  List<HostMatcher> sse_decode_list_host_matcher(SseDeserializer deserializer);
+
+  @protected
   List<HreflangEntry> sse_decode_list_hreflang_entry(
     SseDeserializer deserializer,
   );
@@ -743,6 +787,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   BrowserExtras? sse_decode_opt_box_autoadd_browser_extras(
     SseDeserializer deserializer,
   );
@@ -754,6 +801,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlResult? sse_decode_opt_box_autoadd_crawl_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DocumentContentEncoding? sse_decode_opt_box_autoadd_document_content_encoding(
     SseDeserializer deserializer,
   );
 
@@ -961,6 +1013,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_browser_extras(
     BrowserExtras self,
     SseSerializer serializer,
@@ -987,6 +1042,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_crawl_stream_request(
     CrawlStreamRequest self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_document_content_encoding(
+    DocumentContentEncoding self,
     SseSerializer serializer,
   );
 
@@ -1096,6 +1157,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_document_content_encoding(
+    DocumentContentEncoding self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_downloaded_asset(
     DownloadedAsset self,
     SseSerializer serializer,
@@ -1127,6 +1194,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_heading_info(HeadingInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_host_matcher(HostMatcher self, SseSerializer serializer);
 
   @protected
   void sse_encode_hreflang_entry(HreflangEntry self, SseSerializer serializer);
@@ -1225,6 +1295,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_host_matcher(
+    List<HostMatcher> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_hreflang_entry(
     List<HreflangEntry> self,
     SseSerializer serializer,
@@ -1306,6 +1382,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_browser_extras(
     BrowserExtras? self,
     SseSerializer serializer,
@@ -1320,6 +1399,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_crawl_result(
     CrawlResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_document_content_encoding(
+    DocumentContentEncoding? self,
     SseSerializer serializer,
   );
 

@@ -22,6 +22,16 @@ asset download, and link-following enqueue.
 DNS rebinding is mitigated: if a hostname resolves to a mix of public and
 denied IPs, the request is refused.
 
+:::caution[WebAssembly: hostnames are not checked]
+On `wasm32` targets — `crawlberg-wasm`, including its `pkg/nodejs` build — there is no DNS
+resolution available to the crawler. `validate_url` only checks a **literal IP** host against
+the policy; a domain name is always permitted, regardless of `deny_private`. In a browser this
+gap is covered by same-origin/CORS. **Under Node.js, `fetch` enforces no CORS**, so a Node
+service embedding the wasm binding can be driven to internal hosts by domain name even with
+`deny_private = true`. Do not rely on `deny_private` to stop this in Node — enforce egress
+restrictions (network policy, firewall, proxy allowlist) outside the process.
+:::
+
 Each 30x `Location` is re-resolved and re-validated against the same policy
 before the next hop is taken. Up to `SsrfPolicy::max_redirects` (default 5)
 hops are followed.

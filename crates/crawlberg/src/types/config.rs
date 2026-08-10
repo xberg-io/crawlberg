@@ -496,6 +496,14 @@ pub struct CrawlConfig {
     ///
     /// `deny_private`, `allowlist` and `max_redirects` are exposed to all language
     /// bindings. `scheme_allowlist` stays Rust-only — see `SsrfPolicy`.
+    ///
+    /// **wasm32 (including Node.js): `deny_private` does not stop hostname-based
+    /// requests.** There is no DNS resolution on this target, so only a literal IP host is
+    /// checked against the policy — a domain name is always permitted, regardless of
+    /// `deny_private`. Under Node, where `fetch` enforces no CORS, this means a service
+    /// embedding the wasm binding can be driven to internal hosts by domain name even with
+    /// `deny_private = true`. Enforce egress restrictions at the network layer for that
+    /// deployment target; do not rely on this field. See `crawlberg::net::validate_url`.
     #[serde(default = "SsrfPolicy::from_env")]
     pub ssrf: SsrfPolicy,
     /// Pins [`SsrfPolicy::deny_private`] to a caller-chosen value, bypassing the

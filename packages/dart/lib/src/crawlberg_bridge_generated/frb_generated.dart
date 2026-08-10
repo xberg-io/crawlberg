@@ -2186,6 +2186,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
   BrowserExtras dco_decode_box_autoadd_browser_extras(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_browser_extras(raw);
@@ -2213,6 +2219,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlStreamRequest dco_decode_box_autoadd_crawl_stream_request(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_crawl_stream_request(raw);
+  }
+
+  @protected
+  DocumentContentEncoding dco_decode_box_autoadd_document_content_encoding(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_document_content_encoding(raw);
   }
 
   @protected
@@ -2382,48 +2396,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 39)
-      throw Exception('unexpected arr length: expect 39 but see ${arr.length}');
+    if (arr.length != 43)
+      throw Exception('unexpected arr length: expect 43 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
-      maxConcurrent: dco_decode_opt_box_autoadd_i_64(arr[2]),
-      respectRobotsTxt: dco_decode_bool(arr[3]),
-      softHttpErrors: dco_decode_bool(arr[4]),
-      userAgent: dco_decode_opt_String(arr[5]),
-      stayOnDomain: dco_decode_bool(arr[6]),
-      allowSubdomains: dco_decode_bool(arr[7]),
-      includePaths: dco_decode_list_String(arr[8]),
-      excludePaths: dco_decode_list_String(arr[9]),
-      customHeaders: dco_decode_Map_String_String_None(arr[10]),
-      requestTimeout: dco_decode_i_64(arr[11]),
-      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[12]),
-      maxRedirects: dco_decode_i_64(arr[13]),
-      retryCount: dco_decode_i_64(arr[14]),
-      retryCodes: dco_decode_list_prim_i_64_strict(arr[15]),
-      cookiesEnabled: dco_decode_bool(arr[16]),
-      auth: dco_decode_opt_box_autoadd_auth_config(arr[17]),
-      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[18]),
-      removeTags: dco_decode_list_String(arr[19]),
-      content: dco_decode_content_config(arr[20]),
-      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[21]),
-      mapSearch: dco_decode_opt_String(arr[22]),
-      downloadAssets: dco_decode_bool(arr[23]),
-      assetTypes: dco_decode_list_asset_category(arr[24]),
-      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[25]),
-      browser: dco_decode_browser_config(arr[26]),
-      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[27]),
-      userAgents: dco_decode_list_String(arr[28]),
-      captureScreenshot: dco_decode_bool(arr[29]),
-      followDocumentUrls: dco_decode_bool(arr[30]),
-      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[31]),
-      downloadDocuments: dco_decode_bool(arr[32]),
-      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[33]),
-      documentMimeTypes: dco_decode_list_String(arr[34]),
-      warcOutput: dco_decode_opt_String(arr[35]),
-      browserProfile: dco_decode_opt_String(arr[36]),
-      saveBrowserProfile: dco_decode_bool(arr[37]),
-      ssrf: dco_decode_ssrf_policy(arr[38]),
+      maxLinksPerPage: dco_decode_opt_box_autoadd_i_64(arr[2]),
+      maxConcurrent: dco_decode_opt_box_autoadd_i_64(arr[3]),
+      respectRobotsTxt: dco_decode_bool(arr[4]),
+      softHttpErrors: dco_decode_bool(arr[5]),
+      userAgent: dco_decode_opt_String(arr[6]),
+      stayOnDomain: dco_decode_bool(arr[7]),
+      allowSubdomains: dco_decode_bool(arr[8]),
+      includePaths: dco_decode_list_String(arr[9]),
+      excludePaths: dco_decode_list_String(arr[10]),
+      customHeaders: dco_decode_Map_String_String_None(arr[11]),
+      requestTimeout: dco_decode_i_64(arr[12]),
+      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[13]),
+      maxRedirects: dco_decode_i_64(arr[14]),
+      retryCount: dco_decode_i_64(arr[15]),
+      retryCodes: dco_decode_list_prim_i_64_strict(arr[16]),
+      cookiesEnabled: dco_decode_bool(arr[17]),
+      auth: dco_decode_opt_box_autoadd_auth_config(arr[18]),
+      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[19]),
+      removeTags: dco_decode_list_String(arr[20]),
+      content: dco_decode_content_config(arr[21]),
+      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[22]),
+      mapSearch: dco_decode_opt_String(arr[23]),
+      downloadAssets: dco_decode_bool(arr[24]),
+      assetTypes: dco_decode_list_asset_category(arr[25]),
+      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[26]),
+      browser: dco_decode_browser_config(arr[27]),
+      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[28]),
+      userAgents: dco_decode_list_String(arr[29]),
+      captureScreenshot: dco_decode_bool(arr[30]),
+      followDocumentUrls: dco_decode_bool(arr[31]),
+      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[32]),
+      downloadDocuments: dco_decode_bool(arr[33]),
+      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[34]),
+      documentMimeTypes: dco_decode_list_String(arr[35]),
+      documentOutputDir: dco_decode_opt_String(arr[36]),
+      documentContentEncoding:
+          dco_decode_opt_box_autoadd_document_content_encoding(arr[37]),
+      warcOutput: dco_decode_opt_String(arr[38]),
+      browserProfile: dco_decode_opt_String(arr[39]),
+      saveBrowserProfile: dco_decode_bool(arr[40]),
+      ssrf: dco_decode_ssrf_policy(arr[41]),
+      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[42]),
     );
   }
 
@@ -2561,6 +2580,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DocumentContentEncoding dco_decode_document_content_encoding(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DocumentContentEncoding.values[raw as int];
+  }
+
+  @protected
   DownloadedAsset dco_decode_downloaded_asset(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2580,8 +2605,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DownloadedDocument dco_decode_downloaded_document(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return DownloadedDocument(
       url: dco_decode_String(arr[0]),
       mimeType: dco_decode_String(arr[1]),
@@ -2589,6 +2614,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       filename: dco_decode_opt_String(arr[3]),
       contentHash: dco_decode_String(arr[4]),
       headers: dco_decode_Map_String_String_None(arr[5]),
+      truncated: dco_decode_bool(arr[6]),
+      contentPath: dco_decode_opt_String(arr[7]),
+      contentBase64: dco_decode_opt_String(arr[8]),
     );
   }
 
@@ -2659,6 +2687,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  HostMatcher dco_decode_host_matcher(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return HostMatcher_Exact(value: dco_decode_String(raw[1]));
+      case 1:
+        return HostMatcher_Suffix(value: dco_decode_String(raw[1]));
+      case 2:
+        return HostMatcher_Cidr(value: dco_decode_String(raw[1]));
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
   HreflangEntry dco_decode_hreflang_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2707,12 +2750,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InteractionResult dco_decode_interaction_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return InteractionResult(
       actionResults: dco_decode_list_action_result(arr[0]),
       finalHtml: dco_decode_String(arr[1]),
       finalUrl: dco_decode_String(arr[2]),
+      screenshotBase64: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -2823,6 +2867,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<HostMatcher> dco_decode_list_host_matcher(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_host_matcher).toList();
+  }
+
+  @protected
   List<HreflangEntry> dco_decode_list_hreflang_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_hreflang_entry).toList();
@@ -2926,6 +2976,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_bool(raw);
+  }
+
+  @protected
   BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_browser_extras(raw);
@@ -2941,6 +2997,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlResult? dco_decode_opt_box_autoadd_crawl_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_crawl_result(raw);
+  }
+
+  @protected
+  DocumentContentEncoding? dco_decode_opt_box_autoadd_document_content_encoding(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_document_content_encoding(raw);
   }
 
   @protected
@@ -3149,8 +3215,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ScrapeResult dco_decode_scrape_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 28)
-      throw Exception('unexpected arr length: expect 28 but see ${arr.length}');
+    if (arr.length != 29)
+      throw Exception('unexpected arr length: expect 29 but see ${arr.length}');
     return ScrapeResult(
       statusCode: dco_decode_i_64(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -3178,10 +3244,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       markdown: dco_decode_opt_box_autoadd_markdown_result(arr[23]),
       extractedData: dco_decode_opt_String(arr[24]),
       extractionMeta: dco_decode_opt_box_autoadd_extraction_meta(arr[25]),
+      screenshotBase64: dco_decode_opt_String(arr[26]),
       downloadedDocument: dco_decode_opt_box_autoadd_downloaded_document(
-        arr[26],
+        arr[27],
       ),
-      browser: dco_decode_opt_box_autoadd_browser_extras(arr[27]),
+      browser: dco_decode_opt_box_autoadd_browser_extras(arr[28]),
     );
   }
 
@@ -3214,12 +3281,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return SsrfError_NotOnAllowlist();
       case 2:
-        return SsrfError_DnsResolutionFailed(field0: dco_decode_String(raw[1]));
+        return SsrfError_InvalidCidr(field0: dco_decode_String(raw[1]));
       case 3:
-        return SsrfError_InvalidUrl(field0: dco_decode_String(raw[1]));
+        return SsrfError_DnsResolutionFailed(field0: dco_decode_String(raw[1]));
       case 4:
-        return SsrfError_DisallowedScheme(field0: dco_decode_String(raw[1]));
+        return SsrfError_InvalidUrl(field0: dco_decode_String(raw[1]));
       case 5:
+        return SsrfError_DisallowedScheme(field0: dco_decode_String(raw[1]));
+      case 6:
         return SsrfError_TooManyRedirects();
       default:
         throw Exception("unreachable");
@@ -3230,11 +3299,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SsrfPolicy dco_decode_ssrf_policy(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return SsrfPolicy(
       denyPrivate: dco_decode_bool(arr[0]),
-      maxRedirects: dco_decode_i_64(arr[1]),
+      allowlist: dco_decode_list_host_matcher(arr[1]),
+      maxRedirects: dco_decode_i_64(arr[2]),
     );
   }
 
@@ -3482,6 +3552,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bool(deserializer));
+  }
+
+  @protected
   BrowserExtras sse_decode_box_autoadd_browser_extras(
     SseDeserializer deserializer,
   ) {
@@ -3519,6 +3595,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_crawl_stream_request(deserializer));
+  }
+
+  @protected
+  DocumentContentEncoding sse_decode_box_autoadd_document_content_encoding(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_document_content_encoding(deserializer));
   }
 
   @protected
@@ -3718,6 +3802,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_maxDepth = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_maxPages = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_maxLinksPerPage = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_maxConcurrent = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_respectRobotsTxt = sse_decode_bool(deserializer);
     var var_softHttpErrors = sse_decode_bool(deserializer);
@@ -3751,13 +3836,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_downloadDocuments = sse_decode_bool(deserializer);
     var var_documentMaxSize = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_documentMimeTypes = sse_decode_list_String(deserializer);
+    var var_documentOutputDir = sse_decode_opt_String(deserializer);
+    var var_documentContentEncoding =
+        sse_decode_opt_box_autoadd_document_content_encoding(deserializer);
     var var_warcOutput = sse_decode_opt_String(deserializer);
     var var_browserProfile = sse_decode_opt_String(deserializer);
     var var_saveBrowserProfile = sse_decode_bool(deserializer);
     var var_ssrf = sse_decode_ssrf_policy(deserializer);
+    var var_ssrfDenyPrivateExplicit = sse_decode_opt_box_autoadd_bool(
+      deserializer,
+    );
     return CrawlConfig(
       maxDepth: var_maxDepth,
       maxPages: var_maxPages,
+      maxLinksPerPage: var_maxLinksPerPage,
       maxConcurrent: var_maxConcurrent,
       respectRobotsTxt: var_respectRobotsTxt,
       softHttpErrors: var_softHttpErrors,
@@ -3791,10 +3883,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       downloadDocuments: var_downloadDocuments,
       documentMaxSize: var_documentMaxSize,
       documentMimeTypes: var_documentMimeTypes,
+      documentOutputDir: var_documentOutputDir,
+      documentContentEncoding: var_documentContentEncoding,
       warcOutput: var_warcOutput,
       browserProfile: var_browserProfile,
       saveBrowserProfile: var_saveBrowserProfile,
       ssrf: var_ssrf,
+      ssrfDenyPrivateExplicit: var_ssrfDenyPrivateExplicit,
     );
   }
 
@@ -3975,6 +4070,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DocumentContentEncoding sse_decode_document_content_encoding(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DocumentContentEncoding.values[inner];
+  }
+
+  @protected
   DownloadedAsset sse_decode_downloaded_asset(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_url = sse_decode_String(deserializer);
@@ -4004,6 +4108,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_filename = sse_decode_opt_String(deserializer);
     var var_contentHash = sse_decode_String(deserializer);
     var var_headers = sse_decode_Map_String_String_None(deserializer);
+    var var_truncated = sse_decode_bool(deserializer);
+    var var_contentPath = sse_decode_opt_String(deserializer);
+    var var_contentBase64 = sse_decode_opt_String(deserializer);
     return DownloadedDocument(
       url: var_url,
       mimeType: var_mimeType,
@@ -4011,6 +4118,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       filename: var_filename,
       contentHash: var_contentHash,
       headers: var_headers,
+      truncated: var_truncated,
+      contentPath: var_contentPath,
+      contentBase64: var_contentBase64,
     );
   }
 
@@ -4077,6 +4187,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  HostMatcher sse_decode_host_matcher(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_value = sse_decode_String(deserializer);
+        return HostMatcher_Exact(value: var_value);
+      case 1:
+        var var_value = sse_decode_String(deserializer);
+        return HostMatcher_Suffix(value: var_value);
+      case 2:
+        var var_value = sse_decode_String(deserializer);
+        return HostMatcher_Cidr(value: var_value);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
   HreflangEntry sse_decode_hreflang_entry(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_lang = sse_decode_String(deserializer);
@@ -4128,10 +4258,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_actionResults = sse_decode_list_action_result(deserializer);
     var var_finalHtml = sse_decode_String(deserializer);
     var var_finalUrl = sse_decode_String(deserializer);
+    var var_screenshotBase64 = sse_decode_opt_String(deserializer);
     return InteractionResult(
       actionResults: var_actionResults,
       finalHtml: var_finalHtml,
       finalUrl: var_finalUrl,
+      screenshotBase64: var_screenshotBase64,
     );
   }
 
@@ -4331,6 +4463,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<HostMatcher> sse_decode_list_host_matcher(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <HostMatcher>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_host_matcher(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<HreflangEntry> sse_decode_list_hreflang_entry(
     SseDeserializer deserializer,
   ) {
@@ -4512,6 +4656,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_bool(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   BrowserExtras? sse_decode_opt_box_autoadd_browser_extras(
     SseDeserializer deserializer,
   ) {
@@ -4545,6 +4700,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_crawl_result(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  DocumentContentEncoding? sse_decode_opt_box_autoadd_document_content_encoding(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_document_content_encoding(deserializer));
     } else {
       return null;
     }
@@ -4915,6 +5083,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_extractionMeta = sse_decode_opt_box_autoadd_extraction_meta(
       deserializer,
     );
+    var var_screenshotBase64 = sse_decode_opt_String(deserializer);
     var var_downloadedDocument = sse_decode_opt_box_autoadd_downloaded_document(
       deserializer,
     );
@@ -4946,6 +5115,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       markdown: var_markdown,
       extractedData: var_extractedData,
       extractionMeta: var_extractionMeta,
+      screenshotBase64: var_screenshotBase64,
       downloadedDocument: var_downloadedDocument,
       browser: var_browser,
     );
@@ -4986,14 +5156,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return SsrfError_NotOnAllowlist();
       case 2:
         var var_field0 = sse_decode_String(deserializer);
-        return SsrfError_DnsResolutionFailed(field0: var_field0);
+        return SsrfError_InvalidCidr(field0: var_field0);
       case 3:
         var var_field0 = sse_decode_String(deserializer);
-        return SsrfError_InvalidUrl(field0: var_field0);
+        return SsrfError_DnsResolutionFailed(field0: var_field0);
       case 4:
         var var_field0 = sse_decode_String(deserializer);
-        return SsrfError_DisallowedScheme(field0: var_field0);
+        return SsrfError_InvalidUrl(field0: var_field0);
       case 5:
+        var var_field0 = sse_decode_String(deserializer);
+        return SsrfError_DisallowedScheme(field0: var_field0);
+      case 6:
         return SsrfError_TooManyRedirects();
       default:
         throw UnimplementedError('');
@@ -5004,9 +5177,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SsrfPolicy sse_decode_ssrf_policy(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_denyPrivate = sse_decode_bool(deserializer);
+    var var_allowlist = sse_decode_list_host_matcher(deserializer);
     var var_maxRedirects = sse_decode_i_64(deserializer);
     return SsrfPolicy(
       denyPrivate: var_denyPrivate,
+      allowlist: var_allowlist,
       maxRedirects: var_maxRedirects,
     );
   }
@@ -5247,6 +5422,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_browser_extras(
     BrowserExtras self,
     SseSerializer serializer,
@@ -5289,6 +5470,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_crawl_stream_request(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_document_content_encoding(
+    DocumentContentEncoding self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_document_content_encoding(self, serializer);
   }
 
   @protected
@@ -5459,6 +5649,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_opt_box_autoadd_i_64(self.maxDepth, serializer);
     sse_encode_opt_box_autoadd_i_64(self.maxPages, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.maxLinksPerPage, serializer);
     sse_encode_opt_box_autoadd_i_64(self.maxConcurrent, serializer);
     sse_encode_bool(self.respectRobotsTxt, serializer);
     sse_encode_bool(self.softHttpErrors, serializer);
@@ -5492,10 +5683,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.downloadDocuments, serializer);
     sse_encode_opt_box_autoadd_i_64(self.documentMaxSize, serializer);
     sse_encode_list_String(self.documentMimeTypes, serializer);
+    sse_encode_opt_String(self.documentOutputDir, serializer);
+    sse_encode_opt_box_autoadd_document_content_encoding(
+      self.documentContentEncoding,
+      serializer,
+    );
     sse_encode_opt_String(self.warcOutput, serializer);
     sse_encode_opt_String(self.browserProfile, serializer);
     sse_encode_bool(self.saveBrowserProfile, serializer);
     sse_encode_ssrf_policy(self.ssrf, serializer);
+    sse_encode_opt_box_autoadd_bool(self.ssrfDenyPrivateExplicit, serializer);
   }
 
   @protected
@@ -5636,6 +5833,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_document_content_encoding(
+    DocumentContentEncoding self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_downloaded_asset(
     DownloadedAsset self,
     SseSerializer serializer,
@@ -5661,6 +5867,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.filename, serializer);
     sse_encode_String(self.contentHash, serializer);
     sse_encode_Map_String_String_None(self.headers, serializer);
+    sse_encode_bool(self.truncated, serializer);
+    sse_encode_opt_String(self.contentPath, serializer);
+    sse_encode_opt_String(self.contentBase64, serializer);
   }
 
   @protected
@@ -5713,6 +5922,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_host_matcher(HostMatcher self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case HostMatcher_Exact(value: final value):
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(value, serializer);
+      case HostMatcher_Suffix(value: final value):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(value, serializer);
+      case HostMatcher_Cidr(value: final value):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(value, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_hreflang_entry(HreflangEntry self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.lang, serializer);
@@ -5756,6 +5981,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_action_result(self.actionResults, serializer);
     sse_encode_String(self.finalHtml, serializer);
     sse_encode_String(self.finalUrl, serializer);
+    sse_encode_opt_String(self.screenshotBase64, serializer);
   }
 
   @protected
@@ -5920,6 +6146,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_heading_info(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_host_matcher(
+    List<HostMatcher> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_host_matcher(item, serializer);
     }
   }
 
@@ -6096,6 +6334,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_bool(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_browser_extras(
     BrowserExtras? self,
     SseSerializer serializer,
@@ -6131,6 +6379,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_crawl_result(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_document_content_encoding(
+    DocumentContentEncoding? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_document_content_encoding(self, serializer);
     }
   }
 
@@ -6435,6 +6696,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_markdown_result(self.markdown, serializer);
     sse_encode_opt_String(self.extractedData, serializer);
     sse_encode_opt_box_autoadd_extraction_meta(self.extractionMeta, serializer);
+    sse_encode_opt_String(self.screenshotBase64, serializer);
     sse_encode_opt_box_autoadd_downloaded_document(
       self.downloadedDocument,
       serializer,
@@ -6469,17 +6731,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(reason, serializer);
       case SsrfError_NotOnAllowlist():
         sse_encode_i_32(1, serializer);
-      case SsrfError_DnsResolutionFailed(field0: final field0):
+      case SsrfError_InvalidCidr(field0: final field0):
         sse_encode_i_32(2, serializer);
         sse_encode_String(field0, serializer);
-      case SsrfError_InvalidUrl(field0: final field0):
+      case SsrfError_DnsResolutionFailed(field0: final field0):
         sse_encode_i_32(3, serializer);
         sse_encode_String(field0, serializer);
-      case SsrfError_DisallowedScheme(field0: final field0):
+      case SsrfError_InvalidUrl(field0: final field0):
         sse_encode_i_32(4, serializer);
         sse_encode_String(field0, serializer);
-      case SsrfError_TooManyRedirects():
+      case SsrfError_DisallowedScheme(field0: final field0):
         sse_encode_i_32(5, serializer);
+        sse_encode_String(field0, serializer);
+      case SsrfError_TooManyRedirects():
+        sse_encode_i_32(6, serializer);
     }
   }
 
@@ -6487,6 +6752,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_ssrf_policy(SsrfPolicy self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_bool(self.denyPrivate, serializer);
+    sse_encode_list_host_matcher(self.allowlist, serializer);
     sse_encode_i_64(self.maxRedirects, serializer);
   }
 

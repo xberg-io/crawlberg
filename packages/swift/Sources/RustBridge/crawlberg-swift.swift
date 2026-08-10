@@ -157,6 +157,9 @@ public func browserWaitFromJson<GenericIntoRustString: IntoRustString>(_ json: G
 public func browserBackendFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserBackend {
     try { let val = __swift_bridge__$browser_backend_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserBackend(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
+public func documentContentEncodingFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> DocumentContentEncoding {
+    try { let val = __swift_bridge__$document_content_encoding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DocumentContentEncoding(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func authConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> AuthConfig {
     try { let val = __swift_bridge__$auth_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AuthConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -292,6 +295,9 @@ public func __alef_phantom_vec_browser_wait() -> RustVec<BrowserWait> {
 public func __alef_phantom_vec_browser_backend() -> RustVec<BrowserBackend> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_browser_backend())
 }
+public func __alef_phantom_vec_document_content_encoding() -> RustVec<DocumentContentEncoding> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_document_content_encoding())
+}
 public func __alef_phantom_vec_auth_config() -> RustVec<AuthConfig> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_auth_config())
 }
@@ -312,6 +318,9 @@ public func __alef_phantom_vec_page_action() -> RustVec<PageAction> {
 }
 public func __alef_phantom_vec_scroll_direction() -> RustVec<ScrollDirection> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_scroll_direction())
+}
+public func __alef_phantom_vec_host_matcher() -> RustVec<HostMatcher> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_host_matcher())
 }
 public func __alef_phantom_vec_crawl_stream_request() -> RustVec<CrawlStreamRequest> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_crawl_stream_request())
@@ -792,11 +801,6 @@ public class CrawlConfig: CrawlConfigRefMut {
         }
     }
 }
-extension CrawlConfig {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ max_depth: Optional<UInt>, _ max_pages: Optional<UInt>, _ max_concurrent: Optional<UInt>, _ respect_robots_txt: Bool, _ soft_http_errors: Bool, _ user_agent: Optional<GenericIntoRustString>, _ stay_on_domain: Bool, _ allow_subdomains: Bool, _ include_paths: RustVec<GenericIntoRustString>, _ exclude_paths: RustVec<GenericIntoRustString>, _ custom_headers: GenericIntoRustString, _ request_timeout: UInt64, _ rate_limit_ms: Optional<UInt64>, _ max_redirects: UInt, _ retry_count: UInt, _ retry_codes: RustVec<UInt16>, _ cookies_enabled: Bool, _ auth: Optional<AuthConfig>, _ max_body_size: Optional<UInt>, _ remove_tags: RustVec<GenericIntoRustString>, _ content: ContentConfig, _ map_limit: Optional<UInt>, _ map_search: Optional<GenericIntoRustString>, _ download_assets: Bool, _ asset_types: RustVec<AssetCategory>, _ max_asset_size: Optional<UInt>, _ browser: BrowserConfig, _ proxy: Optional<ProxyConfig>, _ user_agents: RustVec<GenericIntoRustString>, _ capture_screenshot: Bool, _ follow_document_urls: Bool, _ document_url_depth: Optional<UInt32>, _ download_documents: Bool, _ document_max_size: Optional<UInt>, _ document_mime_types: RustVec<GenericIntoRustString>, _ warc_output: Optional<GenericIntoRustString>, _ browser_profile: Optional<GenericIntoRustString>, _ save_browser_profile: Bool, _ ssrf: SsrfPolicy) {
-        self.init(ptr: __swift_bridge__$CrawlConfig$new(max_depth.intoFfiRepr(), max_pages.intoFfiRepr(), max_concurrent.intoFfiRepr(), respect_robots_txt, soft_http_errors, { if let rustString = optionalStringIntoRustString(user_agent) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), stay_on_domain, allow_subdomains, { let val = include_paths; val.isOwned = false; return val.ptr }(), { let val = exclude_paths; val.isOwned = false; return val.ptr }(), { let rustString = custom_headers.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), request_timeout, rate_limit_ms.intoFfiRepr(), max_redirects, retry_count, { let val = retry_codes; val.isOwned = false; return val.ptr }(), cookies_enabled, { if let val = auth { val.isOwned = false; return val.ptr } else { return nil } }(), max_body_size.intoFfiRepr(), { let val = remove_tags; val.isOwned = false; return val.ptr }(), {content.isOwned = false; return content.ptr;}(), map_limit.intoFfiRepr(), { if let rustString = optionalStringIntoRustString(map_search) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), download_assets, { let val = asset_types; val.isOwned = false; return val.ptr }(), max_asset_size.intoFfiRepr(), {browser.isOwned = false; return browser.ptr;}(), { if let val = proxy { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = user_agents; val.isOwned = false; return val.ptr }(), capture_screenshot, follow_document_urls, document_url_depth.intoFfiRepr(), download_documents, document_max_size.intoFfiRepr(), { let val = document_mime_types; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(warc_output) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(browser_profile) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), save_browser_profile, {ssrf.isOwned = false; return ssrf.ptr;}()))
-    }
-}
 public class CrawlConfigRefMut: CrawlConfigRef {
     public override init(ptr: UnsafeMutableRawPointer) {
         super.init(ptr: ptr)
@@ -816,6 +820,10 @@ extension CrawlConfigRef {
 
     public func maxPages() -> Optional<UInt> {
         __swift_bridge__$CrawlConfig$max_pages(ptr).intoSwiftRepr()
+    }
+
+    public func maxLinksPerPage() -> Optional<UInt> {
+        __swift_bridge__$CrawlConfig$max_links_per_page(ptr).intoSwiftRepr()
     }
 
     public func maxConcurrent() -> Optional<UInt> {
@@ -950,6 +958,14 @@ extension CrawlConfigRef {
         RustVec(ptr: __swift_bridge__$CrawlConfig$document_mime_types(ptr))
     }
 
+    public func documentOutputDir() -> Optional<RustString> {
+        { let val = __swift_bridge__$CrawlConfig$document_output_dir(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func documentContentEncoding() -> Optional<RustString> {
+        { let val = __swift_bridge__$CrawlConfig$document_content_encoding(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
     public func warcOutput() -> Optional<RustString> {
         { let val = __swift_bridge__$CrawlConfig$warc_output(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
@@ -964,6 +980,10 @@ extension CrawlConfigRef {
 
     public func ssrf() -> SsrfPolicy {
         SsrfPolicy(ptr: __swift_bridge__$CrawlConfig$ssrf(ptr))
+    }
+
+    public func ssrfDenyPrivateExplicit() -> Optional<Bool> {
+        __swift_bridge__$CrawlConfig$ssrf_deny_private_explicit(ptr).intoSwiftRepr()
     }
 }
 extension CrawlConfig: Vectorizable {
@@ -1122,11 +1142,6 @@ public class DownloadedDocument: DownloadedDocumentRefMut {
         }
     }
 }
-extension DownloadedDocument {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ mime_type: GenericIntoRustString, _ size: UInt, _ filename: Optional<GenericIntoRustString>, _ content_hash: GenericIntoRustString, _ headers: GenericIntoRustString) {
-        self.init(ptr: __swift_bridge__$DownloadedDocument$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = mime_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), size, { if let rustString = optionalStringIntoRustString(filename) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { let rustString = content_hash.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = headers.intoRustString(); rustString.isOwned = false; return rustString.ptr }()))
-    }
-}
 public class DownloadedDocumentRefMut: DownloadedDocumentRef {
     public override init(ptr: UnsafeMutableRawPointer) {
         super.init(ptr: ptr)
@@ -1162,6 +1177,18 @@ extension DownloadedDocumentRef {
 
     public func headers() -> RustString {
         RustString(ptr: __swift_bridge__$DownloadedDocument$headers(ptr))
+    }
+
+    public func truncated() -> Bool {
+        __swift_bridge__$DownloadedDocument$truncated(ptr)
+    }
+
+    public func contentPath() -> Optional<RustString> {
+        { let val = __swift_bridge__$DownloadedDocument$content_path(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func contentBase64() -> Optional<RustString> {
+        { let val = __swift_bridge__$DownloadedDocument$content_base64(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 }
 extension DownloadedDocument: Vectorizable {
@@ -1228,8 +1255,8 @@ public class InteractionResult: InteractionResultRefMut {
     }
 }
 extension InteractionResult {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ action_results: RustVec<ActionResult>, _ final_html: GenericIntoRustString, _ final_url: GenericIntoRustString) {
-        self.init(ptr: __swift_bridge__$InteractionResult$new({ let val = action_results; val.isOwned = false; return val.ptr }(), { let rustString = final_html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }()))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ action_results: RustVec<ActionResult>, _ final_html: GenericIntoRustString, _ final_url: GenericIntoRustString, _ screenshot_base64: Optional<GenericIntoRustString>) {
+        self.init(ptr: __swift_bridge__$InteractionResult$new({ let val = action_results; val.isOwned = false; return val.ptr }(), { let rustString = final_html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { if let rustString = optionalStringIntoRustString(screenshot_base64) { rustString.isOwned = false; return rustString.ptr } else { return nil } }()))
     }
 }
 public class InteractionResultRefMut: InteractionResultRef {
@@ -1255,6 +1282,10 @@ extension InteractionResultRef {
 
     public func finalUrl() -> RustString {
         RustString(ptr: __swift_bridge__$InteractionResult$final_url(ptr))
+    }
+
+    public func screenshotBase64() -> Optional<RustString> {
+        { let val = __swift_bridge__$InteractionResult$screenshot_base64(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 }
 extension InteractionResult: Vectorizable {
@@ -1422,8 +1453,8 @@ public class ScrapeResult: ScrapeResultRefMut {
     }
 }
 extension ScrapeResult {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ status_code: UInt16, _ final_url: GenericIntoRustString, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ is_allowed: Bool, _ crawl_delay: Optional<UInt64>, _ noindex_detected: Bool, _ nofollow_detected: Bool, _ x_robots_tag: Optional<GenericIntoRustString>, _ is_pdf: Bool, _ was_skipped: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ auth_header_sent: Bool, _ response_meta: Optional<ResponseMeta>, _ assets: RustVec<DownloadedAsset>, _ js_render_hint: Bool, _ browser_used: Bool, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ downloaded_document: Optional<DownloadedDocument>, _ browser: Optional<BrowserExtras>) {
-        self.init(ptr: __swift_bridge__$ScrapeResult$new(status_code, { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), is_allowed, crawl_delay.intoFfiRepr(), noindex_detected, nofollow_detected, { if let rustString = optionalStringIntoRustString(x_robots_tag) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), is_pdf, was_skipped, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), auth_header_sent, { if let val = response_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = assets; val.isOwned = false; return val.ptr }(), js_render_hint, browser_used, { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = browser { val.isOwned = false; return val.ptr } else { return nil } }()))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ status_code: UInt16, _ final_url: GenericIntoRustString, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ is_allowed: Bool, _ crawl_delay: Optional<UInt64>, _ noindex_detected: Bool, _ nofollow_detected: Bool, _ x_robots_tag: Optional<GenericIntoRustString>, _ is_pdf: Bool, _ was_skipped: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ auth_header_sent: Bool, _ response_meta: Optional<ResponseMeta>, _ assets: RustVec<DownloadedAsset>, _ js_render_hint: Bool, _ browser_used: Bool, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ screenshot_base64: Optional<GenericIntoRustString>, _ downloaded_document: Optional<DownloadedDocument>, _ browser: Optional<BrowserExtras>) {
+        self.init(ptr: __swift_bridge__$ScrapeResult$new(status_code, { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), is_allowed, crawl_delay.intoFfiRepr(), noindex_detected, nofollow_detected, { if let rustString = optionalStringIntoRustString(x_robots_tag) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), is_pdf, was_skipped, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), auth_header_sent, { if let val = response_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = assets; val.isOwned = false; return val.ptr }(), js_render_hint, browser_used, { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(screenshot_base64) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = browser { val.isOwned = false; return val.ptr } else { return nil } }()))
     }
 }
 public class ScrapeResultRefMut: ScrapeResultRef {
@@ -1541,6 +1572,10 @@ extension ScrapeResultRef {
 
     public func extractionMeta() -> Optional<ExtractionMeta> {
         { let val = __swift_bridge__$ScrapeResult$extraction_meta(ptr); if val != nil { return ExtractionMeta(ptr: val!) } else { return nil } }()
+    }
+
+    public func screenshotBase64() -> Optional<RustString> {
+        { let val = __swift_bridge__$ScrapeResult$screenshot_base64(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
     public func downloadedDocument() -> Optional<DownloadedDocument> {
@@ -3254,11 +3289,6 @@ public class PageMetadata: PageMetadataRefMut {
         }
     }
 }
-extension PageMetadata {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ title: Optional<GenericIntoRustString>, _ description: Optional<GenericIntoRustString>, _ canonical_url: Optional<GenericIntoRustString>, _ keywords: Optional<GenericIntoRustString>, _ author: Optional<GenericIntoRustString>, _ viewport: Optional<GenericIntoRustString>, _ theme_color: Optional<GenericIntoRustString>, _ generator: Optional<GenericIntoRustString>, _ robots: Optional<GenericIntoRustString>, _ html_lang: Optional<GenericIntoRustString>, _ html_dir: Optional<GenericIntoRustString>, _ og_title: Optional<GenericIntoRustString>, _ og_type: Optional<GenericIntoRustString>, _ og_image: Optional<GenericIntoRustString>, _ og_description: Optional<GenericIntoRustString>, _ og_url: Optional<GenericIntoRustString>, _ og_site_name: Optional<GenericIntoRustString>, _ og_locale: Optional<GenericIntoRustString>, _ og_video: Optional<GenericIntoRustString>, _ og_audio: Optional<GenericIntoRustString>, _ og_locale_alternates: Optional<RustVec<GenericIntoRustString>>, _ twitter_card: Optional<GenericIntoRustString>, _ twitter_title: Optional<GenericIntoRustString>, _ twitter_description: Optional<GenericIntoRustString>, _ twitter_image: Optional<GenericIntoRustString>, _ twitter_site: Optional<GenericIntoRustString>, _ twitter_creator: Optional<GenericIntoRustString>, _ dc_title: Optional<GenericIntoRustString>, _ dc_creator: Optional<GenericIntoRustString>, _ dc_subject: Optional<GenericIntoRustString>, _ dc_description: Optional<GenericIntoRustString>, _ dc_publisher: Optional<GenericIntoRustString>, _ dc_date: Optional<GenericIntoRustString>, _ dc_type: Optional<GenericIntoRustString>, _ dc_format: Optional<GenericIntoRustString>, _ dc_identifier: Optional<GenericIntoRustString>, _ dc_language: Optional<GenericIntoRustString>, _ dc_rights: Optional<GenericIntoRustString>, _ article: Optional<ArticleMetadata>, _ hreflangs: Optional<RustVec<HreflangEntry>>, _ favicons: Optional<RustVec<FaviconInfo>>, _ headings: Optional<RustVec<HeadingInfo>>, _ word_count: Optional<UInt>) {
-        self.init(ptr: __swift_bridge__$PageMetadata$new({ if let rustString = optionalStringIntoRustString(title) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(description) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(canonical_url) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(keywords) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(author) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(viewport) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(theme_color) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(generator) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(robots) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(html_lang) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(html_dir) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_title) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_type) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_image) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_description) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_url) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_site_name) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_locale) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_video) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(og_audio) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = og_locale_alternates { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_card) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_title) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_description) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_image) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_site) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(twitter_creator) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_title) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_creator) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_subject) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_description) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_publisher) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_date) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_type) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_format) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_identifier) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_language) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(dc_rights) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = article { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = hreflangs { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = favicons { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = headings { val.isOwned = false; return val.ptr } else { return nil } }(), word_count.intoFfiRepr()))
-    }
-}
 public class PageMetadataRefMut: PageMetadataRef {
     public override init(ptr: UnsafeMutableRawPointer) {
         super.init(ptr: ptr)
@@ -3352,8 +3382,8 @@ extension PageMetadataRef {
         { let val = __swift_bridge__$PageMetadata$og_audio(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
-    public func ogLocaleAlternates() -> Optional<RustVec<RustString>> {
-        { let val = __swift_bridge__$PageMetadata$og_locale_alternates(ptr); if val != nil { return RustVec(ptr: val!) } else { return nil } }()
+    public func ogLocaleAlternates() -> RustString {
+        RustString(ptr: __swift_bridge__$PageMetadata$og_locale_alternates(ptr))
     }
 
     public func twitterCard() -> Optional<RustString> {
@@ -4240,8 +4270,8 @@ public class SsrfPolicy: SsrfPolicyRefMut {
     }
 }
 extension SsrfPolicy {
-    public convenience init(_ deny_private: Bool, _ max_redirects: UInt8) {
-        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, max_redirects))
+    public convenience init(_ deny_private: Bool, _ allowlist: RustVec<HostMatcher>, _ max_redirects: UInt8) {
+        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, { let val = allowlist; val.isOwned = false; return val.ptr }(), max_redirects))
     }
 }
 public class SsrfPolicyRefMut: SsrfPolicyRef {
@@ -4259,6 +4289,10 @@ public class SsrfPolicyRef {
 extension SsrfPolicyRef {
     public func denyPrivate() -> Bool {
         __swift_bridge__$SsrfPolicy$deny_private(ptr)
+    }
+
+    public func allowlist() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$SsrfPolicy$allowlist(ptr))
     }
 
     public func maxRedirects() -> UInt8 {
@@ -4551,6 +4585,86 @@ extension BrowserBackend: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_BrowserBackend$len(vecPtr)
+    }
+}
+
+
+public class DocumentContentEncoding: DocumentContentEncodingRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$DocumentContentEncoding$_free(ptr)
+        }
+    }
+}
+public class DocumentContentEncodingRefMut: DocumentContentEncodingRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class DocumentContentEncodingRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension DocumentContentEncodingRef {
+    public func to_string() -> RustString {
+        RustString(ptr: __swift_bridge__$DocumentContentEncoding$to_string(ptr))
+    }
+}
+extension DocumentContentEncoding: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_DocumentContentEncoding$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_DocumentContentEncoding$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: DocumentContentEncoding) {
+        __swift_bridge__$Vec_DocumentContentEncoding$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_DocumentContentEncoding$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (DocumentContentEncoding(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<DocumentContentEncodingRef> {
+        let pointer = __swift_bridge__$Vec_DocumentContentEncoding$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return DocumentContentEncodingRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<DocumentContentEncodingRefMut> {
+        let pointer = __swift_bridge__$Vec_DocumentContentEncoding$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return DocumentContentEncodingRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<DocumentContentEncodingRef> {
+        UnsafePointer<DocumentContentEncodingRef>(OpaquePointer(__swift_bridge__$Vec_DocumentContentEncoding$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_DocumentContentEncoding$len(vecPtr)
     }
 }
 
@@ -5191,6 +5305,86 @@ extension ScrollDirection: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_ScrollDirection$len(vecPtr)
+    }
+}
+
+
+public class HostMatcher: HostMatcherRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$HostMatcher$_free(ptr)
+        }
+    }
+}
+public class HostMatcherRefMut: HostMatcherRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class HostMatcherRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension HostMatcherRef {
+    public func to_string() -> RustString {
+        RustString(ptr: __swift_bridge__$HostMatcher$to_string(ptr))
+    }
+}
+extension HostMatcher: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_HostMatcher$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_HostMatcher$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: HostMatcher) {
+        __swift_bridge__$Vec_HostMatcher$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_HostMatcher$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (HostMatcher(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<HostMatcherRef> {
+        let pointer = __swift_bridge__$Vec_HostMatcher$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return HostMatcherRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<HostMatcherRefMut> {
+        let pointer = __swift_bridge__$Vec_HostMatcher$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return HostMatcherRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<HostMatcherRef> {
+        UnsafePointer<HostMatcherRef>(OpaquePointer(__swift_bridge__$Vec_HostMatcher$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_HostMatcher$len(vecPtr)
     }
 }
 

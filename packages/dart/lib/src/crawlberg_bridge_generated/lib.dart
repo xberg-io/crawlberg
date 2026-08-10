@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// Convert markdown links to numbered citations.
 ///
@@ -888,6 +888,12 @@ class CrawlConfig {
   /// Maximum number of pages to crawl.
   final PlatformInt64? maxPages;
 
+  /// Maximum links enqueued from a single page. Defaults to 10000.
+  ///
+  /// Bounds the work one hostile or pathological page can create; links past the
+  /// cap are dropped and a warning is logged.
+  final PlatformInt64? maxLinksPerPage;
+
   /// Maximum number of concurrent requests.
   final PlatformInt64? maxConcurrent;
 
@@ -977,6 +983,14 @@ class CrawlConfig {
   final List<String> userAgents;
 
   /// Whether to capture a screenshot when using the browser.
+  ///
+  /// Only supported by `scrape()` with `BrowserBackend::Chromiumoxide` and
+  /// `BrowserMode::Always` or `Stealth`. A screenshot is 100–500 KB of PNG per page,
+  /// so `crawl()` does not carry screenshots in `CrawlPageResult`/`CrawlResult` at
+  /// all — a multi-thousand-page crawl holding one per page in memory is not a safe
+  /// default. Setting this with any other configuration (a different backend,
+  /// `BrowserMode::Auto`/`Never`, or during `crawl()`) has no effect and logs a
+  /// warning rather than silently doing nothing.
   final bool captureScreenshot;
 
   /// Re-enqueue discovered `LinkType::Document` URLs into the crawl frontier so
@@ -991,6 +1005,7 @@ class CrawlConfig {
   final PlatformInt64? documentUrlDepth;
 
   /// Whether to download non-HTML documents (PDF, DOCX, images, code, etc.) instead of skipping them.
+  /// Defaults to `true` — unlike `download_assets` and `capture_screenshot`, which default to `false`.
   final bool downloadDocuments;
 
   /// Maximum size in bytes for document downloads. Defaults to 50 MB.
@@ -999,10 +1014,30 @@ class CrawlConfig {
   /// Allowlist of MIME types to download. If empty, uses built-in defaults.
   final List<String> documentMimeTypes;
 
+  /// Directory to stream downloaded document bytes into instead of holding them in
+  /// memory on `DownloadedDocument.content`. When set, `content` is left empty and
+  /// `DownloadedDocument.content_path` is populated with `<dir>/<content_hash>.<ext>`.
+  /// `None` (default) preserves today's in-memory-only behavior. Has no effect on
+  /// wasm32, which has no filesystem — use `document_content_encoding` there instead.
+  final String? documentOutputDir;
+
+  /// Opt-in encoding that duplicates `DownloadedDocument.content` into a serializable
+  /// field for language bindings that need the bytes in-memory (`content` itself is
+  /// `alef(skip)`ed). `None` (default) means no encoding is produced. Independent of
+  /// `document_output_dir` — set both to get a file on disk and an in-memory copy.
+  final DocumentContentEncoding? documentContentEncoding;
+
   /// Path to write WARC output. If `None`, WARC output is disabled.
   final String? warcOutput;
 
   /// Named browser profile for persistent sessions (cookies, localStorage).
+  ///
+  /// Chromiumoxide backend only. The native backend runs an in-process JavaScript
+  /// engine with no Chrome process and therefore no profile directory, so this is
+  /// ignored there and logs a warning. It is also ignored — with a warning — when a
+  /// shared browser pool is in use (the pool launches before any per-crawl config
+  /// exists) or when connecting to an external CDP endpoint whose process crawlberg
+  /// does not own.
   final String? browserProfile;
 
   /// Whether to save changes back to the browser profile on exit.
@@ -1011,14 +1046,41 @@ class CrawlConfig {
   /// SSRF policy for outbound network requests. Default: deny private networks,
   /// allow http/https only, max 5 redirects.
   ///
-  /// Phase 1: `deny_private` and `max_redirects` are exposed to all language
-  /// bindings. `allowlist` is skipped (see `SsrfPolicy` fields) and will be
-  /// added in a follow-up when `HostMatcher`'s tagged-enum FFI form is decided.
+  /// `deny_private`, `allowlist` and `max_redirects` are exposed to all language
+  /// bindings. `scheme_allowlist` stays Rust-only — see `SsrfPolicy`.
+  ///
+  /// **wasm32 (including Node.js): `deny_private` does not stop hostname-based
+  /// requests.** There is no DNS resolution on this target, so only a literal IP host is
+  /// checked against the policy — a domain name is always permitted, regardless of
+  /// `deny_private`. Under Node, where `fetch` enforces no CORS, this means a service
+  /// embedding the wasm binding can be driven to internal hosts by domain name even with
+  /// `deny_private = true`. Enforce egress restrictions at the network layer for that
+  /// deployment target; do not rely on this field. See `crawlberg::net::validate_url`.
   final SsrfPolicy ssrf;
+
+  /// Pins [`SsrfPolicy::deny_private`] to a caller-chosen value, bypassing the
+  /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` operator override entirely for this config.
+  ///
+  /// `ssrf.deny_private` is a plain, always-serialized `bool`: several alef-generated
+  /// bindings construct `SsrfPolicy::default()` (hardcoding `deny_private: true`)
+  /// whenever their caller never touches SSRF settings at all, so `true` on that field
+  /// alone cannot distinguish "the caller wants private networks denied" from "the
+  /// binding's own structural default landed on `true`". The environment variable
+  /// exists precisely to resolve that ambiguity in the common case by treating any
+  /// `true` as inconclusive and deferring to the operator.
+  ///
+  /// Set this field when that default-deferral is wrong for your call — e.g. a test
+  /// that must prove `deny_private: true` still denies even while the operator has set
+  /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` suite-wide for every other call. `None` (default)
+  /// preserves today's behavior: the environment variable may still flip
+  /// `ssrf.deny_private` to `false`. `Some(value)` pins `ssrf.deny_private` to `value`
+  /// and the environment variable is not consulted for this config.
+  final bool? ssrfDenyPrivateExplicit;
 
   const CrawlConfig({
     this.maxDepth,
     this.maxPages,
+    this.maxLinksPerPage,
     this.maxConcurrent,
     required this.respectRobotsTxt,
     required this.softHttpErrors,
@@ -1052,16 +1114,20 @@ class CrawlConfig {
     required this.downloadDocuments,
     this.documentMaxSize,
     required this.documentMimeTypes,
+    this.documentOutputDir,
+    this.documentContentEncoding,
     this.warcOutput,
     this.browserProfile,
     required this.saveBrowserProfile,
     required this.ssrf,
+    this.ssrfDenyPrivateExplicit,
   });
 
   @override
   int get hashCode =>
       maxDepth.hashCode ^
       maxPages.hashCode ^
+      maxLinksPerPage.hashCode ^
       maxConcurrent.hashCode ^
       respectRobotsTxt.hashCode ^
       softHttpErrors.hashCode ^
@@ -1095,10 +1161,13 @@ class CrawlConfig {
       downloadDocuments.hashCode ^
       documentMaxSize.hashCode ^
       documentMimeTypes.hashCode ^
+      documentOutputDir.hashCode ^
+      documentContentEncoding.hashCode ^
       warcOutput.hashCode ^
       browserProfile.hashCode ^
       saveBrowserProfile.hashCode ^
-      ssrf.hashCode;
+      ssrf.hashCode ^
+      ssrfDenyPrivateExplicit.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1107,6 +1176,7 @@ class CrawlConfig {
           runtimeType == other.runtimeType &&
           maxDepth == other.maxDepth &&
           maxPages == other.maxPages &&
+          maxLinksPerPage == other.maxLinksPerPage &&
           maxConcurrent == other.maxConcurrent &&
           respectRobotsTxt == other.respectRobotsTxt &&
           softHttpErrors == other.softHttpErrors &&
@@ -1140,10 +1210,13 @@ class CrawlConfig {
           downloadDocuments == other.downloadDocuments &&
           documentMaxSize == other.documentMaxSize &&
           documentMimeTypes == other.documentMimeTypes &&
+          documentOutputDir == other.documentOutputDir &&
+          documentContentEncoding == other.documentContentEncoding &&
           warcOutput == other.warcOutput &&
           browserProfile == other.browserProfile &&
           saveBrowserProfile == other.saveBrowserProfile &&
-          ssrf == other.ssrf;
+          ssrf == other.ssrf &&
+          ssrfDenyPrivateExplicit == other.ssrfDenyPrivateExplicit;
 }
 
 @freezed
@@ -1487,6 +1560,17 @@ class CrawlStreamRequest {
           url == other.url;
 }
 
+/// Opt-in encoding applied to a downloaded document's bytes for callers who need the
+/// content available in a serializable field rather than reading it from disk.
+///
+/// `None` (the `CrawlConfig.document_content_encoding` default) produces neither — unlike
+/// screenshots, base64-encoding a document by default would duplicate an already
+/// up-to-`document_max_size` buffer (50 MB default) in memory per document.
+enum DocumentContentEncoding {
+  /// Populate `DownloadedDocument.content_base64` with a base64-encoded copy.
+  base64,
+}
+
 /// A downloaded asset from a page.
 class DownloadedAsset {
   /// The original URL of the asset.
@@ -1562,6 +1646,18 @@ class DownloadedDocument {
   /// Selected response headers.
   final Map<String, String> headers;
 
+  /// True when `content` (or the file at `content_path`) was truncated to
+  /// `document_max_size`; `size` still reports the original, untruncated length.
+  final bool truncated;
+
+  /// Filesystem path the document was streamed to when `document_output_dir` was
+  /// set. `content` is empty in memory when this is populated.
+  final String? contentPath;
+
+  /// Base64-encoded copy of `content`, populated only when
+  /// `document_content_encoding` was set to `Base64`.
+  final String? contentBase64;
+
   const DownloadedDocument({
     required this.url,
     required this.mimeType,
@@ -1569,6 +1665,9 @@ class DownloadedDocument {
     this.filename,
     required this.contentHash,
     required this.headers,
+    required this.truncated,
+    this.contentPath,
+    this.contentBase64,
   });
 
   @override
@@ -1578,7 +1677,10 @@ class DownloadedDocument {
       size.hashCode ^
       filename.hashCode ^
       contentHash.hashCode ^
-      headers.hashCode;
+      headers.hashCode ^
+      truncated.hashCode ^
+      contentPath.hashCode ^
+      contentBase64.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1590,7 +1692,10 @@ class DownloadedDocument {
           size == other.size &&
           filename == other.filename &&
           contentHash == other.contentHash &&
-          headers == other.headers;
+          headers == other.headers &&
+          truncated == other.truncated &&
+          contentPath == other.contentPath &&
+          contentBase64 == other.contentBase64;
 }
 
 /// Metadata about an LLM extraction pass.
@@ -1734,6 +1839,30 @@ class HeadingInfo {
           text == other.text;
 }
 
+@freezed
+sealed class HostMatcher with _$HostMatcher {
+  const HostMatcher._();
+
+  /// Exact hostname match (case-insensitive).
+  const factory HostMatcher.exact({
+    /// The hostname to match.
+    required String value,
+  }) = HostMatcher_Exact;
+
+  /// Suffix match: ".xberg.io" matches "api.xberg.io" and "xberg.io".
+  const factory HostMatcher.suffix({
+    /// The dot-prefixed suffix to match. A leading dot is optional.
+    required String value,
+  }) = HostMatcher_Suffix;
+
+  /// CIDR match: "10.0.0.0/8" matches IP addresses in that range.
+  const factory HostMatcher.cidr({
+    /// The CIDR block. Validated when built through [`HostMatcher::cidr`] or
+    /// deserialization.
+    required String value,
+  }) = HostMatcher_Cidr;
+}
+
 /// An hreflang alternate link entry.
 class HreflangEntry {
   /// The language code (e.g., "en", "fr", "x-default").
@@ -1827,15 +1956,25 @@ class InteractionResult {
   /// Final page URL (may have changed due to navigation).
   final String finalUrl;
 
+  /// Base64-encoded PNG screenshot taken after all actions.
+  ///
+  /// Populated only when a `PageAction::Screenshot` action actually ran, so
+  /// callers that never request a screenshot do not pay the encoding cost.
+  final String? screenshotBase64;
+
   const InteractionResult({
     required this.actionResults,
     required this.finalHtml,
     required this.finalUrl,
+    this.screenshotBase64,
   });
 
   @override
   int get hashCode =>
-      actionResults.hashCode ^ finalHtml.hashCode ^ finalUrl.hashCode;
+      actionResults.hashCode ^
+      finalHtml.hashCode ^
+      finalUrl.hashCode ^
+      screenshotBase64.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1844,7 +1983,8 @@ class InteractionResult {
           runtimeType == other.runtimeType &&
           actionResults == other.actionResults &&
           finalHtml == other.finalHtml &&
-          finalUrl == other.finalUrl;
+          finalUrl == other.finalUrl &&
+          screenshotBase64 == other.screenshotBase64;
 }
 
 /// A JSON-LD structured data entry found on a page.
@@ -2514,6 +2654,13 @@ class ScrapeResult {
   /// Metadata about the LLM extraction pass (cost, tokens, model).
   final ExtractionMeta? extractionMeta;
 
+  /// Base64-encoded PNG screenshot of the page.
+  ///
+  /// Populated only when `CrawlConfig.capture_screenshot` was enabled for this
+  /// request, so callers that never requested a screenshot do not pay the
+  /// encoding cost.
+  final String? screenshotBase64;
+
   /// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
   final DownloadedDocument? downloadedDocument;
 
@@ -2548,6 +2695,7 @@ class ScrapeResult {
     this.markdown,
     this.extractedData,
     this.extractionMeta,
+    this.screenshotBase64,
     this.downloadedDocument,
     this.browser,
   });
@@ -2580,6 +2728,7 @@ class ScrapeResult {
       markdown.hashCode ^
       extractedData.hashCode ^
       extractionMeta.hashCode ^
+      screenshotBase64.hashCode ^
       downloadedDocument.hashCode ^
       browser.hashCode;
 
@@ -2614,6 +2763,7 @@ class ScrapeResult {
           markdown == other.markdown &&
           extractedData == other.extractedData &&
           extractionMeta == other.extractionMeta &&
+          screenshotBase64 == other.screenshotBase64 &&
           downloadedDocument == other.downloadedDocument &&
           browser == other.browser;
 }
@@ -2674,6 +2824,10 @@ sealed class SsrfError with _$SsrfError {
   /// Host not on allowlist when an allowlist is configured.
   const factory SsrfError.notOnAllowlist() = SsrfError_NotOnAllowlist;
 
+  /// Allowlist entry is not a parseable CIDR block.
+  const factory SsrfError.invalidCidr({required String field0}) =
+      SsrfError_InvalidCidr;
+
   /// DNS resolution failed for hostname.
   const factory SsrfError.dnsResolutionFailed({required String field0}) =
       SsrfError_DnsResolutionFailed;
@@ -2695,13 +2849,35 @@ class SsrfPolicy {
   /// If true, reject URLs that resolve to private/metadata IP ranges.
   final bool denyPrivate;
 
+  /// Hostnames and IP ranges permitted regardless of `deny_private`.
+  ///
+  /// The allowlist is an *override* of `deny_private`, not an intersection with it.
+  /// Precedence, in order:
+  ///
+  /// 1. `deny_private == false` permits everything; the allowlist is not consulted.
+  /// 2. A hostname matching an `Exact` or `Suffix` entry is permitted immediately,
+  ///    *before* DNS resolution — so the deny-list is never applied to it. This trusts
+  ///    the host string: a name that resolves into private space is still permitted.
+  /// 3. A literal or resolved IP inside a `Cidr` entry is permitted even though it is
+  ///    in the default deny-list.
+  /// 4. Otherwise the default deny-list decides.
+  ///
+  /// An empty allowlist therefore denies nothing by itself — it simply leaves
+  /// `deny_private` and the deny-list in sole control.
+  final List<HostMatcher> allowlist;
+
   /// Maximum number of HTTP redirects to follow during validation.
   final PlatformInt64 maxRedirects;
 
-  const SsrfPolicy({required this.denyPrivate, required this.maxRedirects});
+  const SsrfPolicy({
+    required this.denyPrivate,
+    required this.allowlist,
+    required this.maxRedirects,
+  });
 
   @override
-  int get hashCode => denyPrivate.hashCode ^ maxRedirects.hashCode;
+  int get hashCode =>
+      denyPrivate.hashCode ^ allowlist.hashCode ^ maxRedirects.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2709,5 +2885,6 @@ class SsrfPolicy {
       other is SsrfPolicy &&
           runtimeType == other.runtimeType &&
           denyPrivate == other.denyPrivate &&
+          allowlist == other.allowlist &&
           maxRedirects == other.maxRedirects;
 }

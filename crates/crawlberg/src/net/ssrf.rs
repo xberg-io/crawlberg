@@ -323,6 +323,14 @@ impl SsrfPolicy {
     /// - Outbound requests in a browser go through the fetch API, which enforces its own network policies.
     /// - Rust-side SSRF checking is unenforceable and redundant in a wasm32 context.
     /// - For testing and localhost access, the host's network sandbox is the enforcing boundary.
+    ///
+    /// **Node.js caveat:** `deny_private` (whatever its value) has no effect on hostname-based
+    /// requests under `wasm32`. There is no DNS resolution on this target, so [`validate_url`]
+    /// only ever checks a literal IP host; a domain name falls straight through to `Ok(())`. In a
+    /// browser this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node
+    /// service embedding this wasm module can be driven to internal hosts by domain name even
+    /// though `deny_private = true`. Do not rely on this policy to stop that in Node — enforce
+    /// egress restrictions (network policy, firewall, proxy allowlist) outside the process.
     pub fn from_env() -> Self {
         #[cfg(target_arch = "wasm32")]
         let allow_private = true;
@@ -368,6 +376,11 @@ impl SsrfPolicy {
 ///
 /// DNS rebinding mitigation: all resolved IPs are validated; if ANY resolved IP violates
 /// the policy, the URL is rejected.
+///
+/// **wasm32 targets only check literal IP hosts.** There is no DNS resolution on `wasm32`
+/// (no `tokio::net`), so step 4 never runs: a hostname that survives the scheme and allowlist
+/// checks above is permitted unconditionally, regardless of `policy.deny_private`. See the
+/// `wasm32`-specific note on [`SsrfPolicy::from_env`] for why this matters under Node.js.
 pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
     let scheme = url.scheme();
     if !policy.scheme_allowlist.contains(scheme) {

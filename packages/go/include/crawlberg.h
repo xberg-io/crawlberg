@@ -136,6 +136,15 @@ typedef struct CBERGCrawlResult CBERGCrawlResult;
  */
 typedef struct CBERGCrawlStreamRequest CBERGCrawlStreamRequest;
 /**
+ * Opt-in encoding applied to a downloaded document's bytes for callers who need the
+ * content available in a serializable field rather than reading it from disk.
+ *
+ * `None` (the `CrawlConfig.document_content_encoding` default) produces neither â unlike
+ * screenshots, base64-encoding a document by default would duplicate an already
+ * up-to-`document_max_size` buffer (50 MB default) in memory per document.
+ */
+typedef struct CBERGDocumentContentEncoding CBERGDocumentContentEncoding;
+/**
  * A downloaded asset from a page.
  */
 typedef struct CBERGDownloadedAsset CBERGDownloadedAsset;
@@ -167,6 +176,24 @@ typedef struct CBERGFeedType CBERGFeedType;
  * A heading element extracted from the page.
  */
 typedef struct CBERGHeadingInfo CBERGHeadingInfo;
+/**
+ * Hostname/IP allowlist matcher for SSRF policy.
+ *
+ * Serializes as an internally-tagged object so each variant is distinguishable on the
+ * wire and round-trips losslessly:
+ *
+ * ```json
+ * {"type": "exact",  "value": "api.example.com"}
+ * {"type": "suffix", "value": ".example.com"}
+ * {"type": "cidr",   "value": "10.0.0.0/8"}
+ * ```
+ *
+ * A bare JSON string is still accepted on deserialization and resolves to `Exact`,
+ * preserving configs written against the previous untagged representation.
+ *
+ * `Exact`: HostMatcher::Exact
+ */
+typedef struct CBERGHostMatcher CBERGHostMatcher;
 /**
  * An hreflang alternate link entry.
  */
@@ -292,7 +319,7 @@ void cberg_free_string(char *ptr);
  * or the call must pass `ptr = null` (in which case it is a no-op).
  * # Safety
  * Pointer must have been returned by this library (via out_ptr / out_len / out_cap
- * out-params), or be null. The len and cap values must be unchanged since the call.
+ * out-params), and ownership must not already have been released.
  */
 void cberg_free_bytes(uint8_t *ptr,
                       uintptr_t len,
@@ -763,6 +790,13 @@ uintptr_t cberg_crawl_config_max_depth(const CBERGCrawlConfig *ptr);
 uintptr_t cberg_crawl_config_max_pages(const CBERGCrawlConfig *ptr);
 
 /**
+ * Get the `max_links_per_page` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uintptr_t cberg_crawl_config_max_links_per_page(const CBERGCrawlConfig *ptr);
+
+/**
  * Get the `max_concurrent` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -994,6 +1028,20 @@ uintptr_t cberg_crawl_config_document_max_size(const CBERGCrawlConfig *ptr);
 char *cberg_crawl_config_document_mime_types(const CBERGCrawlConfig *ptr);
 
 /**
+ * Get the `document_output_dir` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_config_document_output_dir(const CBERGCrawlConfig *ptr);
+
+/**
+ * Get the `document_content_encoding` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+CBERGDocumentContentEncoding *cberg_crawl_config_document_content_encoding(const CBERGCrawlConfig *ptr);
+
+/**
  * Get the `warc_output` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1020,6 +1068,13 @@ int32_t cberg_crawl_config_save_browser_profile(const CBERGCrawlConfig *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 CBERGSsrfPolicy *cberg_crawl_config_ssrf(const CBERGCrawlConfig *ptr);
+
+/**
+ * Get the `ssrf_deny_private_explicit` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_ssrf_deny_private_explicit(const CBERGCrawlConfig *ptr);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
@@ -1144,6 +1199,27 @@ char *cberg_downloaded_document_content_hash(const CBERGDownloadedDocument *ptr)
 char *cberg_downloaded_document_headers(const CBERGDownloadedDocument *ptr);
 
 /**
+ * Get the `truncated` field from a `DownloadedDocument`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_downloaded_document_truncated(const CBERGDownloadedDocument *ptr);
+
+/**
+ * Get the `content_path` field from a `DownloadedDocument`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_downloaded_document_content_path(const CBERGDownloadedDocument *ptr);
+
+/**
+ * Get the `content_base64` field from a `DownloadedDocument`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_downloaded_document_content_base64(const CBERGDownloadedDocument *ptr);
+
+/**
  * Create a `InteractionResult` from a JSON string. Returns null on failure.
  * # Safety
  * JSON string must be valid UTF-8 and null-terminated.
@@ -1186,6 +1262,13 @@ char *cberg_interaction_result_final_html(const CBERGInteractionResult *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_interaction_result_final_url(const CBERGInteractionResult *ptr);
+
+/**
+ * Get the `screenshot_base64` field from a `InteractionResult`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_interaction_result_screenshot_base64(const CBERGInteractionResult *ptr);
 
 /**
  * Create a `ActionResult` from a JSON string. Returns null on failure.
@@ -1449,6 +1532,13 @@ char *cberg_scrape_result_extracted_data(const CBERGScrapeResult *ptr);
  * Pointer must be a valid handle returned by this library.
  */
 CBERGExtractionMeta *cberg_scrape_result_extraction_meta(const CBERGScrapeResult *ptr);
+
+/**
+ * Get the `screenshot_base64` field from a `ScrapeResult`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_scrape_result_screenshot_base64(const CBERGScrapeResult *ptr);
 
 /**
  * Get the `downloaded_document` field from a `ScrapeResult`.
@@ -1715,6 +1805,13 @@ int32_t cberg_crawl_result_browser_used(const CBERGCrawlResult *ptr);
 
 /**
  * Returns the count of unique normalized URLs encountered during crawling.
+ *
+ * Computed from `pages` (not the deprecated `normalized_urls` field) so it
+ * is correct across every binding that reconstructs `CrawlResult` from
+ * `pages` alone. In streaming mode `pages` is empty, so this returns 0 on
+ * the opaque-handle (C/Go/C#/Zig/Dart) path where it previously counted
+ * streamed pages â a known, accepted cost of making the other ten binding
+ * families correct.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
@@ -3170,6 +3267,13 @@ void cberg_ssrf_policy_free(CBERGSsrfPolicy *ptr);
 int32_t cberg_ssrf_policy_deny_private(const CBERGSsrfPolicy *ptr);
 
 /**
+ * Get the `allowlist` field from a `SsrfPolicy`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_ssrf_policy_allowlist(const CBERGSsrfPolicy *ptr);
+
+/**
  * Get the `max_redirects` field from a `SsrfPolicy`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -3193,6 +3297,14 @@ CBERGSsrfPolicy *cberg_ssrf_policy_default(void);
  * - Outbound requests in a browser go through the fetch API, which enforces its own network policies.
  * - Rust-side SSRF checking is unenforceable and redundant in a wasm32 context.
  * - For testing and localhost access, the host's network sandbox is the enforcing boundary.
+ *
+ * **Node.js caveat:** `deny_private` (whatever its value) has no effect on hostname-based
+ * requests under `wasm32`. There is no DNS resolution on this target, so `validate_url`
+ * only ever checks a literal IP host; a domain name falls straight through to `Ok(())`. In a
+ * browser this is covered by same-origin/CORS. Node's `fetch` enforces no CORS, so a Node
+ * service embedding this wasm module can be driven to internal hosts by domain name even
+ * though `deny_private = true`. Do not rely on this policy to stop that in Node â enforce
+ * egress restrictions (network policy, firewall, proxy allowlist) outside the process.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
@@ -3242,6 +3354,21 @@ int32_t cberg_browser_backend_from_i32(int32_t value);
  * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_browser_backend_from_str(const char *name);
+
+/**
+ * Convert an integer to a `DocumentContentEncoding` variant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+int32_t cberg_document_content_encoding_from_i32(int32_t value);
+
+/**
+ * Convert a `DocumentContentEncoding` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ */
+int32_t cberg_document_content_encoding_from_str(const char *name);
 
 /**
  * Convert an integer to a `AuthConfig` variant. Returns -1 on invalid input.
@@ -3364,6 +3491,21 @@ int32_t cberg_scroll_direction_from_i32(int32_t value);
 int32_t cberg_scroll_direction_from_str(const char *name);
 
 /**
+ * Convert an integer to a `HostMatcher` variant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+int32_t cberg_host_matcher_from_i32(int32_t value);
+
+/**
+ * Convert a `HostMatcher` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ */
+int32_t cberg_host_matcher_from_str(const char *name);
+
+/**
  * Free a heap-allocated `BrowserMode` returned by a pointer-returning FFI function.
  * # Safety
  * Pointer must have been returned by this library, or be null.
@@ -3437,6 +3579,31 @@ char *cberg_browser_backend_to_json(const CBERGBrowserBackend *ptr);
  * The returned string must be freed with `cberg_free_string`.
  */
 char *cberg_browser_backend_to_string(const CBERGBrowserBackend *ptr);
+
+/**
+ * Free a heap-allocated `DocumentContentEncoding` returned by a pointer-returning FFI function.
+ * # Safety
+ * Pointer must have been returned by this library, or be null.
+ */
+void cberg_document_content_encoding_free(CBERGDocumentContentEncoding *ptr);
+
+/**
+ * Serialize a heap-allocated `DocumentContentEncoding` to a JSON string.
+ * # Safety
+ * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_document_content_encoding_to_json(const CBERGDocumentContentEncoding *ptr);
+
+/**
+ * Render a heap-allocated `DocumentContentEncoding` as its string representation
+ * (the unit-variant name as serialized by serde — e.g. `"completed"`,
+ * without surrounding JSON quotes).
+ * # Safety
+ * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_document_content_encoding_to_string(const CBERGDocumentContentEncoding *ptr);
 
 /**
  * Free a heap-allocated `AuthConfig` returned by a pointer-returning FFI function.
