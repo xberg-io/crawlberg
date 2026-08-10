@@ -4,6 +4,42 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Added
+
+- `SsrfPolicy.allowlist` (`HostMatcher`) is now exposed to every language binding via a binding-safe tagged
+  representation (`exact` / `suffix` / `cidr`). Allowlist entries permit access regardless of the default denylist.
+  Closes #37.
+- `CrawlConfig.ssrf_deny_private_explicit` lets a caller pin `ssrf.deny_private` to an explicit value so it is no
+  longer consulted from `CRAWLBERG_ALLOW_PRIVATE_NETWORK`, removing the ambiguity between a caller who means
+  `deny_private: true` and a binding whose struct default happens to land there.
+- `CrawlConfig.max_links_per_page` bounds how many links are enqueued from a single page. Links past the cap are
+  dropped and a warning is logged.
+- `CrawlConfig.document_output_dir` writes downloaded document bytes to disk (`<dir>/<content_hash>.<ext>`) and drops
+  them from the result, populating `DownloadedDocument.content_path` instead of `content`. No effect on wasm32 (no
+  filesystem).
+- `CrawlConfig.document_content_encoding` (new `DocumentContentEncoding` enum) opts a downloaded document's bytes
+  into `DownloadedDocument.content_base64` for bindings that need an in-memory, serializable copy. Off by default:
+  base64-encoding a document by default would duplicate an already up-to-`document_max_size` buffer (50 MB default)
+  in memory per document.
+- `CrawlConfig.capture_screenshot` (scrape-only, chromiumoxide-only) captures a base64-encoded PNG screenshot of the
+  page. `CrawlConfig.browser_profile` (chromiumoxide-only) selects a named browser profile for persistent sessions
+  (cookies, localStorage).
+
+### Changed
+
+- JS evaluation paths (`ExecuteJs` interactions and `eval_script`) now run under a timeout, so a hung script can no
+  longer permanently burn a worker slot or hang the isolate.
+- Credentials are redacted before reaching tracing spans, SSRF-violation error messages, and `Debug` output —
+  `ProxyConfig` and `AuthConfig` no longer leak `user:pass@` in errors or logs.
+- Idle per-domain rate-limiter and EWMA domain state now expire on a TTL instead of accumulating unboundedly for
+  long-running processes that crawl many distinct domains.
+- Document persistence now writes via `tokio::fs` instead of blocking `std::fs` on the async document-download path.
+- Bindings regenerated on alef 0.60.0.
+
+### Fixed
+
+- E2E fixtures use Alef's canonical `brew` language identifier, allowing strict fixture-driven generation to proceed.
+
 ## [1.1.3] - 2026-08-04
 
 ### Changed
