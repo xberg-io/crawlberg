@@ -26,7 +26,8 @@ pub struct RobotsRules {
     pub crawl_delay: Option<u64>,
     /// Sitemap URLs declared in the file.
     pub sitemaps: Vec<String>,
-    /// `true` when the matched block is `User-agent: *` with `Disallow: /`.
+    /// `true` when these rules came from the `User-agent: *` block because no
+    /// block matched the requested user-agent specifically.
     pub is_wildcard_block: bool,
 }
 
@@ -195,13 +196,6 @@ fn robots_path_matches(path: &str, rule: &str) -> bool {
 ///
 /// Uses longest-match semantics: the longest matching allow or disallow rule wins.
 pub fn is_path_allowed(path: &str, rules: &RobotsRules) -> bool {
-    let has_disallow_rules = !rules.disallow.is_empty();
-
-    // ~keep In wildcard blocks, `Allow: /` is a baseline, not a root-specific override over Disallow rules.
-    if rules.is_wildcard_block && has_disallow_rules && rules.allow.iter().any(|r| r == "/") {
-        return false;
-    }
-
     let mut best_allow: Option<usize> = None;
     let mut best_disallow: Option<usize> = None;
 
@@ -227,5 +221,78 @@ pub fn is_path_allowed(path: &str, rules: &RobotsRules) -> bool {
         (None, Some(_)) => false,
         (Some(_), None) => true,
         (None, None) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules(allow: &[&str], disallow: &[&str], wildcard: bool) -> RobotsRules {
+        RobotsRules {
+            allow: allow.iter().map(|s| (*s).to_string()).collect(),
+            disallow: disallow.iter().map(|s| (*s).to_string()).collect(),
+            crawl_delay: None,
+            sitemaps: Vec::new(),
+            is_wildcard_block: wildcard,
+        }
+    }
+
+    #[test]
+    fn allow_root_with_a_disallow_still_permits_unrelated_paths() {
+        // ~keep Regression: a special case blanket-denied EVERY path whenever a wildcard
+        // block combined `Allow: /` with any `Disallow`. That shape is the default for
+        // Shopify and many CMSes, so affected crawls silently returned zero pages.
+        let robots = rules(&["/"], &["/admin"], true);
+
+        assert!(
+            is_path_allowed("/public", &robots),
+            "/public matches no Disallow and must be allowed"
+        );
+        assert!(is_path_allowed("/", &robots), "the root itself must be allowed");
+        assert!(
+            !is_path_allowed("/admin", &robots),
+            "/admin is explicitly disallowed and longest-match must win over `Allow: /`"
+        );
+        assert!(
+            !is_path_allowed("/admin/users", &robots),
+            "paths under a disallowed prefix must stay disallowed"
+        );
+    }
+
+    #[test]
+    fn longest_match_wins_between_allow_and_disallow() {
+        let robots = rules(&["/api/public/"], &["/api/"], true);
+
+        assert!(
+            is_path_allowed("/api/public/docs", &robots),
+            "the longer Allow rule must override the shorter Disallow"
+        );
+        assert!(
+            !is_path_allowed("/api/private", &robots),
+            "a path matching only the Disallow must be refused"
+        );
+    }
+
+    #[test]
+    fn equal_length_rules_resolve_in_favor_of_allow() {
+        // ~keep Ties go to Allow, matching Google's least-restrictive-wins reading.
+        let robots = rules(&["/x"], &["/x"], true);
+        assert!(is_path_allowed("/x", &robots), "an equal-length tie must allow");
+    }
+
+    #[test]
+    fn no_rules_allows_everything() {
+        let robots = rules(&[], &[], false);
+        assert!(is_path_allowed("/anything", &robots), "empty rules must not block");
+    }
+
+    #[test]
+    fn disallow_root_blocks_everything() {
+        let robots = rules(&[], &["/"], true);
+        assert!(
+            !is_path_allowed("/anything", &robots),
+            "`Disallow: /` must block all paths"
+        );
     }
 }
