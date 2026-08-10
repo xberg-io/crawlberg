@@ -58,6 +58,16 @@ async fn native_browser_fetch_inner(
         ));
     }
 
+    if config.browser_profile.is_some() {
+        // ~keep The native backend runs deno_core/V8 in-process and spawns no Chrome
+        // ~keep subprocess, so there is no `--user-data-dir` for a profile to configure.
+        tracing::warn!(
+            profile = config.browser_profile.as_deref().unwrap_or_default(),
+            "browser_profile is ignored by the native browser backend; it has no Chrome \
+             process or user-data-dir, so persistent profiles are chromiumoxide-only"
+        );
+    }
+
     let mut extra_headers = config.custom_headers.clone();
     match config.auth {
         Some(AuthConfig::Bearer { ref token }) => {

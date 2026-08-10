@@ -19,9 +19,19 @@ pub use actions::{
 };
 pub use validation::validate_actions;
 
+use base64::Engine as _;
+
 use crate::engine::CrawlEngine;
 use crate::error::CrawlError;
 use crate::types::{BrowserBackend, InteractionResult};
+
+/// Base64-encode PNG screenshot bytes for the `screenshot_base64` result field.
+///
+/// Shared by both interact backends so a screenshot captured via chromiumoxide
+/// or the native renderer reaches bindings the same way scrape/crawl results do.
+pub(crate) fn encode_screenshot_base64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
 
 /// Execute browser actions on a single page.
 pub(crate) async fn run(

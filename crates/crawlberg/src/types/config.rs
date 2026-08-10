@@ -76,6 +76,19 @@ pub enum BrowserBackend {
     Native,
 }
 
+/// Opt-in encoding applied to a downloaded document's bytes for callers who need the
+/// content available in a serializable field rather than reading it from disk.
+///
+/// `None` (the `CrawlConfig.document_content_encoding` default) produces neither — unlike
+/// screenshots, base64-encoding a document by default would duplicate an already
+/// up-to-`document_max_size` buffer (50 MB default) in memory per document.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentContentEncoding {
+    /// Populate `DownloadedDocument.content_base64` with a base64-encoded copy.
+    Base64,
+}
+
 pub(crate) mod duration_ms {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::Duration;
@@ -436,9 +449,29 @@ pub struct CrawlConfig {
     /// Allowlist of MIME types to download. If empty, uses built-in defaults.
     #[serde(default)]
     pub document_mime_types: Vec<String>,
+    /// Directory to stream downloaded document bytes into instead of holding them in
+    /// memory on `DownloadedDocument.content`. When set, `content` is left empty and
+    /// `DownloadedDocument.content_path` is populated with `<dir>/<content_hash>.<ext>`.
+    /// `None` (default) preserves today's in-memory-only behavior. Has no effect on
+    /// wasm32, which has no filesystem — use `document_content_encoding` there instead.
+    #[serde(default)]
+    pub document_output_dir: Option<PathBuf>,
+    /// Opt-in encoding that duplicates `DownloadedDocument.content` into a serializable
+    /// field for language bindings that need the bytes in-memory (`content` itself is
+    /// `alef(skip)`ed). `None` (default) means no encoding is produced. Independent of
+    /// `document_output_dir` — set both to get a file on disk and an in-memory copy.
+    #[serde(default)]
+    pub document_content_encoding: Option<DocumentContentEncoding>,
     /// Path to write WARC output. If `None`, WARC output is disabled.
     pub warc_output: Option<PathBuf>,
     /// Named browser profile for persistent sessions (cookies, localStorage).
+    ///
+    /// Chromiumoxide backend only. The native backend runs an in-process JavaScript
+    /// engine with no Chrome process and therefore no profile directory, so this is
+    /// ignored there and logs a warning. It is also ignored — with a warning — when a
+    /// shared browser pool is in use (the pool launches before any per-crawl config
+    /// exists) or when connecting to an external CDP endpoint whose process crawlberg
+    /// does not own.
     pub browser_profile: Option<String>,
     /// Whether to save changes back to the browser profile on exit.
     pub save_browser_profile: bool,
@@ -526,6 +559,8 @@ impl Default for CrawlConfig {
             download_documents: true,
             document_max_size: Some(50 * 1024 * 1024),
             document_mime_types: Vec::new(),
+            document_output_dir: None,
+            document_content_encoding: None,
             warc_output: None,
             browser_profile: None,
             save_browser_profile: false,

@@ -1,5 +1,9 @@
 //! Persistent browser profiles for preserving cookies and localStorage across sessions.
-#![allow(dead_code)]
+//!
+//! Chromiumoxide-only: the native browser backend runs deno_core/V8 in-process and
+//! spawns no Chrome subprocess, so it has no `--user-data-dir` for a profile to
+//! configure. `CrawlConfig.browser_profile` is a no-op (with a `tracing::warn!`) on
+//! that backend.
 
 use std::path::PathBuf;
 
@@ -9,7 +13,13 @@ use crate::error::CrawlError;
 ///
 /// Profile names are sanitized to prevent path-traversal attacks. The underlying
 /// directory lives under `<data_dir>/crawlberg/profiles/<name>`.
+///
+/// Rust-only: this type is excluded from alef-generated polyglot bindings.
+/// Language bindings configure persistence through the `browser_profile` /
+/// `save_browser_profile` fields on `CrawlConfig`; direct profile management
+/// (listing, deleting) is a Rust-only API for now.
 #[derive(Debug, Clone)]
+#[cfg_attr(alef, alef(skip))]
 pub struct BrowserProfile {
     /// Sanitized profile name.
     pub name: Box<str>,

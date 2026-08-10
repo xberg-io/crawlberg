@@ -8,7 +8,7 @@ use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
-use super::{PageAction, ScrollDirection};
+use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -104,11 +104,14 @@ async fn run_with_browser(
             .and_then(|value| value.as_str().map(str::to_owned))
             .unwrap_or_else(|| url.to_owned());
 
+        let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
+
         Ok(InteractionResult {
             action_results,
             final_html,
             final_url,
             screenshot,
+            screenshot_base64,
         })
     }
     .await;

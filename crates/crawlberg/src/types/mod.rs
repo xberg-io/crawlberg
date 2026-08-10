@@ -16,8 +16,8 @@ pub use antibot::{AntibotStrategy, Decision};
 pub use builder::{CrawlConfigBuilder, DispatchProfileBuilder};
 pub use bypass::{BypassProvider, BypassResponse, DynBypassProvider};
 pub use config::{
-    AuthConfig, BrowserBackend, BrowserConfig, BrowserMode, BrowserWait, ContentConfig, CrawlConfig, ExtractionMeta,
-    ProxyConfig,
+    AuthConfig, BrowserBackend, BrowserConfig, BrowserMode, BrowserWait, ContentConfig, CrawlConfig,
+    DocumentContentEncoding, ExtractionMeta, ProxyConfig,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use discovery::CrawlEvent;

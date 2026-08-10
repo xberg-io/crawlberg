@@ -11,6 +11,8 @@ use crawlberg::ScrollDirection;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
 use crawlberg::{CrawlError, PageAction, create_engine, interact, validate_actions};
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+use base64::Engine as _;
 
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use wiremock::matchers::{method, path};
@@ -132,7 +134,17 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
     assert!(result.final_html.contains("clicked"));
     assert!(result.final_html.contains("id=\"done\""));
     assert!(result.final_html.contains("data-eval-script=\"ran\""));
-    assert!(result.screenshot.as_ref().is_some_and(|bytes| !bytes.is_empty()));
+    let screenshot_bytes = result
+        .screenshot
+        .as_ref()
+        .expect("screenshot action must populate InteractionResult.screenshot");
+    assert!(!screenshot_bytes.is_empty());
+    let expected_screenshot_base64 = base64::engine::general_purpose::STANDARD.encode(screenshot_bytes);
+    assert_eq!(
+        result.screenshot_base64.as_deref(),
+        Some(expected_screenshot_base64.as_str()),
+        "screenshot_base64 must carry the same bytes as screenshot so bindings do not lose them"
+    );
     let scrape_data = result
         .action_results
         .last()
@@ -384,6 +396,16 @@ async fn native_interact_full_page_screenshot_returns_png() {
             .as_deref()
             .and_then(png_dimensions)
             .is_some_and(|(_, height)| height > NATIVE_VIEWPORT_SCREENSHOT_HEIGHT)
+    );
+    let screenshot_bytes = result
+        .screenshot
+        .as_ref()
+        .expect("screenshot action must populate InteractionResult.screenshot");
+    let expected_screenshot_base64 = base64::engine::general_purpose::STANDARD.encode(screenshot_bytes);
+    assert_eq!(
+        result.screenshot_base64.as_deref(),
+        Some(expected_screenshot_base64.as_str()),
+        "screenshot_base64 must carry the same bytes as screenshot so bindings do not lose them"
     );
 }
 

@@ -53,6 +53,16 @@ pub struct DownloadedDocument {
     /// Selected response headers.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<Box<str>, Box<str>>,
+    /// True when `content` (or the file at `content_path`) was truncated to
+    /// `document_max_size`; `size` still reports the original, untruncated length.
+    #[serde(default)]
+    pub truncated: bool,
+    /// Filesystem path the document was streamed to when `document_output_dir` was
+    /// set. `content` is empty in memory when this is populated.
+    pub content_path: Option<String>,
+    /// Base64-encoded copy of `content`, populated only when
+    /// `document_content_encoding` was set to `Base64`.
+    pub content_base64: Option<String>,
 }
 
 /// Result of executing a sequence of page interaction actions.
@@ -70,6 +80,11 @@ pub struct InteractionResult {
     #[cfg_attr(alef, alef(skip))]
     #[cfg_attr(feature = "mcp", schemars(skip))]
     pub screenshot: Option<Vec<u8>>,
+    /// Base64-encoded PNG screenshot taken after all actions.
+    ///
+    /// Populated only when a `PageAction::Screenshot` action actually ran, so
+    /// callers that never request a screenshot do not pay the encoding cost.
+    pub screenshot_base64: Option<String>,
 }
 
 /// Result from a single page action execution.
@@ -152,6 +167,12 @@ pub struct ScrapeResult {
     #[cfg_attr(alef, alef(skip))]
     #[cfg_attr(feature = "mcp", schemars(skip))]
     pub screenshot: Option<Vec<u8>>,
+    /// Base64-encoded PNG screenshot of the page.
+    ///
+    /// Populated only when `CrawlConfig.capture_screenshot` was enabled for this
+    /// request, so callers that never requested a screenshot do not pay the
+    /// encoding cost.
+    pub screenshot_base64: Option<String>,
     /// Downloaded non-HTML document (PDF, DOCX, image, code, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub downloaded_document: Option<DownloadedDocument>,
@@ -233,6 +254,11 @@ pub struct CrawlResult {
     /// Whether the browser fallback was used for any page in this crawl.
     pub browser_used: bool,
     /// Normalized URLs encountered during crawling (for deduplication counting).
+    ///
+    /// Deprecated: duplicates `CrawlPageResult.normalized_url`, which already
+    /// reaches every binding. [`CrawlResult::unique_normalized_urls`] no longer
+    /// reads this field; it is kept only to avoid a breaking field removal.
+    #[deprecated(note = "use CrawlPageResult.normalized_url via CrawlResult::unique_normalized_urls instead")]
     #[serde(default, skip_serializing)]
     #[cfg_attr(alef, alef(skip))]
     #[cfg_attr(feature = "mcp", schemars(skip))]
@@ -241,6 +267,10 @@ pub struct CrawlResult {
 
 impl CrawlResult {
     /// Create a new `CrawlResult` with the given fields.
+    ///
+    /// `normalized_urls` is accepted for caller compatibility but no longer
+    /// stored: it duplicated `CrawlPageResult.normalized_url` on every page.
+    /// See [`CrawlResult::unique_normalized_urls`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         pages: Vec<CrawlPageResult>,
@@ -250,9 +280,10 @@ impl CrawlResult {
         error: Option<String>,
         cookies: Vec<CookieInfo>,
         stayed_on_domain: bool,
-        normalized_urls: Vec<String>,
+        _normalized_urls: Vec<String>,
     ) -> Self {
         let browser_used = pages.iter().any(|p| p.browser_used);
+        #[allow(deprecated)]
         Self {
             pages,
             final_url,
@@ -262,17 +293,102 @@ impl CrawlResult {
             cookies,
             stayed_on_domain,
             browser_used,
-            normalized_urls,
+            normalized_urls: Vec::new(),
         }
     }
 
     /// Returns the count of unique normalized URLs encountered during crawling.
+    ///
+    /// Computed from `pages` (not the deprecated `normalized_urls` field) so it
+    /// is correct across every binding that reconstructs `CrawlResult` from
+    /// `pages` alone. In streaming mode `pages` is empty, so this returns 0 on
+    /// the opaque-handle (C/Go/C#/Zig/Dart) path where it previously counted
+    /// streamed pages — a known, accepted cost of making the other ten binding
+    /// families correct.
     pub fn unique_normalized_urls(&self) -> usize {
-        let mut unique: AHashSet<&str> = AHashSet::new();
-        for n in &self.normalized_urls {
-            unique.insert(n.as_str());
+        self.pages
+            .iter()
+            .map(|p| p.normalized_url.as_str())
+            .collect::<AHashSet<_>>()
+            .len()
+    }
+}
+
+#[cfg(test)]
+mod crawl_result_tests {
+    use super::{CookieInfo, CrawlPageResult, CrawlResult};
+
+    fn page_with_normalized_url(normalized_url: &str) -> CrawlPageResult {
+        CrawlPageResult {
+            normalized_url: normalized_url.to_owned(),
+            ..CrawlPageResult::default()
         }
-        unique.len()
+    }
+
+    #[test]
+    fn unique_normalized_urls_counts_distinct_pages_and_ignores_duplicates() {
+        let result = CrawlResult::new(
+            vec![
+                page_with_normalized_url("https://example.com/a"),
+                page_with_normalized_url("https://example.com/b"),
+                page_with_normalized_url("https://example.com/a"),
+            ],
+            "https://example.com/".to_owned(),
+            0,
+            false,
+            None,
+            Vec::<CookieInfo>::new(),
+            true,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            result.unique_normalized_urls(),
+            2,
+            "must count distinct CrawlPageResult.normalized_url values, deduplicating the repeated page"
+        );
+    }
+
+    #[test]
+    fn unique_normalized_urls_is_zero_when_pages_is_empty() {
+        let result = CrawlResult::new(
+            Vec::new(),
+            "https://example.com/".to_owned(),
+            0,
+            false,
+            None,
+            Vec::<CookieInfo>::new(),
+            true,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            result.unique_normalized_urls(),
+            0,
+            "an empty pages list (e.g. streaming mode) must report zero unique URLs, not panic"
+        );
+    }
+
+    #[test]
+    fn new_does_not_populate_the_deprecated_normalized_urls_field_even_when_given_input() {
+        #[allow(deprecated)]
+        let result = CrawlResult::new(
+            vec![page_with_normalized_url("https://example.com/a")],
+            "https://example.com/".to_owned(),
+            0,
+            false,
+            None,
+            Vec::<CookieInfo>::new(),
+            true,
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
+        );
+
+        #[allow(deprecated)]
+        let normalized_urls = &result.normalized_urls;
+        assert!(
+            normalized_urls.is_empty(),
+            "normalized_urls must stay empty regardless of what the caller passes in, got {normalized_urls:?}"
+        );
     }
 }
 

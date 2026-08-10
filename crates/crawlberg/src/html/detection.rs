@@ -70,6 +70,11 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
 }
 
 /// Check whether a Content-Type header indicates binary content.
+///
+/// ~keep These are the "built-in defaults" `CrawlConfig.document_mime_types` refers to.
+/// This function only decides `is_binary`/markdown-skip classification; it does not
+/// gate document *downloading* — a non-empty `document_mime_types` allowlist governs
+/// that decision independently in `document::build_downloaded_document`.
 pub(crate) fn is_binary_content_type(ct: &str) -> bool {
     let lower = ct.to_lowercase();
     if lower.starts_with("image/")

@@ -5,7 +5,7 @@ use crawlberg_browser::adapter::{
     NativeInteractionResult, NativePageAction, NativeScrollDirection,
 };
 
-use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection};
+use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult, ProxyConfig};
 
@@ -191,11 +191,13 @@ fn map_scroll_direction(direction: ScrollDirection) -> NativeScrollDirection {
 }
 
 fn map_result(result: NativeInteractionResult) -> InteractionResult {
+    let screenshot_base64 = result.screenshot.as_deref().map(encode_screenshot_base64);
     InteractionResult {
         action_results: result.action_results.into_iter().map(map_action_result).collect(),
         final_html: result.final_html,
         final_url: result.final_url,
         screenshot: result.screenshot,
+        screenshot_base64,
     }
 }
 

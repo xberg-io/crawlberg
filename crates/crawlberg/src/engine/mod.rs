@@ -782,6 +782,7 @@ impl CrawlEngine {
                     extracted_data: None,
                     extraction_meta: None,
                     screenshot: None,
+                    screenshot_base64: None,
                     downloaded_document: None,
                     browser: None,
                 });
@@ -818,6 +819,7 @@ impl CrawlEngine {
                     extracted_data: None,
                     extraction_meta: None,
                     screenshot: None,
+                    screenshot_base64: None,
                     downloaded_document: None,
                     browser: None,
                 });
@@ -992,7 +994,6 @@ impl CrawlEngine {
         }];
 
         let mut pages: Vec<CrawlPageResult> = Vec::new();
-        let mut normalized_urls: Vec<String> = Vec::new();
         let mut redirect_count: usize = 0;
         let mut was_skipped = false;
         let mut pages_failed: usize = 0;
@@ -1169,7 +1170,6 @@ impl CrawlEngine {
                 })
                 .await;
 
-            normalized_urls.push(crate::normalize::normalize_url(&page.url));
             pages.push(page);
         }
 
@@ -1202,7 +1202,7 @@ impl CrawlEngine {
             crawl_error,
             Vec::new(),
             stayed_on_domain,
-            normalized_urls,
+            Vec::new(),
         ))
     }
 

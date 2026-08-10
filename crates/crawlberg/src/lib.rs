@@ -10,7 +10,7 @@ mod browser_detect;
 #[cfg(feature = "browser")]
 pub mod browser_pool;
 #[cfg(feature = "browser")]
-pub(crate) mod browser_profile;
+pub mod browser_profile;
 #[cfg(feature = "browser")]
 pub mod browser_session_pool;
 pub mod budget;
@@ -63,6 +63,8 @@ pub use bindings::{batch_crawl_stream, crawl_stream};
 #[cfg(feature = "browser")]
 pub use browser_pool::{BrowserPool, BrowserPoolConfig};
 #[cfg(feature = "browser")]
+pub use browser_profile::BrowserProfile;
+#[cfg(feature = "browser")]
 pub use browser_session_pool::{BrowserSessionPool, SessionKey};
 pub use budget::{BudgetError, DefaultPageBudget, PageBudget};
 pub use citations::{CitationReference, CitationResult, generate_citations};
@@ -95,11 +97,11 @@ pub use types::{
     ActionResult, ArticleMetadata, AssetCategory, AttemptOutcome, AuthConfig, BrowserBackend, BrowserConfig,
     BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassProvider, BypassResponse, CachedPage,
     ContentConfig, CookieInfo, CrawlConfig, CrawlConfigBuilder, CrawlPageResult, CrawlResult, DispatchProfile,
-    DispatchProfileBuilder, DomainObservation, DomainRecommendation, DomainStatePort, DownloadedAsset,
-    DownloadedDocument, DynBypassProvider, DynDomainStatePort, DynEscalationBudget, DynRetryPolicy, DynWafClassifier,
-    EscalationBudget, EscalationReason, EscalationStrategy, ExtractionMeta, FaviconInfo, FeedInfo, FeedType,
-    HeadingInfo, HreflangEntry, ImageInfo, ImageSource, InteractionResult, JsonLdEntry, LinkInfo, LinkType, MapResult,
-    MarkdownResult, ObservedOutcome, PageMetadata, ProxyConfig, ResponseMeta, RetryDirective, RetryPolicy,
+    DispatchProfileBuilder, DocumentContentEncoding, DomainObservation, DomainRecommendation, DomainStatePort,
+    DownloadedAsset, DownloadedDocument, DynBypassProvider, DynDomainStatePort, DynEscalationBudget, DynRetryPolicy,
+    DynWafClassifier, EscalationBudget, EscalationReason, EscalationStrategy, ExtractionMeta, FaviconInfo, FeedInfo,
+    FeedType, HeadingInfo, HreflangEntry, ImageInfo, ImageSource, InteractionResult, JsonLdEntry, LinkInfo, LinkType,
+    MapResult, MarkdownResult, ObservedOutcome, PageMetadata, ProxyConfig, ResponseMeta, RetryDirective, RetryPolicy,
     ScrapeResult, SitemapUrl, Tier, WafClassifier, WafClassifyError, WafSignal,
 };
 #[cfg(not(target_arch = "wasm32"))]

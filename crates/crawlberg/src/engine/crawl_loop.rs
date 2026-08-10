@@ -257,7 +257,6 @@ struct PageExtraction {
 /// Mutable state accumulated during a crawl.
 struct CrawlState {
     pages: Vec<CrawlPageResult>,
-    normalized_urls: Vec<String>,
     redirect_count: usize,
     error: Option<String>,
     was_skipped: bool,
@@ -273,7 +272,6 @@ impl CrawlState {
     fn new(capacity: usize, is_streaming: bool) -> Self {
         Self {
             pages: Vec::with_capacity(capacity),
-            normalized_urls: Vec::with_capacity(capacity),
             redirect_count: 0,
             error: None,
             was_skipped: false,
@@ -301,7 +299,7 @@ impl CrawlState {
             self.error,
             self.all_cookies,
             stayed_on_domain,
-            self.normalized_urls,
+            Vec::new(),
         )
     }
 }
@@ -631,7 +629,28 @@ impl CrawlEngine {
                     .await
                     .map_err(|_| CrawlError::Other("semaphore closed".into()))?;
 
-                let engine = self.clone();
+                // ~keep `http.rs::read_body_bounded` (not ours to edit) is the only place that
+                // bounds the network read, and it is driven solely by `config.max_body_size`
+                // (default `None` — unbounded). When `download_documents` is on (its default)
+                // and the URL looks like a document, lift this per-task clone's `max_body_size`
+                // to `document_max_size` so a large PDF/DOCX/etc. is never fully materialized
+                // in memory regardless of `document_max_size`, matching how `read_body_bounded`
+                // already bounds the HTML body path. Scoped to document-shaped URLs (rather than
+                // every request) so an explicit `max_body_size` — or a plain large HTML page —
+                // keeps today's behavior; `self.config` (used by the rest of this loop, e.g. the
+                // `max_body_size` truncation in `process_fetch_result`) is untouched.
+                let mut engine = self.clone();
+                if engine.config.download_documents
+                    && engine.config.max_body_size.is_none()
+                    && (is_binary_url(&entry.url) || is_pdf_url(&entry.url))
+                {
+                    engine.config.max_body_size = Some(
+                        engine
+                            .config
+                            .document_max_size
+                            .unwrap_or(crate::document::DEFAULT_DOCUMENT_MAX_SIZE),
+                    );
+                }
 
                 join_set.spawn(async move {
                     let _permit = permit;
@@ -859,8 +878,6 @@ impl CrawlEngine {
         let domain = page_parsed.host_str().unwrap_or("");
         let norm_url = normalize_url(&page_url);
         let stayed_on_domain = domain == base_host;
-
-        state.normalized_urls.push(norm_url.clone());
 
         let in_document_context = fetch.entry.doc_depth > 0;
         let should_discover = (!page_was_skipped || in_document_context)
