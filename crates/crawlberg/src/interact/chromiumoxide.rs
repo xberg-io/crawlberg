@@ -59,7 +59,17 @@ async fn run_with_browser(
         let mut screenshot = None;
 
         for (index, action) in actions.iter().enumerate() {
-            match execute_action(&page, action).await {
+            // ~keep A non-terminating ExecuteJs script otherwise hangs `page.evaluate` forever,
+            // ~keep leaking the Chrome subprocess this loop never gets a chance to close.
+            let budget = action.timeout();
+            let outcome = match tokio::time::timeout(budget, execute_action(&page, action)).await {
+                Ok(result) => result,
+                Err(_) => Err(CrawlError::BrowserTimeout(format!(
+                    "action[{index}] ({}) timed out after {budget:?}",
+                    action_type(action)
+                ))),
+            };
+            match outcome {
                 Ok(action_data) => {
                     if let Some(bytes) = action_data.screenshot {
                         screenshot = Some(bytes);

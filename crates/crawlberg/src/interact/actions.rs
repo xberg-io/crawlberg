@@ -1,7 +1,17 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of actions allowed in a single interaction sequence.
 pub const MAX_ACTIONS: usize = 100;
+
+/// Default per-action timeout. Applied per `PageAction` execution (e.g. a
+/// single `ExecuteJs` call) so a non-terminating script cannot hang an
+/// interaction sequence — and the Chrome subprocess it holds — forever.
+pub const DEFAULT_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Grace period added on top of a `Wait` action's own requested duration.
+const WAIT_ACTION_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
 
 /// Maximum total wait time across all Wait actions, in seconds.
 pub const MAX_TOTAL_WAIT_SECS: u64 = 300;
@@ -96,6 +106,27 @@ pub enum PageAction {
     /// Scrape the current page HTML.
     #[default]
     Scrape,
+}
+
+impl PageAction {
+    /// How long this action may run before it is treated as hung.
+    ///
+    /// ~keep A flat [`DEFAULT_ACTION_TIMEOUT`] would kill a `Wait` that validation
+    /// explicitly permits — [`MAX_SINGLE_WAIT_MS`] allows a single wait of five
+    /// minutes. A wait therefore gets its own requested duration plus a margin;
+    /// everything else gets the default, because no other action has a
+    /// caller-declared duration to honour.
+    pub fn timeout(&self) -> Duration {
+        match self {
+            Self::Wait {
+                milliseconds: Some(ms), ..
+            } => Duration::from_millis(ms.unsigned_abs()).saturating_add(WAIT_ACTION_TIMEOUT_MARGIN),
+            Self::Wait { selector: Some(_), .. } => {
+                Duration::from_millis(MAX_SINGLE_WAIT_MS).saturating_add(WAIT_ACTION_TIMEOUT_MARGIN)
+            }
+            _ => DEFAULT_ACTION_TIMEOUT,
+        }
+    }
 }
 
 /// Direction for a scroll action.

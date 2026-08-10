@@ -115,6 +115,14 @@ pub struct RenderedPage {
     pub cookies: Vec<NativeCookie>,
 }
 
+/// Per-action ceiling in the native worker.
+///
+/// ~keep Deliberately generous: crawlberg validates a single `Wait` up to 5 minutes,
+/// and this loop cannot see the caller's per-action budget, so a tighter value would
+/// kill legitimate waits. Its job is only to stop a non-terminating action pinning the
+/// worker's OS thread forever, not to enforce latency.
+const ACTION_TIMEOUT: Duration = Duration::from_secs(360);
+
 const DEFAULT_SCROLL_AMOUNT: i64 = 800;
 const DEFAULT_SELECTOR_WAIT_MS: i64 = 30_000;
 const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -482,7 +490,15 @@ async fn interact_url_local(
     let mut action_results = Vec::with_capacity(actions.len());
     let mut screenshot = None;
     for (index, action) in actions.iter().enumerate() {
-        match execute_action(&mut page, action).await {
+        // ~keep This job runs on a dedicated OS thread fed by a blocking job queue, so a
+        // caller-side timeout only stops the caller waiting — it cannot cancel this loop.
+        // Without a timeout here a non-terminating ExecuteJs pins the worker thread and
+        // leaks the Chrome subprocess for the life of the process.
+        let outcome = match tokio::time::timeout(ACTION_TIMEOUT, execute_action(&mut page, action)).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(format!("action timed out after {}s", ACTION_TIMEOUT.as_secs())),
+        };
+        match outcome {
             Ok(data) => {
                 if let Some(bytes) = data.screenshot {
                     screenshot = Some(bytes);

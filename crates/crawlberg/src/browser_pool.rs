@@ -366,6 +366,22 @@ impl PooledPage {
             let _ = page.close().await;
         }
     }
+
+    // ~keep Hands the page + permit to a new owner (e.g. session affinity) without running
+    // ~keep Drop's close-on-drop, which would race a still-in-flight navigation on the same target.
+    /// Detach the page and its semaphore permit for handoff to another owner.
+    ///
+    /// Unlike [`close`](Self::close), this does not close the CDP target — the
+    /// caller becomes responsible for eventually closing the page and dropping
+    /// the permit. Used when a page is handed off to
+    /// [`BrowserSessionPool`](crate::browser_session_pool::BrowserSessionPool)
+    /// for reuse, or simply to keep the page+permit alive across a caller's
+    /// `.await` boundary instead of dropping them at the end of an expression.
+    pub(crate) fn into_parts(mut self) -> (chromiumoxide::Page, Option<OwnedSemaphorePermit>) {
+        let page = self.page.take().expect("page already taken via close()");
+        let permit = self._permit.take();
+        (page, permit)
+    }
 }
 
 impl Drop for PooledPage {

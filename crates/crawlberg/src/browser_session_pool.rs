@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedSemaphorePermit};
 
 use crate::error::CrawlError;
 
@@ -47,7 +47,13 @@ impl SessionKey {
 struct PooledSession {
     /// The chromiumoxide Page from the browser pool. This is what carries
     /// cookies, fingerprint, and any solved challenge state across requests.
-    page: chromiumoxide::Page,
+    page: Option<chromiumoxide::Page>,
+    /// The `BrowserPool` semaphore permit this page was acquired with. Held
+    /// here (rather than released back to the pool) so a page parked for
+    /// reuse still counts against `max_pages` — it still occupies a real
+    /// Chrome tab. `None` for pages that did not come from a `BrowserPool`
+    /// (e.g. tests constructing a page directly).
+    permit: Option<OwnedSemaphorePermit>,
     /// Last time this session was used (for idle eviction).
     last_used: Instant,
 }
@@ -57,6 +63,19 @@ impl std::fmt::Debug for PooledSession {
         f.debug_struct("PooledSession")
             .field("last_used", &self.last_used)
             .finish()
+    }
+}
+
+impl Drop for PooledSession {
+    // ~keep Without this, evicted/replaced sessions leaked their Chrome tab: chromiumoxide::Page
+    // ~keep is a cheap Arc handle with no Drop of its own, so letting it fall out of the map
+    // ~keep silently abandoned the CDP target instead of closing it.
+    fn drop(&mut self) {
+        if let Some(page) = self.page.take() {
+            tokio::spawn(async move {
+                let _ = page.close().await;
+            });
+        }
     }
 }
 
@@ -88,18 +107,25 @@ impl BrowserSessionPool {
     }
 
     /// Look up an existing session for the key, refreshing its last_used.
-    /// Evicts expired entries opportunistically. Returns None if the session
-    /// was not found or was expired.
-    pub async fn acquire(&self, key: &SessionKey) -> Option<chromiumoxide::Page> {
+    /// Evicts expired entries opportunistically. Returns `None` if the
+    /// session was not found or was expired.
+    ///
+    /// Returns the page together with the `BrowserPool` semaphore permit it
+    /// was inserted with (if any), so the caller keeps holding the same
+    /// concurrency slot across reuse instead of re-acquiring a fresh one.
+    pub async fn acquire(&self, key: &SessionKey) -> Option<(chromiumoxide::Page, Option<OwnedSemaphorePermit>)> {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
-        let entry = sessions.remove(key)?;
-        Some(entry.page)
+        let mut entry = sessions.remove(key)?;
+        let page = entry.page.take().expect("acquired session always has a page");
+        Some((page, entry.permit.take()))
     }
 
-    /// Insert a page into the pool for the given key. If the pool is over
-    /// capacity, evicts the least-recently-used session.
-    pub async fn insert(&self, key: SessionKey, page: chromiumoxide::Page) {
+    /// Insert a page into the pool for the given key, along with the
+    /// `BrowserPool` semaphore permit it was acquired with (if any). If the
+    /// pool is over capacity, evicts the least-recently-used session,
+    /// closing its page and releasing its permit.
+    pub async fn insert(&self, key: SessionKey, page: chromiumoxide::Page, permit: Option<OwnedSemaphorePermit>) {
         let mut sessions = self.sessions.lock().await;
         self.evict_expired(&mut sessions);
 
@@ -115,7 +141,8 @@ impl BrowserSessionPool {
         sessions.insert(
             key,
             PooledSession {
-                page,
+                page: Some(page),
+                permit,
                 last_used: Instant::now(),
             },
         );
@@ -136,11 +163,9 @@ impl BrowserSessionPool {
     /// in closing individual pages are silently ignored.
     pub async fn shutdown(&self) {
         let mut sessions = self.sessions.lock().await;
-        for (_, session) in sessions.drain() {
-            tokio::spawn(async move {
-                let _ = session.page.close().await;
-            });
-        }
+        // ~keep Dropping each entry runs `PooledSession::drop`, which closes the page and
+        // ~keep (via the permit field) releases the BrowserPool concurrency slot it held.
+        sessions.clear();
     }
 }
 

@@ -105,7 +105,11 @@ async fn chromiumoxide_fetch_inner(
         })?;
 
     if let Some(pool) = pool {
-        let page = if config.browser.session_affinity {
+        // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the
+        // ~keep acquisition guard drop as the tail expression of this block, which released the
+        // ~keep semaphore permit AND spawned a `Target.closeTarget` race against the navigation
+        // ~keep that was about to start on the very same CDP target.
+        let (page, permit) = if config.browser.session_affinity {
             let session_key = crate::browser_session_pool::SessionKey::from_url(
                 url,
                 config.browser.proxy.as_ref().map(|p| p.url.as_str()),
@@ -114,15 +118,15 @@ async fn chromiumoxide_fetch_inner(
                 CrawlError::BrowserError("session_affinity enabled but session pool is not configured".into())
             })?;
 
-            if let Some(pooled_page) = session_pool.acquire(&session_key).await {
-                pooled_page
+            if let Some(reused) = session_pool.acquire(&session_key).await {
+                reused
             } else {
                 let pooled = pool.acquire_page().await?;
-                pooled.page().clone()
+                pooled.into_parts()
             }
         } else {
             let pooled = pool.acquire_page().await?;
-            pooled.page().clone()
+            pooled.into_parts()
         };
 
         let result = page_fetch(url, config, &page, prior_cookies).await;
@@ -135,9 +139,10 @@ async fn chromiumoxide_fetch_inner(
             )
             && let Some(session_pool) = config.browser_session_pool.as_deref()
         {
-            session_pool.insert(session_key, page).await;
+            session_pool.insert(session_key, page, permit).await;
         } else {
             let _ = page.close().await;
+            drop(permit);
         }
 
         result
