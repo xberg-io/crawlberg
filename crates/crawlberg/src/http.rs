@@ -1,6 +1,7 @@
 //! HTTP fetching with redirect handling, retry logic, and cookie extraction.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
@@ -42,6 +43,93 @@ pub(crate) fn truncate_body_at_char_boundary(body: &mut String, max_size: usize)
         boundary -= 1;
     }
     body.truncate(boundary);
+}
+
+/// Re-decode `body_bytes` using `charset` when it names a recognized non-UTF-8 encoding.
+///
+/// ~keep Shared by the scrape path (`scrape.rs`) and the crawl path
+/// (`engine/crawl_loop.rs`) so both apply the charset `detect_charset` reports instead
+/// of only reporting it. `resp.body`/`fetch.body` is always a `String::from_utf8_lossy`
+/// decode of the raw bytes (see `read_body_bounded` callers in this file and in
+/// `tower/service.rs`); for any non-UTF-8/us-ascii charset that lossy decode has
+/// already replaced every non-ASCII byte with U+FFFD, so callers must re-decode from
+/// `body_bytes` rather than post-process the lossy string.
+///
+/// Returns `None` — meaning "keep the caller's existing lossy-UTF-8 body" — when
+/// `charset` is `"utf-8"`/`"us-ascii"`, is not a label `encoding_rs` recognizes, or
+/// decoding hit unmappable sequences (an unreliable decode is worse than the lossy
+/// fallback, which at least round-trips the ASCII-safe portion of the page).
+pub(crate) fn redecode_with_charset(charset: &str, body_bytes: &[u8]) -> Option<String> {
+    if charset == "utf-8" || charset == "us-ascii" {
+        return None;
+    }
+    let encoding = encoding_rs::Encoding::for_label(charset.as_bytes())?;
+    let (decoded, _, had_errors) = encoding.decode(body_bytes);
+    if had_errors { None } else { Some(decoded.into_owned()) }
+}
+
+/// Read a response body in bounded chunks, stopping once more than `max_size` bytes
+/// have been received. Returns the bytes read together with whether the read stopped
+/// early because the cap was hit (as opposed to a natural end-of-body).
+///
+/// ~keep `resp.bytes()` buffers the *entire* body — including whatever reqwest's
+/// transparent gzip/brotli decompression produces — before `max_body_size` truncation
+/// ever runs downstream, so a decompression bomb (e.g. a 10 GB gzip response behind a
+/// 1 MB cap) still allocates its full decompressed size. Reading chunk-by-chunk via
+/// `Response::chunk` (available without the `stream` cargo feature, unlike
+/// `bytes_stream`) and stopping as soon as the cap is crossed bounds peak memory to
+/// roughly `max_size` plus one chunk width, regardless of the declared or true
+/// decompressed size — the cap is enforced while reading, not after the fact.
+///
+/// When `max_size` is `None`, reads to completion exactly as `resp.bytes()` would.
+///
+/// Takes `resp` by value: every call site reads the body as its last operation on the
+/// response before returning or moving on to the next redirect hop, and the native
+/// implementation needs `&mut` access to `Response::chunk` internally.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn read_body_bounded(
+    mut resp: reqwest::Response,
+    max_size: Option<usize>,
+) -> Result<(Vec<u8>, bool), reqwest::Error> {
+    let mut buf: Vec<u8> = Vec::with_capacity(max_size.unwrap_or(8192).min(1 << 20));
+    while let Some(chunk) = resp.chunk().await? {
+        buf.extend_from_slice(&chunk);
+        if let Some(max_size) = max_size
+            && buf.len() > max_size
+        {
+            return Ok((buf, true));
+        }
+    }
+    Ok((buf, false))
+}
+
+/// wasm32 fallback: the browser-`fetch`-backed `reqwest::Response` on this target does
+/// not expose `Response::chunk` (only `bytes()`, which reads to completion, or
+/// `bytes_stream()`, which requires the `stream` cargo feature this crate does not
+/// enable). The memory-exhaustion threat this bounds — a malicious server streaming an
+/// unbounded decompression bomb at a long-running native crawler process — does not
+/// apply the same way inside a browser's sandboxed wasm runtime, so this reads to
+/// completion and always reports `hit_cap = false`; callers still apply
+/// `max_body_size` truncation to the result afterwards, matching prior wasm behavior.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn read_body_bounded(
+    resp: reqwest::Response,
+    _max_size: Option<usize>,
+) -> Result<(Vec<u8>, bool), reqwest::Error> {
+    Ok((resp.bytes().await?.to_vec(), false))
+}
+
+/// Read a response body via [`read_body_bounded`] and lossily decode it as UTF-8,
+/// returning an empty string on any read error.
+///
+/// Used by WAF-classification paths that only need best-effort body text and already
+/// tolerate a missing body (they previously used `resp.text().await.unwrap_or_default()`,
+/// which has the same unbounded-memory problem `read_body_bounded` fixes).
+pub(crate) async fn read_text_bounded(resp: reqwest::Response, max_size: Option<usize>) -> String {
+    match read_body_bounded(resp, max_size).await {
+        Ok((bytes, _)) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    }
 }
 
 /// An HTTP response with status, headers, and body content.
@@ -102,7 +190,7 @@ pub(crate) async fn http_fetch(
 
     let mut current_url = initial_url.clone();
     let mut final_url_str: String;
-    let mut redirects_followed = 0u8;
+    let mut redirects_followed: usize = 0;
 
     loop {
         let mut req = client.get(current_url.to_string());
@@ -163,7 +251,8 @@ pub(crate) async fn http_fetch(
                 let next_url = match current_url.join(&location) {
                     Ok(u) => u,
                     Err(_) => {
-                        let body_bytes_vec = resp.bytes().await.unwrap_or_default().to_vec();
+                        let (body_bytes_vec, _) =
+                            read_body_bounded(resp, config.max_body_size).await.unwrap_or_default();
                         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
                         let mut headers_map: std::collections::HashMap<String, Vec<String>> =
                             std::collections::HashMap::new();
@@ -195,7 +284,14 @@ pub(crate) async fn http_fetch(
                 }
 
                 redirects_followed += 1;
-                if redirects_followed > config.ssrf.max_redirects {
+                // ~keep `CrawlConfig.max_redirects` is the single effective redirect-hop bound for
+                // every GET, matching `follow_redirects` in `engine/crawl_loop.rs`. It is the only
+                // one of the two redirect-count fields exposed by the builder (see
+                // `types/builder.rs::max_redirects`); `SsrfPolicy.max_redirects` is kept only for
+                // backward-compatible (de)serialization of the SSRF policy shape (it is part of the
+                // fixtures/schema.json contract) and is not read at runtime — SSRF safety itself is
+                // unaffected because every redirect target is still validated by `validate_url` below.
+                if redirects_followed > config.max_redirects {
                     return Err(CrawlError::SsrfPolicyViolation {
                         url: next_url.to_string(),
                         reason: "too many redirects".to_string(),
@@ -210,7 +306,7 @@ pub(crate) async fn http_fetch(
         match status {
             401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
             403 => {
-                let body = resp.text().await.unwrap_or_default();
+                let body = read_text_bounded(resp, config.max_body_size).await;
                 let partial_response = build_partial_response(status, &body, &headers);
                 let classifier = TomlClassifier::builtin();
                 if let Ok(Some(signal)) = classifier.classify(&partial_response) {
@@ -239,7 +335,7 @@ pub(crate) async fn http_fetch(
             let headers_only_response = build_partial_response(status, "", &headers);
             let classifier = TomlClassifier::builtin();
             if let Ok(Some(signal)) = classifier.classify(&headers_only_response) {
-                let body = resp.text().await.unwrap_or_default();
+                let body = read_text_bounded(resp, config.max_body_size).await;
                 let partial_response = build_partial_response(status, &body, &headers);
                 let vendor = classifier
                     .classify(&partial_response)
@@ -259,7 +355,7 @@ pub(crate) async fn http_fetch(
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<usize>().ok());
 
-        let body_bytes = resp.bytes().await.map_err(|e| {
+        let (body_bytes_vec, hit_cap) = read_body_bounded(resp, config.max_body_size).await.map_err(|e| {
             let chain = error_chain_string(&e);
             let is_body_error = chain.contains("content-length")
                 || chain.contains("truncate")
@@ -278,17 +374,19 @@ pub(crate) async fn http_fetch(
             }
         })?;
 
-        if let Some(expected) = expected_len
-            && body_bytes.len() < expected
-            && expected - body_bytes.len() > 100
+        // ~keep A capped read stopping short of `content-length` is expected (that is the
+        // point of `max_body_size`), not evidence of a truncated/failed transfer.
+        if !hit_cap
+            && let Some(expected) = expected_len
+            && body_bytes_vec.len() < expected
+            && expected - body_bytes_vec.len() > 100
         {
             return Err(CrawlError::DataLoss(format!(
                 "data_loss: expected {expected} bytes, got {}",
-                body_bytes.len()
+                body_bytes_vec.len()
             )));
         }
 
-        let body_bytes_vec = body_bytes.to_vec();
         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
 
         // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
@@ -325,9 +423,112 @@ pub(crate) async fn http_fetch(
     }
 }
 
+/// Identity of the `reqwest::Client` configuration knobs that legitimately vary per
+/// fetch — timeout, cookie jar, proxy, and auth — used to key the shared client cache
+/// in [`build_client`] so that requests sharing an identity reuse one connection pool
+/// instead of paying a fresh TCP/TLS handshake on every call.
+///
+/// Auth is included even though it is applied as a per-request header (not baked into
+/// the `reqwest::Client` itself) because a shared client's cookie jar (when
+/// `cookies_enabled`) must not be reused across distinct credentials — otherwise two
+/// concurrent sessions to the same host with different auth would leak session cookies
+/// between them.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ClientCacheKey {
+    timeout_micros: u128,
+    cookies_enabled: bool,
+    proxy: String,
+    auth: String,
+}
+
+impl ClientCacheKey {
+    fn from_config(config: &CrawlConfig) -> Self {
+        Self {
+            timeout_micros: config.request_timeout.as_micros(),
+            cookies_enabled: config.cookies_enabled,
+            proxy: proxy_identity(config),
+            auth: auth_identity(config),
+        }
+    }
+}
+
+/// Encode `config`'s proxy configuration as an opaque identity string.
+///
+/// A `ProxyProvider` is a trait object with no `Eq`/`Hash` impl, so its identity is its
+/// `Arc` data address — two `CrawlConfig`s sharing the same provider `Arc` (the normal
+/// case: one engine, cloned config) resolve to the same key.
+fn proxy_identity(config: &CrawlConfig) -> String {
+    if let Some(ref provider) = config.proxy_provider {
+        format!("provider:{:p}", std::sync::Arc::as_ptr(provider))
+    } else if let Some(ref proxy) = config.proxy {
+        format!(
+            "static:{}:{}:{}",
+            proxy.url,
+            proxy.username.as_deref().unwrap_or(""),
+            proxy.password.as_deref().unwrap_or("")
+        )
+    } else {
+        "none".to_owned()
+    }
+}
+
+/// Encode `config`'s auth configuration as an opaque identity string.
+fn auth_identity(config: &CrawlConfig) -> String {
+    match &config.auth {
+        Some(AuthConfig::Basic { username, password }) => format!("basic:{username}:{password}"),
+        Some(AuthConfig::Bearer { token }) => format!("bearer:{token}"),
+        Some(AuthConfig::Header { name, value }) => format!("header:{name}:{value}"),
+        None => "none".to_owned(),
+    }
+}
+
+/// Process-wide cache of built `reqwest::Client`s, keyed by [`ClientCacheKey`].
+///
+/// ~keep `build_client` is called on the hot fetch path (once per tier attempt in
+/// `engine/mod.rs::run_tier`), so without this cache every HTTP request pays a fresh
+/// TCP/TLS handshake and gets no connection-pool reuse. `reqwest::Client` is
+/// `Arc`-backed internally, so cloning a cached entry is cheap, and each distinct
+/// proxy/auth/timeout/cookie identity still gets its own client rather than one client
+/// silently serving unrelated sessions (see [`ClientCacheKey`]).
+fn client_cache() -> &'static Mutex<HashMap<ClientCacheKey, reqwest::Client>> {
+    static CACHE: OnceLock<Mutex<HashMap<ClientCacheKey, reqwest::Client>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Upper bound on distinct cached clients.
+///
+/// ~keep An unbounded cache is a slow leak: a long-lived process that rotates proxies
+/// or per-tenant auth mints a new identity per rotation and never releases the old
+/// client — nor the provider `Arc` captured inside it. Past this many entries the cache
+/// is cleared wholesale rather than evicted by recency; entries are interchangeable
+/// (rebuilding one costs a handshake, not correctness), so tracking access order would
+/// buy nothing for the extra state.
+const MAX_CACHED_CLIENTS: usize = 64;
+
+/// Whether a cached client already exists for `config`'s identity. Test-only
+/// introspection for verifying [`build_client`]'s caching behavior.
+#[cfg(test)]
+pub(crate) fn client_cache_contains(config: &CrawlConfig) -> bool {
+    let key = ClientCacheKey::from_config(config);
+    client_cache()
+        .lock()
+        .map(|cache| cache.contains_key(&key))
+        .unwrap_or(false)
+}
+
 /// Build a `reqwest::Client` with the given configuration (redirect policy, timeout, cookies, proxy).
-#[cfg_attr(target_arch = "wasm32", allow(unused_variables, unused_mut))]
+///
+/// Returns a cached, cheaply-cloned client when one matching this configuration's
+/// [`ClientCacheKey`] already exists; otherwise builds one and caches it for reuse.
+#[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
 pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+    let key = ClientCacheKey::from_config(config);
+    if let Ok(cache) = client_cache().lock()
+        && let Some(client) = cache.get(&key)
+    {
+        return Ok(client.clone());
+    }
+
     let mut builder = reqwest::Client::builder();
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -337,9 +538,13 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
             .timeout(config.request_timeout);
     }
 
+    // ~keep `cookie_provider`, not `cookie_store(true)`: reqwest's default jar loads no
+    // public-suffix list, so a host may set Domain= to a shared multi-tenant suffix
+    // (herokuapp.com, github.io, a bare TLD). One client is reused across a whole crawl
+    // that can span hosts, so that would be a supercookie leak between unrelated tenants.
     #[cfg(not(target_arch = "wasm32"))]
     if config.cookies_enabled {
-        builder = builder.cookie_store(true);
+        builder = builder.cookie_provider(std::sync::Arc::new(crate::net::cookie::PolicyCookieStore::default()));
     }
 
     // ~keep `proxy_provider` takes precedence over static proxy so reqwest can rotate per request.
@@ -365,9 +570,23 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
         builder = builder.proxy(proxy);
     }
 
-    builder
+    let client = builder
         .build()
-        .map_err(|e| CrawlError::Other(format!("Failed to build HTTP client: {e}")))
+        .map_err(|e| CrawlError::Other(format!("Failed to build HTTP client: {e}")))?;
+
+    if let Ok(mut cache) = client_cache().lock() {
+        if cache.len() >= MAX_CACHED_CLIENTS {
+            tracing::debug!(
+                cached = cache.len(),
+                cap = MAX_CACHED_CLIENTS,
+                "HTTP client cache full, clearing"
+            );
+            cache.clear();
+        }
+        cache.insert(key, client.clone());
+    }
+
+    Ok(client)
 }
 
 /// Fetch a URL with retry logic based on configuration.
@@ -630,5 +849,265 @@ mod tests {
         let mut body = "abc".to_string();
         truncate_body_at_char_boundary(&mut body, 100);
         assert_eq!(body, "abc", "a body under the limit must not be modified");
+    }
+
+    #[test]
+    fn redecode_with_charset_decodes_windows_1252_bytes_exactly() {
+        // ~keep Real Windows-1252 bytes for "café €100" (verified via Python's `str.encode`).
+        // A UTF-8-lossy decode of these bytes would replace 0xE9 and 0x80 with U+FFFD.
+        let bytes: &[u8] = &[0x63, 0x61, 0x66, 0xE9, 0x20, 0x80, 0x31, 0x30, 0x30];
+        let decoded = redecode_with_charset("windows-1252", bytes);
+        assert_eq!(
+            decoded,
+            Some("café €100".to_owned()),
+            "windows-1252 bytes must decode to the exact original string, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn redecode_with_charset_decodes_shift_jis_bytes_exactly() {
+        // ~keep Real Shift_JIS bytes for "日本語 テスト" (verified via Python's `str.encode`).
+        let bytes: &[u8] = &[
+            0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, 0x20, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67,
+        ];
+        let decoded = redecode_with_charset("shift_jis", bytes);
+        assert_eq!(
+            decoded,
+            Some("日本語 テスト".to_owned()),
+            "shift_jis bytes must decode to the exact original string, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn redecode_with_charset_is_a_noop_for_utf8() {
+        let decoded = redecode_with_charset("utf-8", "hello".as_bytes());
+        assert_eq!(
+            decoded, None,
+            "utf-8 must be a no-op (caller keeps its existing lossy body), got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn redecode_with_charset_returns_none_for_unrecognized_label() {
+        let decoded = redecode_with_charset("not-a-real-charset", b"hello");
+        assert_eq!(
+            decoded, None,
+            "an unrecognized charset label must not panic and must return None, got {decoded:?}"
+        );
+    }
+
+    /// Regression test: `http_fetch`'s internal redirect loop used to enforce
+    /// `config.ssrf.max_redirects` (a `u8` with no public builder setter, default 5)
+    /// instead of the builder-settable `config.max_redirects`, so `.max_redirects(N)`
+    /// had no effect on this loop. This proves the builder value now bounds it.
+    #[tokio::test]
+    async fn http_fetch_stops_once_builder_max_redirects_is_exceeded() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/hop0"))
+            .respond_with(ResponseTemplate::new(302).append_header("location", "/hop1"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/hop1"))
+            .respond_with(ResponseTemplate::new(302).append_header("location", "/hop2"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/hop2"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("done"))
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        config.max_redirects = 1;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("{}/hop0", mock.uri());
+        let result = http_fetch(&url, &config, &std::collections::HashMap::new(), &client).await;
+
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("must stop once the second hop exceeds max_redirects(1), got Ok"),
+        };
+        assert!(
+            matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
+            "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
+        );
+    }
+
+    /// Same redirect chain as above, but with a builder value large enough to reach the
+    /// end — proving `.max_redirects(N)` is actually honored (not just enforced too
+    /// tightly) by the same loop.
+    #[tokio::test]
+    async fn http_fetch_follows_full_chain_when_builder_max_redirects_is_sufficient() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/hop0"))
+            .respond_with(ResponseTemplate::new(302).append_header("location", "/hop1"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/hop1"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("done"))
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        config.max_redirects = 1;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("{}/hop0", mock.uri());
+        let resp = http_fetch(&url, &config, &std::collections::HashMap::new(), &client)
+            .await
+            .expect("one redirect hop must be followed when max_redirects == 1");
+
+        assert_eq!(
+            resp.body, "done",
+            "final response body must be the hop1 body, got {:?}",
+            resp.body
+        );
+        assert_eq!(resp.status, 200, "final status must be 200, got {}", resp.status);
+    }
+
+    #[tokio::test]
+    async fn read_body_bounded_stops_reading_once_max_size_is_exceeded() {
+        let mock = MockServer::start().await;
+
+        // ~keep A ~5 MB response with max_size(1024) proves the reader stops early —
+        // simulates the "declared/actual size exceeds the cap" scenario without
+        // needing a real decompression bomb for this specific unit test.
+        let full_size = 5 * 1024 * 1024;
+        Mock::given(method("GET"))
+            .and(path("/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; full_size]))
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("{}/big", mock.uri());
+        let resp = client.get(&url).send().await.expect("request must succeed");
+
+        let max_size = 1024usize;
+        let (bytes, hit_cap) = read_body_bounded(resp, Some(max_size))
+            .await
+            .expect("bounded read must not error");
+
+        assert!(hit_cap, "hit_cap must be true once the body exceeds max_size");
+        assert!(
+            bytes.len() < full_size / 100,
+            "bounded read must stop far short of the full {full_size}-byte body, got {} bytes",
+            bytes.len()
+        );
+        assert!(
+            bytes.len() > max_size,
+            "the chunk that crosses the cap should still be included, got {} bytes",
+            bytes.len()
+        );
+    }
+
+    /// Security regression: a gzip decompression bomb (~5 MB decompressed from a few
+    /// hundred compressed bytes) behind a small `max_body_size` must not allocate
+    /// anywhere near its full decompressed size. `read_body_bounded` reads
+    /// `Response::chunk`-by-chunk (decompressed by reqwest's transparent gzip layer as
+    /// it streams) and stops as soon as the cap is crossed, rather than buffering the
+    /// entire decompressed body via `resp.bytes()` before any cap is applied.
+    #[tokio::test]
+    async fn read_body_bounded_caps_a_decompression_bomb() {
+        let mock = MockServer::start().await;
+
+        let decompressed_size = 5 * 1024 * 1024;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        std::io::Write::write_all(&mut encoder, &vec![b'a'; decompressed_size]).expect("gzip write must succeed");
+        let compressed = encoder.finish().expect("gzip finish must succeed");
+        assert!(
+            compressed.len() < 10_000,
+            "test fixture must actually compress well (highly repetitive input), got {} bytes",
+            compressed.len()
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/bomb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_raw(compressed, "application/octet-stream"),
+            )
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("{}/bomb", mock.uri());
+        let resp = client.get(&url).send().await.expect("request must succeed");
+
+        let max_size = 1024usize;
+        let (bytes, hit_cap) = read_body_bounded(resp, Some(max_size))
+            .await
+            .expect("bounded read must not error");
+
+        assert!(
+            hit_cap,
+            "hit_cap must be true once the decompressed body exceeds max_size"
+        );
+        assert!(
+            bytes.len() < decompressed_size / 100,
+            "bounded read must stop far short of the bomb's full decompressed size \
+             ({decompressed_size} bytes), got {} bytes",
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn build_client_reuses_cached_client_for_matching_config() {
+        // ~keep A distinct, unlikely-to-collide timeout so this test's cache entry
+        // cannot already be populated by another test running in parallel.
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_273),
+            ..CrawlConfig::default()
+        };
+        assert!(
+            !client_cache_contains(&config),
+            "precondition failed: another test already cached this exact config identity"
+        );
+
+        let _first = build_client(&config).expect("first build must succeed");
+        assert!(
+            client_cache_contains(&config),
+            "build_client must populate the cache after building a client"
+        );
+
+        let _second = build_client(&config).expect("second build with the same config must succeed");
+        assert!(
+            client_cache_contains(&config),
+            "the cache entry must still be present after a second build with a matching identity"
+        );
+    }
+
+    #[test]
+    fn build_client_uses_distinct_cache_entries_for_distinct_timeouts() {
+        let config_a = CrawlConfig {
+            request_timeout: Duration::from_millis(918_274),
+            ..CrawlConfig::default()
+        };
+        let config_b = CrawlConfig {
+            request_timeout: Duration::from_millis(918_275),
+            ..CrawlConfig::default()
+        };
+
+        let _a = build_client(&config_a).expect("client a must build");
+        assert!(
+            client_cache_contains(&config_a),
+            "config_a's identity must be cached after building it"
+        );
+        assert!(
+            !client_cache_contains(&config_b),
+            "building a client for config_a must not also cache config_b's distinct identity"
+        );
     }
 }

@@ -299,6 +299,11 @@ pub struct CrawlConfig {
     pub max_depth: Option<usize>,
     /// Maximum number of pages to crawl.
     pub max_pages: Option<usize>,
+    /// Maximum links enqueued from a single page. Defaults to 10000.
+    ///
+    /// Bounds the work one hostile or pathological page can create; links past the
+    /// cap are dropped and a warning is logged.
+    pub max_links_per_page: Option<usize>,
     /// Maximum number of concurrent requests.
     pub max_concurrent: Option<usize>,
     /// Whether to respect robots.txt directives.
@@ -448,6 +453,7 @@ impl Default for CrawlConfig {
         Self {
             max_depth: None,
             max_pages: None,
+            max_links_per_page: None,
             max_concurrent: None,
             respect_robots_txt: false,
             soft_http_errors: false,

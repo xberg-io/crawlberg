@@ -135,7 +135,9 @@ async fn do_fetch(
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if (300..400).contains(&status) {
-        let body_bytes = resp.bytes().await.unwrap_or_default().to_vec();
+        let (body_bytes, _) = crate::http::read_body_bounded(resp, config.max_body_size)
+            .await
+            .unwrap_or_default();
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
         return Ok(CrawlResponse {
             status,
@@ -154,7 +156,7 @@ async fn do_fetch(
                 .and_then(|v| v.first())
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::http::read_text_bounded(resp, config.max_body_size).await;
             if crate::http::is_waf_blocked(&server, &body, &headers) {
                 let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
                 return Err(CrawlError::WafBlocked {
@@ -176,31 +178,34 @@ async fn do_fetch(
         _ => {}
     }
 
-    let body_bytes = resp.bytes().await.map_err(|e| {
-        let chain = crate::error::error_chain_string(&e);
-        let is_body_error = chain.contains("content-length")
-            || chain.contains("truncate")
-            || chain.contains("incomplete")
-            || chain.contains("end of file")
-            || chain.contains("body error")
-            || chain.contains("body from connection")
-            || chain.contains("decoding response body")
-            || chain.contains("error decoding");
-        #[cfg(not(target_arch = "wasm32"))]
-        let is_body_error = is_body_error || e.is_body();
-        if is_body_error {
-            CrawlError::DataLoss(format!("data_loss: {e}"))
-        } else {
-            classify_reqwest_error(&e)
-        }
-    })?;
+    let (body_vec, hit_cap) = crate::http::read_body_bounded(resp, config.max_body_size)
+        .await
+        .map_err(|e| {
+            let chain = crate::error::error_chain_string(&e);
+            let is_body_error = chain.contains("content-length")
+                || chain.contains("truncate")
+                || chain.contains("incomplete")
+                || chain.contains("end of file")
+                || chain.contains("body error")
+                || chain.contains("body from connection")
+                || chain.contains("decoding response body")
+                || chain.contains("error decoding");
+            #[cfg(not(target_arch = "wasm32"))]
+            let is_body_error = is_body_error || e.is_body();
+            if is_body_error {
+                CrawlError::DataLoss(format!("data_loss: {e}"))
+            } else {
+                classify_reqwest_error(&e)
+            }
+        })?;
 
-    let body_vec = body_bytes.to_vec();
-
-    if let Some(expected) = headers
-        .get("content-length")
-        .and_then(|v| v.first())
-        .and_then(|s| s.parse::<usize>().ok())
+    // ~keep A capped read stopping short of `content-length` is expected (that is the
+    // point of `max_body_size`), not evidence of a truncated/failed transfer.
+    if !hit_cap
+        && let Some(expected) = headers
+            .get("content-length")
+            .and_then(|v| v.first())
+            .and_then(|s| s.parse::<usize>().ok())
         && body_vec.len() < expected
         && expected - body_vec.len() > 100
     {

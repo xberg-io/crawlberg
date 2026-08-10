@@ -1,6 +1,7 @@
 //! Trait-based extension points for the crawl engine.
 #![allow(dead_code)]
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::CrawlError;
@@ -105,6 +106,24 @@ pub trait Frontier: Send + Sync {
 
     /// Mark a URL as seen.
     async fn mark_seen(&self, url: &str) -> Result<(), CrawlError>;
+
+    /// Return a fresh instance scoped to a single crawl call, or `None` to keep
+    /// sharing this instance's state across calls.
+    ///
+    /// `CrawlEngine` is designed to be constructed once and reused for many
+    /// `crawl()`/`batch_crawl()` calls (see `CrawlEngineBuilder` docs). Because
+    /// `CrawlEngine::clone()` shares the same `Arc<dyn Frontier>`, an
+    /// implementation whose `seen` set is never cleared would leak state from
+    /// one call into the next, silently truncating later crawls, and would race
+    /// under concurrent `batch_crawl` calls sharing the same `seen` set.
+    ///
+    /// ~keep The default `None` preserves existing behavior for implementations
+    /// that intentionally persist `seen` state across calls (e.g. a distributed
+    /// or resumable frontier backed by external storage). `InMemoryFrontier`
+    /// overrides this to return a fresh, empty instance per call.
+    fn isolated(&self) -> Option<Arc<dyn Frontier>> {
+        None
+    }
 }
 
 /// Per-domain rate limiting / throttling.

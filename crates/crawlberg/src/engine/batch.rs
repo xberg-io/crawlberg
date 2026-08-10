@@ -1,6 +1,8 @@
 //! Batch and streaming crawl operations.
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::Semaphore;
@@ -21,13 +23,29 @@ const DEFAULT_MAX_CONCURRENT: usize = 10;
 const STREAM_BUFFER_MULTIPLIER: usize = 16;
 
 impl CrawlEngine {
+    /// Return a clone of this engine whose frontier is isolated to a single crawl call.
+    ///
+    /// `CrawlEngine` is designed to be constructed once and reused for many `crawl()`
+    /// calls, and `CrawlEngine::clone()` shares the same `Arc<dyn Frontier>` across all
+    /// clones. Without per-call isolation, a frontier's `seen` state (e.g. the default
+    /// `InMemoryFrontier`) would leak across calls on a reused engine and race under
+    /// concurrent `batch_crawl` calls sharing the same `seen` set. Every entry point that
+    /// invokes `crawl_with_sender` must route through this helper.
+    fn with_isolated_frontier(&self) -> Self {
+        let mut engine = self.clone();
+        if let Some(fresh) = self.frontier.isolated() {
+            engine.frontier = fresh;
+        }
+        engine
+    }
+
     /// Crawl a website starting from `url`, following links up to the configured depth.
     ///
     /// Uses the engine's [`CrawlStrategy`](crate::traits::CrawlStrategy) and
     /// [`Frontier`](crate::traits::Frontier) traits to control URL selection order
     /// and deduplication.
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
-        self.crawl_with_sender(url, None).await
+        self.with_isolated_frontier().crawl_with_sender(url, None).await
     }
 
     /// Crawl a website and return a stream of events as pages are processed.
@@ -35,7 +53,7 @@ impl CrawlEngine {
     /// Uses the engine's trait implementations (strategy, frontier, etc.) for the crawl.
     pub fn crawl_stream(&self, url: &str) -> ReceiverStream<CrawlEvent> {
         let url = url.to_owned();
-        let engine = self.clone();
+        let engine = self.with_isolated_frontier();
 
         let channel_size = self.config.max_concurrent.unwrap_or(4) * STREAM_BUFFER_MULTIPLIER;
         let (tx, rx) = tokio::sync::mpsc::channel(channel_size);
@@ -64,40 +82,67 @@ impl CrawlEngine {
         ReceiverStream::new(rx)
     }
 
-    /// Scrape multiple URLs concurrently.
+    /// Run `operation(engine, url)` for each of `urls` with bounded concurrency, pairing
+    /// every result with its originating URL — including when a spawned task panics.
     ///
-    /// Unlike the standalone `batch::batch_scrape`, this method routes each URL
-    /// through the engine's middleware chain, rate limiter, and cache.
-    pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
+    /// ~keep `JoinError` carries a task id but not the URL the task was processing, so a
+    /// naive panic handler loses the URL entirely (returns `String::new()`). Task ids are
+    /// recorded at spawn time and used to recover the URL on panic instead.
+    async fn run_batch<T, F, Fut>(&self, urls: &[&str], operation: F) -> Vec<(String, Result<T, CrawlError>)>
+    where
+        F: Fn(CrawlEngine, String) -> Fut,
+        Fut: Future<Output = Result<T, CrawlError>> + Send + 'static,
+        T: Send + 'static,
+    {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
-        let mut join_set = JoinSet::new();
+        let mut join_set: JoinSet<Result<T, CrawlError>> = JoinSet::new();
+        let mut url_by_task: HashMap<tokio::task::Id, String> = HashMap::with_capacity(urls.len());
 
         for url in urls {
             let url_owned = url.to_string();
             let engine = self.clone();
             let permit = match semaphore.clone().acquire_owned().await {
                 Ok(p) => p,
-                Err(_) => {
-                    break;
-                }
+                Err(_) => break,
             };
-
-            join_set.spawn(async move {
+            let task = operation(engine, url_owned.clone());
+            let abort_handle = join_set.spawn(async move {
                 let _permit = permit;
-                let result = engine.scrape(&url_owned).await;
-                (url_owned, result)
+                task.await
             });
+            url_by_task.insert(abort_handle.id(), url_owned);
         }
 
         let mut results = Vec::with_capacity(urls.len());
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(result) => results.push(result),
-                Err(e) => results.push((String::new(), Err(CrawlError::Other(format!("task panicked: {e}"))))),
-            }
+        while let Some(joined) = join_set.join_next_with_id().await {
+            let (task_id, outcome) = match joined {
+                Ok((id, out)) => (id, out),
+                Err(join_error) => {
+                    let id = join_error.id();
+                    let url = url_by_task.remove(&id).unwrap_or_default();
+                    results.push((
+                        url.clone(),
+                        Err(CrawlError::Other(format!(
+                            "task panicked while processing {url}: {join_error}"
+                        ))),
+                    ));
+                    continue;
+                }
+            };
+            let url = url_by_task.remove(&task_id).unwrap_or_default();
+            results.push((url, outcome));
         }
         results
+    }
+
+    /// Scrape multiple URLs concurrently.
+    ///
+    /// Unlike the standalone `batch::batch_scrape`, this method routes each URL
+    /// through the engine's middleware chain, rate limiter, and cache.
+    pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
+        self.run_batch(urls, |engine, url| async move { engine.scrape(&url).await })
+            .await
     }
 
     /// Crawl multiple seed URLs, each following links to configured depth.
@@ -110,35 +155,8 @@ impl CrawlEngine {
     }
 
     async fn batch_crawl_inner(&self, urls: &[&str]) -> Vec<(String, Result<CrawlResult, CrawlError>)> {
-        let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
-        let semaphore = Arc::new(Semaphore::new(max_concurrent));
-        let mut join_set = JoinSet::new();
-
-        for url in urls {
-            let url_owned = url.to_string();
-            let engine = self.clone();
-            let permit = match semaphore.clone().acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => break,
-            };
-
-            join_set.spawn(async move {
-                let _permit = permit;
-                let result = engine.crawl(&url_owned).await;
-                (url_owned, result)
-            });
-        }
-
-        let mut results = Vec::with_capacity(urls.len());
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(result) => results.push(result),
-                Err(e) => {
-                    results.push((String::new(), Err(CrawlError::Other(format!("task panicked: {e}")))));
-                }
-            }
-        }
-        results
+        self.run_batch(urls, |engine, url| async move { engine.crawl(&url).await })
+            .await
     }
 
     /// Crawl multiple seed URLs and stream events from all crawls.
@@ -154,7 +172,7 @@ impl CrawlEngine {
             let mut join_set = JoinSet::new();
 
             for url in urls {
-                let engine = engine.clone();
+                let engine = engine.with_isolated_frontier();
                 let tx = tx.clone();
                 let permit = match semaphore.clone().acquire_owned().await {
                     Ok(p) => p,
@@ -183,5 +201,52 @@ impl CrawlEngine {
         });
 
         ReceiverStream::new(rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: a panicking task must not lose the URL it was processing.
+    /// Previously, `join_set.join_next()` returning `Err(JoinError)` on panic pushed
+    /// `(String::new(), Err(...))`, discarding the URL entirely.
+    #[tokio::test]
+    async fn run_batch_preserves_url_when_task_panics() {
+        let engine = CrawlEngine::builder().build().expect("engine build must not fail");
+
+        let results = engine
+            .run_batch(
+                &["https://ok.example/", "https://panics.example/"],
+                |_engine, url| async move {
+                    if url == "https://panics.example/" {
+                        panic!("simulated task panic");
+                    }
+                    Ok::<u32, CrawlError>(42)
+                },
+            )
+            .await;
+
+        assert_eq!(results.len(), 2, "expected one result per URL, got {results:?}");
+
+        let ok_result = results
+            .iter()
+            .find(|(url, _)| url == "https://ok.example/")
+            .expect("ok URL must be present in results");
+        assert_eq!(ok_result.1.as_ref().copied().ok(), Some(42));
+
+        let panic_result = results
+            .iter()
+            .find(|(url, _)| url == "https://panics.example/")
+            .unwrap_or_else(|| panic!("panicking task must still report its URL, got: {results:?}"));
+        let error_msg = panic_result
+            .1
+            .as_ref()
+            .expect_err("panicking task must return Err")
+            .to_string();
+        assert!(
+            error_msg.contains("https://panics.example/"),
+            "panic error must mention the URL that was being processed, got: {error_msg}"
+        );
     }
 }

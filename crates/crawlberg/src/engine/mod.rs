@@ -1059,7 +1059,20 @@ impl CrawlEngine {
                 && !page_is_skipped_wasm
                 && (!in_doc_context || self.config.follow_document_urls);
             if should_discover_wasm {
-                for link in &scrape.links {
+                // ~keep A single page can carry unbounded link fan-out (e.g. a sitemap-like page
+                // ~keep with a million anchors); cap per-page discovery so one page cannot blow
+                // ~keep up frontier memory in a single iteration.
+                const MAX_LINKS_PER_PAGE: usize = 10_000;
+                if scrape.links.len() > MAX_LINKS_PER_PAGE {
+                    tracing::warn!(
+                        target: "crawlberg.frontier",
+                        url = %entry.url,
+                        link_count = scrape.links.len(),
+                        cap = MAX_LINKS_PER_PAGE,
+                        "page link fan-out exceeds cap, truncating discovered links"
+                    );
+                }
+                for link in scrape.links.iter().take(MAX_LINKS_PER_PAGE) {
                     let is_doc_link = link.link_type == LinkType::Document;
 
                     if link.link_type != LinkType::Internal && !is_doc_link {

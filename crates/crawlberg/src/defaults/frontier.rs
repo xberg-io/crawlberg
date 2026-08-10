@@ -69,6 +69,10 @@ impl Frontier for InMemoryFrontier {
     async fn len(&self) -> Result<usize, CrawlError> {
         Ok(self.queue.lock().expect("lock poisoned").len())
     }
+
+    fn isolated(&self) -> Option<std::sync::Arc<dyn Frontier>> {
+        Some(std::sync::Arc::new(InMemoryFrontier::new()))
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +172,25 @@ mod tests {
         assert_eq!(batch[0].url, "url0");
         assert_eq!(batch[2].url, "url2");
         assert_eq!(f.len().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_isolated_returns_fresh_instance_with_empty_seen_set() {
+        let f = InMemoryFrontier::new();
+        f.mark_seen("https://example.com/seen").await.unwrap();
+        assert!(f.is_seen("https://example.com/seen").await.unwrap());
+
+        let fresh = f.isolated().expect("InMemoryFrontier must support isolation");
+        assert!(
+            !fresh.is_seen("https://example.com/seen").await.unwrap(),
+            "a fresh isolated frontier must not inherit the parent's seen set"
+        );
+
+        fresh.mark_seen("https://example.com/only-in-fresh").await.unwrap();
+        assert!(
+            !f.is_seen("https://example.com/only-in-fresh").await.unwrap(),
+            "marking the fresh frontier must not leak back into the parent"
+        );
     }
 
     #[tokio::test]

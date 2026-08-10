@@ -46,19 +46,12 @@ pub(crate) async fn scrape_from_crawl_response(
     let content_type = resp.content_type.clone();
     let mut body = resp.body.clone();
 
-    let detected_charset = detect_charset(&content_type, &body);
+    let detected_charset = detect_charset(&content_type, &resp.body_bytes);
 
-    if let Some(ref charset) = detected_charset {
-        let charset_lower = charset.as_str();
-        if charset_lower != "utf-8"
-            && charset_lower != "us-ascii"
-            && let Some(encoding) = encoding_rs::Encoding::for_label(charset.as_bytes())
-        {
-            let (decoded, _, had_errors) = encoding.decode(&resp.body_bytes);
-            if !had_errors {
-                body = decoded.into_owned();
-            }
-        }
+    if let Some(ref charset) = detected_charset
+        && let Some(decoded) = crate::http::redecode_with_charset(charset, &resp.body_bytes)
+    {
+        body = decoded;
     }
     let is_pdf = is_pdf_content(&content_type, &body);
 

@@ -61,6 +61,9 @@ fn escalation_strategy_label(strategy: EscalationStrategy) -> &'static str {
 /// Default concurrency limit when `max_concurrent` is not set.
 const DEFAULT_MAX_CONCURRENT: usize = 10;
 
+/// Default cap on links enqueued from one page, when `max_links_per_page` is unset.
+const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
+
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
     /// The final URL after all redirects have been followed.
@@ -235,6 +238,12 @@ struct FetchResult {
 
 /// Result of blocking HTML extraction within a fetch task.
 struct PageExtraction {
+    /// The page body, re-decoded with `detected_charset` when a non-UTF-8 encoding
+    /// was detected (see [`blocking_extract_page`]). This is the body extraction,
+    /// markdown conversion, and the final `CrawlPageResult::html` must all use —
+    /// never the caller's original UTF-8-lossy `body`.
+    body: String,
+    body_bytes: Vec<u8>,
     extraction: HtmlExtraction,
     is_binary: bool,
     is_pdf: bool,
@@ -296,14 +305,28 @@ impl CrawlState {
 /// Perform HTML extraction in a blocking context.
 ///
 /// `tl::parse` borrows the input string, so this must run via `spawn_blocking`.
-fn blocking_extract_page(url: &str, content_type: &str, body: &str) -> PageExtraction {
+///
+/// ~keep Re-decodes `body` from `body_bytes` using the detected charset (mirrors
+/// `scrape_from_crawl_response` in `scrape.rs`) *before* parsing, so extraction,
+/// markdown conversion, and the `html` field the caller reports downstream all see
+/// correctly decoded text instead of `crawl()`'s original UTF-8-lossy fallback body.
+/// `detect_charset` runs on `body_bytes` (not `body`) so a byte-order mark or non-ASCII
+/// meta tag survives even when `body` is already lossy-mangled.
+fn blocking_extract_page(url: &str, content_type: &str, body: String, body_bytes: Vec<u8>) -> PageExtraction {
     let parsed_url = Url::parse(url).unwrap_or_else(|_| FALLBACK_URL.clone());
-    let is_binary = is_binary_content_type(content_type) || is_binary_url(url);
-    let is_pdf = is_pdf_content(content_type, body) || is_pdf_url(url);
-    let is_html = is_html_content(content_type, body);
 
-    let extraction = if let Ok(doc) = tl::parse(body, ParserOptions::default()) {
-        extract_page_data(&doc, body, &parsed_url, is_html && !is_binary && !is_pdf, false)
+    let detected_charset = detect_charset(content_type, &body_bytes);
+    let body = match detected_charset.as_deref() {
+        Some(charset) => crate::http::redecode_with_charset(charset, &body_bytes).unwrap_or(body),
+        None => body,
+    };
+
+    let is_binary = is_binary_content_type(content_type) || is_binary_url(url);
+    let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
+    let is_html = is_html_content(content_type, &body);
+
+    let extraction = if let Ok(doc) = tl::parse(&body, ParserOptions::default()) {
+        extract_page_data(&doc, &body, &parsed_url, is_html && !is_binary && !is_pdf, false)
     } else {
         HtmlExtraction {
             metadata: PageMetadata::default(),
@@ -313,9 +336,10 @@ fn blocking_extract_page(url: &str, content_type: &str, body: &str) -> PageExtra
             json_ld: Vec::new(),
         }
     };
-    let detected_charset = detect_charset(content_type, body);
 
     PageExtraction {
+        body,
+        body_bytes,
         extraction,
         is_binary,
         is_pdf,
@@ -572,6 +596,26 @@ impl CrawlEngine {
                     continue;
                 }
 
+                // ~keep The budget hook was previously checked only under cfg(wasm32), making it a
+                // silent no-op on every native binding. Gate the same point the wasm path gates:
+                // after filtering, before a permit is taken. `break` (not cancel) matches the
+                // max_pages check above — stop spawning, let in-flight fetches finish.
+                match self.page_budget.check().await {
+                    Ok(()) => {}
+                    Err(crate::budget::BudgetError::Exhausted) => {
+                        tracing::info!(target: "crawlberg.budget", "page budget exhausted");
+                        break;
+                    }
+                    Err(crate::budget::BudgetError::Backend(message)) => {
+                        tracing::error!(
+                            target: "crawlberg.budget",
+                            error = %message,
+                            "budget backend error; treating as exhausted"
+                        );
+                        break;
+                    }
+                }
+
                 let permit = semaphore
                     .clone()
                     .acquire_owned()
@@ -591,15 +635,14 @@ impl CrawlEngine {
                     let status_code = resp.status;
                     let content_type = resp.content_type.clone();
                     let headers = resp.headers.clone();
-                    let body = resp.body.clone();
+                    let body = resp.body;
                     let body_bytes = resp.body_bytes;
 
                     let url_for_extract = entry.url.clone();
                     let content_type_clone = content_type.clone();
-                    let body_clone = body.clone();
 
                     let page_ext = tokio::task::spawn_blocking(move || {
-                        blocking_extract_page(&url_for_extract, &content_type_clone, &body_clone)
+                        blocking_extract_page(&url_for_extract, &content_type_clone, body, body_bytes)
                     })
                     .await
                     .map_err(|e| (entry.clone(), CrawlError::Other(format!("extraction task failed: {e}"))))?;
@@ -608,8 +651,8 @@ impl CrawlEngine {
                         entry,
                         status_code,
                         content_type,
-                        body,
-                        body_bytes,
+                        body: page_ext.body,
+                        body_bytes: page_ext.body_bytes,
                         headers,
                         extraction: page_ext.extraction,
                         is_binary: page_ext.is_binary,
@@ -945,8 +988,19 @@ impl CrawlEngine {
         urls_discovered: &mut usize,
     ) -> Result<(), CrawlError> {
         let mut candidates = Vec::new();
+        let link_cap = self.config.max_links_per_page.unwrap_or(DEFAULT_MAX_LINKS_PER_PAGE);
 
         for link in links {
+            if candidates.len() >= link_cap {
+                tracing::warn!(
+                    target: "crawlberg.frontier",
+                    link_count = links.len(),
+                    cap = link_cap,
+                    "page link fan-out exceeds cap, truncating discovered links"
+                );
+                break;
+            }
+
             let is_doc_link = link.link_type == LinkType::Document;
 
             if link.link_type != LinkType::Internal && !is_doc_link {
