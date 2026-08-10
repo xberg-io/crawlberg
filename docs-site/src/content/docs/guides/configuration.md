@@ -108,6 +108,7 @@ match config.validate() {
 | ------------------ | --------------- | ------- | --------------------------------------------------------------------------------------------- |
 | `max_depth`        | `Option<usize>` | `None`  | Maximum crawl depth (link hops from seed). `None` means 0 (seed only).                        |
 | `max_pages`        | `Option<usize>` | `None`  | Maximum pages to crawl. `None` means unlimited. Must be > 0 if set.                           |
+| `max_links_per_page` | `Option<usize>` | `None` (10,000) | Maximum number of links enqueued from a single page. Bounds the work one hostile or pathological page can create; links past the cap are dropped and a warning is logged. |
 | `stay_on_domain`   | `bool`          | `false` | Restrict crawling to the seed URL's domain.                                                   |
 | `allow_subdomains` | `bool`          | `false` | Allow subdomains when `stay_on_domain` is true.                                               |
 | `include_paths`    | `Vec<String>`   | `[]`    | Regex patterns -- only matching URL paths are crawled. Seed URL (depth 0) is always included. |
@@ -234,17 +235,19 @@ When both static `proxy` and an injected provider are set, the provider takes pr
 | Field                 | Type            | Default | Description                                                                      |
 | --------------------- | --------------- | ------- | -------------------------------------------------------------------------------- |
 | `download_documents`  | `bool`          | `true`  | Download non-HTML resources (PDF, DOCX, images, code files) instead of skipping. |
-| `document_max_size`   | `Option<usize>` | 50 MB   | Maximum document download size in bytes.                                         |
+| `document_max_size`   | `Option<usize>` | 50 MB   | Maximum document download size in bytes. When a document exceeds this, the download is truncated at the limit rather than dropped: `DownloadedDocument.truncated` is set to `true` and `size` reports the true, untruncated length, so a truncated file is never silently indistinguishable from a corrupt one. |
 | `document_mime_types` | `Vec<String>`   | `[]`    | MIME type allowlist. Empty uses built-in defaults.                               |
+| `document_output_dir` | `Option<PathBuf>` | `None` | Directory to stream downloaded document bytes into instead of holding them in memory. When set, `DownloadedDocument.content` stays empty in memory and `DownloadedDocument.content_path` is populated with `<dir>/<content_hash>.<ext>`. Has no effect on wasm32, which has no filesystem -- use `document_content_encoding` there instead. |
+| `document_content_encoding` | `Option<DocumentContentEncoding>` | `None` | Opt-in encoding that duplicates a downloaded document's bytes into `DownloadedDocument.content_base64` for bindings that need the content in-memory. Off by default: base64-encoding every document would duplicate an already up-to-`document_max_size` buffer (50 MB default) in memory per document -- e.g. a 50 MB document would carry a further ~67 MB base64 string. Independent of `document_output_dir`; set both to get a file on disk and an in-memory copy. |
 
 ### Browser configuration
 
 | Field                  | Type             | Default   | Description                                    |
 | ---------------------- | ---------------- | --------- | ---------------------------------------------- |
 | `browser`              | `BrowserConfig`  | See below | Headless browser fallback settings.            |
-| `capture_screenshot`   | `bool`           | `false`   | Capture PNG screenshot when browser is used.   |
-| `browser_profile`      | `Option<String>` | `None`    | Named browser profile for persistent sessions. |
-| `save_browser_profile` | `bool`           | `false`   | Save browser profile changes on exit.          |
+| `capture_screenshot`   | `bool`           | `false`   | Capture a base64-encoded PNG screenshot (`ScrapeResult.screenshot_base64`) when the browser is used. Only takes effect on `scrape()`, with `BrowserBackend::Chromiumoxide`, and only when the browser actually ran the request (`BrowserMode::Always` or `BrowserMode::Stealth`, or an `Auto` escalation). It has no effect during `crawl()` and logs a warning if set there. |
+| `browser_profile`      | `Option<String>` | `None`    | Named browser profile for persistent sessions. Chromiumoxide backend only -- the native backend has no Chrome process and therefore no profile directory; setting this with `BrowserBackend::Native` logs a warning and is ignored. |
+| `save_browser_profile` | `bool`           | `false`   | Save browser profile changes on exit. Same chromiumoxide-only constraint as `browser_profile`. |
 
 #### BrowserConfig fields
 

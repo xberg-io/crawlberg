@@ -139,6 +139,28 @@ let config = CrawlConfig {
 
 Profile names are validated against path-traversal — only ASCII alphanumerics, hyphens, underscores, and dots are allowed (max 255 characters). Profiles are stored under `<data_dir>/crawlberg/profiles/<name>` and, on Unix, are created with mode `0o700`.
 
+`browser_profile` and `save_browser_profile` are chromiumoxide-only. The native backend runs an in-process JavaScript engine with no Chrome process and therefore no profile directory to persist; setting either field with `BrowserBackend::Native` logs a warning and is ignored.
+
+## Screenshots
+
+Capture a PNG screenshot of the rendered page by setting `CrawlConfig::capture_screenshot`:
+
+```rust
+use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
+
+let config = CrawlConfig {
+    capture_screenshot: true,
+    browser: BrowserConfig {
+        backend: BrowserBackend::Chromiumoxide,
+        mode: BrowserMode::Always,
+        ..BrowserConfig::default()
+    },
+    ..CrawlConfig::default()
+};
+```
+
+`capture_screenshot` only takes effect for `scrape()` with `BrowserBackend::Chromiumoxide` and `BrowserMode::Always` or `Stealth`; the result is delivered as a base64-encoded PNG in `ScrapeResult::screenshot_base64`. It is not carried on `crawl()` results at all -- a multi-thousand-page crawl holding one screenshot per page in memory is not a safe default -- and it has no effect with `BrowserMode::Auto`/`Never` or with `BrowserBackend::Native`. Any of those combinations logs a warning instead of silently doing nothing. Screenshots taken during `interact()` (via `PageAction::Screenshot`) are similarly delivered as base64 in `InteractionResult::screenshot_base64`, populated only when that action actually ran.
+
 ## WAF detection
 
 Crawlberg detects WAF and bot-mitigation signals with a built-in TOML fingerprint classifier. When a fingerprint matches, the error path includes `CrawlError::WafBlocked { vendor, .. }`; generic or unrecognized blocks may report `unknown` or `generic`. In `Auto` browser mode, those signals can trigger automatic browser escalation. This is not a guarantee that a challenge can be bypassed.

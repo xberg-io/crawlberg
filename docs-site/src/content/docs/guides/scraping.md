@@ -111,7 +111,7 @@ The `ScrapeResult` struct contains everything extracted from a single page:
 | `assets`              | `Vec<DownloadedAsset>`       | Downloaded page assets (when `download_assets` is enabled).                      |
 | `js_render_hint`      | `bool`                       | Whether the page content suggests JavaScript rendering is needed.                |
 | `browser_used`        | `bool`                       | Whether the headless browser fallback was used.                                  |
-| `screenshot`          | `Option<Vec<u8>>`            | PNG screenshot bytes (when browser is used and `capture_screenshot` is enabled). |
+| `screenshot_base64`   | `Option<String>`             | Base64-encoded PNG screenshot. Only populated by `scrape()` with `BrowserBackend::Chromiumoxide` and `BrowserMode::Always`/`Stealth`; see [Screenshots](/guides/browser/#screenshots). |
 | `downloaded_document` | `Option<DownloadedDocument>` | Non-HTML document data (PDF, DOCX, etc.) when `download_documents` is enabled.   |
 
 ### LLM extraction
@@ -304,3 +304,24 @@ CrawlConfig {
 ```
 
 Downloaded documents are available in the `downloaded_document` field as a `DownloadedDocument` with raw bytes, MIME type, filename, size, and a SHA-256 content hash.
+
+If a document exceeds `document_max_size`, the download is truncated at the limit rather than dropped: `DownloadedDocument.truncated` is `true` and `size` still reports the true, untruncated length, so a truncated file is never silently indistinguishable from a corrupt one.
+
+### On-disk vs. in-memory documents
+
+By default, downloaded document bytes are held in memory on `DownloadedDocument.content`. Two independent, opt-in fields change that:
+
+```rust
+use crawlberg::{CrawlConfig, DocumentContentEncoding};
+
+CrawlConfig {
+    document_output_dir: Some("/var/crawlberg/documents".into()),
+    document_content_encoding: Some(DocumentContentEncoding::Base64),
+    ..Default::default()
+}
+```
+
+- `document_output_dir` streams document bytes to `<dir>/<content_hash>.<ext>` instead of holding them in memory; `content` is left empty and `DownloadedDocument.content_path` is populated. Has no effect on wasm32, which has no filesystem.
+- `document_content_encoding` duplicates `content` into `DownloadedDocument.content_base64` for bindings that need the bytes in a serializable field. It defaults to `None` because base64-encoding every document is not free: a document already at the `document_max_size` limit (50 MB by default) would carry a further ~67 MB base64 string, doubling memory use per document. Only enable it when a binding genuinely needs the in-memory copy.
+
+Set both fields to get a file on disk and an in-memory base64 copy at the same time.

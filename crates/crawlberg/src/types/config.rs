@@ -134,6 +134,10 @@ impl std::fmt::Debug for ProxyConfig {
     /// itself carry `user:pass@` userinfo. Any `tracing::debug!(?proxy, ...)` or
     /// `{:?}` capture would leak it into logs. Shows the redacted URL and the username,
     /// but only whether a password is set — never the password itself.
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
+    #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProxyConfig")
             .field("url", &crate::net::redact_url_credentials(&self.url))
@@ -185,6 +189,10 @@ impl std::fmt::Debug for AuthConfig {
     /// header value carrying the secret) verbatim, and any `tracing::debug!(?auth, ...)`
     /// or `{:?}` capture would leak it into logs. Shows which variant is configured and
     /// whether its secret field is non-empty, never the secret's contents.
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
+    #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Basic { username, password } => f

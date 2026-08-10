@@ -32,6 +32,7 @@ for page in &result.pages {
 | ----------- | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `max_depth` | `Option<usize>` | `None` (0 -- seed only) | Maximum number of link hops from the seed URL. `None` means depth 0, which fetches only the seed page.                                             |
 | `max_pages` | `Option<usize>` | `None` (unlimited)      | Maximum number of pages to include in the result. The engine stops spawning fetch tasks once this limit is reached and aborts any in-flight tasks. |
+| `max_links_per_page` | `Option<usize>` | `None` (10,000) | Maximum number of links enqueued from a single page. Bounds the frontier growth one hostile or pathological page can create; links past the cap are dropped and a warning is logged. |
 
 :::caution[Depth 0 means seed only]
 When `max_depth` is `None` or `Some(0)`, the engine fetches the seed URL but does not follow any links. Set `max_depth: Some(1)` to crawl one hop out.

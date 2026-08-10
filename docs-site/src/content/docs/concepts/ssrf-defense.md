@@ -50,6 +50,34 @@ When opt-out is on, the policy permits private IPs but **still refuses
 non-http(s) schemes**. The redirect cap and per-hop re-validation also stay
 in effect.
 
+### Pinning `deny_private` against the environment variable
+
+`SsrfPolicy.deny_private` defaults to `true` for every binding, so a plain
+`true` on that field is ambiguous: it cannot distinguish "the caller
+explicitly wants private networks denied" from "the binding's own
+structural default happened to land on `true`". Because of that ambiguity,
+`CRAWLBERG_ALLOW_PRIVATE_NETWORK` is still consulted and can flip
+`deny_private` to `false` even when a config sets it to `true`.
+
+Set `CrawlConfig::ssrf_deny_private_explicit` when that default-deferral is
+wrong for a specific call — for example, a test that must prove
+`deny_private: true` still denies even while the operator has set
+`CRAWLBERG_ALLOW_PRIVATE_NETWORK` suite-wide for every other call:
+
+```rust
+use crawlberg::CrawlConfig;
+
+let config = CrawlConfig {
+    ssrf_deny_private_explicit: Some(true),
+    ..Default::default()
+};
+```
+
+`None` (the default) preserves today's behavior: the environment variable
+may still flip `ssrf.deny_private` to `false`. `Some(value)` pins
+`ssrf.deny_private` to `value` and the environment variable is not
+consulted for that config.
+
 ## Host allowlists
 
 Allowlist specific hosts while keeping the rest of the policy strict:
