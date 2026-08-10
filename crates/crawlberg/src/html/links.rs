@@ -55,7 +55,9 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 .and_then(|h| h.get(parser))
                 .and_then(|n| n.as_tag())
                 .and_then(|tag| get_attr(tag, "href"))
-                .and_then(|href| Url::parse(href).ok())
+                // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
+                // the document URL instead of requiring it to already be absolute.
+                .and_then(|href| base_url.join(href).ok())
         })
         .unwrap_or_else(|| base_url.clone());
 
@@ -80,24 +82,11 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             }
 
-            let link_type = if href.starts_with("//") {
-                let resolved = format!("{}:{}", effective_base.scheme(), href);
-                if let Ok(u) = Url::parse(&resolved) {
-                    if u.host_str() != effective_base.host_str() {
-                        LinkType::External
-                    } else {
-                        LinkType::Internal
-                    }
-                } else {
-                    LinkType::External
-                }
-            } else {
-                classify_link(href, &effective_base)
-            };
+            // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
+            // per the WHATWG URL spec, so no special-casing is needed here.
+            let link_type = classify_link(href, &effective_base);
 
-            let resolved_url = if href.starts_with("//") {
-                href.to_owned()
-            } else if let Ok(u) = effective_base.join(href) {
+            let resolved_url = if let Ok(u) = effective_base.join(href) {
                 u.to_string()
             } else {
                 href.to_owned()
@@ -117,4 +106,52 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
         }
     }
     links
+}
+
+#[cfg(test)]
+mod tests {
+    use tl::ParserOptions;
+
+    use super::*;
+
+    fn extract(html: &str, base: &str) -> Vec<LinkInfo> {
+        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let base_url = Url::parse(base).expect("valid base URL");
+        extract_links(&dom, &base_url)
+    }
+
+    #[test]
+    fn resolves_protocol_relative_urls_to_the_base_scheme() {
+        let html = r#"<a href="//cdn.example/x.js">script</a>"#;
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");
+        assert_eq!(
+            links[0].url, "https://cdn.example/x.js",
+            "protocol-relative URL should inherit the base scheme, got {}",
+            links[0].url
+        );
+    }
+
+    #[test]
+    fn resolves_relative_base_href_against_the_document_url() {
+        let html = r#"<base href="/en/"><a href="page.html">link</a>"#;
+        let links = extract(html, "https://example.com/us/index.html");
+        assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");
+        assert_eq!(
+            links[0].url, "https://example.com/en/page.html",
+            "relative base href should resolve against the document URL, got {}",
+            links[0].url
+        );
+    }
+
+    #[test]
+    fn absolute_base_href_still_resolves_correctly() {
+        let html = r#"<base href="https://cdn.example/assets/"><a href="img.png">img</a>"#;
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(
+            links[0].url, "https://cdn.example/assets/img.png",
+            "absolute base href should still resolve relative hrefs, got {}",
+            links[0].url
+        );
+    }
 }

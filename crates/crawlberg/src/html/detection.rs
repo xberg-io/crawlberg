@@ -16,7 +16,43 @@ static BINARY_EXTENSIONS: &[&str] = &[
     ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", ".exe", ".dll", ".so", ".bin",
 ];
 
+/// Tag-name prefixes (already lowercase) that mark `body` as HTML.
+const HTML_TAG_PREFIXES: &[&str] = &[
+    "<!doctype",
+    "<html",
+    "<head",
+    "<body",
+    "<div",
+    "<p",
+    "<h1",
+    "<script",
+    "<meta",
+    "<link",
+    "<!",
+];
+
+/// Case-insensitive ASCII prefix check that avoids allocating a lowercased copy of `haystack`.
+fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    haystack.len() >= needle.len() && haystack[..needle.len()].eq_ignore_ascii_case(needle)
+}
+
+/// Case-insensitive ASCII substring check that avoids allocating a lowercased copy of `haystack`.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 /// Check whether content appears to be HTML based on Content-Type header or body content.
+///
+/// HTML tag names are ASCII, so only a byte-wise ASCII case fold is needed here — lowercasing
+/// the whole (potentially multi-megabyte) `body` via `str::to_lowercase` for a handful of short
+/// prefix/substring checks was wasted work on large pages.
 pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
     if content_type.contains("html") {
         return true;
@@ -25,21 +61,12 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
     if !trimmed.starts_with('<') {
         return false;
     }
-    let lower = trimmed.to_lowercase();
-    if lower.starts_with("<?xml") && !lower.contains("<html") {
+    if starts_with_ignore_ascii_case(trimmed, "<?xml") && !contains_ignore_ascii_case(trimmed, "<html") {
         return false;
     }
-    lower.starts_with("<!doctype")
-        || lower.starts_with("<html")
-        || lower.starts_with("<head")
-        || lower.starts_with("<body")
-        || lower.starts_with("<div")
-        || lower.starts_with("<p")
-        || lower.starts_with("<h1")
-        || lower.starts_with("<script")
-        || lower.starts_with("<meta")
-        || lower.starts_with("<link")
-        || lower.starts_with("<!")
+    HTML_TAG_PREFIXES
+        .iter()
+        .any(|prefix| starts_with_ignore_ascii_case(trimmed, prefix))
 }
 
 /// Check whether a Content-Type header indicates binary content.
@@ -103,6 +130,59 @@ pub(crate) fn is_pdf_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Characterization cases for `is_html_content`, captured before the
+    /// full-body-lowercase optimization so the refactor can be proven
+    /// behavior-preserving by re-running this exact table.
+    fn is_html_content_cases() -> Vec<(&'static str, &'static str, bool)> {
+        vec![
+            ("text/html", "", true),
+            ("application/json", "not html at all", false),
+            ("", "<!DOCTYPE html><html></html>", true),
+            ("", "<!doctype html><html></html>", true),
+            ("", "  \n\t<HTML><body>x</body></html>", true),
+            ("", "<HeAd><title>t</title></head>", true),
+            ("", "<BODY>text</BODY>", true),
+            ("", "<div>x</div>", true),
+            ("", "<DIV>x</div>", true),
+            ("", "<p>paragraph</p>", true),
+            ("", "<H1>Title</h1>", true),
+            ("", "<script>var x = 1;</script>", true),
+            ("", "<META charset=\"utf-8\">", true),
+            ("", "<LINK rel=\"stylesheet\" href=\"a.css\">", true),
+            ("", "<!-- a comment -->", true),
+            // ~keep The trimmed body always starts with "<?xml", which never matches any of
+            // the recognized prefixes below, so this is false regardless of whether "<html"
+            // appears later — verified against the pre-optimization implementation.
+            ("", "<?xml version=\"1.0\"?><html><body/></html>", false),
+            ("", "<?xml version=\"1.0\"?><rss><channel/></rss>", false),
+            ("", "<?XML version=\"1.0\"?><feed></feed>", false),
+            ("", "not starting with a tag at all", false),
+            ("", "<unknown-tag>x</unknown-tag>", false),
+            ("", "", false),
+            ("", "   ", false),
+        ]
+    }
+
+    #[test]
+    fn is_html_content_matches_characterized_cases() {
+        for (content_type, body, expected) in is_html_content_cases() {
+            assert_eq!(
+                is_html_content(content_type, body),
+                expected,
+                "is_html_content({content_type:?}, {body:?}) expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_html_content_handles_a_large_non_html_body_without_panicking() {
+        let body = format!("<{}", "x".repeat(200_000));
+        assert!(
+            !is_html_content("", &body),
+            "a large body starting with an unrecognized tag must not be classified as HTML"
+        );
+    }
 
     #[test]
     fn office_and_archive_content_types_are_binary() {

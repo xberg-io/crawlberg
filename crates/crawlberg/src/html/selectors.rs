@@ -32,7 +32,10 @@ pub(super) const SEL_FEED_ALTERNATE: &str = "link[rel='alternate']";
 pub(super) const SEL_JSON_LD: &str = "script[type='application/ld+json']";
 pub(super) const SEL_HTML: &str = "html";
 pub(super) const SEL_HREFLANG: &str = "link[rel='alternate'][hreflang]";
-pub(super) const SEL_FAVICON: &str = "link[rel='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']";
+// ~keep A comma-grouped `link[rel='x'], link[rel='y']` selector does not reliably match in
+// `tl` when both alternatives share the tag name — see the `~keep` note at its call site.
+// Select on attribute presence and filter the exact `rel` values in Rust instead.
+pub(super) const SEL_FAVICON: &str = "link[rel]";
 pub(super) const SEL_HEADINGS: &str = "h1, h2, h3, h4, h5, h6";
 pub(crate) const SEL_LINK_CSS: &str = "link[rel='stylesheet'][href]";
 pub(crate) const SEL_SCRIPT_SRC: &str = "script[src]";

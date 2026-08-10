@@ -49,7 +49,7 @@ pub(crate) fn extract_page_data(
         if !hreflangs.is_empty() {
             metadata.hreflangs = Some(hreflangs);
         }
-        let favicons = extract_favicons(dom);
+        let favicons = extract_favicons(dom, base_url);
         if !favicons.is_empty() {
             metadata.favicons = Some(favicons);
         }
@@ -62,7 +62,7 @@ pub(crate) fn extract_page_data(
 
     let links = extract_links(dom, base_url);
     let images = extract_images(dom, base_url);
-    let feeds = extract_feeds(dom);
+    let feeds = extract_feeds(dom, base_url);
     let json_ld = extract_json_ld(dom);
 
     HtmlExtraction {

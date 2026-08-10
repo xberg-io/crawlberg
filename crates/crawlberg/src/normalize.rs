@@ -23,12 +23,15 @@ pub(crate) fn normalize_url(raw: &str) -> String {
         if !pairs.is_empty() {
             let mut sorted = pairs;
             sorted.sort();
-            let query_str: String = sorted
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join("&");
-            u.set_query(Some(&query_str));
+            // ~keep Re-encode with a proper x-www-form-urlencoded serializer instead of
+            // `format!("{k}={v}")`. The decoded pairs may contain '&' or '=' (e.g. from a
+            // percent-encoded value), and writing them back unescaped would collapse two
+            // genuinely different URLs onto the same normalized string.
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (k, v) in &sorted {
+                serializer.append_pair(k, v);
+            }
+            u.set_query(Some(&serializer.finish()));
         }
         clean_url_path(&mut u);
         u.to_string()
@@ -94,4 +97,46 @@ pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> String {
         return resolved.to_string();
     }
     target.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distinct_urls_with_escaped_and_literal_separators_stay_distinct() {
+        let escaped = normalize_url("http://example.com/?x=A%26y=B");
+        let literal = normalize_url("http://example.com/?x=A&y=B");
+        assert_ne!(
+            escaped, literal,
+            "?x=A%26y=B (one param, value contains '&') and ?x=A&y=B (two params) must not \
+             normalize to the same string, but both produced {escaped:?}"
+        );
+        assert_eq!(
+            escaped, "http://example.com/?x=A%26y%3DB",
+            "expected the single-pair value 'A&y=B' to round-trip fully percent-encoded, got {escaped:?}"
+        );
+        assert_eq!(
+            literal, "http://example.com/?x=A&y=B",
+            "expected the two literal params to be preserved and sorted, got {literal:?}"
+        );
+    }
+
+    #[test]
+    fn sorts_query_parameters_by_key() {
+        let normalized = normalize_url("http://example.com/?b=2&a=1");
+        assert_eq!(
+            normalized, "http://example.com/?a=1&b=2",
+            "expected query parameters sorted by key, got {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn removes_fragment_and_trailing_slash() {
+        let normalized = normalize_url("http://example.com/path/#section");
+        assert_eq!(
+            normalized, "http://example.com/path",
+            "expected fragment removed and trailing slash trimmed, got {normalized:?}"
+        );
+    }
 }
