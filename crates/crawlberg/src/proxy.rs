@@ -45,10 +45,33 @@ pub trait ProxyProvider: std::fmt::Debug + Send + Sync + 'static {
 ///
 /// Threadsafe; uses an [`AtomicUsize`] counter incremented per call. Empty
 /// pools always return `None` (direct connection).
-#[derive(Debug)]
 pub struct StaticProxyProvider {
     entries: Vec<ProxyConfig>,
     counter: AtomicUsize,
+}
+
+impl std::fmt::Debug for StaticProxyProvider {
+    /// Redacted: [`ProxyConfig`]'s own derived `Debug` prints `username`/`password` and
+    /// any userinfo embedded in `url` verbatim, and `ProxyProvider: std::fmt::Debug`
+    /// means any consumer holding a trait object can trigger this via `{:?}` — including
+    /// through `tracing`'s `?field` capture. Show only the redacted URL per entry plus
+    /// whether credentials are configured, never the credentials themselves.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_urls: Vec<String> = self
+            .entries
+            .iter()
+            .map(|entry| crate::net::redact_url_credentials(&entry.url))
+            .collect();
+        let has_credentials = self
+            .entries
+            .iter()
+            .any(|entry| entry.username.is_some() || entry.password.is_some());
+        f.debug_struct("StaticProxyProvider")
+            .field("entries", &redacted_urls)
+            .field("has_credentials", &has_credentials)
+            .field("counter", &self.counter.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 impl StaticProxyProvider {
@@ -108,6 +131,28 @@ mod tests {
         assert!(provider.next_proxy("example.com").is_none());
         assert!(provider.is_empty());
         assert_eq!(provider.len(), 0);
+    }
+
+    #[test]
+    fn debug_format_never_exposes_proxy_credentials() {
+        // ~keep `ProxyProvider: std::fmt::Debug` means any consumer holding a trait
+        // object (`tracing::debug!(?provider, ...)`, a Debug-derived struct that embeds
+        // one) can print this. The derived Debug would show `password: Some("hunter2")`
+        // and the credential-bearing URL verbatim.
+        let provider = StaticProxyProvider::new(vec![ProxyConfig {
+            url: "http://svc-account:hunter2@proxy.internal:8080".into(),
+            username: Some("svc-account".into()),
+            password: Some("hunter2".into()),
+        }]);
+        let rendered = format!("{provider:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "Debug output must not contain the raw password, got '{rendered}'"
+        );
+        assert!(
+            !rendered.contains("svc-account:hunter2"),
+            "Debug output must not contain raw proxy URL userinfo, got '{rendered}'"
+        );
     }
 
     #[test]

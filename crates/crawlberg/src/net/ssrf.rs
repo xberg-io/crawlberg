@@ -5,9 +5,9 @@
 
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 
 /// Private / metadata / loopback CIDRs that are denied by default, as source strings.
 ///
@@ -34,6 +34,38 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
         .map(|cidr| cidr.parse().expect("literal CIDR"))
         .collect()
 });
+
+/// Content-addressed cache of parsed [`IpNet`] values, keyed by the source CIDR string.
+///
+/// `HostMatcher::Cidr`'s `value` field is a `String`, not an `IpNet`, because it is a
+/// binding-generator source type: `crates/crawlberg-ffi` and friends cannot bind an
+/// `IpNet` field, so the wire/enum shape must stay string-based. Without this cache,
+/// [`HostMatcher::matches_ip`] would reparse the same CIDR string on every IP it is
+/// asked about — once per resolved address, on every request an allowlisted CIDR could
+/// apply to.
+///
+/// Keyed by string content rather than embedded in `HostMatcher` or `SsrfPolicy`
+/// themselves, so cloning a policy or mutating its `allowlist` in place (both public
+/// operations — `SsrfPolicy::allowlist` is a plain `pub Vec<HostMatcher>`) can never
+/// desynchronize a matcher from a stale, positionally-cached entry.
+type CidrParseResult = Result<IpNet, String>;
+type CidrParseCache = RwLock<HashMap<Box<str>, CidrParseResult>>;
+
+static CIDR_PARSE_CACHE: LazyLock<CidrParseCache> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Parse `cidr`, memoizing the result — success or failure — in [`CIDR_PARSE_CACHE`] so
+/// repeated calls with the same string never re-invoke [`IpNet`]'s parser.
+fn parse_cidr_cached(cidr: &str) -> CidrParseResult {
+    if let Some(cached) = CIDR_PARSE_CACHE.read().expect("CIDR_PARSE_CACHE poisoned").get(cidr) {
+        return cached.clone();
+    }
+    let parsed = cidr.parse::<IpNet>().map_err(|e| e.to_string());
+    CIDR_PARSE_CACHE
+        .write()
+        .expect("CIDR_PARSE_CACHE poisoned")
+        .insert(cidr.into(), parsed.clone());
+    parsed
+}
 
 /// Hostname/IP allowlist matcher for SSRF policy.
 ///
@@ -95,7 +127,7 @@ impl HostMatcher {
     /// network.
     pub fn cidr(cidr: impl Into<String>) -> Result<Self, SsrfError> {
         let value = cidr.into();
-        match value.parse::<IpNet>() {
+        match parse_cidr_cached(&value) {
             Ok(_) => Ok(HostMatcher::Cidr { value }),
             Err(e) => Err(SsrfError::InvalidCidr(format!("{value}: {e}"))),
         }
@@ -124,7 +156,7 @@ impl HostMatcher {
     pub fn matches_ip(&self, ip: &IpAddr) -> bool {
         match self {
             HostMatcher::Exact { .. } | HostMatcher::Suffix { .. } => false,
-            HostMatcher::Cidr { value } => match value.parse::<IpNet>() {
+            HostMatcher::Cidr { value } => match parse_cidr_cached(value) {
                 Ok(net) => net.contains(ip),
                 Err(e) => {
                     // ~keep Reachable only via a struct literal bypassing HostMatcher::cidr;
@@ -550,6 +582,58 @@ mod tests {
         assert!(
             !matcher.matches_host("10.0.0.1"),
             "a CIDR matcher is IP-space only and must never match a host string"
+        );
+    }
+
+    #[test]
+    fn cidr_matcher_reuses_cached_parse_across_repeated_matches() {
+        // ~keep Proves the perf fix: repeated matches_ip calls on the same CIDR string
+        // must not reparse it, and results must stay correct across many calls.
+        let cidr = "203.0.113.0/24"; // TEST-NET-3 (RFC 5737); unique to this test.
+        let matcher = HostMatcher::cidr(cidr).expect("literal CIDR is valid");
+        for _ in 0..50 {
+            assert!(
+                matcher.matches_ip(&"203.0.113.5".parse::<IpAddr>().unwrap()),
+                "203.0.113.5 must match {cidr} on every repeated call"
+            );
+            assert!(
+                !matcher.matches_ip(&"203.0.114.5".parse::<IpAddr>().unwrap()),
+                "203.0.114.5 must never match {cidr}"
+            );
+        }
+        let cached = CIDR_PARSE_CACHE
+            .read()
+            .expect("CIDR_PARSE_CACHE poisoned")
+            .get(cidr)
+            .cloned();
+        assert!(
+            matches!(cached, Some(Ok(_))),
+            "expected {cidr} to be memoized as a successful parse, got {cached:?}"
+        );
+    }
+
+    #[test]
+    fn cidr_matcher_caches_malformed_cidr_and_keeps_denying() {
+        // ~keep Struct-literal bypass of HostMatcher::cidr(), per the ~keep note on
+        // matches_ip: a silent false must remain a false, and must stay cached as such.
+        let malformed = "not-a-cidr-unique-marker";
+        let matcher = HostMatcher::Cidr {
+            value: malformed.to_owned(),
+        };
+        for _ in 0..5 {
+            assert!(
+                !matcher.matches_ip(&"1.2.3.4".parse::<IpAddr>().unwrap()),
+                "a malformed CIDR must never match, even from cache"
+            );
+        }
+        let cached = CIDR_PARSE_CACHE
+            .read()
+            .expect("CIDR_PARSE_CACHE poisoned")
+            .get(malformed)
+            .cloned();
+        assert!(
+            matches!(cached, Some(Err(_))),
+            "expected {malformed} to be memoized as a failed parse, got {cached:?}"
         );
     }
 

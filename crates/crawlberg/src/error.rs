@@ -124,6 +124,62 @@ pub enum CrawlError {
     Other(String),
 }
 
+/// Pairs an [`crate::net::ssrf::SsrfError`] with the URL that was being validated when it
+/// occurred, so the pairing survives `?` into a [`CrawlError`] that names the refused URL.
+///
+/// [`crate::net::ssrf::SsrfError`] never carries a URL on its own — `validate_url` takes
+/// it as a parameter rather than embedding it in every variant — so the blanket
+/// `From<SsrfError> for CrawlError` below has no URL to report and falls back to
+/// `"unknown"`. Attach one with [`crate::net::ssrf::SsrfError::with_url`] instead:
+///
+/// ```
+/// # async fn example(url: url::Url, policy: crawlberg::SsrfPolicy) -> Result<(), crawlberg::CrawlError> {
+/// crawlberg::validate_url(&url, &policy)
+///     .await
+///     .map_err(|e| e.with_url(&url))?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct UrlSsrfError {
+    /// The URL that was being validated when `source` occurred. Credentials embedded in
+    /// the URL's userinfo (`user:pass@host`) are redacted before storage.
+    pub url: String,
+    /// The underlying SSRF policy error.
+    #[source]
+    pub source: crate::net::ssrf::SsrfError,
+}
+
+impl crate::net::ssrf::SsrfError {
+    /// Attach the URL that was being validated, producing an error that survives `?`
+    /// into [`CrawlError::SsrfPolicyViolation`] with `url` populated instead of
+    /// `"unknown"`. Any userinfo credentials in `url` are redacted, since this value may
+    /// flow into logs and error reports.
+    #[must_use]
+    pub fn with_url(self, url: &url::Url) -> UrlSsrfError {
+        UrlSsrfError {
+            url: crate::net::redact_url_credentials(url.as_str()),
+            source: self,
+        }
+    }
+}
+
+impl From<UrlSsrfError> for CrawlError {
+    fn from(err: UrlSsrfError) -> Self {
+        CrawlError::SsrfPolicyViolation {
+            url: err.url,
+            reason: err.source.to_string(),
+        }
+    }
+}
+
+/// Converts an [`crate::net::ssrf::SsrfError`] with no URL context available.
+///
+/// Prefer [`crate::net::ssrf::SsrfError::with_url`] wherever the URL that was being
+/// validated is in scope — every call site inside this crate does. This impl exists so
+/// `SsrfError` still converts via a bare `?` for callers that genuinely have no URL to
+/// attach; `url` is reported as the literal string `"unknown"` in that case.
 impl From<crate::net::ssrf::SsrfError> for CrawlError {
     fn from(err: crate::net::ssrf::SsrfError) -> Self {
         CrawlError::SsrfPolicyViolation {
@@ -292,6 +348,70 @@ mod tests {
     #[test]
     fn network_error_kind_tag_other() {
         assert_eq!(NetworkErrorKind::Other.tag(), "network");
+    }
+
+    #[test]
+    fn blanket_from_ssrf_error_reports_unknown_url() {
+        // ~keep Documents the pre-existing, still-supported fallback: no URL context
+        // means no URL to report. This is exactly the gap `SsrfError::with_url` closes.
+        let err = crate::net::ssrf::SsrfError::DeniedByPolicy { reason: "loopback" };
+        let crawl_err: CrawlError = err.into();
+        match crawl_err {
+            CrawlError::SsrfPolicyViolation { url, reason } => {
+                assert_eq!(url, "unknown", "bare `?` conversion has no URL to report, got '{url}'");
+                assert_eq!(
+                    reason, "denied by SSRF policy: loopback",
+                    "unexpected reason: '{reason}'"
+                );
+            }
+            other => panic!("expected SsrfPolicyViolation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ssrf_error_with_url_preserves_the_refused_url() {
+        let url = "http://169.254.169.254/latest/meta-data/".parse::<url::Url>().unwrap();
+        let err = crate::net::ssrf::SsrfError::DeniedByPolicy { reason: "link_local" };
+        let crawl_err: CrawlError = err.with_url(&url).into();
+        match crawl_err {
+            CrawlError::SsrfPolicyViolation { url: reported, reason } => {
+                assert_eq!(
+                    reported, "http://169.254.169.254/latest/meta-data/",
+                    "the refused URL must be preserved, not 'unknown'"
+                );
+                assert_eq!(
+                    reason, "denied by SSRF policy: link_local",
+                    "unexpected reason: '{reason}'"
+                );
+            }
+            other => panic!("expected SsrfPolicyViolation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ssrf_error_with_url_redacts_embedded_proxy_credentials() {
+        // ~keep A crawl target or proxy-routed URL can itself carry userinfo
+        // (http://user:pass@host/); that must never reach a rendered CrawlError.
+        let url = "http://svc-account:hunter2@internal.example/admin"
+            .parse::<url::Url>()
+            .unwrap();
+        let err = crate::net::ssrf::SsrfError::DeniedByPolicy {
+            reason: "private_network",
+        };
+        let crawl_err: CrawlError = err.with_url(&url).into();
+        let rendered = crawl_err.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "rendered CrawlError must not contain the raw password, got '{rendered}'"
+        );
+        assert!(
+            !rendered.contains("svc-account:hunter2"),
+            "rendered CrawlError must not contain raw userinfo, got '{rendered}'"
+        );
+        assert!(
+            rendered.contains("internal.example"),
+            "rendered CrawlError should still name the host for debugging, got '{rendered}'"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
