@@ -105,7 +105,7 @@ pub(crate) mod option_duration_ms {
 }
 
 /// Proxy configuration for HTTP requests.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
     /// Proxy URL (e.g. "http://proxy:8080", "socks5://proxy:1080").
@@ -116,8 +116,22 @@ pub struct ProxyConfig {
     pub password: Option<String>,
 }
 
+impl std::fmt::Debug for ProxyConfig {
+    /// Redacted: the derived `Debug` would print `password` verbatim, and `url` may
+    /// itself carry `user:pass@` userinfo. Any `tracing::debug!(?proxy, ...)` or
+    /// `{:?}` capture would leak it into logs. Shows the redacted URL and the username,
+    /// but only whether a password is set — never the password itself.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyConfig")
+            .field("url", &crate::net::redact_url_credentials(&self.url))
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .finish()
+    }
+}
+
 /// Authentication configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type")]
 pub enum AuthConfig {
     /// HTTP Basic authentication.
@@ -149,6 +163,31 @@ impl Default for AuthConfig {
         Self::Basic {
             username: String::new(),
             password: String::new(),
+        }
+    }
+}
+
+impl std::fmt::Debug for AuthConfig {
+    /// Redacted: the derived `Debug` would print `password`, `token`, and `value` (the
+    /// header value carrying the secret) verbatim, and any `tracing::debug!(?auth, ...)`
+    /// or `{:?}` capture would leak it into logs. Shows which variant is configured and
+    /// whether its secret field is non-empty, never the secret's contents.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Basic { username, password } => f
+                .debug_struct("Basic")
+                .field("username", username)
+                .field("password", &(!password.is_empty()).then_some("***"))
+                .finish(),
+            Self::Bearer { token } => f
+                .debug_struct("Bearer")
+                .field("token", &(!token.is_empty()).then_some("***"))
+                .finish(),
+            Self::Header { name, value } => f
+                .debug_struct("Header")
+                .field("name", name)
+                .field("value", &(!value.is_empty()).then_some("***"))
+                .finish(),
         }
     }
 }
@@ -673,5 +712,83 @@ mod tests {
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("chromiumoxide"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn proxy_config_debug_redacts_password_and_url_userinfo() {
+        let proxy = ProxyConfig {
+            url: "http://svc-account:hunter2@proxy.internal:8080".into(),
+            username: Some("svc-account".into()),
+            password: Some("hunter2".into()),
+        };
+        let rendered = format!("{proxy:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "Debug output must not contain the raw password, got '{rendered}'"
+        );
+        assert!(
+            rendered.contains("svc-account"),
+            "Debug output should still show the non-secret username, got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn proxy_config_debug_shows_none_when_password_unset() {
+        let proxy = ProxyConfig {
+            url: "http://proxy.internal:8080".into(),
+            username: None,
+            password: None,
+        };
+        let rendered = format!("{proxy:?}");
+        assert!(
+            rendered.contains("password: None"),
+            "unset password must render as None, got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn auth_config_debug_redacts_basic_password() {
+        let auth = AuthConfig::Basic {
+            username: "alice".into(),
+            password: "hunter2".into(),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "Debug output must not contain the raw password, got '{rendered}'"
+        );
+        assert!(
+            rendered.contains("alice"),
+            "Debug output should still show the non-secret username, got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn auth_config_debug_redacts_bearer_token() {
+        let auth = AuthConfig::Bearer {
+            token: "sk-super-secret-token".into(),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(
+            !rendered.contains("sk-super-secret-token"),
+            "Debug output must not contain the raw bearer token, got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn auth_config_debug_redacts_header_value() {
+        let auth = AuthConfig::Header {
+            name: "X-Api-Key".into(),
+            value: "sk-super-secret-key".into(),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(
+            !rendered.contains("sk-super-secret-key"),
+            "Debug output must not contain the raw header value, got '{rendered}'"
+        );
+        assert!(
+            rendered.contains("X-Api-Key"),
+            "Debug output should still show the non-secret header name, got '{rendered}'"
+        );
     }
 }

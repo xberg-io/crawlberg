@@ -60,9 +60,12 @@ pub(crate) fn build_downloaded_document(
 
     let size = content.len();
 
+    // ~keep `url` may carry userinfo (http://user:pass@host/); redact before it reaches
+    // the span, which is shipped to logs/OTLP by default.
+    let redacted_url = crate::net::redact_url_credentials(url);
     let _span = tracing::info_span!(
         "crawl.document.download",
-        { URL_FULL } = url,
+        { URL_FULL } = %redacted_url,
         { CRAWL_MIME_TYPE } = %mime_type,
         { CRAWL_SIZE_BYTES } = size as i64,
     )

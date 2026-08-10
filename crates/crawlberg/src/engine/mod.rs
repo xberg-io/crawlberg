@@ -680,6 +680,10 @@ impl CrawlEngine {
         content_density: f32,
     ) {
         let tier_chain = tiers_attempted.join(",");
+        // ~keep The field key stays `url` — it is public, semver-relevant surface — but the
+        // value is redacted: a crawl of http://user:pass@host/ would otherwise put the
+        // credential into every dispatch event.
+        let url = crate::net::redact_url_credentials(url);
         tracing::info!(
             target: "crawlberg::dispatch",
             url,

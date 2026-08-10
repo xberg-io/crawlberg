@@ -72,10 +72,23 @@ pub(crate) struct RedirectOutcome {
     pub(crate) final_response: crate::tower::CrawlResponse,
     /// Number of redirect hops taken.
     pub(crate) redirect_count: usize,
-    /// Response headers from each intermediate redirect hop (for cookie extraction).
-    pub(crate) intermediate_headers: Vec<HashMap<String, Vec<String>>>,
+    /// `(host, response headers)` for each intermediate redirect hop, so cookie extraction
+    /// can validate each hop's `Set-Cookie` `Domain=` attribute against the host that sent it.
+    pub(crate) intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)>,
     /// Whether headless-browser fetch was used for the final hop.
     pub(crate) browser_used: bool,
+}
+
+/// Best-effort host extraction for `Set-Cookie` `Domain=` validation.
+///
+/// An unparsable `url` yields an empty host, which `validate_cookie_domain` never
+/// domain-matches against a non-empty `Domain=` attribute, so a malformed hop URL causes
+/// any explicitly-scoped cookie from it to be rejected rather than silently accepted.
+fn url_host(url: &str) -> String {
+    Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 /// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
@@ -103,7 +116,7 @@ pub(crate) async fn follow_redirects(
     let mut seen: HashSet<String> = HashSet::with_capacity(max_redirects + 1);
     seen.insert(current_url.clone());
     let mut redirect_count: usize = 0;
-    let mut intermediate_headers: Vec<HashMap<String, Vec<String>>> = Vec::new();
+    let mut intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)> = Vec::new();
 
     let mut browser_used = false;
     loop {
@@ -143,7 +156,7 @@ pub(crate) async fn follow_redirects(
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
-                intermediate_headers.push(resp.headers);
+                intermediate_headers.push((url_host(&current_url), resp.headers));
                 seen.insert(target.clone());
                 redirect_count += 1;
                 current_url = target;
@@ -163,7 +176,7 @@ pub(crate) async fn follow_redirects(
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
-                intermediate_headers.push(resp.headers);
+                intermediate_headers.push((url_host(&current_url), resp.headers));
                 seen.insert(target.clone());
                 redirect_count += 1;
                 current_url = target;
@@ -187,7 +200,7 @@ pub(crate) async fn follow_redirects(
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
-                intermediate_headers.push(resp.headers);
+                intermediate_headers.push((url_host(&current_url), resp.headers));
                 seen.insert(target.clone());
                 redirect_count += 1;
                 current_url = target;
@@ -498,12 +511,14 @@ impl CrawlEngine {
         match follow_redirects(self, url, max_redirects).await {
             Ok(outcome) => {
                 if self.config.cookies_enabled {
-                    for headers in &outcome.intermediate_headers {
-                        state.all_cookies.extend(extract_cookies_from_hashmap(headers));
+                    for (host, headers) in &outcome.intermediate_headers {
+                        state.all_cookies.extend(extract_cookies_from_hashmap(host, headers));
                     }
-                    state
-                        .all_cookies
-                        .extend(extract_cookies_from_hashmap(&outcome.final_response.headers));
+                    let final_host = url_host(&outcome.final_url);
+                    state.all_cookies.extend(extract_cookies_from_hashmap(
+                        &final_host,
+                        &outcome.final_response.headers,
+                    ));
                 }
                 state.redirect_count = outcome.redirect_count;
                 if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
@@ -598,7 +613,10 @@ impl CrawlEngine {
                         break;
                     }
                     Err(crate::budget::BudgetError::Backend(message)) => {
-                        tracing::error!(
+                        // ~keep WARN, not ERROR: the crawl does not fail — it stops spawning and
+                        // returns the pages already collected. Degraded, not lost. Matches the
+                        // wasm path's handling of the same condition in engine/mod.rs.
+                        tracing::warn!(
                             target: "crawlberg.budget",
                             error = %message,
                             "budget backend error; treating as exhausted"
@@ -819,7 +837,10 @@ impl CrawlEngine {
         }
 
         if self.config.cookies_enabled {
-            state.all_cookies.extend(extract_cookies_from_hashmap(&fetch.headers));
+            let fetch_host = url_host(&page_url);
+            state
+                .all_cookies
+                .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
         }
 
         let mut body = fetch.body;
@@ -1065,11 +1086,16 @@ impl CrawlEngine {
                             .ok()
                             .and_then(|u| u.host_str().map(str::to_owned))
                             .unwrap_or_default();
+                        // ~keep Both fields are full URLs a crawl may have discovered with
+                        // embedded userinfo (http://user:pass@host/); redact before they reach
+                        // the span, which is shipped to logs/OTLP by default.
+                        let redacted_link_url = crate::net::redact_url_credentials(&link_url);
+                        let redacted_parent_url = crate::net::redact_url_credentials(_page_url);
                         let _discover_span = tracing::info_span!(
                             "crawl.page.discover",
-                            { URL_FULL } = %link_url,
+                            { URL_FULL } = %redacted_link_url,
                             { URL_DOMAIN } = %link_host,
-                            { CRAWL_PARENT_URL } = %_page_url,
+                            { CRAWL_PARENT_URL } = %redacted_parent_url,
                             { CRAWL_DEPTH } = child_depth as i64,
                             { CRAWL_LINK_TYPE } = if is_doc_link { "document" } else { "internal" },
                         )
@@ -1093,7 +1119,9 @@ impl CrawlEngine {
                     );
                 }
                 Err(e) => {
-                    tracing::error!("error validating link during enqueue: {}", e);
+                    // ~keep WARN and structured, matching the sibling arm: one link failed to
+                    // validate and is skipped; the crawl continues.
+                    tracing::warn!(error = %e, "link validation task failed during enqueue");
                 }
             }
         }

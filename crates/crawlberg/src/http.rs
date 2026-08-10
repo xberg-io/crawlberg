@@ -7,6 +7,8 @@ use std::time::Duration;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::net::cookie::validate_cookie_domain;
 use crate::net::ssrf::validate_url;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::types::CookieInfo;
@@ -652,8 +654,16 @@ pub(crate) async fn fetch_with_retry(
 ///
 /// Looks for the `"set-cookie"` key and parses each value as an individual
 /// Set-Cookie header, preserving all cookies from the response.
+///
+/// `host` is the host that sent the response; a cookie whose `Domain=` attribute fails
+/// [`validate_cookie_domain`] (cross-origin spoof or public-suffix) is dropped entirely
+/// rather than accepted with the attribute stripped, matching [`crate::net::cookie::PolicyCookieStore`]'s
+/// policy for the same headers on the plain-HTTP path. These cookies feed
+/// `browser::page_fetch`'s `prior_cookies`, which are replayed into a page's CDP session,
+/// so an unvalidated `Domain=` here would let one crawled origin plant a cookie for another.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn extract_cookies_from_hashmap(
+    host: &str,
     headers: &std::collections::HashMap<String, Vec<String>>,
 ) -> Vec<CookieInfo> {
     let mut cookies = Vec::new();
@@ -669,15 +679,30 @@ pub(crate) fn extract_cookies_from_hashmap(
                     domain: None,
                     path: None,
                 };
+                let mut domain_rejected = false;
                 for attr in &parts[1..] {
                     let attr = attr.trim().to_lowercase();
                     if let Some(d) = attr.strip_prefix("domain=") {
-                        cookie.domain = Some(d.to_owned());
+                        match validate_cookie_domain(host, d) {
+                            Ok(()) => cookie.domain = Some(d.to_owned()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    host = %host,
+                                    cookie.name = %cookie.name,
+                                    error = %e,
+                                    "dropping cookie with invalid Set-Cookie domain"
+                                );
+                                domain_rejected = true;
+                                break;
+                            }
+                        }
                     } else if let Some(p) = attr.strip_prefix("path=") {
                         cookie.path = Some(p.to_owned());
                     }
                 }
-                cookies.push(cookie);
+                if !domain_rejected {
+                    cookies.push(cookie);
+                }
             }
         }
     }
@@ -1247,5 +1272,73 @@ mod tests {
             !client_cache_contains(&config_b),
             "building a client for config_a must not also cache config_b's distinct identity"
         );
+    }
+
+    /// Build a `set-cookie` headers `HashMap` with a single raw `Set-Cookie` value, as
+    /// `extract_cookies_from_hashmap` expects to receive from the fetch layer.
+    fn set_cookie_headers(raw: &str) -> std::collections::HashMap<String, Vec<String>> {
+        std::collections::HashMap::from([("set-cookie".to_owned(), vec![raw.to_owned()])])
+    }
+
+    #[test]
+    fn extract_cookies_drops_cross_origin_domain_spoof() {
+        // ~keep The literal attack: a response from evil.example claims Domain=victim.example.
+        let headers = set_cookie_headers("session=stolen; Domain=victim.example; Path=/");
+        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
+        assert!(
+            cookies.is_empty(),
+            "a cookie whose Domain does not domain-match the response host must be dropped, got {cookies:?}"
+        );
+    }
+
+    #[test]
+    fn extract_cookies_drops_known_public_suffix_domain() {
+        let headers = set_cookie_headers("session=stolen; Domain=herokuapp.com");
+        let cookies = extract_cookies_from_hashmap("evil-tenant.herokuapp.com", &headers);
+        assert!(
+            cookies.is_empty(),
+            "a cookie scoped to a public-suffix Domain must be dropped, got {cookies:?}"
+        );
+    }
+
+    #[test]
+    fn extract_cookies_keeps_host_only_cookie() {
+        let headers = set_cookie_headers("session=abc123; Path=/");
+        let cookies = extract_cookies_from_hashmap("example.com", &headers);
+        assert_eq!(
+            cookies.len(),
+            1,
+            "a host-only cookie (no Domain attribute) must be kept"
+        );
+        assert_eq!(cookies[0].name, "session");
+        assert_eq!(cookies[0].value, "abc123");
+        assert_eq!(cookies[0].domain, None);
+    }
+
+    #[test]
+    fn extract_cookies_keeps_legitimate_parent_domain_widening() {
+        let headers = set_cookie_headers("session=abc123; Domain=example.com");
+        let cookies = extract_cookies_from_hashmap("api.example.com", &headers);
+        assert_eq!(
+            cookies.len(),
+            1,
+            "a Domain that domain-matches its own registrable parent must be kept"
+        );
+        assert_eq!(cookies[0].domain, Some("example.com".to_owned()));
+    }
+
+    #[test]
+    fn extract_cookies_drops_only_the_offending_cookie_in_a_mixed_batch() {
+        let headers = std::collections::HashMap::from([(
+            "set-cookie".to_owned(),
+            vec!["good=1; Path=/".to_owned(), "bad=2; Domain=victim.example".to_owned()],
+        )]);
+        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
+        assert_eq!(
+            cookies.len(),
+            1,
+            "only the spoofed cookie must be dropped, got {cookies:?}"
+        );
+        assert_eq!(cookies[0].name, "good");
     }
 }
