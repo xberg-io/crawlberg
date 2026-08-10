@@ -904,7 +904,8 @@ impl CrawlEngine {
             &fetch.body_bytes,
             page_was_skipped,
             &self.config,
-        );
+        )
+        .await;
 
         let markdown = if page_was_skipped {
             None

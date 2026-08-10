@@ -87,11 +87,21 @@ fn extension_from_filename(filename: Option<&str>) -> &str {
 }
 
 /// Write `content` to `<dir>/<content_hash>.<extension>`, creating `dir` if needed.
+///
+/// ~keep Uses `tokio::fs`, not `std::fs`: this runs inside `build_downloaded_document`,
+/// which is now itself `async` and called from the crawl loop's per-task future. A
+/// synchronous write here would block the executor thread for the write's full
+/// duration — up to `document_max_size` (50 MB by default) worth of bytes.
 #[cfg(not(target_arch = "wasm32"))]
-fn write_document_file(dir: &Path, content_hash: &str, extension: &str, content: &[u8]) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
+async fn write_document_file(
+    dir: &Path,
+    content_hash: &str,
+    extension: &str,
+    content: &[u8],
+) -> std::io::Result<PathBuf> {
+    tokio::fs::create_dir_all(dir).await?;
     let path = dir.join(format!("{content_hash}.{extension}"));
-    std::fs::write(&path, content)?;
+    tokio::fs::write(&path, content).await?;
     Ok(path)
 }
 
@@ -103,8 +113,13 @@ fn write_document_file(dir: &Path, content_hash: &str, extension: &str, content:
 /// document once it is already durably on disk. On write failure the original bytes
 /// are kept so the caller does not silently lose the document.
 #[cfg(not(target_arch = "wasm32"))]
-fn persist_document(dir: &Path, content_hash: &str, extension: &str, content: Vec<u8>) -> (Vec<u8>, Option<String>) {
-    match write_document_file(dir, content_hash, extension, &content) {
+async fn persist_document(
+    dir: &Path,
+    content_hash: &str,
+    extension: &str,
+    content: Vec<u8>,
+) -> (Vec<u8>, Option<String>) {
+    match write_document_file(dir, content_hash, extension, &content).await {
         Ok(path) => (Vec::new(), Some(path.to_string_lossy().into_owned())),
         Err(error) => {
             tracing::warn!(
@@ -119,7 +134,12 @@ fn persist_document(dir: &Path, content_hash: &str, extension: &str, content: Ve
 
 /// wasm32 has no filesystem — `document_output_dir` cannot be honored there.
 #[cfg(target_arch = "wasm32")]
-fn persist_document(dir: &Path, _content_hash: &str, _extension: &str, content: Vec<u8>) -> (Vec<u8>, Option<String>) {
+async fn persist_document(
+    dir: &Path,
+    _content_hash: &str,
+    _extension: &str,
+    content: Vec<u8>,
+) -> (Vec<u8>, Option<String>) {
     tracing::warn!(
         dir = %dir.display(),
         "document_output_dir is set but wasm32 has no filesystem; keeping content in memory instead"
@@ -143,7 +163,7 @@ fn persist_document(dir: &Path, _content_hash: &str, _extension: &str, content: 
 ///
 /// `url` is recorded verbatim on the result; `parsed_url` is used only to derive the
 /// filename hint from the final path segment.
-pub(crate) fn build_downloaded_document(
+pub(crate) async fn build_downloaded_document(
     url: &str,
     parsed_url: &Url,
     content_type: &str,
@@ -179,26 +199,31 @@ pub(crate) fn build_downloaded_document(
     // ~keep `url` may carry userinfo (http://user:pass@host/); redact before it reaches
     // the span, which is shipped to logs/OTLP by default.
     let redacted_url = crate::net::redact_url_credentials(url);
-    let _span = tracing::info_span!(
-        "crawl.document.download",
-        { URL_FULL } = %redacted_url,
-        { CRAWL_MIME_TYPE } = %mime_type,
-        { CRAWL_SIZE_BYTES } = size as i64,
-    )
-    .entered();
+    // ~keep EnteredSpan is !Send, so it must be entered and dropped inside this block,
+    // before the `persist_document` await below. Holding it across the await makes the
+    // whole future !Send, which breaks every spawned batch task and axum handler.
+    {
+        let _span = tracing::info_span!(
+            "crawl.document.download",
+            { URL_FULL } = %redacted_url,
+            { CRAWL_MIME_TYPE } = %mime_type,
+            { CRAWL_SIZE_BYTES } = size as i64,
+        )
+        .entered();
 
-    if truncated {
-        tracing::warn!(
-            size,
-            max_size,
-            "document exceeded document_max_size; content truncated, size and content_hash still reflect \
-             the original bytes"
-        );
+        if truncated {
+            tracing::warn!(
+                size,
+                max_size,
+                "document exceeded document_max_size; content truncated, size and content_hash still reflect \
+                 the original bytes"
+            );
+        }
+
+        registry()
+            .documents_discovered_total
+            .add(1, &[KeyValue::new("mime_type", mime_type.to_string())]);
     }
-
-    registry()
-        .documents_discovered_total
-        .add(1, &[KeyValue::new("mime_type", mime_type.to_string())]);
 
     let content_base64 = matches!(config.document_content_encoding, Some(DocumentContentEncoding::Base64))
         .then(|| BASE64.encode(&content));
@@ -206,7 +231,7 @@ pub(crate) fn build_downloaded_document(
     let (content, content_path) = match config.document_output_dir.as_ref() {
         Some(dir) => {
             let extension = extension_from_filename(filename.as_deref());
-            persist_document(dir, &content_hash, extension, content)
+            persist_document(dir, &content_hash, extension, content).await
         }
         None => (content, None),
     };
@@ -233,8 +258,8 @@ mod tests {
         Url::parse("https://example.com/files/report.pdf").expect("valid url")
     }
 
-    #[test]
-    fn returns_none_when_downloads_disabled() {
+    #[tokio::test]
+    async fn returns_none_when_downloads_disabled() {
         let config = CrawlConfig {
             download_documents: false,
             ..Default::default()
@@ -246,12 +271,13 @@ mod tests {
             b"%PDF-1.4",
             true,
             &config,
-        );
+        )
+        .await;
         assert!(doc.is_none(), "disabled downloads must yield None");
     }
 
-    #[test]
-    fn returns_none_for_non_document_page() {
+    #[tokio::test]
+    async fn returns_none_for_non_document_page() {
         let config = CrawlConfig::default();
         let html_url = Url::parse("https://example.com/page").expect("valid url");
         let doc = build_downloaded_document(
@@ -261,12 +287,13 @@ mod tests {
             b"<html></html>",
             false,
             &config,
-        );
+        )
+        .await;
         assert!(doc.is_none(), "an HTML page must yield None");
     }
 
-    #[test]
-    fn captures_bytes_mime_hash_and_filename() {
+    #[tokio::test]
+    async fn captures_bytes_mime_hash_and_filename() {
         let config = CrawlConfig::default();
         let doc = build_downloaded_document(
             pdf_url().as_str(),
@@ -276,6 +303,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
         assert_eq!(doc.content.as_slice(), b"%PDF-1.4 body");
         assert_eq!(doc.size, 13);
@@ -288,8 +316,8 @@ mod tests {
         assert_eq!(doc.content_hash.len(), 64, "sha-256 hex digest is 64 chars");
     }
 
-    #[test]
-    fn truncates_content_but_reports_true_size_and_flag() {
+    #[tokio::test]
+    async fn truncates_content_but_reports_true_size_and_flag() {
         let config = CrawlConfig {
             document_max_size: Some(4),
             ..Default::default()
@@ -302,6 +330,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
         assert_eq!(
             doc.content.as_slice(),
@@ -318,8 +347,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn content_hash_identifies_the_original_bytes_not_the_truncated_prefix() {
+    #[tokio::test]
+    async fn content_hash_identifies_the_original_bytes_not_the_truncated_prefix() {
         let config = CrawlConfig {
             document_max_size: Some(4),
             ..Default::default()
@@ -332,6 +361,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
 
         let mut hasher = Sha256::new();
@@ -361,8 +391,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn document_mime_types_allowlist_restricts_downloads() {
+    #[tokio::test]
+    async fn document_mime_types_allowlist_restricts_downloads() {
         let config = CrawlConfig {
             document_mime_types: vec!["application/pdf".to_owned()],
             ..Default::default()
@@ -374,15 +404,16 @@ mod tests {
             b"not a pdf",
             true,
             &config,
-        );
+        )
+        .await;
         assert!(
             doc.is_none(),
             "a mime type absent from a non-empty document_mime_types allowlist must not be downloaded"
         );
     }
 
-    #[test]
-    fn document_mime_types_allowlist_permits_listed_mime_case_insensitively() {
+    #[tokio::test]
+    async fn document_mime_types_allowlist_permits_listed_mime_case_insensitively() {
         let config = CrawlConfig {
             document_mime_types: vec!["APPLICATION/PDF".to_owned()],
             ..Default::default()
@@ -394,18 +425,20 @@ mod tests {
             b"%PDF-1.4",
             true,
             &config,
-        );
+        )
+        .await;
         assert!(doc.is_some(), "an allowlisted mime type must still be downloaded");
     }
 
-    #[test]
-    fn document_mime_types_allowlist_extends_beyond_builtin_classification() {
+    #[tokio::test]
+    async fn document_mime_types_allowlist_extends_beyond_builtin_classification() {
         let config = CrawlConfig {
             document_mime_types: vec!["application/json".to_owned()],
             ..Default::default()
         };
         let json_url = Url::parse("https://example.com/data.json").expect("valid url");
-        let doc = build_downloaded_document(json_url.as_str(), &json_url, "application/json", b"{}", false, &config);
+        let doc =
+            build_downloaded_document(json_url.as_str(), &json_url, "application/json", b"{}", false, &config).await;
         assert!(
             doc.is_some(),
             "a mime type listed in a non-empty document_mime_types must be downloaded \
@@ -413,8 +446,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn empty_document_mime_types_keeps_built_in_behavior() {
+    #[tokio::test]
+    async fn empty_document_mime_types_keeps_built_in_behavior() {
         let config = CrawlConfig::default();
         let doc = build_downloaded_document(
             pdf_url().as_str(),
@@ -423,15 +456,16 @@ mod tests {
             b"binary body",
             true,
             &config,
-        );
+        )
+        .await;
         assert!(
             doc.is_some(),
             "an empty document_mime_types allowlist must not restrict downloads beyond is_document"
         );
     }
 
-    #[test]
-    fn document_content_encoding_base64_populates_content_base64() {
+    #[tokio::test]
+    async fn document_content_encoding_base64_populates_content_base64() {
         let config = CrawlConfig {
             document_content_encoding: Some(DocumentContentEncoding::Base64),
             ..Default::default()
@@ -444,6 +478,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
         assert_eq!(
             doc.content_base64.as_deref(),
@@ -452,8 +487,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_document_content_encoding_leaves_content_base64_none() {
+    #[tokio::test]
+    async fn no_document_content_encoding_leaves_content_base64_none() {
         let config = CrawlConfig::default();
         let doc = build_downloaded_document(
             pdf_url().as_str(),
@@ -463,6 +498,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
         assert!(
             doc.content_base64.is_none(),
@@ -470,8 +506,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn document_output_dir_streams_bytes_to_disk_and_clears_in_memory_content() {
+    #[tokio::test]
+    async fn document_output_dir_streams_bytes_to_disk_and_clears_in_memory_content() {
         let dir = std::env::temp_dir().join(format!("crawlberg-doc-test-{}", std::process::id()));
         let config = CrawlConfig {
             document_output_dir: Some(dir.clone()),
@@ -485,6 +521,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
 
         assert!(
@@ -505,8 +542,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn no_document_output_dir_leaves_content_path_none() {
+    #[tokio::test]
+    async fn no_document_output_dir_leaves_content_path_none() {
         let config = CrawlConfig::default();
         let doc = build_downloaded_document(
             pdf_url().as_str(),
@@ -516,6 +553,7 @@ mod tests {
             true,
             &config,
         )
+        .await
         .expect("a document is expected");
         assert!(doc.content_path.is_none(), "content_path must stay None by default");
         assert_eq!(

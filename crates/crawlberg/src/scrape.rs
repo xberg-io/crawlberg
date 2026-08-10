@@ -85,7 +85,8 @@ pub(crate) async fn scrape_from_crawl_response(
         &resp.body_bytes,
         was_skipped,
         config,
-    );
+    )
+    .await;
 
     let is_html = is_html_content(&content_type, &body);
 

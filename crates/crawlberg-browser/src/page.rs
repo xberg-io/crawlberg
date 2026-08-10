@@ -11,6 +11,12 @@ use crate::lifecycle::LifecycleState;
 #[cfg(feature = "stealth")]
 use crate::net::StealthHttpClient;
 
+/// Wall-clock bound on [`Page::execute_preload_script`], mirroring `adapter::EVAL_SCRIPT_TIMEOUT`
+/// and `adapter::EXECUTE_JS_TIMEOUT` (#71): a fixed, watchdog-enforced ceiling for
+/// operator/config-supplied scripts, independent of any caller-configured, potentially
+/// unbounded timeout.
+const PRELOAD_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Returns true when a JS-initiated navigation would step from a
 /// non-file scheme into a file: URL. We treat that move as an SOP
 /// violation because the existing realm survives the navigation and
@@ -923,9 +929,14 @@ impl Page {
         });
     }
 
+    /// ~keep A preload script is operator/config-supplied like `ExecuteJs` and `eval_script`
+    /// (#71), so it hits the same hazard: `BrowserJsRuntime::execute_script` is a synchronous,
+    /// non-yielding V8 call that a caller-side `tokio::time::timeout` cannot preempt. Routed
+    /// through the watchdog-backed `execute_script_with_timeout` with the same 30s bound used
+    /// for `ExecuteJs`/`eval_script` rather than a plain call.
     pub fn execute_preload_script(&mut self, source: &str) -> Result<(), String> {
         if let Some(js) = &mut self.js {
-            js.execute_script("<preload>", source)
+            js.execute_script_with_timeout(source, PRELOAD_SCRIPT_TIMEOUT)
         } else {
             Err("No JS runtime".to_string())
         }

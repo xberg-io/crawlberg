@@ -134,6 +134,19 @@ const ACTION_TIMEOUT: Duration = Duration::from_secs(360);
 /// short bound keeps a hostile or buggy script from pinning a worker for long.
 const EXECUTE_JS_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Wall-clock bound on `config.eval_script`, enforced the same way as `EXECUTE_JS_TIMEOUT` (#71).
+///
+/// ~keep `eval_script` is operator/config-supplied rather than untrusted per-action input, but
+/// it hits the identical hazard: it runs through `Page::evaluate`/`evaluate_result`, a
+/// synchronous, non-yielding V8 call that no `tokio::time::timeout` around it can preempt. It
+/// deliberately reuses `EXECUTE_JS_TIMEOUT`'s value rather than `config.timeout`: `config.timeout`
+/// is caller-supplied and unbounded (crawlberg's `CrawlConfig::validate` does not clamp it), and
+/// `evaluate_with_timeout` treats a zero duration as "no watchdog" — so deriving the guard from
+/// it would let an unvalidated zero (or an operator's very long navigation budget) silently
+/// reopen the hang this fix closes. A fixed, proven bound keeps the guarantee independent of
+/// caller configuration.
+const EVAL_SCRIPT_TIMEOUT: Duration = EXECUTE_JS_TIMEOUT;
+
 const DEFAULT_SCROLL_AMOUNT: i64 = 800;
 const DEFAULT_SELECTOR_WAIT_MS: i64 = 30_000;
 const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -494,7 +507,7 @@ async fn interact_url_local(
         tokio::time::sleep(wait).await;
     }
     if let Some(ref script) = config.eval_script {
-        page.evaluate_result(script)
+        page.evaluate_result_with_timeout(script, EVAL_SCRIPT_TIMEOUT)
             .map_err(|e| PageError::ParseError(format!("post-navigation eval_script failed: {e}")))?;
     }
 
@@ -608,8 +621,14 @@ async fn render_with_context(
         .unwrap_or_default();
 
     let eval_result = if let Some(ref script) = config.eval_script {
-        let val = page.evaluate(script);
-        if val.is_null() { None } else { Some(val) }
+        match page.evaluate_result_with_timeout(script, EVAL_SCRIPT_TIMEOUT) {
+            Ok(value) if !value.is_null() => Some(value),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::debug!("eval_script error for '{}': {}", &script[..script.len().min(80)], error);
+                None
+            }
+        }
     } else {
         None
     };
@@ -1378,6 +1397,98 @@ mod tests {
             "follow-up Scrape action should succeed"
         );
         assert!(followup_outcome.final_html.contains("Native executor"));
+    }
+
+    /// Proves #71 is fixed for the post-navigation `eval_script` path in `interact_url_local`,
+    /// which previously called `Page::evaluate_result` with no bound. A non-terminating
+    /// `eval_script` must be reclaimed by the same watchdog proven for `ExecuteJs`, must
+    /// surface as a clear termination error rather than hanging the whole job, and must leave
+    /// the worker OS thread free for the next job on this single-worker executor.
+    #[tokio::test]
+    async fn hung_post_navigation_eval_script_terminates_and_the_native_worker_recovers() {
+        allow_private_network();
+        let server = TestServer::start().await;
+        let executor =
+            NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
+        let config = NativeBrowserConfig {
+            eval_script: Some("while (true) {}".to_owned()),
+            ..NativeBrowserConfig::default()
+        };
+
+        let outcome = tokio::time::timeout(
+            EVAL_SCRIPT_TIMEOUT + Duration::from_secs(15),
+            executor.interact_url(&server.base_url, &config, &[NativePageAction::Scrape], None),
+        )
+        .await
+        .expect("the watchdog must reclaim the isolate well before this outer safety margin");
+
+        let error = outcome.expect_err("a hung eval_script must surface as an error, not hang the job");
+        let message = error.to_string();
+        assert!(
+            message.contains("terminated"),
+            "a terminated eval_script must produce a clear termination error, got {message:?}"
+        );
+
+        let followup_outcome = tokio::time::timeout(
+            Duration::from_secs(15),
+            executor.interact_url(
+                &server.base_url,
+                &NativeBrowserConfig::default(),
+                &[NativePageAction::Scrape],
+                None,
+            ),
+        )
+        .await
+        .expect("a trivial follow-up job on the same single-worker executor must complete now that the worker thread is free")
+        .expect("follow-up interact_url should succeed");
+
+        assert!(
+            followup_outcome.action_results[0].success,
+            "follow-up Scrape action should succeed"
+        );
+        assert!(followup_outcome.final_html.contains("Native executor"));
+    }
+
+    /// Proves #71 is fixed for the render-path `eval_script` in `render_with_context`, which
+    /// previously called `Page::evaluate` with no bound. Render-path `eval_script` errors are
+    /// swallowed to `None` (mirroring `Page::evaluate`'s existing null-on-error contract), so a
+    /// terminated script must not hang the render but must still let the render itself
+    /// succeed, and must leave the worker OS thread free for the next job.
+    #[tokio::test]
+    async fn hung_render_path_eval_script_is_terminated_and_the_native_worker_recovers() {
+        allow_private_network();
+        let server = TestServer::start().await;
+        let executor =
+            NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
+        let config = NativeBrowserConfig {
+            eval_script: Some("while (true) {}".to_owned()),
+            ..NativeBrowserConfig::default()
+        };
+
+        let rendered = tokio::time::timeout(
+            EVAL_SCRIPT_TIMEOUT + Duration::from_secs(15),
+            executor.render_url(&server.base_url, &config),
+        )
+        .await
+        .expect("the watchdog must reclaim the isolate well before this outer safety margin")
+        .expect("render should still succeed even though eval_script hung and was terminated");
+
+        assert!(
+            rendered.eval_result.is_none(),
+            "a terminated eval_script must not surface a spurious result, got {:?}",
+            rendered.eval_result
+        );
+        assert!(rendered.html.contains("Native executor"));
+
+        let followup = tokio::time::timeout(
+            Duration::from_secs(15),
+            executor.render_url(&server.base_url, &NativeBrowserConfig::default()),
+        )
+        .await
+        .expect("a trivial follow-up render on the same single-worker executor must complete now that the worker thread is free")
+        .expect("follow-up render_url should succeed");
+
+        assert!(followup.html.contains("Native executor"));
     }
 
     struct TestServer {
