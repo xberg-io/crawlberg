@@ -93,16 +93,10 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
 ) -> Result<HttpResponse, CrawlError> {
-    let target = url::Url::parse(url).map_err(|e| CrawlError::SsrfPolicyViolation {
-        url: url.to_string(),
-        reason: format!("invalid URL: {e}"),
-    })?;
+    let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
     validate_url(&target, &config.ssrf)
         .await
-        .map_err(|e| CrawlError::SsrfPolicyViolation {
-            url: url.to_string(),
-            reason: e.to_string(),
-        })?;
+        .map_err(|e| CrawlError::ssrf_violation(url.to_string(), e.to_string()))?;
 
     if let Some(pool) = pool {
         // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the

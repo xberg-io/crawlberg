@@ -96,17 +96,12 @@ async fn do_fetch(
     config: &CrawlConfig,
     req: &CrawlRequest,
 ) -> Result<CrawlResponse, CrawlError> {
-    let url = url::Url::parse(&req.url).map_err(|e| CrawlError::SsrfPolicyViolation {
-        url: req.url.clone(),
-        reason: format!("invalid URL: {e}"),
-    })?;
+    let url =
+        url::Url::parse(&req.url).map_err(|e| CrawlError::ssrf_violation(&req.url, format!("invalid URL: {e}")))?;
 
     validate_url(&url, &config.ssrf)
         .await
-        .map_err(|e| CrawlError::SsrfPolicyViolation {
-            url: req.url.clone(),
-            reason: e.to_string(),
-        })?;
+        .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
     let http_req = apply_headers(client.get(url.to_string()), config, req);
 

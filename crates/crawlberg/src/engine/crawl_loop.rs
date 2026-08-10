@@ -141,10 +141,7 @@ pub(crate) async fn follow_redirects(
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
-                    return Err(CrawlError::SsrfPolicyViolation {
-                        url: target,
-                        reason: e.to_string(),
-                    });
+                    return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push(resp.headers);
                 seen.insert(target.clone());
@@ -164,10 +161,7 @@ pub(crate) async fn follow_redirects(
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
-                    return Err(CrawlError::SsrfPolicyViolation {
-                        url: target,
-                        reason: e.to_string(),
-                    });
+                    return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push(resp.headers);
                 seen.insert(target.clone());
@@ -191,10 +185,7 @@ pub(crate) async fn follow_redirects(
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
-                    return Err(CrawlError::SsrfPolicyViolation {
-                        url: target,
-                        reason: e.to_string(),
-                    });
+                    return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push(resp.headers);
                 seen.insert(target.clone());

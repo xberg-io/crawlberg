@@ -176,17 +176,12 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
-    let initial_url = url::Url::parse(url).map_err(|e| CrawlError::SsrfPolicyViolation {
-        url: url.to_string(),
-        reason: format!("invalid URL: {e}"),
-    })?;
+    let initial_url =
+        url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
         .await
-        .map_err(|e| CrawlError::SsrfPolicyViolation {
-            url: url.to_string(),
-            reason: e.to_string(),
-        })?;
+        .map_err(|e| CrawlError::ssrf_violation(url.to_string(), e.to_string()))?;
 
     let mut current_url = initial_url.clone();
     let mut final_url_str: String;
@@ -277,10 +272,7 @@ pub(crate) async fn http_fetch(
                 };
 
                 if let Err(e) = validate_url(&next_url, &config.ssrf).await {
-                    return Err(CrawlError::SsrfPolicyViolation {
-                        url: next_url.to_string(),
-                        reason: e.to_string(),
-                    });
+                    return Err(CrawlError::ssrf_violation(next_url.to_string(), e.to_string()));
                 }
 
                 redirects_followed += 1;
@@ -292,10 +284,7 @@ pub(crate) async fn http_fetch(
                 // fixtures/schema.json contract) and is not read at runtime — SSRF safety itself is
                 // unaffected because every redirect target is still validated by `validate_url` below.
                 if redirects_followed > config.max_redirects {
-                    return Err(CrawlError::SsrfPolicyViolation {
-                        url: next_url.to_string(),
-                        reason: "too many redirects".to_string(),
-                    });
+                    return Err(CrawlError::ssrf_violation(next_url.to_string(), "too many redirects".to_string()));
                 }
 
                 current_url = next_url;
@@ -324,7 +313,10 @@ pub(crate) async fn http_fetch(
             500 => return Err(CrawlError::ServerError("server_error".into())),
             502 => return Err(CrawlError::BadGateway("bad_gateway".into())),
             503 => {
-                return Err(CrawlError::ServerError("server_error: service unavailable".into()));
+                return Err(CrawlError::ServerError(format!("server_error: {SERVICE_UNAVAILABLE_SUFFIX}")));
+            }
+            504 => {
+                return Err(CrawlError::ServerError(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")));
             }
             _ => {}
         }
@@ -589,6 +581,38 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
     Ok(client)
 }
 
+/// Substring appended to a `CrawlError::ServerError` message for a 503 response.
+///
+/// ~keep `CrawlError::ServerError` carries a single free-form `String` with no numeric
+/// status field (see `error.rs`), so 500, 503, and 504 all raise the same enum variant.
+/// `should_retry_status` matches on this substring to tell them apart when deciding
+/// which `retry_codes` entry governs a given failure — without it, configuring a retry
+/// for one of the three silently also retried (or failed to retry) the other two.
+const SERVICE_UNAVAILABLE_SUFFIX: &str = "service unavailable";
+
+/// Substring appended to a `CrawlError::ServerError` message for a 504 response.
+/// See [`SERVICE_UNAVAILABLE_SUFFIX`] for why this disambiguation is needed.
+const GATEWAY_TIMEOUT_SUFFIX: &str = "gateway timeout";
+
+/// Decide whether `error` should trigger a retry, given the configured `retry_codes`.
+///
+/// Each configured status code retries exactly the failures that produced it: 500 only
+/// retries a plain `ServerError`, 503 only a `ServerError` carrying
+/// [`SERVICE_UNAVAILABLE_SUFFIX`], 504 only one carrying [`GATEWAY_TIMEOUT_SUFFIX`], 502
+/// only `BadGateway`, 408 only `Timeout`, and 429 only `RateLimited`. Any other error
+/// (including statuses not covered by `retry_codes`) never retries.
+fn should_retry_status(error: &CrawlError, retry_codes: &[u16]) -> bool {
+    match error {
+        CrawlError::ServerError(msg) if msg.contains(GATEWAY_TIMEOUT_SUFFIX) => retry_codes.contains(&504),
+        CrawlError::ServerError(msg) if msg.contains(SERVICE_UNAVAILABLE_SUFFIX) => retry_codes.contains(&503),
+        CrawlError::ServerError(_) => retry_codes.contains(&500),
+        CrawlError::BadGateway(_) => retry_codes.contains(&502),
+        CrawlError::Timeout(_) => retry_codes.contains(&408),
+        CrawlError::RateLimited(_) => retry_codes.contains(&429),
+        _ => false,
+    }
+}
+
 /// Fetch a URL with retry logic based on configuration.
 ///
 /// Retries on server errors and rate limiting if the corresponding status codes
@@ -607,11 +631,7 @@ pub(crate) async fn fetch_with_retry(
         match http_fetch(url, config, extra_headers, client).await {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                let should_retry = match &e {
-                    CrawlError::ServerError(_) => retry_codes.contains(&503) || retry_codes.contains(&500),
-                    CrawlError::RateLimited(_) => retry_codes.contains(&429),
-                    _ => false,
-                };
+                let should_retry = should_retry_status(&e, &retry_codes);
                 if should_retry && attempt < retries {
                     let delay = Duration::from_millis(100 * (1 << attempt));
                     tokio::time::sleep(delay).await;
@@ -934,6 +954,37 @@ mod tests {
         assert!(
             matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
             "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
+        );
+    }
+
+    /// ~keep Regression: `redact_url_credentials` existed and was unit-tested, but every
+    /// real `SsrfPolicyViolation` site built the variant with a struct literal carrying
+    /// the raw URL — so a refused `http://user:pass@host/` leaked the credential into API
+    /// error bodies, MCP payloads and tracing fields. Testing the helper in isolation is
+    /// exactly what hid that, so this drives a real `http_fetch` rejection instead.
+    #[tokio::test]
+    async fn http_fetch_ssrf_rejection_does_not_leak_url_credentials() {
+        let config = CrawlConfig::default();
+        let client = build_client(&config).expect("client must build");
+        let url = "http://alice:hunter2@169.254.169.254/latest/meta-data/";
+
+        let err = match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("the link-local metadata address must be refused by the default policy"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the refused URL's password must never reach the error, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the refused URL's username must never reach the error, got {rendered}"
+        );
+        assert!(
+            rendered.contains("169.254.169.254"),
+            "the host must survive redaction so the error stays actionable, got {rendered}"
         );
     }
 

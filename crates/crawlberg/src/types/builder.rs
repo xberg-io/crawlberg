@@ -58,6 +58,12 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Set the maximum number of links enqueued from a single page.
+    pub fn max_links_per_page(mut self, value: usize) -> Self {
+        self.inner.max_links_per_page = Some(value);
+        self
+    }
+
     /// Set the maximum number of concurrent requests.
     pub fn max_concurrent(mut self, value: usize) -> Self {
         self.inner.max_concurrent = Some(value);

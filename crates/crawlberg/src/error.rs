@@ -151,6 +151,21 @@ pub struct UrlSsrfError {
     pub source: crate::net::ssrf::SsrfError,
 }
 
+impl CrawlError {
+    /// Build an [`CrawlError::SsrfPolicyViolation`] with `url` credential-redacted.
+    ///
+    /// ~keep Always construct this variant here rather than with a struct literal. A
+    /// refused URL frequently carries userinfo (`http://user:pass@host/`), and this
+    /// value reaches API error bodies, MCP error payloads and tracing fields — so a
+    /// literal leaks the credential at exactly the moment the request was rejected.
+    pub(crate) fn ssrf_violation(url: impl AsRef<str>, reason: impl Into<String>) -> Self {
+        Self::SsrfPolicyViolation {
+            url: crate::net::redact_url_credentials(url.as_ref()),
+            reason: reason.into(),
+        }
+    }
+}
+
 impl crate::net::ssrf::SsrfError {
     /// Attach the URL that was being validated, producing an error that survives `?`
     /// into [`CrawlError::SsrfPolicyViolation`] with `url` populated instead of
