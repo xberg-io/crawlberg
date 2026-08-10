@@ -1,6 +1,11 @@
 {
 	"id": "crawl_single_page_no_links",
 	"description": "Crawling a page with no links returns only the seed page",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-single-page-no-links",
+		"title": "Crawling a page with no links returns only the seed page"
+	},
 	"tags": ["crawl"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "browser_mode_always",
 	"description": "Browser mode 'always' uses browser even for normal server-rendered pages",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-mode-always",
+		"title": "Browser mode 'always' uses browser even for normal server-rendered pages"
+	},
 	"tags": ["browser", "config"],
 	"skip": {
 		"languages": ["wasm"],

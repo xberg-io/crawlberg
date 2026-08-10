@@ -1,6 +1,11 @@
 {
 	"id": "error_500_server",
 	"description": "Handles 500 server error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-500-server",
+		"title": "Handles 500 server error"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

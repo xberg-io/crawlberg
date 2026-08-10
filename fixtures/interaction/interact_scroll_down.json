@@ -1,6 +1,11 @@
 {
 	"id": "interact_scroll_down",
 	"description": "Scroll down on the page and verify success",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-scroll-down",
+		"title": "Scroll down on the page and verify success"
+	},
 	"tags": ["interaction", "scroll"],
 	"skip": {
 		"languages": ["wasm"],

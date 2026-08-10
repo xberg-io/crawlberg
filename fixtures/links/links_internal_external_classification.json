@@ -1,6 +1,11 @@
 {
 	"id": "links_internal_external_classification",
 	"description": "Correctly classifies internal vs external links by domain",
+	"docs": {
+		"topic": "links",
+		"stem": "links-internal-external-classification",
+		"title": "Correctly classifies internal vs external links by domain"
+	},
 	"tags": ["links"],
 	"input": {
 		"config": {},

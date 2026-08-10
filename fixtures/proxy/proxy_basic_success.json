@@ -1,6 +1,11 @@
 {
 	"id": "proxy_basic_success",
 	"description": "Configure proxy URL and successfully crawl through it",
+	"docs": {
+		"topic": "proxy",
+		"stem": "proxy-basic-success",
+		"title": "Configure proxy URL and successfully crawl through it"
+	},
 	"tags": ["proxy", "basic", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

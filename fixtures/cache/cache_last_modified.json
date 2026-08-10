@@ -1,6 +1,11 @@
 {
 	"id": "cache_last_modified",
 	"description": "Last-Modified header enables conditional requests via If-Modified-Since",
+	"docs": {
+		"topic": "cache",
+		"stem": "cache-last-modified",
+		"title": "Last-Modified header enables conditional requests via If-Modified-Since"
+	},
 	"tags": ["cache", "last-modified", "conditional", "crawl"],
 	"input": {
 		"mock_responses": [

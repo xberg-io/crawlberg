@@ -1,6 +1,11 @@
 {
 	"id": "crawl_query_param_dedup",
 	"description": "Deduplicates URLs with same query params in different order",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-query-param-dedup",
+		"title": "Deduplicates URLs with same query params in different order"
+	},
 	"tags": ["crawl", "normalization"],
 	"input": {
 		"mock_responses": [

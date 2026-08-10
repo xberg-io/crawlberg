@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_index",
 	"description": "Follows sitemap index to discover child sitemaps",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-index",
+		"title": "Follows sitemap index to discover child sitemaps"
+	},
 	"tags": ["sitemap", "map"],
 	"input": {
 		"config": {},

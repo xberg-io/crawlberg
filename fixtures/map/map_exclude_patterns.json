@@ -1,6 +1,11 @@
 {
 	"id": "map_exclude_patterns",
 	"description": "Excludes URLs matching patterns from URL map",
+	"docs": {
+		"topic": "map",
+		"stem": "map-exclude-patterns",
+		"title": "Excludes URLs matching patterns from URL map"
+	},
 	"tags": ["map", "filter"],
 	"input": {
 		"mock_responses": [

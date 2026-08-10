@@ -1,6 +1,11 @@
 {
 	"id": "validation_invalid_proxy_url",
 	"description": "proxy with invalid URL like 'not-a-url' is rejected",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-proxy-url",
+		"title": "proxy with invalid URL like 'not-a-url' is rejected"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

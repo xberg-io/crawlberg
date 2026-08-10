@@ -1,6 +1,11 @@
 {
 	"id": "metadata_og_video_audio",
 	"description": "Extracts og:video, og:audio, and og:locale:alternate metadata",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-og-video-audio",
+		"title": "Extracts og:video, og:audio, and og:locale:alternate metadata"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

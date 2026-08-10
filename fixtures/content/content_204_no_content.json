@@ -1,6 +1,11 @@
 {
 	"id": "content_204_no_content",
 	"description": "Handles 204 No Content response gracefully",
+	"docs": {
+		"topic": "content",
+		"stem": "content-204-no-content",
+		"title": "Handles 204 No Content response gracefully"
+	},
 	"tags": ["content", "edge-case"],
 	"input": {
 		"config": {},

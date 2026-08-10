@@ -1,6 +1,11 @@
 {
 	"id": "scrape_json_ld",
 	"description": "Extracts JSON-LD structured data from a page",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-json-ld",
+		"title": "Extracts JSON-LD structured data from a page"
+	},
 	"tags": ["scrape", "metadata", "json-ld"],
 	"input": {
 		"config": {},

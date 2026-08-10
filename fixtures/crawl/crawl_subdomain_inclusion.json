@@ -1,6 +1,11 @@
 {
 	"id": "crawl_subdomain_inclusion",
 	"description": "Crawls subdomains when allow_subdomains is enabled",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-subdomain-inclusion",
+		"title": "Crawls subdomains when allow_subdomains is enabled"
+	},
 	"tags": ["crawl", "subdomain"],
 	"input": {
 		"mock_responses": [

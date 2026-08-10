@@ -1,12 +1,12 @@
 {
-	"id": "crawl_concurrent_max_pages",
-	"description": "Concurrent crawl respects max_pages budget",
+	"id": "crawl_max_links_per_page",
+	"description": "max_links_per_page caps the number of links enqueued from a single page",
 	"docs": {
 		"topic": "crawl",
-		"stem": "crawl-concurrent-max-pages",
-		"title": "Concurrent crawl respects max_pages budget"
+		"stem": "crawl-max-links-per-page",
+		"title": "max_links_per_page caps the number of links enqueued from a single page"
 	},
-	"tags": ["crawl", "concurrency"],
+	"tags": ["crawl", "limits"],
 	"input": {
 		"mock_responses": [
 			{
@@ -23,7 +23,7 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>P1</h1></body></html>"
+				"body_inline": "<html><body><h1>Page 1</h1></body></html>"
 			},
 			{
 				"path": "/p2",
@@ -31,7 +31,7 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>P2</h1></body></html>"
+				"body_inline": "<html><body><h1>Page 2</h1></body></html>"
 			},
 			{
 				"path": "/p3",
@@ -39,7 +39,7 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>P3</h1></body></html>"
+				"body_inline": "<html><body><h1>Page 3</h1></body></html>"
 			},
 			{
 				"path": "/p4",
@@ -47,7 +47,7 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>P4</h1></body></html>"
+				"body_inline": "<html><body><h1>Page 4</h1></body></html>"
 			},
 			{
 				"path": "/p5",
@@ -55,13 +55,12 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>P5</h1></body></html>"
+				"body_inline": "<html><body><h1>Page 5</h1></body></html>"
 			}
 		],
 		"config": {
-			"max_depth": 1,
-			"max_pages": 3,
-			"max_concurrent": 4,
+			"max_links_per_page": 2,
+			"max_pages": 10,
 			"respect_robots_txt": false
 		}
 	},

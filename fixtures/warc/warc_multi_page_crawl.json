@@ -1,6 +1,11 @@
 {
 	"id": "warc_multi_page_crawl",
 	"description": "Crawl multiple pages with depth=1 and WARC output enabled",
+	"docs": {
+		"topic": "warc",
+		"stem": "warc-multi-page-crawl",
+		"title": "Crawl multiple pages with depth=1 and WARC output enabled"
+	},
 	"tags": ["warc", "output", "crawl", "multi-page"],
 	"skip": {
 		"languages": ["wasm", "brew"],

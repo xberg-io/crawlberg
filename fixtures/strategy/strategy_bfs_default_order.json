@@ -1,6 +1,11 @@
 {
 	"id": "strategy_bfs_default_order",
 	"description": "BFS strategy visits pages in breadth-first order",
+	"docs": {
+		"topic": "strategy",
+		"stem": "strategy-bfs-default-order",
+		"title": "BFS strategy visits pages in breadth-first order"
+	},
 	"tags": ["strategy", "bfs", "crawl"],
 	"input": {
 		"mock_responses": [

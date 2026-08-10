@@ -1,6 +1,11 @@
 {
 	"id": "validation_max_redirects_too_high",
 	"description": "max_redirects > 100 is rejected as invalid config",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-max-redirects-too-high",
+		"title": "max_redirects > 100 is rejected as invalid config"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "content_binary_skip",
 	"description": "Skips image and video content types gracefully",
+	"docs": {
+		"topic": "content",
+		"stem": "content-binary-skip",
+		"title": "Skips image and video content types gracefully"
+	},
 	"category": "crawl",
 	"tags": ["content", "binary"],
 	"input": {

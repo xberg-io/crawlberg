@@ -1,6 +1,11 @@
 {
 	"id": "batch_crawl_stream_events",
 	"description": "Batch crawl stream produces expected Page and Complete events",
+	"docs": {
+		"topic": "stream",
+		"stem": "batch-crawl-stream-events",
+		"title": "Batch crawl stream produces expected Page and Complete events"
+	},
 	"tags": ["stream", "batch"],
 	"input": {
 		"mock_responses": [

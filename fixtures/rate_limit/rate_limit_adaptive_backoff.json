@@ -1,6 +1,11 @@
 {
 	"id": "rate_limit_adaptive_backoff",
 	"description": "Exponential backoff retry succeeds after 429 Too Many Requests",
+	"docs": {
+		"topic": "rate-limit",
+		"stem": "rate-limit-adaptive-backoff",
+		"title": "Exponential backoff retry succeeds after 429 Too Many Requests"
+	},
 	"tags": ["rate_limit", "retry", "backoff"],
 	"input": {
 		"mock_responses": [

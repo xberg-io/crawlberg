@@ -1,6 +1,11 @@
 {
 	"id": "links_protocol_relative",
 	"description": "Handles protocol-relative URLs (//example.com) correctly",
+	"docs": {
+		"topic": "links",
+		"stem": "links-protocol-relative",
+		"title": "Handles protocol-relative URLs (//example.com) correctly"
+	},
 	"tags": ["links", "edge-case"],
 	"input": {
 		"config": {},

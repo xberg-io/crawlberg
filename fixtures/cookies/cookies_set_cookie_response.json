@@ -1,6 +1,11 @@
 {
 	"id": "cookies_set_cookie_response",
 	"description": "Respects Set-Cookie header from server responses",
+	"docs": {
+		"topic": "cookies",
+		"stem": "cookies-set-cookie-response",
+		"title": "Respects Set-Cookie header from server responses"
+	},
 	"tags": ["cookies", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

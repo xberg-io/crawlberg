@@ -1,6 +1,11 @@
 {
 	"id": "cache_basic",
 	"description": "Crawling with disk cache enabled succeeds without errors",
+	"docs": {
+		"topic": "cache",
+		"stem": "cache-basic",
+		"title": "Crawling with disk cache enabled succeeds without errors"
+	},
 	"tags": ["cache"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "robots_x_robots_tag",
 	"description": "Respects X-Robots-Tag HTTP header directives",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-x-robots-tag",
+		"title": "Respects X-Robots-Tag HTTP header directives"
+	},
 	"tags": ["robots", "http-header"],
 	"input": {
 		"mock_responses": [

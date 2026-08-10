@@ -1,6 +1,11 @@
 {
 	"id": "robots_meta_noindex",
 	"description": "Detects noindex meta robots tag in HTML page",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-meta-noindex",
+		"title": "Detects noindex meta robots tag in HTML page"
+	},
 	"tags": ["robots", "meta"],
 	"input": {
 		"mock_responses": [

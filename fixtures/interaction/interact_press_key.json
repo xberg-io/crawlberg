@@ -1,6 +1,11 @@
 {
 	"id": "interact_press_key",
 	"description": "Press a keyboard key (Enter) and verify success",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-press-key",
+		"title": "Press a keyboard key (Enter) and verify success"
+	},
 	"tags": ["interaction", "press"],
 	"skip": {
 		"languages": ["wasm"],

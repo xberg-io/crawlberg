@@ -1,6 +1,11 @@
 {
 	"id": "robots_allow_override",
 	"description": "Allow directive overrides Disallow for specific paths",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-allow-override",
+		"title": "Allow directive overrides Disallow for specific paths"
+	},
 	"tags": ["robots", "allow"],
 	"input": {
 		"mock_responses": [

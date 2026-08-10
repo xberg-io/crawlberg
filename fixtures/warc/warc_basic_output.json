@@ -1,6 +1,11 @@
 {
 	"id": "warc_basic_output",
 	"description": "Scrape single page with WARC output enabled writes to file",
+	"docs": {
+		"topic": "warc",
+		"stem": "warc-basic-output",
+		"title": "Scrape single page with WARC output enabled writes to file"
+	},
 	"tags": ["warc", "output", "basic", "crawl"],
 	"skip": {
 		"languages": ["wasm", "brew"],

@@ -1,6 +1,11 @@
 {
 	"id": "proxy_authenticated",
 	"description": "Proxy with username and password credentials authenticates successfully",
+	"docs": {
+		"topic": "proxy",
+		"stem": "proxy-authenticated",
+		"title": "Proxy with username and password credentials authenticates successfully"
+	},
 	"tags": ["proxy", "auth", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

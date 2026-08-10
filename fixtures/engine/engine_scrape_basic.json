@@ -1,6 +1,11 @@
 {
 	"id": "engine_scrape_basic",
 	"description": "CrawlEngine with defaults scrapes a page identically to the free function",
+	"docs": {
+		"topic": "getting-started",
+		"stem": "basic_usage",
+		"title": "Basic usage"
+	},
 	"tags": ["engine", "scrape"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "validation_browser_endpoint_invalid",
 	"description": "Browser endpoint must be a valid ws:// or wss:// URL, not http://",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-browser-endpoint-invalid",
+		"title": "Browser endpoint must be a valid ws:// or wss:// URL, not http://"
+	},
 	"tags": ["browser", "validation"],
 	"input": {
 		"mock_responses": [

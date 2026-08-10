@@ -1,6 +1,11 @@
 {
 	"id": "redirect_to_404",
 	"description": "Redirect target returns 404 Not Found",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-to-404",
+		"title": "Redirect target returns 404 Not Found"
+	},
 	"tags": ["redirect", "error", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

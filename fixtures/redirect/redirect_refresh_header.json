@@ -1,6 +1,11 @@
 {
 	"id": "redirect_refresh_header",
 	"description": "Handles HTTP Refresh header redirect",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-refresh-header",
+		"title": "Handles HTTP Refresh header redirect"
+	},
 	"tags": ["redirect", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

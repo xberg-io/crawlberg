@@ -84,6 +84,11 @@
 					"properties": {
 						"max_depth": { "type": "integer", "minimum": 0 },
 						"max_pages": { "type": "integer", "minimum": 1 },
+						"max_links_per_page": {
+							"type": "integer",
+							"minimum": 0,
+							"description": "Maximum links enqueued from a single page. Defaults to 10000. Links past the cap are dropped and a warning is logged; bounds fan-out from one hostile or pathological page."
+						},
 						"respect_robots_txt": { "type": "boolean" },
 						"soft_http_errors": { "type": "boolean" },
 						"request_timeout": {
@@ -252,7 +257,12 @@
 										"additionalProperties": false
 									}
 								},
-								"max_redirects": { "type": "integer", "minimum": 0, "maximum": 255 }
+								"max_redirects": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 255,
+									"description": "Maximum redirects followed during SSRF validation. WARNING: CrawlConfig.max_redirects (the top-level config property) is the effective knob at runtime for how many redirects the engine actually follows — SsrfPolicy.max_redirects still deserializes for backward compatibility but is NOT read at runtime. A fixture must not rely on this field to bound the number of redirect hops; set the top-level max_redirects instead."
+								}
 							},
 							"additionalProperties": false
 						}

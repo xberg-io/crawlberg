@@ -1,6 +1,11 @@
 {
 	"id": "redirect_cross_domain",
 	"description": "Reports cross-domain redirect target without following to external domain",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-cross-domain",
+		"title": "Reports cross-domain redirect target without following to external domain"
+	},
 	"tags": ["redirect", "crawl"],
 	"input": {
 		"mock_responses": [

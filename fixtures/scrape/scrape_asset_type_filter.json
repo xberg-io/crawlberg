@@ -1,6 +1,11 @@
 {
 	"id": "scrape_asset_type_filter",
 	"description": "Only downloads image assets when asset_types filter is set",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-asset-type-filter",
+		"title": "Only downloads image assets when asset_types filter is set"
+	},
 	"tags": ["scrape", "assets"],
 	"input": {
 		"mock_responses": [

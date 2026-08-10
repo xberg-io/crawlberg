@@ -1,6 +1,11 @@
 {
 	"id": "scrape_twitter_card",
 	"description": "Extracts Twitter Card metadata from a page",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-twitter-card",
+		"title": "Extracts Twitter Card metadata from a page"
+	},
 	"tags": ["scrape", "metadata", "twitter"],
 	"input": {
 		"config": {},

@@ -1,6 +1,11 @@
 {
 	"id": "stream_event_ordering",
 	"description": "Stream ensures complete event arrives after all page events",
+	"docs": {
+		"topic": "stream",
+		"stem": "stream-event-ordering",
+		"title": "Stream ensures complete event arrives after all page events"
+	},
 	"tags": ["stream", "ordering"],
 	"input": {
 		"mock_responses": [

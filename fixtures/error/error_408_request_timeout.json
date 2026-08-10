@@ -1,6 +1,11 @@
 {
 	"id": "error_408_request_timeout",
 	"description": "Handles 408 Request Timeout response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-408-request-timeout",
+		"title": "Handles 408 Request Timeout response correctly"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

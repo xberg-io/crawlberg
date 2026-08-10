@@ -1,6 +1,11 @@
 {
 	"id": "links_rel_attributes",
 	"description": "Preserves rel=nofollow and rel=canonical attributes",
+	"docs": {
+		"topic": "links",
+		"stem": "links-rel-attributes",
+		"title": "Preserves rel=nofollow and rel=canonical attributes"
+	},
 	"tags": ["links"],
 	"input": {
 		"config": {},

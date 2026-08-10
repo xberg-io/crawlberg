@@ -1,6 +1,11 @@
 {
 	"id": "scrape_basic_html_page",
 	"description": "Scrapes a simple HTML page and extracts title, description, and links",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-basic-html-page",
+		"title": "Scrapes a simple HTML page and extracts title, description, and links"
+	},
 	"tags": ["scrape", "metadata", "smoke"],
 	"input": {
 		"mock_responses": [

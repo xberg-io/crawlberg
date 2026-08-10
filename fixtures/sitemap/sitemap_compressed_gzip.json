@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_compressed_gzip",
 	"description": "Parses a gzip-compressed sitemap file",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-compressed-gzip",
+		"title": "Parses a gzip-compressed sitemap file"
+	},
 	"tags": ["sitemap", "compression", "map"],
 	"input": {
 		"mock_responses": [

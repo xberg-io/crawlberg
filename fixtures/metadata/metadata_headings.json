@@ -1,6 +1,11 @@
 {
 	"id": "metadata_headings",
 	"description": "Extracts heading hierarchy (h1-h6) from HTML page",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-headings",
+		"title": "Extracts heading hierarchy (h1-h6) from HTML page"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

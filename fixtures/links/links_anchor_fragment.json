@@ -1,6 +1,11 @@
 {
 	"id": "links_anchor_fragment",
 	"description": "Identifies fragment-only links as anchor type",
+	"docs": {
+		"topic": "links",
+		"stem": "links-anchor-fragment",
+		"title": "Identifies fragment-only links as anchor type"
+	},
 	"tags": ["links"],
 	"input": {
 		"config": {},

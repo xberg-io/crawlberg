@@ -1,6 +1,11 @@
 {
 	"id": "scrape_batch_basic",
 	"description": "Batch scrape of multiple URLs all succeeding",
+	"docs": {
+		"topic": "batch",
+		"stem": "scrape-batch-basic",
+		"title": "Batch scrape of multiple URLs all succeeding"
+	},
 	"tags": ["batch"],
 	"input": {
 		"mock_responses": [

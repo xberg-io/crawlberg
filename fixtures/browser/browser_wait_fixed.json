@@ -1,9 +1,14 @@
 {
 	"id": "browser_wait_fixed",
 	"description": "Browser wait strategy 'fixed' waits for a specific duration after page navigation",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-wait-fixed",
+		"title": "Browser wait strategy 'fixed' waits for a specific duration after page navigation"
+	},
 	"tags": ["browser", "wait", "fixed"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

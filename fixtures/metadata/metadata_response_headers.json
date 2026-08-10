@@ -1,6 +1,11 @@
 {
 	"id": "metadata_response_headers",
 	"description": "Extracts response metadata from HTTP headers (etag, server, content-language)",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-response-headers",
+		"title": "Extracts response metadata from HTTP headers (etag, server, content-language)"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

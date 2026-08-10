@@ -1,6 +1,11 @@
 {
 	"id": "error_dns_resolution",
 	"description": "Handles DNS resolution failure gracefully",
+	"docs": {
+		"topic": "error",
+		"stem": "error-dns-resolution",
+		"title": "Handles DNS resolution failure gracefully"
+	},
 	"tags": ["error", "network"],
 	"assertions": [
 		{

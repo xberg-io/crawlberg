@@ -1,6 +1,11 @@
 {
 	"id": "middleware_noop_no_effect",
 	"description": "Default middleware chain does not affect normal scraping",
+	"docs": {
+		"topic": "middleware",
+		"stem": "middleware-noop-no-effect",
+		"title": "Default middleware chain does not affect normal scraping"
+	},
 	"tags": ["middleware"],
 	"input": {
 		"mock_responses": [

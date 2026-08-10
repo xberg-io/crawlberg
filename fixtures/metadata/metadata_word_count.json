@@ -1,6 +1,11 @@
 {
 	"id": "metadata_word_count",
 	"description": "Computes word count from visible page text",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-word-count",
+		"title": "Computes word count from visible page text"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

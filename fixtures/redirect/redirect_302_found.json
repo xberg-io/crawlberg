@@ -1,6 +1,11 @@
 {
 	"id": "redirect_302_found",
 	"description": "Follows 302 Found redirect correctly",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-302-found",
+		"title": "Follows 302 Found redirect correctly"
+	},
 	"tags": ["redirect", "crawl"],
 	"input": {
 		"mock_responses": [

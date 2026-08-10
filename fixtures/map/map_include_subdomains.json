@@ -1,6 +1,11 @@
 {
 	"id": "map_include_subdomains",
 	"description": "Includes subdomain URLs in URL map discovery; page has 1 local and 1 subdomain link",
+	"docs": {
+		"topic": "map",
+		"stem": "map-include-subdomains",
+		"title": "Includes subdomain URLs in URL map discovery; page has 1 local and 1 subdomain link"
+	},
 	"tags": ["map", "subdomain"],
 	"input": {
 		"mock_responses": [

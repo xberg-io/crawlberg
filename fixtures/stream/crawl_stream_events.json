@@ -1,6 +1,11 @@
 {
 	"id": "crawl_stream_events",
 	"description": "Crawl stream produces page and complete events",
+	"docs": {
+		"topic": "stream",
+		"stem": "crawl-stream-events",
+		"title": "Crawl stream produces page and complete events"
+	},
 	"tags": ["stream"],
 	"input": {
 		"mock_responses": [

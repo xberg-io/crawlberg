@@ -1,6 +1,11 @@
 {
 	"id": "engine_map_basic",
 	"description": "CrawlEngine with defaults discovers URLs like the free function",
+	"docs": {
+		"topic": "engine",
+		"stem": "engine-map-basic",
+		"title": "CrawlEngine with defaults discovers URLs like the free function"
+	},
 	"tags": ["engine", "map"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_xhtml_links",
 	"description": "Parses sitemap with XHTML namespace alternate links",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-xhtml-links",
+		"title": "Parses sitemap with XHTML namespace alternate links"
+	},
 	"tags": ["sitemap", "xhtml", "map"],
 	"input": {
 		"mock_responses": [

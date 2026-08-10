@@ -1,6 +1,11 @@
 {
 	"id": "content_pdf_no_extension",
 	"description": "Detects PDF content by Content-Type header when URL has no .pdf extension",
+	"docs": {
+		"topic": "content",
+		"stem": "content-pdf-no-extension",
+		"title": "Detects PDF content by Content-Type header when URL has no .pdf extension"
+	},
 	"tags": ["content", "pdf"],
 	"input": {
 		"mock_responses": [

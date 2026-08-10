@@ -1,6 +1,11 @@
 {
 	"id": "robots_allow_all",
 	"description": "Permissive robots.txt allows all paths",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-allow-all",
+		"title": "Permissive robots.txt allows all paths"
+	},
 	"tags": ["robots"],
 	"input": {
 		"mock_responses": [

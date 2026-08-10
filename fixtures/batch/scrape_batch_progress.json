@@ -1,6 +1,11 @@
 {
 	"id": "scrape_batch_progress",
 	"description": "Batch scrape of 2 URLs completes with 2 results",
+	"docs": {
+		"topic": "batch",
+		"stem": "scrape-batch-progress",
+		"title": "Batch scrape of 2 URLs completes with 2 results"
+	},
 	"tags": ["batch"],
 	"input": {
 		"mock_responses": [

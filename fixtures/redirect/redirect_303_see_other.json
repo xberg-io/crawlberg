@@ -1,6 +1,11 @@
 {
 	"id": "redirect_303_see_other",
 	"description": "Follows 303 See Other redirect (method changes to GET)",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-303-see-other",
+		"title": "Follows 303 See Other redirect (method changes to GET)"
+	},
 	"tags": ["redirect", "crawl"],
 	"input": {
 		"mock_responses": [

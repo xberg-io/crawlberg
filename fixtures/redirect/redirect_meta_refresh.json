@@ -1,6 +1,11 @@
 {
 	"id": "redirect_meta_refresh",
 	"description": "Follows HTML meta-refresh redirect to target page",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-meta-refresh",
+		"title": "Follows HTML meta-refresh redirect to target page"
+	},
 	"tags": ["redirect", "html", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

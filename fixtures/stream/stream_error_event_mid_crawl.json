@@ -1,6 +1,11 @@
 {
 	"id": "stream_error_event_mid_crawl",
 	"description": "Stream emits error event when a page fails mid-crawl, but other pages succeed",
+	"docs": {
+		"topic": "stream",
+		"stem": "stream-error-event-mid-crawl",
+		"title": "Stream emits error event when a page fails mid-crawl, but other pages succeed"
+	},
 	"tags": ["stream", "error", "mid-crawl"],
 	"input": {
 		"mock_responses": [

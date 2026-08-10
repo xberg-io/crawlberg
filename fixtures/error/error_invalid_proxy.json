@@ -1,6 +1,11 @@
 {
 	"id": "error_invalid_proxy",
 	"description": "Proxy pointing to unreachable address causes connection error during scrape",
+	"docs": {
+		"topic": "error",
+		"stem": "error-invalid-proxy",
+		"title": "Proxy pointing to unreachable address causes connection error during scrape"
+	},
 	"tags": ["proxy", "error"],
 	"skip": {
 		"languages": ["wasm"],

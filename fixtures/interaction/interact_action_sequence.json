@@ -1,6 +1,11 @@
 {
 	"id": "interact_action_sequence",
 	"description": "Execute a sequence of multiple actions (click, type, click) and verify all succeed with correct indices",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-action-sequence",
+		"title": "Execute a sequence of multiple actions (click, type, click) and verify all succeed with correct indices"
+	},
 	"tags": ["interaction", "sequence"],
 	"skip": {
 		"languages": ["wasm"],

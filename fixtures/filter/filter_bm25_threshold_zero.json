@@ -1,6 +1,11 @@
 {
 	"id": "filter_bm25_threshold_zero",
 	"description": "BM25 filter with zero threshold passes all pages",
+	"docs": {
+		"topic": "filter",
+		"stem": "filter-bm25-threshold-zero",
+		"title": "BM25 filter with zero threshold passes all pages"
+	},
 	"tags": ["filter", "bm25", "crawl"],
 	"input": {
 		"mock_responses": [

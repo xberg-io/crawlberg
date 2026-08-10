@@ -1,6 +1,11 @@
 {
 	"id": "scrape_complex_links",
 	"description": "Classifies links by type: internal, external, anchor, document, image",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-complex-links",
+		"title": "Classifies links by type: internal, external, anchor, document, image"
+	},
 	"tags": ["scrape", "links"],
 	"input": {
 		"config": {},

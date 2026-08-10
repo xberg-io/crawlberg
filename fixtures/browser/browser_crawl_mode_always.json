@@ -1,10 +1,15 @@
 {
 	"id": "browser_crawl_mode_always",
 	"description": "Crawl with browser mode 'always' follows links using browser rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-crawl-mode-always",
+		"title": "Crawl with browser mode 'always' follows links using browser rendering"
+	},
 	"tags": ["browser", "crawl"],
 	"skip": {
-		"languages": ["wasm", "brew"],
-		"reason": "Browser rendering not available in WASM; homebrew lacks headless browser"
+		"languages": ["wasm"],
+		"reason": "Browser rendering not available in WASM"
 	},
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "error_410_gone",
 	"description": "Handles 410 Gone response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-410-gone",
+		"title": "Handles 410 Gone response correctly"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

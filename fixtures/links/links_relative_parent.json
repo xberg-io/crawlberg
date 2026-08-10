@@ -1,6 +1,11 @@
 {
 	"id": "links_relative_parent",
 	"description": "Resolves ../ and ./ relative parent path links correctly",
+	"docs": {
+		"topic": "links",
+		"stem": "links-relative-parent",
+		"title": "Resolves ../ and ./ relative parent path links correctly"
+	},
 	"tags": ["links", "resolution"],
 	"input": {
 		"config": {},

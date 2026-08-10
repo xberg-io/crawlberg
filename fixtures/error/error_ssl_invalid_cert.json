@@ -1,6 +1,11 @@
 {
 	"id": "error_ssl_invalid_cert",
 	"description": "Handles SSL certificate validation error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-ssl-invalid-cert",
+		"title": "Handles SSL certificate validation error"
+	},
 	"tags": ["error", "ssl"],
 	"assertions": [
 		{

@@ -1,6 +1,11 @@
 {
 	"id": "map_limit_pagination",
 	"description": "Limits map result count to specified maximum",
+	"docs": {
+		"topic": "map",
+		"stem": "map-limit-pagination",
+		"title": "Limits map result count to specified maximum"
+	},
 	"tags": ["map", "pagination"],
 	"input": {
 		"mock_responses": [

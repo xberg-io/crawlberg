@@ -1,6 +1,11 @@
 {
 	"id": "crawl_depth_one",
 	"description": "Follows links one level deep from start page",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-depth-one",
+		"title": "Follows links one level deep from start page"
+	},
 	"tags": ["crawl"],
 	"input": {
 		"mock_responses": [

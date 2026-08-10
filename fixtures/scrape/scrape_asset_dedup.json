@@ -1,6 +1,11 @@
 {
 	"id": "scrape_asset_dedup",
 	"description": "Same asset linked twice results in one download with one unique hash",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-asset-dedup",
+		"title": "Same asset linked twice results in one download with one unique hash"
+	},
 	"tags": ["scrape", "assets"],
 	"input": {
 		"mock_responses": [

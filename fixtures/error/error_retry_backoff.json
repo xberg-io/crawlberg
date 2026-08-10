@@ -1,6 +1,11 @@
 {
 	"id": "error_retry_backoff",
 	"description": "Implements exponential backoff when retrying failed requests",
+	"docs": {
+		"topic": "error",
+		"stem": "error-retry-backoff",
+		"title": "Implements exponential backoff when retrying failed requests"
+	},
 	"tags": ["error", "retry", "backoff"],
 	"assertions": [
 		{

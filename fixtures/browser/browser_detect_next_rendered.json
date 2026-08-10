@@ -1,6 +1,11 @@
 {
 	"id": "browser_detect_next_rendered",
 	"description": "Does NOT flag Next.js page with full SSR content as needing JS rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-detect-next-rendered",
+		"title": "Does NOT flag Next.js page with full SSR content as needing JS rendering"
+	},
 	"tags": ["browser", "detection"],
 	"input": {
 		"config": {},

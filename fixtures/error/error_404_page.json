@@ -1,6 +1,11 @@
 {
 	"id": "error_404_page",
 	"description": "Handles 404 response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-404-page",
+		"title": "Handles 404 response correctly"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

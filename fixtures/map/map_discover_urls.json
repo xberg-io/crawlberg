@@ -1,6 +1,11 @@
 {
 	"id": "map_discover_urls",
 	"description": "Discovers all URLs on a site without fetching full content",
+	"docs": {
+		"topic": "map",
+		"stem": "map-discover-urls",
+		"title": "Discovers all URLs on a site without fetching full content"
+	},
 	"tags": ["map", "discovery"],
 	"input": {
 		"mock_responses": [

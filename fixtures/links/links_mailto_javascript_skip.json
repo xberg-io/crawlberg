@@ -1,6 +1,11 @@
 {
 	"id": "links_mailto_javascript_skip",
 	"description": "Skips mailto:, javascript:, and tel: scheme links",
+	"docs": {
+		"topic": "links",
+		"stem": "links-mailto-javascript-skip",
+		"title": "Skips mailto:, javascript:, and tel: scheme links"
+	},
 	"tags": ["links", "filtering"],
 	"input": {
 		"config": {},

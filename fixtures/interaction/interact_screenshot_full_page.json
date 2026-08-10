@@ -1,6 +1,11 @@
 {
 	"id": "interact_screenshot_full_page",
 	"description": "Screenshot full page and verify image data",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-screenshot-full-page",
+		"title": "Screenshot full page and verify image data"
+	},
 	"tags": ["interaction", "screenshot"],
 	"skip": {
 		"languages": ["wasm", "brew"],

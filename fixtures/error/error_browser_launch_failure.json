@@ -1,9 +1,14 @@
 {
 	"id": "error_browser_launch_failure",
 	"description": "Browser launch fails when browser mode is always but browser is unavailable",
+	"docs": {
+		"topic": "error",
+		"stem": "error-browser-launch-failure",
+		"title": "Browser launch fails when browser mode is always but browser is unavailable"
+	},
 	"tags": ["error", "browser"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature and specific environment"
 	},
 	"input": {

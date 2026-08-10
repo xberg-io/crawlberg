@@ -1,6 +1,11 @@
 {
 	"id": "browser_config_never_mode",
 	"description": "Browser mode 'never' prevents browser fallback even for SPA shell content",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-config-never-mode",
+		"title": "Browser mode 'never' prevents browser fallback even for SPA shell content"
+	},
 	"tags": ["browser", "config"],
 	"input": {
 		"mock_responses": [

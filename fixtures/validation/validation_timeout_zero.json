@@ -1,6 +1,11 @@
 {
 	"id": "validation_timeout_zero",
 	"description": "Zero request timeout is rejected as invalid config",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-timeout-zero",
+		"title": "Zero request timeout is rejected as invalid config"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

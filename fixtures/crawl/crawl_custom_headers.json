@@ -1,6 +1,11 @@
 {
 	"id": "crawl_custom_headers",
 	"description": "Sends custom headers on all crawl requests",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-custom-headers",
+		"title": "Sends custom headers on all crawl requests"
+	},
 	"tags": ["crawl", "headers"],
 	"input": {
 		"mock_responses": [

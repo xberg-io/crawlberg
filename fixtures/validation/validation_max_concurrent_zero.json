@@ -1,6 +1,11 @@
 {
 	"id": "validation_max_concurrent_zero",
 	"description": "max_concurrent=0 is rejected as invalid config (minimum is 1)",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-max-concurrent-zero",
+		"title": "max_concurrent=0 is rejected as invalid config (minimum is 1)"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

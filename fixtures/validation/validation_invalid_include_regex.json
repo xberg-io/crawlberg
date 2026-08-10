@@ -1,6 +1,11 @@
 {
 	"id": "validation_invalid_include_regex",
 	"description": "Invalid regex in include_paths is rejected",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-include-regex",
+		"title": "Invalid regex in include_paths is rejected"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

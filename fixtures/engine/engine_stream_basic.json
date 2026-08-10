@@ -1,6 +1,11 @@
 {
 	"id": "engine_stream_basic",
 	"description": "CrawlEngine with defaults streams events like the free function",
+	"docs": {
+		"topic": "engine",
+		"stem": "engine-stream-basic",
+		"title": "CrawlEngine with defaults streams events like the free function"
+	},
 	"call": "crawl_stream",
 	"tags": ["engine", "stream"],
 	"input": {

@@ -1,6 +1,11 @@
 {
 	"id": "rate_limit_basic_delay",
 	"description": "Rate limiter adds delay between requests to the same domain",
+	"docs": {
+		"topic": "rate-limit",
+		"stem": "rate-limit-basic-delay",
+		"title": "Rate limiter adds delay between requests to the same domain"
+	},
 	"tags": ["rate_limit", "crawl"],
 	"input": {
 		"mock_responses": [

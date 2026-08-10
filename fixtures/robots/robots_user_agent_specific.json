@@ -1,6 +1,11 @@
 {
 	"id": "robots_user_agent_specific",
 	"description": "Matches user-agent specific rules in robots.txt",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-user-agent-specific",
+		"title": "Matches user-agent specific rules in robots.txt"
+	},
 	"tags": ["robots", "user-agent"],
 	"input": {
 		"mock_responses": [

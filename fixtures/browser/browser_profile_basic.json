@@ -1,9 +1,14 @@
 {
 	"id": "browser_profile_basic",
 	"description": "Browser profile configuration persists and reuses browser state across crawl sessions",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-profile-basic",
+		"title": "Browser profile configuration persists and reuses browser state across crawl sessions"
+	},
 	"tags": ["browser", "profile"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

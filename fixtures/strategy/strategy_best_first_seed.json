@@ -1,6 +1,11 @@
 {
 	"id": "strategy_best_first_seed",
 	"description": "BestFirst strategy always processes the seed URL first",
+	"docs": {
+		"topic": "strategy",
+		"stem": "strategy-best-first-seed",
+		"title": "BestFirst strategy always processes the seed URL first"
+	},
 	"tags": ["strategy", "best_first", "crawl"],
 	"input": {
 		"mock_responses": [

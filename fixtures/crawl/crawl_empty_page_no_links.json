@@ -1,6 +1,11 @@
 {
 	"id": "crawl_empty_page_no_links",
 	"description": "Crawl completes when child page has no outgoing links",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-empty-page-no-links",
+		"title": "Crawl completes when child page has no outgoing links"
+	},
 	"tags": ["crawl", "edge-case"],
 	"input": {
 		"mock_responses": [

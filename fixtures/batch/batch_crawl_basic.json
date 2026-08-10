@@ -1,6 +1,11 @@
 {
 	"id": "batch_crawl_basic",
 	"description": "Batch crawl of 2 seed URLs with links to discover",
+	"docs": {
+		"topic": "batch",
+		"stem": "batch-crawl-basic",
+		"title": "Batch crawl of 2 seed URLs with links to discover"
+	},
 	"tags": ["batch", "crawl"],
 	"input": {
 		"mock_responses": [

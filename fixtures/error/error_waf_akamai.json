@@ -1,6 +1,11 @@
 {
 	"id": "error_waf_akamai",
 	"description": "Akamai WAF detection returns WafBlocked error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-waf-akamai",
+		"title": "Akamai WAF detection returns WafBlocked error"
+	},
 	"tags": ["error", "waf"],
 	"input": {
 		"config": {

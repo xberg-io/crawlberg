@@ -1,6 +1,11 @@
 {
 	"id": "download_mime_filter",
 	"description": "Only download documents matching specified MIME types (PDF only, not DOCX)",
+	"docs": {
+		"topic": "download",
+		"stem": "download-mime-filter",
+		"title": "Only download documents matching specified MIME types (PDF only, not DOCX)"
+	},
 	"tags": ["download", "mime-type", "filter"],
 	"input": {
 		"mock_responses": [

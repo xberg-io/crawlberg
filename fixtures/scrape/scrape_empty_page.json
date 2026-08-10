@@ -1,6 +1,11 @@
 {
 	"id": "scrape_empty_page",
 	"description": "Handles an empty HTML document without errors",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-empty-page",
+		"title": "Handles an empty HTML document without errors"
+	},
 	"tags": ["scrape", "edge-case"],
 	"input": {
 		"config": {},

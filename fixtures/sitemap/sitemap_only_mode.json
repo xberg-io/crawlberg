@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_only_mode",
 	"description": "Uses sitemap URLs exclusively without following page links",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-only-mode",
+		"title": "Uses sitemap URLs exclusively without following page links"
+	},
 	"tags": ["sitemap", "mode", "map"],
 	"input": {
 		"mock_responses": [

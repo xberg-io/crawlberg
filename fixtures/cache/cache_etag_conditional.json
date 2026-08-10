@@ -1,6 +1,11 @@
 {
 	"id": "cache_etag_conditional",
 	"description": "Etag header enables conditional requests for cached content",
+	"docs": {
+		"topic": "cache",
+		"stem": "cache-etag-conditional",
+		"title": "Etag header enables conditional requests for cached content"
+	},
 	"tags": ["cache", "etag", "conditional", "crawl"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "error_401_unauthorized",
 	"description": "Handles 401 Unauthorized response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-401-unauthorized",
+		"title": "Handles 401 Unauthorized response correctly"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

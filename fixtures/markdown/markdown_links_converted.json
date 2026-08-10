@@ -1,6 +1,11 @@
 {
 	"id": "markdown_links_converted",
 	"description": "HTML links are converted to markdown link syntax",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-links-converted",
+		"title": "HTML links are converted to markdown link syntax"
+	},
 	"tags": ["markdown"],
 	"input": {
 		"mock_responses": [

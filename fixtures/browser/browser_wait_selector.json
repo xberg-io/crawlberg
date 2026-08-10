@@ -1,9 +1,14 @@
 {
 	"id": "browser_wait_selector",
 	"description": "Browser wait strategy 'selector' waits for specific CSS selector before considering page loaded",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-wait-selector",
+		"title": "Browser wait strategy 'selector' waits for specific CSS selector before considering page loaded"
+	},
 	"tags": ["browser", "wait", "selector"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

@@ -1,6 +1,11 @@
 {
 	"id": "citations_balanced_parens",
 	"description": "Citations correctly handle links inside parentheses with balanced rendering",
+	"docs": {
+		"topic": "markdown",
+		"stem": "citations-balanced-parens",
+		"title": "Citations correctly handle links inside parentheses with balanced rendering"
+	},
 	"tags": ["markdown", "citations", "parens"],
 	"input": {
 		"mock_responses": [

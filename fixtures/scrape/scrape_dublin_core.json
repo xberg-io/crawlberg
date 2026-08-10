@@ -1,6 +1,11 @@
 {
 	"id": "scrape_dublin_core",
 	"description": "Extracts Dublin Core metadata from a page",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-dublin-core",
+		"title": "Extracts Dublin Core metadata from a page"
+	},
 	"tags": ["scrape", "metadata", "dublin-core"],
 	"input": {
 		"config": {},

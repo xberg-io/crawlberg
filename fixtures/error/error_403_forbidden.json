@@ -1,6 +1,11 @@
 {
 	"id": "error_403_forbidden",
 	"description": "Handles 403 Forbidden response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-403-forbidden",
+		"title": "Handles 403 Forbidden response correctly"
+	},
 	"tags": ["error"],
 	"input": {
 		"config": {

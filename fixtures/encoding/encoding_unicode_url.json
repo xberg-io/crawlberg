@@ -1,6 +1,11 @@
 {
 	"id": "encoding_unicode_url",
 	"description": "Handles Unicode characters in URLs (Hebrew, Japanese, Cyrillic)",
+	"docs": {
+		"topic": "encoding",
+		"stem": "encoding-unicode-url",
+		"title": "Handles Unicode characters in URLs (Hebrew, Japanese, Cyrillic)"
+	},
 	"tags": ["encoding", "unicode"],
 	"input": {
 		"config": {},

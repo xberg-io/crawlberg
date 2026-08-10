@@ -1,6 +1,11 @@
 {
 	"id": "scrape_og_metadata",
 	"description": "Extracts full Open Graph metadata from a page",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-og-metadata",
+		"title": "Extracts full Open Graph metadata from a page"
+	},
 	"tags": ["scrape", "metadata", "og"],
 	"input": {
 		"config": {},

@@ -1,10 +1,15 @@
 {
 	"id": "browser_crawl_waf_fallback",
 	"description": "Crawl with browser mode 'auto' falls back to browser when encountering WAF 403",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-crawl-waf-fallback",
+		"title": "Crawl with browser mode 'auto' falls back to browser when encountering WAF 403"
+	},
 	"tags": ["browser", "crawl", "error"],
 	"skip": {
-		"languages": ["wasm", "brew"],
-		"reason": "Browser rendering not available in WASM; homebrew lacks headless browser"
+		"languages": ["wasm"],
+		"reason": "Browser rendering not available in WASM"
 	},
 	"input": {
 		"mock_responses": [

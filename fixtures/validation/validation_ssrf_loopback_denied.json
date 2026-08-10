@@ -1,22 +1,28 @@
 {
-	"id": "validation_ssrf_loopback_denied",
-	"description": "scrape() rejects loopback addresses by default SSRF policy",
-	"tags": ["validation", "ssrf"],
-	"skip": {
-		"languages": [],
-		"reason": "Suite-wide CRAWLBERG_ALLOW_PRIVATE_NETWORK=true override conflicts with SSRF policy verification. Behavior covered by Rust unit tests in crates/crawlberg/src/net/ssrf.rs."
-	},
-	"assertions": [
-		{
-			"type": "error"
-		},
-		{
-			"type": "error",
-			"value": "ssrf_policy_violation"
-		}
-	],
-	"input": {
-		"url": "http://127.0.0.1:9/",
-		"config": {}
-	}
+  "id": "validation_ssrf_loopback_denied",
+  "description": "scrape() rejects loopback addresses by default SSRF policy",
+  "docs": {
+    "topic": "validation",
+    "stem": "validation-ssrf-loopback-denied",
+    "title": "scrape() rejects loopback addresses by default SSRF policy"
+  },
+  "tags": [
+    "validation",
+    "ssrf"
+  ],
+  "assertions": [
+    {
+      "type": "error"
+    },
+    {
+      "type": "error",
+      "value": "ssrf_policy_violation"
+    }
+  ],
+  "input": {
+    "url": "http://127.0.0.1:9/",
+    "config": {
+      "ssrf_deny_private_explicit": true
+    }
+  }
 }

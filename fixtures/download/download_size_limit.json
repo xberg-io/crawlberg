@@ -1,6 +1,11 @@
 {
 	"id": "download_size_limit",
 	"description": "Reject documents exceeding the configured size limit",
+	"docs": {
+		"topic": "download",
+		"stem": "download-size-limit",
+		"title": "Reject documents exceeding the configured size limit"
+	},
 	"tags": ["download", "size-limit"],
 	"input": {
 		"mock_responses": [

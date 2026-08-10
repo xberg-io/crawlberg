@@ -1,6 +1,11 @@
 {
 	"id": "content_pdf_link_skip",
 	"description": "Encounters PDF link and skips or marks as document type",
+	"docs": {
+		"topic": "content",
+		"stem": "content-pdf-link-skip",
+		"title": "Encounters PDF link and skips or marks as document type"
+	},
 	"category": "crawl",
 	"tags": ["content", "pdf"],
 	"input": {

@@ -1,6 +1,11 @@
 {
 	"id": "rate_limit_per_domain",
 	"description": "Per-domain rate limiting applies delay between requests to same domain",
+	"docs": {
+		"topic": "rate-limit",
+		"stem": "rate-limit-per-domain",
+		"title": "Per-domain rate limiting applies delay between requests to same domain"
+	},
 	"tags": ["rate_limit", "per_domain", "crawl"],
 	"input": {
 		"mock_responses": [

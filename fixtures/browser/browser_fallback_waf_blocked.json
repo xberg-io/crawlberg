@@ -1,6 +1,11 @@
 {
 	"id": "browser_fallback_waf_blocked",
 	"description": "Browser fallback is used when browser mode is always, simulating WAF-blocked scenario",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-fallback-waf-blocked",
+		"title": "Browser fallback is used when browser mode is always, simulating WAF-blocked scenario"
+	},
 	"tags": ["browser", "fallback", "waf"],
 	"skip": {
 		"languages": ["wasm"],

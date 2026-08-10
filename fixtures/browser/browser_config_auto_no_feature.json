@@ -1,6 +1,11 @@
 {
 	"id": "browser_config_auto_no_feature",
 	"description": "Browser mode 'never' prevents browser use even when JS render hint is set",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-config-auto-no-feature",
+		"title": "Browser mode 'never' prevents browser use even when JS render hint is set"
+	},
 	"tags": ["browser", "config"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "error_partial_response",
 	"description": "Handles incomplete or truncated HTTP response",
+	"docs": {
+		"topic": "error",
+		"stem": "error-partial-response",
+		"title": "Handles incomplete or truncated HTTP response"
+	},
 	"tags": ["error", "network"],
 	"assertions": [
 		{

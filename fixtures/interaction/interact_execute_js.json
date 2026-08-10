@@ -1,6 +1,11 @@
 {
 	"id": "interact_execute_js",
 	"description": "Execute JavaScript that returns document.title and verify success with data",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-execute-js",
+		"title": "Execute JavaScript that returns document.title and verify success with data"
+	},
 	"tags": ["interaction", "javascript"],
 	"skip": {
 		"languages": ["wasm"],

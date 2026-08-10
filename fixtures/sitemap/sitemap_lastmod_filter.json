@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_lastmod_filter",
 	"description": "Filters sitemap URLs by lastmod date",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-lastmod-filter",
+		"title": "Filters sitemap URLs by lastmod date"
+	},
 	"tags": ["sitemap", "lastmod", "map"],
 	"input": {
 		"mock_responses": [

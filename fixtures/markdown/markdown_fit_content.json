@@ -1,6 +1,11 @@
 {
 	"id": "markdown_fit_content",
 	"description": "Fit markdown removes navigation and boilerplate content",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-fit-content",
+		"title": "Fit markdown removes navigation and boilerplate content"
+	},
 	"tags": ["markdown", "fit"],
 	"input": {
 		"mock_responses": [

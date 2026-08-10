@@ -1,6 +1,11 @@
 {
 	"id": "stealth_ua_rotation_config",
 	"description": "User-agent rotation config is accepted and crawl succeeds",
+	"docs": {
+		"topic": "stealth",
+		"stem": "stealth-ua-rotation-config",
+		"title": "User-agent rotation config is accepted and crawl succeeds"
+	},
 	"tags": ["stealth"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "scrape_batch_partial_failure",
 	"description": "Batch scrape with one URL failing returns partial results",
+	"docs": {
+		"topic": "batch",
+		"stem": "scrape-batch-partial-failure",
+		"title": "Batch scrape with one URL failing returns partial results"
+	},
 	"tags": ["batch"],
 	"input": {
 		"mock_responses": [

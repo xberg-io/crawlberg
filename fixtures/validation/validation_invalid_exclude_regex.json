@@ -1,6 +1,11 @@
 {
 	"id": "validation_invalid_exclude_regex",
 	"description": "Invalid regex in exclude_paths is rejected",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-exclude-regex",
+		"title": "Invalid regex in exclude_paths is rejected"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

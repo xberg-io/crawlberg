@@ -1,6 +1,11 @@
 {
 	"id": "interact_screenshot",
 	"description": "Screenshot a specific element via selector and verify image data",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-screenshot",
+		"title": "Screenshot a specific element via selector and verify image data"
+	},
 	"tags": ["interaction", "screenshot"],
 	"skip": {
 		"languages": ["wasm", "brew"],

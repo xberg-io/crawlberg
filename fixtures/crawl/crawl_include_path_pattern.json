@@ -1,6 +1,11 @@
 {
 	"id": "crawl_include_path_pattern",
 	"description": "Only follows URLs matching the include path pattern",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-include-path-pattern",
+		"title": "Only follows URLs matching the include path pattern"
+	},
 	"tags": ["crawl", "filter"],
 	"input": {
 		"mock_responses": [

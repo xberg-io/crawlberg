@@ -1,6 +1,11 @@
 {
 	"id": "encoding_double_encoded",
 	"description": "Handles double-encoded URL characters (%25C3%25B6)",
+	"docs": {
+		"topic": "encoding",
+		"stem": "encoding-double-encoded",
+		"title": "Handles double-encoded URL characters (%25C3%25B6)"
+	},
 	"tags": ["encoding", "edge-case"],
 	"input": {
 		"config": {},

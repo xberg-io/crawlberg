@@ -1,6 +1,11 @@
 {
 	"id": "crawl_concurrent_limit",
 	"description": "Respects max concurrent requests limit during crawl",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-concurrent-limit",
+		"title": "Respects max concurrent requests limit during crawl"
+	},
 	"tags": ["crawl", "concurrency"],
 	"input": {
 		"mock_responses": [

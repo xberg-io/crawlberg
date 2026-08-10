@@ -1,6 +1,11 @@
 {
 	"id": "crawl_max_pages",
 	"description": "Stops crawling at page budget limit",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-max-pages",
+		"title": "Stops crawling at page budget limit"
+	},
 	"tags": ["crawl"],
 	"input": {
 		"mock_responses": [

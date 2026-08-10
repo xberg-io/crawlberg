@@ -1,6 +1,11 @@
 {
 	"id": "encoding_mixed_charset_page",
 	"description": "Handles charset mismatch between HTTP header and HTML meta tag",
+	"docs": {
+		"topic": "encoding",
+		"stem": "encoding-mixed-charset-page",
+		"title": "Handles charset mismatch between HTTP header and HTML meta tag"
+	},
 	"tags": ["encoding", "charset"],
 	"input": {
 		"config": {},

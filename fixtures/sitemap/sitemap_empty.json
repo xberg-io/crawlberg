@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_empty",
 	"description": "Handles empty sitemap gracefully",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-empty",
+		"title": "Handles empty sitemap gracefully"
+	},
 	"tags": ["sitemap", "edge-case", "map"],
 	"input": {
 		"config": {},

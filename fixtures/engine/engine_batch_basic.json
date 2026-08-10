@@ -1,6 +1,11 @@
 {
 	"id": "engine_batch_basic",
 	"description": "CrawlEngine with defaults batch scrapes like the free function",
+	"docs": {
+		"topic": "engine",
+		"stem": "engine-batch-basic",
+		"title": "CrawlEngine with defaults batch scrapes like the free function"
+	},
 	"tags": ["engine", "batch"],
 	"input": {
 		"mock_responses": [

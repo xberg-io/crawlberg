@@ -1,6 +1,11 @@
 {
 	"id": "error_waf_blocked",
 	"description": "WAF challenge/block detection returns WafBlocked error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-waf-blocked",
+		"title": "WAF challenge/block detection returns WafBlocked error"
+	},
 	"tags": ["error", "waf"],
 	"input": {
 		"config": {

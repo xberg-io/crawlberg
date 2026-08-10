@@ -1,6 +1,11 @@
 {
 	"id": "robots_crawl_delay",
 	"description": "Respects crawl-delay directive from robots.txt",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-crawl-delay",
+		"title": "Respects crawl-delay directive from robots.txt"
+	},
 	"tags": ["robots", "rate-limit"],
 	"input": {
 		"mock_responses": [

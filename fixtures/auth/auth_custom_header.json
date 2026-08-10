@@ -1,6 +1,11 @@
 {
 	"id": "auth_custom_header",
 	"description": "Sends authentication via custom header (X-API-Key)",
+	"docs": {
+		"topic": "auth",
+		"stem": "auth-custom-header",
+		"title": "Sends authentication via custom header (X-API-Key)"
+	},
 	"tags": ["auth", "api-key"],
 	"input": {
 		"mock_responses": [

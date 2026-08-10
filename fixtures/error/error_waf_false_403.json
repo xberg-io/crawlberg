@@ -1,6 +1,11 @@
 {
 	"id": "error_waf_false_403",
 	"description": "Detects WAF/bot protection false 403 (Cloudflare challenge page)",
+	"docs": {
+		"topic": "error",
+		"stem": "error-waf-false-403",
+		"title": "Detects WAF/bot protection false 403 (Cloudflare challenge page)"
+	},
 	"tags": ["error", "waf"],
 	"input": {
 		"config": {

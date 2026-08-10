@@ -1,6 +1,11 @@
 {
 	"id": "robots_missing_404",
 	"description": "Missing robots.txt (404) allows all crawling",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-missing-404",
+		"title": "Missing robots.txt (404) allows all crawling"
+	},
 	"tags": ["robots"],
 	"input": {
 		"mock_responses": [

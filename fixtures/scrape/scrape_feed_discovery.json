@@ -1,6 +1,11 @@
 {
 	"id": "scrape_feed_discovery",
 	"description": "Discovers RSS, Atom, and JSON feed links",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-feed-discovery",
+		"title": "Discovers RSS, Atom, and JSON feed links"
+	},
 	"tags": ["scrape", "feeds"],
 	"input": {
 		"config": {},

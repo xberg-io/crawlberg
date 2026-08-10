@@ -1,6 +1,11 @@
 {
 	"id": "citations_duplicate_urls",
 	"description": "Citations deduplicates multiple links to the same URL",
+	"docs": {
+		"topic": "markdown",
+		"stem": "citations-duplicate-urls",
+		"title": "Citations deduplicates multiple links to the same URL"
+	},
 	"tags": ["markdown", "citations", "dedup"],
 	"input": {
 		"mock_responses": [

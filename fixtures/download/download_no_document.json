@@ -1,6 +1,11 @@
 {
 	"id": "download_no_document",
 	"description": "HTML pages are not downloaded as documents even when download_documents is enabled",
+	"docs": {
+		"topic": "download",
+		"stem": "download-no-document",
+		"title": "HTML pages are not downloaded as documents even when download_documents is enabled"
+	},
 	"tags": ["download", "html", "skip"],
 	"input": {
 		"mock_responses": [

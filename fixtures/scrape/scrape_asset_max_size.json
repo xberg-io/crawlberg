@@ -1,6 +1,11 @@
 {
 	"id": "scrape_asset_max_size",
 	"description": "Skips assets exceeding max_asset_size limit",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-asset-max-size",
+		"title": "Skips assets exceeding max_asset_size limit"
+	},
 	"tags": ["scrape", "assets"],
 	"input": {
 		"mock_responses": [

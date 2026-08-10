@@ -1,6 +1,11 @@
 {
 	"id": "filter_noop_passes_all",
 	"description": "No content filter passes all crawled pages through",
+	"docs": {
+		"topic": "filter",
+		"stem": "filter-noop-passes-all",
+		"title": "No content filter passes all crawled pages through"
+	},
 	"tags": ["filter", "crawl"],
 	"input": {
 		"mock_responses": [

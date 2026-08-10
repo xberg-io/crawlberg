@@ -1,6 +1,11 @@
 {
 	"id": "download_basic_pdf",
 	"description": "Download a basic PDF document with download_documents enabled",
+	"docs": {
+		"topic": "download",
+		"stem": "download-basic-pdf",
+		"title": "Download a basic PDF document with download_documents enabled"
+	},
 	"tags": ["download", "pdf"],
 	"input": {
 		"mock_responses": [

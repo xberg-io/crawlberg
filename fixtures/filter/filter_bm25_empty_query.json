@@ -1,6 +1,11 @@
 {
 	"id": "filter_bm25_empty_query",
 	"description": "BM25 filter with empty query passes all pages through",
+	"docs": {
+		"topic": "filter",
+		"stem": "filter-bm25-empty-query",
+		"title": "BM25 filter with empty query passes all pages through"
+	},
 	"tags": ["filter", "bm25", "crawl"],
 	"input": {
 		"mock_responses": [

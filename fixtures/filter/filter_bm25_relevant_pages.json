@@ -1,6 +1,11 @@
 {
 	"id": "filter_bm25_relevant_pages",
 	"description": "BM25 filter keeps only pages relevant to the query",
+	"docs": {
+		"topic": "filter",
+		"stem": "filter-bm25-relevant-pages",
+		"title": "BM25 filter keeps only pages relevant to the query"
+	},
 	"tags": ["filter", "bm25"],
 	"input": {
 		"mock_responses": [

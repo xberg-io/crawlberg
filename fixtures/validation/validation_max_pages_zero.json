@@ -1,6 +1,11 @@
 {
 	"id": "validation_max_pages_zero",
 	"description": "max_pages=0 is rejected as invalid config",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-max-pages-zero",
+		"title": "max_pages=0 is rejected as invalid config"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

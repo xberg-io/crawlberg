@@ -1,6 +1,11 @@
 {
 	"id": "content_gzip_compressed",
 	"description": "Handles response with Accept-Encoding gzip negotiation",
+	"docs": {
+		"topic": "content",
+		"stem": "content-gzip-compressed",
+		"title": "Handles response with Accept-Encoding gzip negotiation"
+	},
 	"tags": ["content", "compression"],
 	"input": {
 		"mock_responses": [

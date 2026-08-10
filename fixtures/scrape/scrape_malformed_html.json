@@ -1,6 +1,11 @@
 {
 	"id": "scrape_malformed_html",
 	"description": "Gracefully handles broken HTML without crashing",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-malformed-html",
+		"title": "Gracefully handles broken HTML without crashing"
+	},
 	"tags": ["scrape", "edge-case"],
 	"input": {
 		"config": {},

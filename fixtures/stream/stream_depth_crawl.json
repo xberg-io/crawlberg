@@ -1,6 +1,11 @@
 {
 	"id": "stream_depth_crawl",
 	"description": "Stream produces events for multi-depth crawl with link following",
+	"docs": {
+		"topic": "stream",
+		"stem": "stream-depth-crawl",
+		"title": "Stream produces events for multi-depth crawl with link following"
+	},
 	"tags": ["stream", "depth"],
 	"input": {
 		"mock_responses": [

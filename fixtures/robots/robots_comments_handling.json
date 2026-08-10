@@ -1,6 +1,11 @@
 {
 	"id": "robots_comments_handling",
 	"description": "Correctly parses robots.txt with inline and line comments",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-comments-handling",
+		"title": "Correctly parses robots.txt with inline and line comments"
+	},
 	"tags": ["robots", "parsing"],
 	"input": {
 		"mock_responses": [

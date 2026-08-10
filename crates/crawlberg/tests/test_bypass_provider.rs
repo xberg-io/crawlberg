@@ -63,5 +63,8 @@ async fn bypass_provider_returns_response_with_cost() {
     assert_eq!(resp.status, 200);
     assert_eq!(resp.body, "<html>test</html>");
     assert_eq!(resp.cost_usd, Some(0.001));
-    assert_eq!(resp.vendor_request_id, None, "TestProvider never sets a vendor request id");
+    assert_eq!(
+        resp.vendor_request_id, None,
+        "TestProvider never sets a vendor request id"
+    );
 }

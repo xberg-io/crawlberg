@@ -1,6 +1,11 @@
 {
 	"id": "validation_invalid_retry_code",
 	"description": "Retry code outside 100-599 is rejected",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-retry-code",
+		"title": "Retry code outside 100-599 is rejected"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

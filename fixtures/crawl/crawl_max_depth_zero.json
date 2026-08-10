@@ -1,6 +1,11 @@
 {
 	"id": "crawl_max_depth_zero",
 	"description": "max_depth=0 crawls only the seed page with no link following",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-max-depth-zero",
+		"title": "max_depth=0 crawls only the seed page with no link following"
+	},
 	"tags": ["crawl", "depth"],
 	"input": {
 		"mock_responses": [

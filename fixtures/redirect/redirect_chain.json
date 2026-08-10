@@ -1,6 +1,11 @@
 {
 	"id": "redirect_chain",
 	"description": "Follows a chain of redirects (301 -> 302 -> 200)",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-chain",
+		"title": "Follows a chain of redirects (301 -> 302 -> 200)"
+	},
 	"tags": ["redirect", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

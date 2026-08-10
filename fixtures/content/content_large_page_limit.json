@@ -1,6 +1,11 @@
 {
 	"id": "content_large_page_limit",
 	"description": "Respects max body size limit and truncates or skips oversized pages",
+	"docs": {
+		"topic": "content",
+		"stem": "content-large-page-limit",
+		"title": "Respects max body size limit and truncates or skips oversized pages"
+	},
 	"tags": ["content", "limits"],
 	"input": {
 		"mock_responses": [

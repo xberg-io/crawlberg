@@ -1,6 +1,11 @@
 {
 	"id": "browser_detect_nuxt_shell",
 	"description": "Detects Nuxt SPA shell with empty #__nuxt div as needing JS rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-detect-nuxt-shell",
+		"title": "Detects Nuxt SPA shell with empty #__nuxt div as needing JS rendering"
+	},
 	"tags": ["browser", "detection"],
 	"input": {
 		"config": {

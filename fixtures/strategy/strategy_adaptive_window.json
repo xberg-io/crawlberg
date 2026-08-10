@@ -1,6 +1,11 @@
 {
 	"id": "strategy_adaptive_window",
 	"description": "Adaptive strategy crawls more pages when content is diverse",
+	"docs": {
+		"topic": "strategy",
+		"stem": "strategy-adaptive-window",
+		"title": "Adaptive strategy crawls more pages when content is diverse"
+	},
 	"tags": ["strategy", "adaptive", "diverse", "crawl"],
 	"input": {
 		"mock_responses": [

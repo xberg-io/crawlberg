@@ -1,6 +1,11 @@
 {
 	"id": "batch_crawl_with_config",
 	"description": "Batch crawl with max_depth=1 config verifying pages are discovered",
+	"docs": {
+		"topic": "batch",
+		"stem": "batch-crawl-with-config",
+		"title": "Batch crawl with max_depth=1 config verifying pages are discovered"
+	},
 	"tags": ["batch", "crawl"],
 	"input": {
 		"mock_responses": [

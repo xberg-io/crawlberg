@@ -1,6 +1,11 @@
 {
 	"id": "cookies_per_domain",
 	"description": "Isolates cookies per domain during crawl",
+	"docs": {
+		"topic": "cookies",
+		"stem": "cookies-per-domain",
+		"title": "Isolates cookies per domain during crawl"
+	},
 	"tags": ["cookies", "isolation", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

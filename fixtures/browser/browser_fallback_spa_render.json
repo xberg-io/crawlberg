@@ -1,6 +1,11 @@
 {
 	"id": "browser_fallback_spa_render",
 	"description": "Browser auto re-fetches SPA shell when JS rendering is detected",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-fallback-spa-render",
+		"title": "Browser auto re-fetches SPA shell when JS rendering is detected"
+	},
 	"tags": ["browser", "fallback", "spa"],
 	"skip": {
 		"languages": ["wasm"],

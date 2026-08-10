@@ -1,6 +1,11 @@
 {
 	"id": "error_data_loss_truncated",
 	"description": "Content-Length mismatch causes data loss error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-data-loss-truncated",
+		"title": "Content-Length mismatch causes data loss error"
+	},
 	"tags": ["error", "data_loss"],
 	"assertions": [
 		{

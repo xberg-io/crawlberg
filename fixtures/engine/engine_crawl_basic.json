@@ -1,6 +1,11 @@
 {
 	"id": "engine_crawl_basic",
 	"description": "CrawlEngine with defaults crawls multiple pages like the free function",
+	"docs": {
+		"topic": "engine",
+		"stem": "engine-crawl-basic",
+		"title": "CrawlEngine with defaults crawls multiple pages like the free function"
+	},
 	"tags": ["engine", "crawl"],
 	"input": {
 		"mock_responses": [

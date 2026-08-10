@@ -1,6 +1,11 @@
 {
 	"id": "interact_wait_selector",
 	"description": "Wait for a CSS selector that exists on the page",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-wait-selector",
+		"title": "Wait for a CSS selector that exists on the page"
+	},
 	"tags": ["interaction", "wait"],
 	"skip": {
 		"languages": ["wasm"],

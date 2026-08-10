@@ -1,6 +1,11 @@
 {
 	"id": "error_502_bad_gateway",
 	"description": "Handles 502 Bad Gateway response correctly",
+	"docs": {
+		"topic": "error",
+		"stem": "error-502-bad-gateway",
+		"title": "Handles 502 Bad Gateway response correctly"
+	},
 	"tags": ["error"],
 	"assertions": [
 		{

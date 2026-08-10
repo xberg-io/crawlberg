@@ -1,6 +1,11 @@
 {
 	"id": "redirect_301_permanent",
 	"description": "Follows 301 permanent redirect and returns final page content",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-301-permanent",
+		"title": "Follows 301 permanent redirect and returns final page content"
+	},
 	"tags": ["redirect", "smoke", "crawl"],
 	"input": {
 		"mock_responses": [

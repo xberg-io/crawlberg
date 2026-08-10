@@ -1,6 +1,11 @@
 {
 	"id": "crawl_depth_priority",
 	"description": "Crawls in breadth-first order, processing depth-0 pages before depth-1",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-depth-priority",
+		"title": "Crawls in breadth-first order, processing depth-0 pages before depth-1"
+	},
 	"tags": ["crawl", "ordering"],
 	"input": {
 		"mock_responses": [

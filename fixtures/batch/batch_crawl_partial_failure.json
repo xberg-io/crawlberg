@@ -1,6 +1,11 @@
 {
 	"id": "batch_crawl_partial_failure",
 	"description": "Batch crawl where one seed URL returns 404 error",
+	"docs": {
+		"topic": "batch",
+		"stem": "batch-crawl-partial-failure",
+		"title": "Batch crawl where one seed URL returns 404 error"
+	},
 	"tags": ["batch", "crawl"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "validation_negative_body_size",
 	"description": "max_body_size set to -1 is rejected as invalid config",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-negative-body-size",
+		"title": "max_body_size set to -1 is rejected as invalid config"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

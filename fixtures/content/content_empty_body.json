@@ -1,6 +1,11 @@
 {
 	"id": "content_empty_body",
 	"description": "Handles 200 response with empty body gracefully",
+	"docs": {
+		"topic": "content",
+		"stem": "content-empty-body",
+		"title": "Handles 200 response with empty body gracefully"
+	},
 	"tags": ["content", "edge-case"],
 	"input": {
 		"mock_responses": [

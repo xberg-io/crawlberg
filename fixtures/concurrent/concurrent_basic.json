@@ -1,6 +1,11 @@
 {
 	"id": "concurrent_basic",
 	"description": "Concurrent crawling fetches all pages with max_concurrent workers",
+	"docs": {
+		"topic": "concurrent",
+		"stem": "concurrent-basic",
+		"title": "Concurrent crawling fetches all pages with max_concurrent workers"
+	},
 	"tags": ["concurrent", "crawl"],
 	"input": {
 		"mock_responses": [

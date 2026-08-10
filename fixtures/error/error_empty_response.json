@@ -1,6 +1,11 @@
 {
 	"id": "error_empty_response",
 	"description": "Handles 200 with completely empty body gracefully",
+	"docs": {
+		"topic": "error",
+		"stem": "error-empty-response",
+		"title": "Handles 200 with completely empty body gracefully"
+	},
 	"tags": ["error", "edge-case"],
 	"assertions": [
 		{

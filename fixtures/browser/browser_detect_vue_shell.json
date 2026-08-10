@@ -1,6 +1,11 @@
 {
 	"id": "browser_detect_vue_shell",
 	"description": "Detects Vue SPA shell with empty #app div as needing JS rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-detect-vue-shell",
+		"title": "Detects Vue SPA shell with empty #app div as needing JS rendering"
+	},
 	"tags": ["browser", "detection"],
 	"input": {
 		"config": {

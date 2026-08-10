@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_basic",
 	"description": "Parses a standard urlset sitemap",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-basic",
+		"title": "Parses a standard urlset sitemap"
+	},
 	"tags": ["sitemap", "map"],
 	"input": {
 		"config": {},

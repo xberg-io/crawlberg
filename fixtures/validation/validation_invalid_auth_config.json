@@ -1,6 +1,11 @@
 {
 	"id": "validation_invalid_auth_config",
 	"description": "auth object with empty username in basic auth is rejected",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-invalid-auth-config",
+		"title": "auth object with empty username in basic auth is rejected"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

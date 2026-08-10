@@ -1,6 +1,11 @@
 {
 	"id": "links_base_tag",
 	"description": "Resolves relative URLs using base tag href",
+	"docs": {
+		"topic": "links",
+		"stem": "links-base-tag",
+		"title": "Resolves relative URLs using base tag href"
+	},
 	"tags": ["links", "resolution"],
 	"input": {
 		"config": {},

@@ -1,6 +1,11 @@
 {
 	"id": "crawl_external_links_ignored",
 	"description": "External links are discovered but not followed when stay_on_domain is true",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-external-links-ignored",
+		"title": "External links are discovered but not followed when stay_on_domain is true"
+	},
 	"tags": ["crawl", "domain"],
 	"input": {
 		"mock_responses": [

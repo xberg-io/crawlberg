@@ -1,6 +1,11 @@
 {
 	"id": "error_rate_limited",
 	"description": "Handles 429 rate limiting with Retry-After",
+	"docs": {
+		"topic": "error",
+		"stem": "error-rate-limited",
+		"title": "Handles 429 rate limiting with Retry-After"
+	},
 	"tags": ["error", "rate-limit"],
 	"assertions": [
 		{

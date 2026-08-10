@@ -1,6 +1,11 @@
 {
 	"id": "batch_scrape_empty_urls_error",
 	"description": "Batch scrape with empty batch_urls array returns error",
+	"docs": {
+		"topic": "batch",
+		"stem": "batch-scrape-empty-urls-error",
+		"title": "Batch scrape with empty batch_urls array returns error"
+	},
 	"tags": ["batch", "error"],
 	"input": {
 		"mock_responses": [

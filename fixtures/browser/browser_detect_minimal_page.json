@@ -1,6 +1,11 @@
 {
 	"id": "browser_detect_minimal_page",
 	"description": "Does NOT flag a short but real content page as needing JS rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-detect-minimal-page",
+		"title": "Does NOT flag a short but real content page as needing JS rendering"
+	},
 	"tags": ["browser", "detection"],
 	"input": {
 		"config": {},

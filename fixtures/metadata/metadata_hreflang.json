@@ -1,6 +1,11 @@
 {
 	"id": "metadata_hreflang",
 	"description": "Extracts hreflang alternate link tags",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-hreflang",
+		"title": "Extracts hreflang alternate link tags"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

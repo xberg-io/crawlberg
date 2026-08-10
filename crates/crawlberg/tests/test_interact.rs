@@ -7,12 +7,12 @@ use std::sync::OnceLock;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use std::time::Duration;
 
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+use base64::Engine as _;
 use crawlberg::ScrollDirection;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
 use crawlberg::{CrawlError, PageAction, create_engine, interact, validate_actions};
-#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
-use base64::Engine as _;
 
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use wiremock::matchers::{method, path};

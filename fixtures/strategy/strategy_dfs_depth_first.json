@@ -1,6 +1,11 @@
 {
 	"id": "strategy_dfs_depth_first",
 	"description": "DFS strategy visits pages in depth-first order",
+	"docs": {
+		"topic": "strategy",
+		"stem": "strategy-dfs-depth-first",
+		"title": "DFS strategy visits pages in depth-first order"
+	},
 	"tags": ["strategy", "dfs", "crawl"],
 	"input": {
 		"mock_responses": [

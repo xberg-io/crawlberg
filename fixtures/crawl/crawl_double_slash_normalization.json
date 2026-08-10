@@ -1,6 +1,11 @@
 {
 	"id": "crawl_double_slash_normalization",
 	"description": "Normalizes double slashes in URL paths (//page to /page)",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-double-slash-normalization",
+		"title": "Normalizes double slashes in URL paths (//page to /page)"
+	},
 	"tags": ["crawl", "normalization"],
 	"input": {
 		"mock_responses": [

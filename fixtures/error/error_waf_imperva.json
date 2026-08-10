@@ -1,6 +1,11 @@
 {
 	"id": "error_waf_imperva",
 	"description": "Imperva/Incapsula WAF detection",
+	"docs": {
+		"topic": "error",
+		"stem": "error-waf-imperva",
+		"title": "Imperva/Incapsula WAF detection"
+	},
 	"tags": ["error", "waf"],
 	"input": {
 		"config": {

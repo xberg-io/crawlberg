@@ -1,6 +1,11 @@
 {
 	"id": "links_empty_href",
 	"description": "Handles empty href attributes without errors",
+	"docs": {
+		"topic": "links",
+		"stem": "links-empty-href",
+		"title": "Handles empty href attributes without errors"
+	},
 	"tags": ["links", "edge-case"],
 	"input": {
 		"config": {},

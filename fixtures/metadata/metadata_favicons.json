@@ -1,6 +1,11 @@
 {
 	"id": "metadata_favicons",
 	"description": "Extracts favicon link tags including apple-touch-icon",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-favicons",
+		"title": "Extracts favicon link tags including apple-touch-icon"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

@@ -1,6 +1,11 @@
 {
 	"id": "scrape_image_sources",
 	"description": "Extracts images from img, picture, og:image, twitter:image",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-image-sources",
+		"title": "Extracts images from img, picture, og:image, twitter:image"
+	},
 	"tags": ["scrape", "images"],
 	"input": {
 		"config": {},

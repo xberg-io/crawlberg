@@ -1,6 +1,11 @@
 {
 	"id": "auth_basic_http",
 	"description": "Sends HTTP Basic authentication header",
+	"docs": {
+		"topic": "auth",
+		"stem": "auth-basic-http",
+		"title": "Sends HTTP Basic authentication header"
+	},
 	"tags": ["auth", "basic"],
 	"input": {
 		"mock_responses": [

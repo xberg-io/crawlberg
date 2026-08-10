@@ -1,6 +1,11 @@
 {
 	"id": "crawl_subdomain_exclusion",
 	"description": "Stays on exact domain and skips subdomain links",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-subdomain-exclusion",
+		"title": "Stays on exact domain and skips subdomain links"
+	},
 	"tags": ["crawl", "subdomain"],
 	"input": {
 		"mock_responses": [

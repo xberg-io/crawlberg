@@ -1,6 +1,11 @@
 {
 	"id": "robots_request_rate",
 	"description": "Parses request-rate directive from robots.txt",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-request-rate",
+		"title": "Parses request-rate directive from robots.txt"
+	},
 	"tags": ["robots", "rate-limit"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "error_timeout",
 	"description": "Mock server delays response longer than request_timeout, surfacing a timeout error",
+	"docs": {
+		"topic": "error",
+		"stem": "error-timeout",
+		"title": "Mock server delays response longer than request_timeout, surfacing a timeout error"
+	},
 	"tags": ["error"],
 	"input": {
 		"mock_responses": [

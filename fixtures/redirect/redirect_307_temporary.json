@@ -1,6 +1,11 @@
 {
 	"id": "redirect_307_temporary",
 	"description": "Follows 307 Temporary Redirect (preserves method)",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-307-temporary",
+		"title": "Follows 307 Temporary Redirect (preserves method)"
+	},
 	"tags": ["redirect", "crawl"],
 	"input": {
 		"mock_responses": [

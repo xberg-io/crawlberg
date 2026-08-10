@@ -1,6 +1,11 @@
 {
 	"id": "crawl_mixed_content_types",
 	"description": "Crawl handles links to non-HTML content types gracefully",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-mixed-content-types",
+		"title": "Crawl handles links to non-HTML content types gracefully"
+	},
 	"tags": ["crawl", "content"],
 	"input": {
 		"mock_responses": [

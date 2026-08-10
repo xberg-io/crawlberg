@@ -1,6 +1,11 @@
 {
 	"id": "markdown_headings_and_paragraphs",
 	"description": "Markdown conversion preserves heading hierarchy and paragraph text",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-headings-and-paragraphs",
+		"title": "Markdown conversion preserves heading hierarchy and paragraph text"
+	},
 	"tags": ["markdown", "content"],
 	"input": {
 		"mock_responses": [

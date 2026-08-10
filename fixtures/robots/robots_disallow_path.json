@@ -1,6 +1,11 @@
 {
 	"id": "robots_disallow_path",
 	"description": "Robots.txt disallows specific paths",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-disallow-path",
+		"title": "Robots.txt disallows specific paths"
+	},
 	"tags": ["robots"],
 	"input": {
 		"mock_responses": [

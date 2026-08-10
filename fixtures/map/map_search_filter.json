@@ -1,6 +1,11 @@
 {
 	"id": "map_search_filter",
 	"description": "Filters map results by search keyword; 4 links in page but only 2 match 'blog'",
+	"docs": {
+		"topic": "map",
+		"stem": "map-search-filter",
+		"title": "Filters map results by search keyword; 4 links in page but only 2 match 'blog'"
+	},
 	"tags": ["map", "filtering"],
 	"input": {
 		"mock_responses": [

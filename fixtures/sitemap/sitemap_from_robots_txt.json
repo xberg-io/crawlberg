@@ -1,6 +1,11 @@
 {
 	"id": "sitemap_from_robots_txt",
 	"description": "Discovers sitemap via robots.txt Sitemap directive",
+	"docs": {
+		"topic": "sitemap",
+		"stem": "sitemap-from-robots-txt",
+		"title": "Discovers sitemap via robots.txt Sitemap directive"
+	},
 	"tags": ["sitemap", "robots", "map"],
 	"input": {
 		"mock_responses": [

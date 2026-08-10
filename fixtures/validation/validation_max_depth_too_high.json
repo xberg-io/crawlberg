@@ -1,6 +1,11 @@
 {
 	"id": "validation_max_depth_too_high",
 	"description": "max_depth=200 exceeds limit of 100",
+	"docs": {
+		"topic": "validation",
+		"stem": "validation-max-depth-too-high",
+		"title": "max_depth=200 exceeds limit of 100"
+	},
 	"tags": ["validation"],
 	"input": {
 		"mock_responses": [

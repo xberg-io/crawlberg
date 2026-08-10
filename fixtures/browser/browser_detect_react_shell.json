@@ -1,6 +1,11 @@
 {
 	"id": "browser_detect_react_shell",
 	"description": "Detects React SPA shell with empty #root div as needing JS rendering",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-detect-react-shell",
+		"title": "Detects React SPA shell with empty #root div as needing JS rendering"
+	},
 	"tags": ["browser", "detection"],
 	"input": {
 		"config": {

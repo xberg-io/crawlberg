@@ -1,6 +1,11 @@
 {
 	"id": "error_retry_503",
 	"description": "Retries request on 503 Service Unavailable response",
+	"docs": {
+		"topic": "error",
+		"stem": "error-retry-503",
+		"title": "Retries request on 503 Service Unavailable response"
+	},
 	"tags": ["error", "retry"],
 	"assertions": [
 		{

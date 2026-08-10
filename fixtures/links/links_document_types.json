@@ -1,6 +1,11 @@
 {
 	"id": "links_document_types",
 	"description": "Detects PDF, DOCX, XLSX links as document type",
+	"docs": {
+		"topic": "links",
+		"stem": "links-document-types",
+		"title": "Detects PDF, DOCX, XLSX links as document type"
+	},
 	"tags": ["links", "documents"],
 	"input": {
 		"config": {},

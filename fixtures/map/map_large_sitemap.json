@@ -1,6 +1,11 @@
 {
 	"id": "map_large_sitemap",
 	"description": "Handles large sitemap with 100+ URLs",
+	"docs": {
+		"topic": "map",
+		"stem": "map-large-sitemap",
+		"title": "Handles large sitemap with 100+ URLs"
+	},
 	"tags": ["map", "sitemap", "large"],
 	"input": {
 		"mock_responses": [

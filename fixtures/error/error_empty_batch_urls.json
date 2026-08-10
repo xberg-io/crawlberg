@@ -1,6 +1,11 @@
 {
 	"id": "error_empty_batch_urls",
 	"description": "Scraping a URL that cannot be found returns an error containing the URL path",
+	"docs": {
+		"topic": "error",
+		"stem": "error-empty-batch-urls",
+		"title": "Scraping a URL that cannot be found returns an error containing the URL path"
+	},
 	"tags": ["error"],
 	"input": {
 		"mock_responses": [],

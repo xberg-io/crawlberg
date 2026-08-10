@@ -1,6 +1,11 @@
 {
 	"id": "redirect_max_exceeded",
 	"description": "Aborts when redirect count exceeds max_redirects limit",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-max-exceeded",
+		"title": "Aborts when redirect count exceeds max_redirects limit"
+	},
 	"tags": ["redirect", "error", "crawl"],
 	"input": {
 		"mock_responses": [

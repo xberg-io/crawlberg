@@ -1,6 +1,11 @@
 {
 	"id": "encoding_percent_encoded_path",
 	"description": "Handles percent-encoded spaces and characters in URL paths",
+	"docs": {
+		"topic": "encoding",
+		"stem": "encoding-percent-encoded-path",
+		"title": "Handles percent-encoded spaces and characters in URL paths"
+	},
 	"tags": ["encoding"],
 	"input": {
 		"config": {},

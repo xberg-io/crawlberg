@@ -1,6 +1,11 @@
 {
 	"id": "stream_with_error_event",
 	"description": "Stream emits page and complete events even when some pages fail",
+	"docs": {
+		"topic": "stream",
+		"stem": "stream-with-error-event",
+		"title": "Stream emits page and complete events even when some pages fail"
+	},
 	"tags": ["stream", "error"],
 	"input": {
 		"mock_responses": [

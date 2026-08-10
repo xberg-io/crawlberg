@@ -1,6 +1,11 @@
 {
 	"id": "interact_scrape_default",
 	"description": "Execute default Scrape action and verify extracted content",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-scrape-default",
+		"title": "Execute default Scrape action and verify extracted content"
+	},
 	"tags": ["interaction", "scrape"],
 	"skip": {
 		"languages": ["wasm"],

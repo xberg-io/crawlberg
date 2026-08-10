@@ -1,6 +1,11 @@
 {
 	"id": "scrape_js_heavy_spa",
 	"description": "Handles SPA page with JavaScript-only content (no server-rendered HTML)",
+	"docs": {
+		"topic": "scrape",
+		"stem": "scrape-js-heavy-spa",
+		"title": "Handles SPA page with JavaScript-only content (no server-rendered HTML)"
+	},
 	"tags": ["scrape", "javascript"],
 	"input": {
 		"config": {},

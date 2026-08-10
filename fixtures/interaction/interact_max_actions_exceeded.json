@@ -1,6 +1,11 @@
 {
 	"id": "interact_max_actions_exceeded",
 	"description": "Submit 101 actions (exceeds MAX_ACTIONS=100) and verify validation error",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-max-actions-exceeded",
+		"title": "Submit 101 actions (exceeds MAX_ACTIONS=100) and verify validation error"
+	},
 	"tags": ["interaction", "validation"],
 	"skip": {
 		"languages": ["wasm"],

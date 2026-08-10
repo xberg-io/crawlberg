@@ -1,6 +1,11 @@
 {
 	"id": "crawl_url_deduplication",
 	"description": "Deduplicates URLs that differ only by fragment or query params",
+	"docs": {
+		"topic": "crawl",
+		"stem": "crawl-url-deduplication",
+		"title": "Deduplicates URLs that differ only by fragment or query params"
+	},
 	"tags": ["crawl", "dedup"],
 	"input": {
 		"mock_responses": [

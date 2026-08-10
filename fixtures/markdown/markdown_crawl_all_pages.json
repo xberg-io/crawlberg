@@ -1,6 +1,11 @@
 {
 	"id": "markdown_crawl_all_pages",
 	"description": "All crawled pages have markdown field populated",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-crawl-all-pages",
+		"title": "All crawled pages have markdown field populated"
+	},
 	"tags": ["markdown", "crawl"],
 	"input": {
 		"mock_responses": [

@@ -1,9 +1,14 @@
 {
 	"id": "error_browser_page_timeout",
 	"description": "Browser page load times out",
+	"docs": {
+		"topic": "error",
+		"stem": "error-browser-page-timeout",
+		"title": "Browser page load times out"
+	},
 	"tags": ["error", "browser", "timeout"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

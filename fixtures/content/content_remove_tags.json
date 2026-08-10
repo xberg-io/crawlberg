@@ -1,6 +1,11 @@
 {
 	"id": "content_remove_tags",
 	"description": "Removes specified HTML elements by CSS selector before processing",
+	"docs": {
+		"topic": "content",
+		"stem": "content-remove-tags",
+		"title": "Removes specified HTML elements by CSS selector before processing"
+	},
 	"tags": ["content", "filtering"],
 	"input": {
 		"mock_responses": [

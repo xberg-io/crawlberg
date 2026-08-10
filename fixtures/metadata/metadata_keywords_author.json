@@ -1,6 +1,11 @@
 {
 	"id": "metadata_keywords_author",
 	"description": "Extracts keywords, author, viewport, generator, theme-color, robots, lang, dir metadata",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-keywords-author",
+		"title": "Extracts keywords, author, viewport, generator, theme-color, robots, lang, dir metadata"
+	},
 	"tags": ["metadata"],
 	"input": {
 		"config": {},

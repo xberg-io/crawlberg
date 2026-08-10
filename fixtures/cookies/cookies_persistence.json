@@ -1,6 +1,11 @@
 {
 	"id": "cookies_persistence",
 	"description": "Maintains cookies across multiple crawl requests",
+	"docs": {
+		"topic": "cookies",
+		"stem": "cookies-persistence",
+		"title": "Maintains cookies across multiple crawl requests"
+	},
 	"tags": ["cookies", "session", "crawl"],
 	"skip": {
 		"languages": ["wasm"],

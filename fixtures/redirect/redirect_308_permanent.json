@@ -1,6 +1,11 @@
 {
 	"id": "redirect_308_permanent",
 	"description": "Follows 308 Permanent Redirect (preserves method)",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-308-permanent",
+		"title": "Follows 308 Permanent Redirect (preserves method)"
+	},
 	"tags": ["redirect", "crawl"],
 	"input": {
 		"mock_responses": [

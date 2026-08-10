@@ -1,6 +1,11 @@
 {
 	"id": "robots_wildcard_paths",
 	"description": "Handles wildcard Disallow patterns in robots.txt",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-wildcard-paths",
+		"title": "Handles wildcard Disallow patterns in robots.txt"
+	},
 	"tags": ["robots", "wildcard"],
 	"input": {
 		"mock_responses": [

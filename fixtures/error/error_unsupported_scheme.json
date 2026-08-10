@@ -1,6 +1,11 @@
 {
 	"id": "error_unsupported_scheme",
 	"description": "Unsupported URL scheme (gopher) is rejected",
+	"docs": {
+		"topic": "error",
+		"stem": "error-unsupported-scheme",
+		"title": "Unsupported URL scheme (gopher) is rejected"
+	},
 	"tags": ["error", "scheme"],
 	"assertions": [
 		{

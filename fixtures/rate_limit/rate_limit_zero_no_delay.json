@@ -1,6 +1,11 @@
 {
 	"id": "rate_limit_zero_no_delay",
 	"description": "Rate limiter with zero delay does not slow crawling",
+	"docs": {
+		"topic": "rate-limit",
+		"stem": "rate-limit-zero-no-delay",
+		"title": "Rate limiter with zero delay does not slow crawling"
+	},
 	"tags": ["rate_limit", "crawl"],
 	"input": {
 		"mock_responses": [

@@ -1,6 +1,11 @@
 {
 	"id": "concurrent_max_pages_exact",
 	"description": "Concurrent crawling does not exceed max_pages limit even with high concurrency",
+	"docs": {
+		"topic": "concurrent",
+		"stem": "concurrent-max-pages-exact",
+		"title": "Concurrent crawling does not exceed max_pages limit even with high concurrency"
+	},
 	"tags": ["concurrent", "max_pages", "crawl"],
 	"input": {
 		"mock_responses": [

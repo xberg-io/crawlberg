@@ -1,9 +1,14 @@
 {
 	"id": "browser_extra_wait",
 	"description": "Browser extra_wait adds additional time after network_idle to ensure all async operations complete",
+	"docs": {
+		"topic": "browser",
+		"stem": "browser-extra-wait",
+		"title": "Browser extra_wait adds additional time after network_idle to ensure all async operations complete"
+	},
 	"tags": ["browser", "wait", "network_idle", "extra_wait"],
 	"skip": {
-		"languages": ["wasm", "brew"],
+		"languages": ["wasm"],
 		"reason": "Requires browser feature"
 	},
 	"input": {

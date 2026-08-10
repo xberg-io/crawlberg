@@ -1,6 +1,11 @@
 {
 	"id": "markdown_basic_conversion",
 	"description": "HTML is always converted to markdown alongside raw HTML",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-basic-conversion",
+		"title": "HTML is always converted to markdown alongside raw HTML"
+	},
 	"tags": ["markdown"],
 	"input": {
 		"mock_responses": [

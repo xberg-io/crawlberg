@@ -1,6 +1,11 @@
 {
 	"id": "error_connection_refused",
 	"description": "Handles connection refused error gracefully",
+	"docs": {
+		"topic": "error",
+		"stem": "error-connection-refused",
+		"title": "Handles connection refused error gracefully"
+	},
 	"tags": ["error", "network"],
 	"assertions": [
 		{

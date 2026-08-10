@@ -1,6 +1,11 @@
 {
 	"id": "download_filename_extraction",
 	"description": "Extract filename from Content-Disposition header",
+	"docs": {
+		"topic": "download",
+		"stem": "download-filename-extraction",
+		"title": "Extract filename from Content-Disposition header"
+	},
 	"tags": ["download", "filename", "content-disposition"],
 	"input": {
 		"mock_responses": [

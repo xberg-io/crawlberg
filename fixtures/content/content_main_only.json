@@ -1,6 +1,11 @@
 {
 	"id": "content_main_only",
 	"description": "Extracts content with aggressive preprocessing, excluding nav, sidebar, footer",
+	"docs": {
+		"topic": "content",
+		"stem": "content-main-only",
+		"title": "Extracts content with aggressive preprocessing, excluding nav, sidebar, footer"
+	},
 	"tags": ["content", "extraction"],
 	"input": {
 		"mock_responses": [

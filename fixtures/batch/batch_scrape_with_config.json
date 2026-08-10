@@ -1,6 +1,11 @@
 {
 	"id": "batch_scrape_with_config",
 	"description": "Batch scrape with aggressive preprocessing configuration",
+	"docs": {
+		"topic": "batch",
+		"stem": "batch-scrape-with-config",
+		"title": "Batch scrape with aggressive preprocessing configuration"
+	},
 	"tags": ["batch", "scrape"],
 	"input": {
 		"mock_responses": [

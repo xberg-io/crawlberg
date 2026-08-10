@@ -1,6 +1,11 @@
 {
 	"id": "stealth_ua_rotation_single_domain",
 	"description": "Custom user-agent string is applied for single domain crawl",
+	"docs": {
+		"topic": "stealth",
+		"stem": "stealth-ua-rotation-single-domain",
+		"title": "Custom user-agent string is applied for single domain crawl"
+	},
 	"tags": ["stealth", "user-agent", "crawl"],
 	"input": {
 		"mock_responses": [

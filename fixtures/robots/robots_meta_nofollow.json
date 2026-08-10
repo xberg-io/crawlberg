@@ -1,6 +1,11 @@
 {
 	"id": "robots_meta_nofollow",
 	"description": "Detects nofollow meta robots tag and skips link extraction",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-meta-nofollow",
+		"title": "Detects nofollow meta robots tag and skips link extraction"
+	},
 	"tags": ["robots", "meta"],
 	"input": {
 		"mock_responses": [

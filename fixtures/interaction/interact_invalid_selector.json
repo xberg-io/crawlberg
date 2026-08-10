@@ -1,6 +1,11 @@
 {
 	"id": "interact_invalid_selector",
 	"description": "Click on a non-existent selector and verify error in action_results",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-invalid-selector",
+		"title": "Click on a non-existent selector and verify error in action_results"
+	},
 	"tags": ["interaction", "error"],
 	"skip": {
 		"languages": ["wasm"],

@@ -1,6 +1,11 @@
 {
 	"id": "auth_bearer_token",
 	"description": "Sends Bearer token in Authorization header",
+	"docs": {
+		"topic": "auth",
+		"stem": "auth-bearer-token",
+		"title": "Sends Bearer token in Authorization header"
+	},
 	"tags": ["auth", "bearer"],
 	"input": {
 		"mock_responses": [

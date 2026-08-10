@@ -1,6 +1,11 @@
 {
 	"id": "redirect_loop",
 	"description": "Detects redirect loop (A -> B -> A) and returns error",
+	"docs": {
+		"topic": "redirect",
+		"stem": "redirect-loop",
+		"title": "Detects redirect loop (A -> B -> A) and returns error"
+	},
 	"tags": ["redirect", "error", "crawl"],
 	"input": {
 		"mock_responses": [

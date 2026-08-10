@@ -1,6 +1,11 @@
 {
 	"id": "stream_large_crawl",
 	"description": "Stream handles crawl of 5+ pages with multiple events",
+	"docs": {
+		"topic": "stream",
+		"stem": "stream-large-crawl",
+		"title": "Stream handles crawl of 5+ pages with multiple events"
+	},
 	"tags": ["stream", "large"],
 	"input": {
 		"mock_responses": [

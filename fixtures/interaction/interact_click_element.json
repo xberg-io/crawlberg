@@ -1,6 +1,11 @@
 {
 	"id": "interact_click_element",
 	"description": "Click a button element and verify success",
+	"docs": {
+		"topic": "interaction",
+		"stem": "interact-click-element",
+		"title": "Click a button element and verify success"
+	},
 	"tags": ["interaction", "click"],
 	"skip": {
 		"languages": ["wasm"],
