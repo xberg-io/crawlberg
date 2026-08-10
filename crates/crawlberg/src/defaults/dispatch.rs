@@ -26,7 +26,6 @@ use crate::types::{AttemptOutcome, BudgetExhausted, EscalationBudget, Escalation
 /// | `Dns`, `Ssl`, `Connection`, `InvalidConfig`, `Unsupported` | `Stop` (permanent) |
 /// | other | `Stop` |
 #[derive(Debug, Clone)]
-#[cfg_attr(alef, alef(skip))]
 pub struct SimpleRetryPolicy {
     max_retries: u32,
     max_backoff_ms: u64,
@@ -123,7 +122,6 @@ pub fn compute_backoff_ms(attempt: u32, max_backoff_ms: u64) -> u64 {
 /// [`EscalationBudget`] that always permits escalation. Used by default
 /// when no budget is configured on `CrawlConfig`.
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg_attr(alef, alef(skip))]
 pub struct UnlimitedBudget;
 
 #[async_trait]
@@ -138,7 +136,6 @@ impl EscalationBudget for UnlimitedBudget {
 /// budget can't cover the request. Useful for self-hosters that want
 /// per-process spend caps without a database.
 #[derive(Debug)]
-#[cfg_attr(alef, alef(skip))]
 pub struct FixedBudget {
     remaining_cents: AtomicU32,
 }
@@ -181,14 +178,12 @@ impl EscalationBudget for FixedBudget {
 
 /// Convenience constructor: `Arc<dyn RetryPolicy>` for the default policy.
 #[must_use]
-#[cfg_attr(alef, alef(skip))]
 pub fn default_retry_policy() -> Arc<dyn RetryPolicy> {
     Arc::new(SimpleRetryPolicy::new())
 }
 
 /// Convenience constructor: `Arc<dyn EscalationBudget>` that never blocks.
 #[must_use]
-#[cfg_attr(alef, alef(skip))]
 pub fn unlimited_budget() -> Arc<dyn EscalationBudget> {
     Arc::new(UnlimitedBudget)
 }

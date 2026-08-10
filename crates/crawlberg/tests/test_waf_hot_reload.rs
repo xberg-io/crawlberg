@@ -21,6 +21,7 @@ fn make_response(status: u16, headers: Vec<(&str, &str)>, body: &str) -> HttpRes
         headers: header_map,
         browser_extras: None,
         final_url: "https://example.com/".into(),
+        screenshot: None,
     }
 }
 

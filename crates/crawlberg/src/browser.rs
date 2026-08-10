@@ -14,6 +14,8 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     FailRequestParams,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, SetCookieParams, SetExtraHttpHeadersParams};
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::page::ScreenshotParams;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
@@ -40,11 +42,22 @@ pub(crate) async fn browser_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
+    want_screenshot: bool,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<HttpResponse, CrawlError> {
     match config.browser.backend {
-        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool).await,
+        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await,
         BrowserBackend::Native => {
+            // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
+            // ~keep (`page_fetch` below); the native backend lives in the off-limits
+            // ~keep `crawlberg-browser` crate. Warn instead of silently dropping the request,
+            // ~keep matching the rest of `capture_screenshot`'s contract.
+            if config.capture_screenshot {
+                tracing::warn!(
+                    "capture_screenshot is not supported by BrowserBackend::Native; \
+                     no screenshot will be captured for this fetch"
+                );
+            }
             #[cfg(feature = "browser-native")]
             {
                 native_fetch(url, config, prior_cookies, native_executor).await
@@ -62,6 +75,7 @@ async fn chromiumoxide_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
+    want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
     let session_id = BROWSER_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
@@ -82,7 +96,7 @@ async fn chromiumoxide_fetch(
     }
     let _guard = SessionGuard;
 
-    chromiumoxide_fetch_inner(url, config, prior_cookies, pool)
+    chromiumoxide_fetch_inner(url, config, prior_cookies, pool, want_screenshot)
         .instrument(span)
         .await
 }
@@ -92,6 +106,7 @@ async fn chromiumoxide_fetch_inner(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
+    want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
     let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
     validate_url(&target, &config.ssrf)
@@ -134,7 +149,7 @@ async fn chromiumoxide_fetch_inner(
             pooled.into_parts()
         };
 
-        let result = page_fetch(url, config, &page, prior_cookies).await;
+        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
 
         if config.browser.session_affinity
             && result.is_ok()
@@ -160,7 +175,7 @@ async fn chromiumoxide_fetch_inner(
             .await
             .map_err(|e| CrawlError::BrowserError(format!("failed to create page: {e}")))?;
 
-        let result = page_fetch(url, config, &page, prior_cookies).await;
+        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
 
         let _ = page.close().await;
         let _ = browser.close().await;
@@ -299,6 +314,7 @@ async fn page_fetch(
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
     prior_cookies: Option<&[CookieInfo]>,
+    want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
@@ -415,6 +431,28 @@ async fn page_fetch(
 
     let body_bytes = html.as_bytes().to_vec();
 
+    // ~keep Gated on the CALLER wanting the bytes, not merely on the config flag. Only
+    // scrape()'s dedicated path consumes a screenshot; every other caller converts through
+    // browser_http_to_crawl, which has nowhere to put it. Reading the flag alone meant a
+    // crawl paid a full CDP screenshot round-trip per page and then discarded every one.
+    let screenshot = if want_screenshot && config.capture_screenshot {
+        let params = ScreenshotParams::builder()
+            .format(CaptureScreenshotFormat::Png)
+            .full_page(false)
+            .build();
+        match page.screenshot(params).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                // ~keep A failed screenshot must not fail an otherwise-successful page fetch;
+                // ~keep the caller still gets HTML, just no image.
+                tracing::warn!(error = %e, "failed to capture page screenshot; continuing without one");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
     Ok(HttpResponse {
         status: 200,
@@ -425,6 +463,7 @@ async fn page_fetch(
         browser_extras: None,
         // ~keep CDP final URL is unavailable here; this path only feeds browser backends, not wasm final_url tracking.
         final_url: url.to_owned(),
+        screenshot,
     })
 }
 

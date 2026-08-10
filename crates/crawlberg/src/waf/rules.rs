@@ -406,6 +406,7 @@ mod tests {
             headers: header_map,
             browser_extras: None,
             final_url: "https://example.com/".into(),
+            screenshot: None,
         }
     }
 

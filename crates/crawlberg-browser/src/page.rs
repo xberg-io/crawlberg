@@ -792,6 +792,21 @@ impl Page {
         }
     }
 
+    /// Like [`Self::evaluate_result`], but bounds execution to `timeout` from a companion
+    /// watchdog thread so a non-terminating script cannot pin the caller's worker forever
+    /// (#60). See [`BrowserJsRuntime::evaluate_with_timeout`] for the recovery mechanism.
+    pub fn evaluate_result_with_timeout(
+        &mut self,
+        expression: &str,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, String> {
+        if let Some(js) = &mut self.js {
+            js.evaluate_with_timeout(expression, timeout)
+        } else {
+            self.evaluate_result(expression)
+        }
+    }
+
     pub async fn evaluate_for_cdp(
         &mut self,
         expression: &str,

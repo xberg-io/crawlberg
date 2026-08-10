@@ -123,6 +123,17 @@ pub struct RenderedPage {
 /// worker's OS thread forever, not to enforce latency.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(360);
 
+/// Wall-clock bound on a single `ExecuteJs` action, enforced from a watchdog thread via
+/// `v8::IsolateHandle::terminate_execution` (#60).
+///
+/// ~keep `ACTION_TIMEOUT`'s `tokio::time::timeout` wrapper around `execute_action` cannot
+/// preempt this action: `Page::evaluate_result` is a synchronous, non-yielding call into V8,
+/// so the outer future never returns `Poll::Pending` for the executor to check against a
+/// timer. This constant is deliberately much tighter than `ACTION_TIMEOUT` — an explicit,
+/// caller-supplied script has no legitimate reason to block the isolate for minutes, and a
+/// short bound keeps a hostile or buggy script from pinning a worker for long.
+const EXECUTE_JS_TIMEOUT: Duration = Duration::from_secs(30);
+
 const DEFAULT_SCROLL_AMOUNT: i64 = 800;
 const DEFAULT_SELECTOR_WAIT_MS: i64 = 30_000;
 const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -750,7 +761,9 @@ async fn execute_action(page: &mut Page, action: &NativePageAction) -> Result<Na
                 screenshot: Some(bytes),
             })
         }
-        NativePageAction::ExecuteJs { script } => page.evaluate_result(script).map(NativeActionData::data),
+        NativePageAction::ExecuteJs { script } => page
+            .evaluate_result_with_timeout(script, EXECUTE_JS_TIMEOUT)
+            .map(NativeActionData::data),
         NativePageAction::Scrape => {
             let final_url = page.url_string();
             let html = rendered_html(page).ok_or_else(|| format!("no rendered DOM available for {final_url}"))?;
@@ -1295,6 +1308,76 @@ mod tests {
             .expect("render should succeed");
         assert!(rendered.html.contains("Native executor"));
         drop(executor);
+    }
+
+    /// Proves #60 is fixed: the inverse of
+    /// `native::hung_execute_js_permanently_pins_the_native_worker_thread` in
+    /// `crawlberg/src/interact/native.rs`, which showed a hung `ExecuteJs` action wedges
+    /// the sole worker OS thread forever, so a trivial follow-up job on the same
+    /// single-worker executor never completes.
+    ///
+    /// Here the same scenario must now resolve: the watchdog spawned by
+    /// `BrowserJsRuntime::evaluate_with_timeout` calls `v8::IsolateHandle::terminate_execution`
+    /// past `EXECUTE_JS_TIMEOUT`, unblocking the worker thread's `execute_script` call. It
+    /// also checks that `cancel_terminate_execution` actually leaves the isolate usable —
+    /// not just for a fresh job, but for the *next action in the same job*, which reuses the
+    /// very `BrowserJsRuntime` that was just terminated.
+    #[tokio::test]
+    async fn hung_execute_js_terminates_and_the_native_worker_recovers_for_later_actions() {
+        allow_private_network();
+        let server = TestServer::start().await;
+        let executor =
+            NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
+        let config = NativeBrowserConfig::default();
+
+        let same_job_actions = vec![
+            NativePageAction::ExecuteJs {
+                script: "while (true) {}".to_owned(),
+            },
+            NativePageAction::ExecuteJs {
+                script: "21 + 21".to_owned(),
+            },
+        ];
+        let same_job_outcome = tokio::time::timeout(
+            EXECUTE_JS_TIMEOUT + Duration::from_secs(15),
+            executor.interact_url(&server.base_url, &config, &same_job_actions, None),
+        )
+        .await
+        .expect("the watchdog must reclaim the isolate well before this outer safety margin")
+        .expect("interact_url should return a result, not a transport error");
+
+        assert_eq!(same_job_outcome.action_results.len(), 2);
+        let hung = &same_job_outcome.action_results[0];
+        assert!(
+            !hung.success,
+            "a terminated script must surface as a failed action, not a silent success"
+        );
+        assert!(
+            hung.error.as_deref().is_some_and(|e| e.contains("terminated")),
+            "a terminated script must produce a clear termination error, got {:?}",
+            hung.error
+        );
+        let recovered = &same_job_outcome.action_results[1];
+        assert!(
+            recovered.success,
+            "the isolate must remain usable for later actions in the same job after a termination, got {:?}",
+            recovered.error
+        );
+        assert_eq!(recovered.data, Some(serde_json::json!(42.0)));
+
+        let followup_outcome = tokio::time::timeout(
+            Duration::from_secs(15),
+            executor.interact_url(&server.base_url, &config, &[NativePageAction::Scrape], None),
+        )
+        .await
+        .expect("a trivial follow-up job on the same single-worker executor must complete now that the worker thread is free")
+        .expect("follow-up interact_url should succeed");
+
+        assert!(
+            followup_outcome.action_results[0].success,
+            "follow-up Scrape action should succeed"
+        );
+        assert!(followup_outcome.final_html.contains("Native executor"));
     }
 
     struct TestServer {

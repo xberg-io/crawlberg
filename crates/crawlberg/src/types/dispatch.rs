@@ -614,7 +614,6 @@ pub struct DispatchProfile {
     /// When `None`, the engine's built-in WAF-signal → escalation logic applies.
     ///
     /// Excluded from alef-generated bindings — opaque trait object.
-    #[cfg_attr(alef, alef(skip))]
     pub antibot_strategy: Option<crate::types::antibot::DynAntibotStrategy>,
 }
 

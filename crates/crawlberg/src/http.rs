@@ -163,6 +163,12 @@ pub struct HttpResponse {
     /// what the wasm scrape path needs to populate `ScrapeResult::final_url`.
     #[allow(dead_code)]
     pub final_url: String,
+    /// PNG screenshot bytes captured for this fetch, when the caller requested one
+    /// (`CrawlConfig.capture_screenshot`) and the fetch went through a browser backend
+    /// that supports capturing it. `None` for every plain-HTTP fetch and for browser
+    /// fetches that did not request a screenshot.
+    #[allow(dead_code)]
+    pub screenshot: Option<Vec<u8>>,
 }
 
 /// Perform a single HTTP GET request with the given configuration.
@@ -268,6 +274,7 @@ pub(crate) async fn http_fetch(
                             headers: headers_map,
                             browser_extras: None,
                             final_url: final_url_str,
+                            screenshot: None,
                         });
                     }
                 };
@@ -416,6 +423,7 @@ pub(crate) async fn http_fetch(
             headers: headers_map,
             browser_extras: None,
             final_url: final_url_str,
+            screenshot: None,
         });
     }
 }
@@ -753,6 +761,7 @@ fn build_partial_response_with_bytes(status: u16, body_bytes: &[u8], body: &str,
         headers: headers_map,
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     }
 }
 
@@ -781,6 +790,7 @@ pub(crate) fn detect_waf_vendor(server: &str, body: &str) -> String {
         headers: headers_map,
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     };
     TomlClassifier::builtin()
         .classify(&response)
@@ -815,6 +825,7 @@ pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String,
         headers: headers_map,
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     };
     TomlClassifier::builtin().classify(&response).ok().flatten().is_some()
 }

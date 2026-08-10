@@ -144,6 +144,82 @@ impl BrowserJsRuntime {
         self.v8_to_json(result)
     }
 
+    /// Evaluate `expression` under a wall-clock bound enforced from a companion OS thread.
+    ///
+    /// `JsRuntime::execute_script` is a synchronous, non-yielding call into V8: an
+    /// `async fn` wrapping it in `tokio::time::timeout` can never observe the deadline,
+    /// because the executor only gets to check a timer between `Poll::Pending` yields and
+    /// this call produces none (#60). The only supported way to reclaim a wedged isolate is
+    /// [`deno_core::v8::IsolateHandle::terminate_execution`], called from a thread other than
+    /// the one running the script. This spawns exactly one such watchdog thread, joins it
+    /// before returning, and clears the termination flag via `cancel_terminate_execution` so
+    /// the isolate is left usable for the caller's next call — mirroring the proven recovery
+    /// in [`Self::execute_script_with_timeout`] and its `execute_script_guarded_kills_small_infinite_loop`
+    /// regression test.
+    pub fn evaluate_with_timeout(
+        &mut self,
+        expression: &str,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value, String> {
+        if timeout.is_zero() {
+            return self.evaluate(expression);
+        }
+
+        let wrapped = Self::wrap_expression(expression);
+        let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+
+        let pair = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let pair_clone = pair.clone();
+
+        let watchdog = std::thread::spawn(move || {
+            let (lock, cvar) = &*pair_clone;
+            let mut cancelled = lock.lock().unwrap();
+            let deadline = std::time::Instant::now() + timeout;
+
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    isolate_handle.terminate_execution();
+                    return;
+                }
+
+                let result = cvar.wait_timeout(cancelled, remaining).unwrap();
+                cancelled = result.0;
+                if *cancelled {
+                    return;
+                }
+            }
+        });
+
+        let result = self.runtime.execute_script("<eval>", wrapped);
+
+        {
+            let (lock, cvar) = &*pair;
+            let mut cancelled = lock.lock().unwrap();
+            *cancelled = true;
+            cvar.notify_one();
+        }
+        let _ = watchdog.join();
+
+        self.runtime.v8_isolate().cancel_terminate_execution();
+
+        match result {
+            Ok(value) => self.v8_to_json(value),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("Uncaught Error: execution terminated") {
+                    tracing::warn!("ExecuteJs script killed after {}s timeout", timeout.as_secs());
+                    Err(format!(
+                        "script execution exceeded the {}s limit and was terminated",
+                        timeout.as_secs()
+                    ))
+                } else {
+                    Err(format!("JS error: {}", msg))
+                }
+            }
+        }
+    }
+
     pub async fn evaluate_for_cdp(
         &mut self,
         expression: &str,

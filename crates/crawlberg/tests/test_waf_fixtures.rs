@@ -83,6 +83,7 @@ fn parse_http_fixture(content: &str) -> HttpResponse {
         headers: headers_map,
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     }
 }
 

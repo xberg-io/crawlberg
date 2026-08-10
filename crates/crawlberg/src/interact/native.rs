@@ -221,7 +221,6 @@ mod proxy_credential_tests {
             url: url.to_owned(),
             username: username.map(str::to_owned),
             password: password.map(str::to_owned),
-            ..ProxyConfig::default()
         }
     }
 
@@ -306,12 +305,14 @@ mod proxy_credential_tests {
         let mut out = Vec::with_capacity(bytes.len());
         let mut i = 0;
         while i < bytes.len() {
-            if bytes[i] == b'%' && i + 2 < bytes.len() {
-                if let Ok(value) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap(), 16) {
-                    out.push(value);
-                    i += 3;
-                    continue;
-                }
+            if bytes[i] == b'%'
+                && i + 2 < bytes.len()
+                && let Ok(text) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                && let Ok(value) = u8::from_str_radix(text, 16)
+            {
+                out.push(value);
+                i += 3;
+                continue;
             }
             out.push(bytes[i]);
             i += 1;

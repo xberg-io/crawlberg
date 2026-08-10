@@ -15,6 +15,7 @@ fn make_test_response(status: u16, body: String) -> HttpResponse {
         headers: HashMap::new(),
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     }
 }
 

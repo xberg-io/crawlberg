@@ -132,11 +132,17 @@ impl CrawlEngine {
         ) {
             let pool = self.config.browser_pool.as_deref();
             #[cfg(feature = "browser-native")]
-            let http_resp =
-                crate::browser::browser_fetch(url, &self.config, None, pool, self.native_browser_executor.as_deref())
-                    .await?;
+            let http_resp = crate::browser::browser_fetch(
+                url,
+                &self.config,
+                None,
+                pool,
+                false,
+                self.native_browser_executor.as_deref(),
+            )
+            .await?;
             #[cfg(not(feature = "browser-native"))]
-            let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool).await?;
+            let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
             let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
             return Ok((crawl_resp, true));
         }
@@ -266,6 +272,7 @@ impl CrawlEngine {
                         headers: resp.headers.clone(),
                         final_url: String::new(),
                         browser_extras: None,
+                        screenshot: None,
                     };
                     let waf_signal = waf_classifier.and_then(|c| match c.classify(&http_resp_for_hooks) {
                         Ok(sig) => sig,
@@ -522,11 +529,12 @@ impl CrawlEngine {
                         &self.config,
                         None,
                         pool,
+                        false,
                         self.native_browser_executor.as_deref(),
                     )
                     .await?;
                     #[cfg(not(feature = "browser-native"))]
-                    let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool).await?;
+                    let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
                     let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
                     Ok((crawl_resp, true))
                 }
@@ -544,6 +552,20 @@ impl CrawlEngine {
     fn browser_http_to_crawl(
         r: crate::http::HttpResponse,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
+        // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
+        // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
+        // ~keep so a screenshot captured upstream in `page_fetch` cannot survive this conversion.
+        // ~keep `CrawlEngine::scrape`'s dedicated short-circuit reads `HttpResponse.screenshot`
+        // ~keep before calling this function specifically to avoid hitting this path; reaching
+        // ~keep here with a screenshot still attached means some other caller (crawl loop,
+        // ~keep dispatch escalation) requested one where it cannot be delivered.
+        if r.screenshot.is_some() {
+            tracing::warn!(
+                "a page screenshot was captured but cannot be attached to this response path; discarding it. \
+                 capture_screenshot is only delivered end-to-end by scrape() with BrowserBackend::Chromiumoxide \
+                 and BrowserMode::Always or Stealth"
+            );
+        }
         let extras = r.browser_extras;
         (
             crate::tower::CrawlResponse {
@@ -714,6 +736,30 @@ impl CrawlEngine {
         tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
 
+        // ~keep `capture_screenshot` is only ever honored by the direct short-circuit below
+        // ~keep (chromiumoxide + BrowserMode::Always/Stealth): every other path returns a
+        // ~keep `crate::tower::CrawlResponse`, which has no field to carry screenshot bytes
+        // ~keep through `crawl_loop::follow_redirects`/`run_tier` (files this task does not
+        // ~keep own). Warn proactively here instead of leaving the caller to discover the
+        // ~keep silent no-op from an empty `ScrapeResult::screenshot`.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.config.capture_screenshot {
+            let will_capture = cfg!(feature = "browser")
+                && self.config.browser.backend == crate::types::BrowserBackend::Chromiumoxide
+                && matches!(
+                    self.config.browser.mode,
+                    crate::types::BrowserMode::Always | crate::types::BrowserMode::Stealth
+                );
+            if !will_capture {
+                tracing::warn!(
+                    backend = ?self.config.browser.backend,
+                    mode = ?self.config.browser.mode,
+                    "capture_screenshot has no effect for this configuration: scrape() only captures \
+                     a screenshot with BrowserBackend::Chromiumoxide and BrowserMode::Always or Stealth"
+                );
+            }
+        }
+
         // ~keep Short-circuit native BrowserMode::Always so browser_extras survive fetch_response conversion.
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
         if self.config.browser.mode == crate::types::BrowserMode::Always
@@ -740,6 +786,43 @@ impl CrawlEngine {
                     network_events: ex.network_events,
                     cookies: ex.cookies,
                 });
+            }
+            return Ok(result);
+        }
+
+        // ~keep Short-circuit chromiumoxide BrowserMode::Always/Stealth when a screenshot was
+        // ~keep requested, for the same reason as the native short-circuit above: the generic
+        // ~keep `fetch_response`/`follow_redirects` path converts to `CrawlResponse`, which drops
+        // ~keep the screenshot bytes captured on `HttpResponse` (see `browser_http_to_crawl`).
+        #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
+        if self.config.capture_screenshot
+            && self.config.browser.backend == crate::types::BrowserBackend::Chromiumoxide
+            && matches!(
+                self.config.browser.mode,
+                crate::types::BrowserMode::Always | crate::types::BrowserMode::Stealth
+            )
+        {
+            let pool = self.config.browser_pool.as_deref();
+            #[cfg(feature = "browser-native")]
+            let mut http_resp = crate::browser::browser_fetch(
+                url,
+                &self.config,
+                None,
+                pool,
+                true,
+                self.native_browser_executor.as_deref(),
+            )
+            .await?;
+            #[cfg(not(feature = "browser-native"))]
+            let mut http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+
+            let screenshot = http_resp.screenshot.take();
+            let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+            let mut result = crate::scrape::scrape_from_crawl_response(url, &crawl_resp, &self.config).await?;
+            result.browser_used = true;
+            if let Some(bytes) = screenshot {
+                result.screenshot_base64 = Some(crate::interact::encode_screenshot_base64(&bytes));
+                result.screenshot = Some(bytes);
             }
             return Ok(result);
         }

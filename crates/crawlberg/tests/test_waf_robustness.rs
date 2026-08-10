@@ -24,6 +24,7 @@ fn make_response(status: u16, body: &str, body_bytes: Vec<u8>) -> HttpResponse {
         headers: HashMap::new(),
         browser_extras: None,
         final_url: "https://example.com/".into(),
+        screenshot: None,
     }
 }
 

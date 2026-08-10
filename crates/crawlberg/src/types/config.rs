@@ -429,6 +429,14 @@ pub struct CrawlConfig {
     #[serde(default)]
     pub user_agents: Vec<String>,
     /// Whether to capture a screenshot when using the browser.
+    ///
+    /// Only supported by `scrape()` with `BrowserBackend::Chromiumoxide` and
+    /// `BrowserMode::Always` or `Stealth`. A screenshot is 100–500 KB of PNG per page,
+    /// so `crawl()` does not carry screenshots in `CrawlPageResult`/`CrawlResult` at
+    /// all — a multi-thousand-page crawl holding one per page in memory is not a safe
+    /// default. Setting this with any other configuration (a different backend,
+    /// `BrowserMode::Auto`/`Never`, or during `crawl()`) has no effect and logs a
+    /// warning rather than silently doing nothing.
     pub capture_screenshot: bool,
     /// Re-enqueue discovered `LinkType::Document` URLs into the crawl frontier so
     /// the crawl follows links *from* document pages (PDFs, etc.) as it would
@@ -482,6 +490,25 @@ pub struct CrawlConfig {
     /// bindings. `scheme_allowlist` stays Rust-only — see `SsrfPolicy`.
     #[serde(default = "SsrfPolicy::from_env")]
     pub ssrf: SsrfPolicy,
+    /// Pins [`SsrfPolicy::deny_private`] to a caller-chosen value, bypassing the
+    /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` operator override entirely for this config.
+    ///
+    /// `ssrf.deny_private` is a plain, always-serialized `bool`: several alef-generated
+    /// bindings construct `SsrfPolicy::default()` (hardcoding `deny_private: true`)
+    /// whenever their caller never touches SSRF settings at all, so `true` on that field
+    /// alone cannot distinguish "the caller wants private networks denied" from "the
+    /// binding's own structural default landed on `true`". The environment variable
+    /// exists precisely to resolve that ambiguity in the common case by treating any
+    /// `true` as inconclusive and deferring to the operator.
+    ///
+    /// Set this field when that default-deferral is wrong for your call — e.g. a test
+    /// that must prove `deny_private: true` still denies even while the operator has set
+    /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` suite-wide for every other call. `None` (default)
+    /// preserves today's behavior: the environment variable may still flip
+    /// `ssrf.deny_private` to `false`. `Some(value)` pins `ssrf.deny_private` to `value`
+    /// and the environment variable is not consulted for this config.
+    #[serde(default)]
+    pub ssrf_deny_private_explicit: Option<bool>,
     /// Pluggable dispatch components: bypass provider, escalation strategy,
     /// retry policy, WAF classifier, domain state, escalation budget, and
     /// max_total_attempts.
@@ -508,7 +535,6 @@ pub struct CrawlConfig {
     /// reqwest HTTP path. Takes precedence over the static [`ProxyConfig`] in
     /// `proxy` when set. Not serializable — Rust callers inject at runtime.
     #[serde(skip)]
-    #[cfg_attr(alef, alef(skip))]
     pub proxy_provider: Option<std::sync::Arc<dyn crate::ProxyProvider>>,
     /// Shared browser session pool for session affinity (not serializable).
     /// When set alongside `session_affinity: true` in BrowserConfig, the pool
@@ -565,6 +591,7 @@ impl Default for CrawlConfig {
             browser_profile: None,
             save_browser_profile: false,
             ssrf: SsrfPolicy::from_env(),
+            ssrf_deny_private_explicit: None,
             dispatch: None,
             #[cfg(feature = "browser")]
             browser_pool: None,

@@ -296,6 +296,54 @@ async fn engine_env_bypass_overrides_explicit_deny_private() {
     );
 }
 
+/// Regression test for #22: `ssrf_deny_private_explicit` must survive
+/// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` — a caller that pins `deny_private: true` via the new
+/// field keeps denying private networks even while the operator env var is set suite-wide.
+///
+/// This is the counterpart to `engine_env_bypass_overrides_explicit_deny_private` above:
+/// that test proves the env var still wins when a binding hands us an *ambient*
+/// `SsrfPolicy::default()` with no way to prove intent; this one proves a caller with a
+/// *provable* intent (`ssrf_deny_private_explicit: Some(true)`) is never overridden.
+#[allow(unsafe_code)]
+#[tokio::test]
+#[serial_test::serial]
+async fn explicit_deny_private_survives_env_bypass() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>ok</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test binary.
+    unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
+
+    let config = CrawlConfig {
+        ssrf: SsrfPolicy {
+            deny_private: true,
+            ..SsrfPolicy::default()
+        },
+        ssrf_deny_private_explicit: Some(true),
+        ..CrawlConfig::default()
+    };
+
+    let result = scrape(&engine(config), &mock.uri()).await;
+
+    unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
+
+    match result {
+        Err(CrawlError::SsrfPolicyViolation { .. }) => {}
+        other => panic!(
+            "explicit deny_private=true (ssrf_deny_private_explicit=Some(true)) must deny loopback \
+             even with CRAWLBERG_ALLOW_PRIVATE_NETWORK=true set, got: {other:?}"
+        ),
+    }
+}
+
 /// A redirect from an allowlisted range (127.0.0.0/8) to 10.0.0.1 (a
 /// different /8 not on the allowlist) must be refused.
 ///

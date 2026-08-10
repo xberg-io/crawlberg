@@ -83,7 +83,6 @@ impl CrawlEngineBuilder {
 
     /// Set the frontier implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn frontier(mut self, frontier: impl Frontier + 'static) -> Self {
         self.frontier = Some(Arc::new(frontier));
         self
@@ -91,7 +90,6 @@ impl CrawlEngineBuilder {
 
     /// Set the rate limiter implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn rate_limiter(mut self, rate_limiter: impl RateLimiter + 'static) -> Self {
         self.rate_limiter = Some(Arc::new(rate_limiter));
         self
@@ -99,7 +97,6 @@ impl CrawlEngineBuilder {
 
     /// Set the store implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn store(mut self, store: impl CrawlStore + 'static) -> Self {
         self.store = Some(Arc::new(store));
         self
@@ -107,7 +104,6 @@ impl CrawlEngineBuilder {
 
     /// Set the event emitter implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn event_emitter(mut self, event_emitter: impl EventEmitter + 'static) -> Self {
         self.event_emitter = Some(Arc::new(event_emitter));
         self
@@ -115,7 +111,6 @@ impl CrawlEngineBuilder {
 
     /// Set the crawl strategy implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn strategy(mut self, strategy: impl CrawlStrategy + 'static) -> Self {
         self.strategy = Some(Arc::new(strategy));
         self
@@ -123,7 +118,6 @@ impl CrawlEngineBuilder {
 
     /// Set the content filter implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn content_filter(mut self, content_filter: impl ContentFilter + 'static) -> Self {
         self.content_filter = Some(Arc::new(content_filter));
         self
@@ -131,7 +125,6 @@ impl CrawlEngineBuilder {
 
     /// Set the persistent cache implementation.
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn cache(mut self, cache: impl CrawlCache + 'static) -> Self {
         self.cache = Some(Arc::new(cache));
         self
@@ -146,7 +139,6 @@ impl CrawlEngineBuilder {
     /// [`CrawlEvent`]: crate::CrawlEvent
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn event_sink(mut self, event_sink: impl EventSink + 'static) -> Self {
         self.event_sink = Some(Arc::new(event_sink));
         self
@@ -161,7 +153,6 @@ impl CrawlEngineBuilder {
     ///
     /// [`DefaultPageBudget`]: crate::budget::DefaultPageBudget
     #[allow(dead_code)]
-    #[cfg_attr(alef, alef(skip))]
     pub fn page_budget(mut self, page_budget: impl crate::budget::PageBudget + 'static) -> Self {
         self.page_budget = Some(Arc::new(page_budget));
         self
@@ -177,7 +168,6 @@ impl CrawlEngineBuilder {
     ///
     /// [`BrowserPool`]: crate::browser_pool::BrowserPool
     #[cfg(feature = "browser")]
-    #[cfg_attr(alef, alef(skip))]
     pub fn with_browser_pool(mut self, pool: Arc<crate::browser_pool::BrowserPool>) -> Self {
         self.browser_pool = Some(pool);
         self
@@ -193,7 +183,6 @@ impl CrawlEngineBuilder {
     ///
     /// [`NativeBrowserExecutor`]: crawlberg_browser::adapter::NativeBrowserExecutor
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-    #[cfg_attr(alef, alef(skip))]
     pub fn with_native_executor(mut self, executor: Arc<crawlberg_browser::adapter::NativeBrowserExecutor>) -> Self {
         self.native_executor = Some(executor);
         self
@@ -207,7 +196,6 @@ impl CrawlEngineBuilder {
     /// Browser-backend proxies (`CrawlConfig::browser::proxy`) still read the
     /// static `ProxyConfig` value — provider rotation only applies to the HTTP
     /// fetcher.
-    #[cfg_attr(alef, alef(skip))]
     pub fn with_proxy_provider(mut self, provider: Arc<dyn crate::ProxyProvider>) -> Self {
         self.proxy_provider = Some(provider);
         self
@@ -230,9 +218,16 @@ impl CrawlEngineBuilder {
             config.proxy_provider = Some(provider);
         }
 
-        // ~keep Apply this operator override at engine construction so binding defaults cannot hide the env var.
-        // ~keep `SsrfPolicy::default()` stays deny-by-default; this env var remains the single explicit override.
-        if std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
+        // ~keep `ssrf.deny_private` alone cannot prove caller intent — several alef-generated
+        // bindings hand us `SsrfPolicy::default()` (deny=true) whenever their caller never
+        // touched SSRF settings, so a bare `true` is as likely to be a binding's structural
+        // default as a deliberate choice. `ssrf_deny_private_explicit` is the only reliable
+        // "the caller meant it" signal: when set, honor it verbatim and skip the env var
+        // entirely; otherwise keep applying `CRAWLBERG_ALLOW_PRIVATE_NETWORK` as the
+        // operator-level default it has always been, so binding defaults still cannot hide it.
+        if let Some(explicit) = config.ssrf_deny_private_explicit {
+            config.ssrf.deny_private = explicit;
+        } else if std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
             .map(|v| v.to_lowercase())
             .ok()
             .is_some_and(|v| v == "1" || v == "true")
