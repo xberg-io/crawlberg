@@ -1186,17 +1186,21 @@ impl CrawlEngine {
                 // ~keep A single page can carry unbounded link fan-out (e.g. a sitemap-like page
                 // ~keep with a million anchors); cap per-page discovery so one page cannot blow
                 // ~keep up frontier memory in a single iteration.
-                const MAX_LINKS_PER_PAGE: usize = 10_000;
-                if scrape.links.len() > MAX_LINKS_PER_PAGE {
+                // ~keep Mirrors the native crawl_loop: `max_links_per_page` is user-settable and
+                // ~keep the constant is only the fallback. Hardcoding it here silently ignored the
+                // ~keep caller's setting on wasm, which native honours.
+                const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
+                let link_cap = self.config.max_links_per_page.unwrap_or(DEFAULT_MAX_LINKS_PER_PAGE);
+                if scrape.links.len() > link_cap {
                     tracing::warn!(
                         target: "crawlberg.frontier",
                         url = %entry.url,
                         link_count = scrape.links.len(),
-                        cap = MAX_LINKS_PER_PAGE,
+                        cap = link_cap,
                         "page link fan-out exceeds cap, truncating discovered links"
                     );
                 }
-                for link in scrape.links.iter().take(MAX_LINKS_PER_PAGE) {
+                for link in scrape.links.iter().take(link_cap) {
                     let is_doc_link = link.link_type == LinkType::Document;
 
                     if link.link_type != LinkType::Internal && !is_doc_link {
