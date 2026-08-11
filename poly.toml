@@ -617,13 +617,16 @@ root = "packages/elixir"
 workspace = true
 files = "packages/elixir/**/*.{ex,exs}"
 
-# ~keep `workspace = true` is deliberately absent: it promotes this into `poly lint .`'s
-# ~keep whole-project phase, which CI runs via a reusable workflow that installs no alef,
-# ~keep so every lint run failed with `alef: not found`. The check still runs in CI, as a
-# ~keep dedicated job in ci-lint.yaml that installs alef first. NOTE alef regenerates this
-# ~keep file and re-adds the flag on every `alef all --clean` — re-remove it after a regen
-# ~keep until alef stops defaulting it on.
+# ~keep `workspace = true` is required, not optional: without it poly appends the matched
+# ~keep filenames as arguments, and `alef snippets check` takes none ("unexpected argument
+# ~keep 'alef.toml' found"). Every other whole-project hook here sets it for the same reason.
+# ~keep The guard exists because `workspace = true` also puts this in `poly lint .`'s
+# ~keep whole-project phase, which CI runs through a reusable workflow that installs no alef
+# ~keep and cannot take an injected step — so it failed every run with `alef: not found`.
+# ~keep Skipping when alef is absent is safe ONLY because ci-lint.yaml runs the same check
+# ~keep in a dedicated job that installs alef first; do not drop that job.
 [hooks.pre-commit.commands.alef-snippets]
-run = "alef snippets check --strict --cache off"
+run = "sh -c 'command -v alef >/dev/null 2>&1 && exec alef snippets check --strict --cache off || echo \"alef not on PATH - snippet check runs in the ci-lint Alef snippets job\"'"
 root = "."
+workspace = true
 files = "{alef.toml,fixtures/**/*.json,docs-site/src/snippets/**}"
