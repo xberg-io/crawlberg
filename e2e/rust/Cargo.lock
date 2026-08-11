@@ -570,13 +570,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.1.4"
+version = "1.2.1"
 dependencies = [
  "ahash",
  "aho-corasick",
  "arc-swap",
  "astral-tl",
  "async-trait",
+ "base64 0.23.1",
  "blake3",
  "chromiumoxide",
  "chrono",
@@ -610,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-e2e-rust"
-version = "1.1.4"
+version = "1.2.1"
 dependencies = [
  "axum",
  "crawlberg",

@@ -178,6 +178,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -291,7 +297,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26ed067eb6c1f660bdb87c05efb964421d2ca262bae0296cdfe38cf0cd949a3e"
 dependencies = [
  "async-tungstenite",
- "base64",
+ "base64 0.22.1",
  "chromiumoxide_cdp",
  "chromiumoxide_types",
  "dunce",
@@ -519,6 +525,7 @@ dependencies = [
  "arc-swap",
  "astral-tl",
  "async-trait",
+ "base64 0.23.1",
  "blake3",
  "chromiumoxide",
  "chrono",
@@ -1021,13 +1028,13 @@ checksum = "46c1ff2d1cbf39efe5af0900ced8a069b5e61557a17544eb0c4a50239937389e"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.9.0"
+version = "3.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72131a643f3b9c379f5080626f1e7774b6abef974424f3f01fd952fcd23b60f3"
+checksum = "e0736be7417aaf65e02124703aa8db88ad42ceff95df99783d0d48bbed4da3a8"
 dependencies = [
  "ahash",
  "astral-tl",
- "base64",
+ "base64 0.23.1",
  "bitflags",
  "html-escape",
  "html5ever",
@@ -1040,6 +1047,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1142,7 +1150,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -2063,7 +2071,7 @@ version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "cookie",
  "cookie_store",
