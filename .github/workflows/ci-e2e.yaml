@@ -370,6 +370,56 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
+      # ~keep This drift check runs on all e2e langs except python and php.
+      # alef's [crates.e2e.format] table (alef.toml) shells out to a real
+      # formatter for only 7 langs: rust, python, go, ruby, php, dart, zig.
+      # The other 9 langs in this matrix (node, java, csharp, elixir, wasm,
+      # brew, c, swift, kotlin_android) have no format entry at all, so
+      # regenerating them needs nothing but alef itself — zero risk of a
+      # missing-toolchain false positive. Of the 7 formatted langs, rust
+      # (rustup default profile ships rustfmt), go (gofmt ships with the Go
+      # toolchain), dart (dart format ships with the Dart SDK), zig (zig fmt
+      # ships with the zig binary) and ruby (bundle exec rubocop — the Setup
+      # Ruby step above runs bundler-cache with working-directory: e2e/ruby,
+      # and rubocop is a Gemfile dependency there) are all reliably
+      # provisioned by the Setup steps earlier in this same job, which is
+      # why this check runs after them. python and php are excluded: alef
+      # calls a bare `ruff` binary directly (not `uv run ruff`) and ruff is
+      # not a project dependency anywhere in this repo, and php's formatter
+      # is packages/php/vendor/bin/php-cs-fixer, which this job's php leg
+      # never installs (only e2e/php's own composer deps get installed, not
+      # packages/php's). Regenerating those two here would produce
+      # unformatted output that diffs against the formatted, committed tree
+      # — a false positive, not real drift, so we exclude them rather than
+      # ship a check that can fail for reasons unrelated to actual staleness.
+      - name: Install alef (pinned)
+        if: matrix.lang != 'python' && matrix.lang != 'php'
+        uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+
+      - name: Check e2e/${{ matrix.lang }} freshness against fixtures/
+        if: matrix.lang != 'python' && matrix.lang != 'php'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # alef's e2e output dir does not always equal the lang name: swift
+          # is disambiguated to e2e/swift_e2e because packages/swift already
+          # exists. Every other lang's dir matches matrix.lang exactly.
+          case "${{ matrix.lang }}" in
+            swift) e2e_dir="e2e/swift_e2e" ;;
+            *) e2e_dir="e2e/${{ matrix.lang }}" ;;
+          esac
+          alef e2e generate --lang "${{ matrix.lang }}"
+          # git diff alone only reports tracked files, so a fixture that adds a
+          # brand-new test file would regenerate as an UNTRACKED file and slip
+          # through. --porcelain -uall reports added, modified and deleted alike.
+          drift="$(git status --porcelain -uall -- "$e2e_dir")"
+          if [ -n "$drift" ]; then
+            echo "$drift" >&2
+            git diff -- "$e2e_dir" >&2 || true
+            echo "::error::${e2e_dir} is out of date with fixtures/. Run 'alef e2e generate --lang ${{ matrix.lang }}' locally (or 'task e2e:generate' to regenerate every language) and commit the result." >&2
+            exit 1
+          fi
+
       - name: Compile Ruby native extension
         if: matrix.lang == 'ruby'
         working-directory: packages/ruby
