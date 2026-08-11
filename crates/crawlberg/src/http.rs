@@ -1,7 +1,7 @@
 //! HTTP fetching with redirect handling, retry logic, and cookie extraction.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
@@ -29,6 +29,36 @@ pub struct BrowserExtras {
     pub network_events: Vec<crate::types::ResponseMeta>,
     /// Cookies present in the browser session after page load.
     pub cookies: Vec<crate::types::CookieInfo>,
+}
+
+/// Process-wide WAF classifier built once from the embedded fingerprint corpus.
+///
+/// ~keep `TomlClassifier::builtin()` re-parses `waf_fingerprints.toml` (via
+/// `include_str!`) and rebuilds the Aho-Corasick matcher set on every call — it was
+/// previously constructed fresh per response on the `http_fetch` hot path (robots.txt,
+/// every asset download, every sitemap fetch, and every page fetch), so this cache
+/// turns a per-response parse+compile into a one-time process-wide cost. `classify`
+/// only needs `&self`, so a shared immutable instance is safe across concurrent fetches.
+static WAF_CLASSIFIER: LazyLock<TomlClassifier> = LazyLock::new(TomlClassifier::builtin);
+
+/// Decode `bytes` as UTF-8, moving the buffer directly into the returned `String`
+/// with no copy when it is already valid UTF-8. Falls back to lossy replacement —
+/// byte-identical to `String::from_utf8_lossy(&bytes).into_owned()` — when it is not.
+///
+/// ~keep `String::from_utf8_lossy(&bytes).into_owned()` always allocates a fresh
+/// buffer and copies into it, even on the (common) valid-UTF-8 path where the bytes
+/// could simply become the `String`'s own buffer. `String::from_utf8` validates and,
+/// on success, moves `bytes` in with no copy; on failure it hands the original bytes
+/// back via `FromUtf8Error::into_bytes`, so the lossy fallback reuses them instead of
+/// cloning. Only call this where the caller does not also need to keep `bytes` as a
+/// separate `Vec<u8>` afterward — callers that also need the raw bytes (e.g. for
+/// `body_bytes`) still need two independently owned buffers and gain nothing from
+/// moving one into the other.
+pub(crate) fn decode_body_lossy(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+    }
 }
 
 /// Truncate `body` to at most `max_size` bytes without splitting a UTF-8 character.
@@ -129,7 +159,7 @@ pub(crate) async fn read_body_bounded(
 /// which has the same unbounded-memory problem `read_body_bounded` fixes).
 pub(crate) async fn read_text_bounded(resp: reqwest::Response, max_size: Option<usize>) -> String {
     match read_body_bounded(resp, max_size).await {
-        Ok((bytes, _)) => String::from_utf8_lossy(&bytes).into_owned(),
+        Ok((bytes, _)) => decode_body_lossy(bytes),
         Err(_) => String::new(),
     }
 }
@@ -256,16 +286,7 @@ pub(crate) async fn http_fetch(
                         let (body_bytes_vec, _) =
                             read_body_bounded(resp, config.max_body_size).await.unwrap_or_default();
                         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
-                        let mut headers_map: std::collections::HashMap<String, Vec<String>> =
-                            std::collections::HashMap::new();
-                        for (name, value) in headers.iter() {
-                            if let Ok(v) = value.to_str() {
-                                headers_map
-                                    .entry(name.as_str().to_lowercase())
-                                    .or_default()
-                                    .push(v.to_string());
-                            }
-                        }
+                        let headers_map = build_headers_map(&headers);
                         return Ok(HttpResponse {
                             status,
                             content_type,
@@ -300,12 +321,18 @@ pub(crate) async fn http_fetch(
             }
         }
 
+        // ~keep Computed lazily and cached below rather than unconditionally up front: most
+        // non-2xx statuses (404, 429, 500, ...) return before ever needing a header map, so
+        // building one here would add an allocation to paths that previously had none.
+        let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
+
         match status {
             401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
             403 => {
                 let body = read_text_bounded(resp, config.max_body_size).await;
-                let partial_response = build_partial_response(status, &body, &headers);
-                let classifier = TomlClassifier::builtin();
+                let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
+                let partial_response = build_partial_response(status, &body, headers_map);
+                let classifier = &WAF_CLASSIFIER;
                 if let Ok(Some(signal)) = classifier.classify(&partial_response) {
                     return Err(CrawlError::WafBlocked {
                         vendor: signal.vendor.clone(),
@@ -336,11 +363,13 @@ pub(crate) async fn http_fetch(
         // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
         // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
         if (200..300).contains(&status) {
-            let headers_only_response = build_partial_response(status, "", &headers);
-            let classifier = TomlClassifier::builtin();
+            let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
+            let headers_only_response = build_partial_response(status, "", headers_map);
+            let classifier = &WAF_CLASSIFIER;
             if let Ok(Some(signal)) = classifier.classify(&headers_only_response) {
                 let body = read_text_bounded(resp, config.max_body_size).await;
-                let partial_response = build_partial_response(status, &body, &headers);
+                let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
+                let partial_response = build_partial_response(status, &body, headers_map);
                 let vendor = classifier
                     .classify(&partial_response)
                     .ok()
@@ -395,8 +424,9 @@ pub(crate) async fn http_fetch(
 
         // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
         if (200..300).contains(&status) {
-            let partial_response = build_partial_response_with_bytes(status, &body_bytes_vec, &body, &headers);
-            let classifier = TomlClassifier::builtin();
+            let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
+            let partial_response = build_partial_response_with_bytes(status, &body_bytes_vec, &body, headers_map);
+            let classifier = &WAF_CLASSIFIER;
             if let Ok(Some(signal)) = classifier.classify(&partial_response) {
                 return Err(CrawlError::WafBlocked {
                     vendor: signal.vendor.clone(),
@@ -405,15 +435,11 @@ pub(crate) async fn http_fetch(
             }
         }
 
-        let mut headers_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-        for (name, value) in headers.iter() {
-            if let Ok(v) = value.to_str() {
-                headers_map
-                    .entry(name.as_str().to_lowercase())
-                    .or_default()
-                    .push(v.to_string());
-            }
-        }
+        // ~keep Reuses the cached header map (built at most once above) instead of walking
+        // `headers` a third time; falls back to a fresh build only for the statuses that
+        // never populated the cache (anything outside 200..300 and not explicitly matched
+        // above, e.g. 206 or an unlisted 4xx/5xx that falls through to `_ => {}`).
+        let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&headers));
 
         return Ok(HttpResponse {
             status,
@@ -732,18 +758,10 @@ pub(crate) fn extract_response_meta_from_hashmap(
     }
 }
 
-/// Build a partial [`HttpResponse`] from reqwest header map + body string.
-///
-/// Used in the early-exit detection paths where we need to pass a response
-/// to [`crate::types::WafClassifier::classify`] before the full
-/// [`HttpResponse`] struct is assembled.
-fn build_partial_response(status: u16, body: &str, headers: &HeaderMap) -> HttpResponse {
-    let body_bytes = body.as_bytes().to_vec();
-    build_partial_response_with_bytes(status, &body_bytes, body, headers)
-}
-
-/// Build a partial [`HttpResponse`] with a pre-computed byte vec.
-fn build_partial_response_with_bytes(status: u16, body_bytes: &[u8], body: &str, headers: &HeaderMap) -> HttpResponse {
+/// Build a `HashMap<String, Vec<String>>` of lowercase header names to values from a
+/// `reqwest::HeaderMap`, dropping values that aren't valid UTF-8 (mirrors the header
+/// filtering `HttpResponse.headers` has always applied on this path).
+fn build_headers_map(headers: &HeaderMap) -> HashMap<String, Vec<String>> {
     let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
     for (name, value) in headers.iter() {
         if let Ok(v) = value.to_str() {
@@ -753,12 +771,37 @@ fn build_partial_response_with_bytes(status: u16, body_bytes: &[u8], body: &str,
                 .push(v.to_string());
         }
     }
+    headers_map
+}
+
+/// Build a partial [`HttpResponse`] from a pre-built header map + body string.
+///
+/// Used in the early-exit detection paths where we need to pass a response
+/// to [`crate::types::WafClassifier::classify`] before the full
+/// [`HttpResponse`] struct is assembled.
+fn build_partial_response(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> HttpResponse {
+    let body_bytes = body.as_bytes().to_vec();
+    build_partial_response_with_bytes(status, &body_bytes, body, headers_map)
+}
+
+/// Build a partial [`HttpResponse`] with a pre-computed byte vec and a pre-built header map.
+///
+/// ~keep Takes an already-built `headers_map` (rather than a `reqwest::HeaderMap` it
+/// rebuilds internally) so callers checking WAF signals at multiple points for the same
+/// response — `http_fetch`'s header-only and body checks — can build the map once and
+/// share it instead of re-walking `HeaderMap` and re-lowercasing every header name per check.
+fn build_partial_response_with_bytes(
+    status: u16,
+    body_bytes: &[u8],
+    body: &str,
+    headers_map: &HashMap<String, Vec<String>>,
+) -> HttpResponse {
     HttpResponse {
         status,
         content_type: String::new(),
         body: body.to_string(),
         body_bytes: body_bytes.to_vec(),
-        headers: headers_map,
+        headers: headers_map.clone(),
         browser_extras: None,
         final_url: String::new(),
         screenshot: None,
@@ -792,7 +835,7 @@ pub(crate) fn detect_waf_vendor(server: &str, body: &str) -> String {
         final_url: String::new(),
         screenshot: None,
     };
-    TomlClassifier::builtin()
+    WAF_CLASSIFIER
         .classify(&response)
         .ok()
         .flatten()
@@ -827,7 +870,7 @@ pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String,
         final_url: String::new(),
         screenshot: None,
     };
-    TomlClassifier::builtin().classify(&response).ok().flatten().is_some()
+    WAF_CLASSIFIER.classify(&response).ok().flatten().is_some()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -880,6 +923,36 @@ mod tests {
             resp.final_url.contains("/page"),
             "final_url must contain the requested path, got: {}",
             resp.final_url
+        );
+    }
+
+    #[test]
+    fn decode_body_lossy_matches_from_utf8_lossy_for_valid_utf8() {
+        let bytes = "héllo wörld".as_bytes().to_vec();
+        let expected = String::from_utf8_lossy(&bytes).into_owned();
+        assert_eq!(
+            decode_body_lossy(bytes.clone()),
+            expected,
+            "the move fast-path must produce the same String as the lossy path for valid UTF-8"
+        );
+    }
+
+    #[test]
+    fn decode_body_lossy_is_byte_identical_to_from_utf8_lossy_for_invalid_utf8() {
+        // ~keep Deliberately invalid UTF-8: a lone continuation byte (0x80) followed by a
+        // truncated 2-byte sequence (0xC3 with no continuation), surrounded by valid ASCII.
+        // Regression target: `decode_body_lossy`'s fallback must replicate
+        // `String::from_utf8_lossy`'s replacement behavior exactly, not just avoid panicking.
+        let bytes: Vec<u8> = vec![b'a', b'b', 0x80, b'c', 0xC3, b'd', b'e'];
+        let expected = String::from_utf8_lossy(&bytes).into_owned();
+        let actual = decode_body_lossy(bytes.clone());
+        assert_eq!(
+            actual, expected,
+            "invalid UTF-8 must decode identically to String::from_utf8_lossy, got {actual:?} vs {expected:?}"
+        );
+        assert!(
+            actual.contains('\u{FFFD}'),
+            "the invalid bytes must be replaced with U+FFFD, got {actual:?}"
         );
     }
 
