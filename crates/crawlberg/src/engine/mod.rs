@@ -264,7 +264,11 @@ impl CrawlEngine {
                 Ok((resp, browser_used)) => {
                     // ~keep Build a minimal HttpResponse here so WAF classification does not widen its trait surface.
                     let waf_classifier = dispatch.and_then(|d| d.waf_classifier.as_ref());
-                    let http_resp_for_hooks = crate::http::HttpResponse {
+                    // ~keep Only materialize this (two full-body clones + a header-map deep copy) when a
+                    // classifier or an antibot strategy is actually configured to consume it; both are
+                    // None under default config, and this arm runs on every successful fetch attempt.
+                    let needs_http_resp_for_hooks = waf_classifier.is_some() || antibot_strategy.is_some();
+                    let http_resp_for_hooks = needs_http_resp_for_hooks.then(|| crate::http::HttpResponse {
                         status: resp.status,
                         content_type: resp.content_type.clone(),
                         body: resp.body.clone(),
@@ -273,21 +277,29 @@ impl CrawlEngine {
                         final_url: String::new(),
                         browser_extras: None,
                         screenshot: None,
-                    };
-                    let waf_signal = waf_classifier.and_then(|c| match c.classify(&http_resp_for_hooks) {
-                        Ok(sig) => sig,
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "crawlberg::waf",
-                                error = %e,
-                                "classify failed"
-                            );
-                            None
-                        }
                     });
+                    let waf_signal = match (waf_classifier, http_resp_for_hooks.as_ref()) {
+                        (Some(c), Some(h)) => match c.classify(h) {
+                            Ok(sig) => sig,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "crawlberg::waf",
+                                    error = %e,
+                                    "classify failed"
+                                );
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
 
                     if let Some(strategy) = &antibot_strategy {
-                        match strategy.post_response(&http_resp_for_hooks, waf_signal.as_ref()).await {
+                        // ~keep `needs_http_resp_for_hooks` is true whenever `antibot_strategy` is Some, so
+                        // `http_resp_for_hooks` was built above.
+                        let http_resp_for_hooks = http_resp_for_hooks
+                            .as_ref()
+                            .expect("http_resp_for_hooks is built when antibot_strategy is Some");
+                        match strategy.post_response(http_resp_for_hooks, waf_signal.as_ref()).await {
                             crate::types::Decision::Accept => {}
                             crate::types::Decision::Retry { backoff } => {
                                 tokio::time::sleep(backoff).await;
@@ -333,8 +345,6 @@ impl CrawlEngine {
                         }
                     }
 
-                    last_ok = Some((resp.clone(), browser_used));
-
                     let density = content_density(&resp.body);
                     last_content_density = density;
 
@@ -364,6 +374,10 @@ impl CrawlEngine {
                         crate::types::RetryDirective::Retry { backoff_ms } => {
                             tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
                             attempt += 1;
+                            // ~keep Moves (not clones) `resp` into `last_ok`: it is only read on the rare
+                            // total_attempts > max_total bail-out, and this loop iteration has no other
+                            // use for `resp` after this point.
+                            last_ok = Some((resp, browser_used));
                             continue;
                         }
                         crate::types::RetryDirective::Escalate { reason } => {
@@ -381,6 +395,7 @@ impl CrawlEngine {
                                 last_escalation_reason = Some(Self::escalation_reason_str(&reason));
                                 current_tier = next;
                                 attempt = 0;
+                                last_ok = Some((resp, browser_used));
                                 continue;
                             }
                             Self::emit_dispatch_span(

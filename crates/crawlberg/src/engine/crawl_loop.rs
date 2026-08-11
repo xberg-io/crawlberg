@@ -661,8 +661,8 @@ impl CrawlEngine {
                         .map_err(|e| (entry.clone(), e))?;
 
                     let status_code = resp.status;
-                    let content_type = resp.content_type.clone();
-                    let headers = resp.headers.clone();
+                    let content_type = resp.content_type;
+                    let headers = resp.headers;
                     let body = resp.body;
                     let body_bytes = resp.body_bytes;
 

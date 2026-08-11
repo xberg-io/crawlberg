@@ -458,6 +458,72 @@ async fn turnstile_challenge_html_triggers_escalation() {
     assert_eq!(provider.calls(), 1, "bypass must be called exactly once");
 }
 
+/// Records whether `post_response` was invoked and whether the `HttpResponse`
+/// it received actually carries the mocked body, so a broken
+/// `needs_http_resp_for_hooks` gate (built only when a WAF classifier OR an
+/// antibot strategy is configured) is caught even when no classifier is wired.
+#[derive(Debug, Default)]
+struct RecordingAntibotStrategy {
+    called: std::sync::atomic::AtomicBool,
+    saw_body: std::sync::Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl crawlberg::AntibotStrategy for RecordingAntibotStrategy {
+    async fn pre_request(&self, _url: &str) -> Result<(), crawlberg::AntibotError> {
+        Ok(())
+    }
+
+    async fn post_response(
+        &self,
+        response: &crawlberg::http::HttpResponse,
+        _waf_signal: Option<&crawlberg::WafSignal>,
+    ) -> crawlberg::Decision {
+        self.called.store(true, Ordering::SeqCst);
+        *self.saw_body.lock().unwrap() = Some(response.body.clone());
+        crawlberg::Decision::Accept
+    }
+}
+
+/// With only an `antibot_strategy` configured (no `waf_classifier`), the
+/// dispatcher must still build `HttpResponse` and invoke `post_response` with
+/// the real fetched body. Regression test for the allocation-gating change in
+/// `fetch_response`: `needs_http_resp_for_hooks` must be true whenever either
+/// hook is configured, not only when a WAF classifier is present.
+#[tokio::test]
+async fn antibot_strategy_receives_response_body_without_waf_classifier() {
+    let mock = MockServer::start().await;
+    let body = "<html><body>plain content, no WAF signature</body></html>";
+    Mock::given(method("GET"))
+        .and(path("/antibot-only"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .mount(&mock)
+        .await;
+
+    let strategy = Arc::new(RecordingAntibotStrategy::default());
+    let config = CrawlConfig {
+        dispatch: Some(DispatchProfile {
+            antibot_strategy: Some(strategy.clone() as _),
+            waf_classifier: None,
+            ..DispatchProfile::default()
+        }),
+        ..CrawlConfig::default()
+    };
+
+    let engine = build_engine(config);
+    engine.scrape(&format!("{}/antibot-only", mock.uri())).await.unwrap();
+
+    assert!(
+        strategy.called.load(Ordering::SeqCst),
+        "post_response must fire when antibot_strategy is configured, even without a waf_classifier"
+    );
+    assert_eq!(
+        strategy.saw_body.lock().unwrap().as_deref(),
+        Some(body),
+        "post_response must receive the real fetched body, not an empty/default HttpResponse"
+    );
+}
+
 /// Wiremock returns an HTML body with meaningful text content.
 /// The retry policy records the `content_density` from `AttemptOutcome` and the
 /// test asserts that it is in the expected range (> 0.2) rather than being the
