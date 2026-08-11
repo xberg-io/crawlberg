@@ -1,6 +1,6 @@
 .{
     .name = .crawlberg,
-    .version = "1.2.0",
+    .version = "1.2.1",
     .fingerprint = 0x1b5a068a0a358622,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

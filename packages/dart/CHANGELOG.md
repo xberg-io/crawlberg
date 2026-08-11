@@ -2,6 +2,6 @@
 
 All notable changes to this package will be documented in this file.
 
-## 1.2.0
+## 1.2.1
 
 - Initial release.

@@ -1,5 +1,5 @@
 name: "crawlberg"
-version: "1.2.0"
+version: "1.2.1"
 description: "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback."
 author: "Kreuzberg, Inc."
 kind: "standalone"

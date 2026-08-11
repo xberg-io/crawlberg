@@ -765,7 +765,7 @@ class ContentConfig {
   final bool removeForms;
 
   /// HTML tag names to strip (render children only, remove the tag wrapper).
-  /// Default: `["noscript"]`.
+  /// Default: `[]`.
   final List<String> stripTags;
 
   /// HTML tag names to preserve as raw HTML in output.
@@ -776,6 +776,12 @@ class ContentConfig {
   /// Unlike `strip_tags` (which removes the wrapper but keeps children),
   /// excluded elements and all descendants are dropped. Supports CSS selectors:
   /// `.class`, `#id`, `[attribute]`, compound selectors.
+  ///
+  /// Default: `["noscript"]`. `<noscript>` fallback content (no-JS notices,
+  /// tracking pixels, GTM iframes) is meant for browsers with JavaScript
+  /// disabled, not for a markdown reader, and `strip_tags` cannot drop it —
+  /// on `preprocessing_preset: "standard"` (crawlberg's only path) it only
+  /// removes the wrapper and still renders the children. ~keep
   ///
   /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
   final List<String> excludeSelectors;

@@ -1,6 +1,6 @@
 {
   "name": "@xberg-io/crawlberg-wasm",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": false,
   "description": "High-performance web crawling engine",
   "license": "MIT",
