@@ -330,6 +330,24 @@ jobs:
         if: matrix.gradle
         uses: xberg-io/actions/setup-gradle@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
+      # gradle: true is exclusive to kotlin_android. No org action wraps
+      # SDK-only setup (setup-android-emulator bundles a full AVD, which
+      # testDebugUnitTest doesn't need), so use the upstream action directly.
+      #
+      # This runner (ubuntu-24.04-arm) is linux-aarch64, and Google ships no
+      # linux-aarch64 build-tools (aapt2 is an x86_64 ELF there). We only
+      # request the compileSdk platform jar (arch-independent) and
+      # deliberately omit build-tools: `gradle testDebugUnitTest --dry-run`
+      # against e2e/kotlin_android (a library module with no src/main/res or
+      # AndroidManifest.xml) resolves to generateDebugRFile /
+      # parseDebugLocalResources, not compileDebugLibraryResources /
+      # processDebugResources — so aapt2 is never invoked for this target.
+      - name: Setup Android SDK
+        if: matrix.gradle
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: "platforms;android-35"
+
       - name: Setup Chrome
         uses: xberg-io/actions/setup-chrome@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
