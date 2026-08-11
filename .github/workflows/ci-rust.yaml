@@ -89,6 +89,28 @@ jobs:
         run: cargo check -p crawlberg --no-default-features
         shell: bash
 
+      # ~keep The clippy step above always runs --all-features, which forces browser
+      # features on and so never compiles the default-feature configuration — the exact
+      # configuration where dead_code went undetected and reached the v1.2.0 publish run.
+      - name: Check default features (catches dead_code the --all-features lint hides)
+        run: cargo check -p crawlberg-jni -p crawlberg --locked
+        shell: bash
+
+      # ~keep wasm32 is never covered by --all-features (browser/native-runtime deps
+      # aren't wasm32-compatible) and CI otherwise never compiles it, which is how an
+      # unused PathBuf import on wasm32 reached the v1.2.0 publish run. Linux-only: the
+      # target and toolchain behave identically across matrix legs, so building it twice
+      # only doubles cost for no extra coverage.
+      - name: Add wasm32 target
+        if: runner.os == 'Linux'
+        run: rustup target add wasm32-unknown-unknown
+        shell: bash
+
+      - name: Check wasm32 target
+        if: runner.os == 'Linux'
+        run: cargo check -p crawlberg --target wasm32-unknown-unknown --locked
+        shell: bash
+
   validate-rust:
     name: Validate Rust
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'

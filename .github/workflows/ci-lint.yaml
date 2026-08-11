@@ -37,3 +37,21 @@ jobs:
       setup-ruby: true
       setup-dart: true
       setup-elixir: true
+
+  # ~keep alef-snippets used to run as a poly `workspace = true` whole-project hook,
+  # but the reusable `validate` job above never installs alef (it's a `uses:` call into
+  # a shared org workflow with no alef input, and no step can be injected into it from
+  # here), so `poly lint .` failed every run with `alef: not found`. Split out as its
+  # own job with a direct alef install instead of changing shared org infra mid-release.
+  alef-snippets:
+    name: Alef snippets
+    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install alef
+        uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+
+      - name: Check snippets
+        run: alef snippets check --strict --cache off

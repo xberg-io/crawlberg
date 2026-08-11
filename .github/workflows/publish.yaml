@@ -2363,9 +2363,20 @@ jobs:
       - publish-rubygems
       - publish-node
       - publish-wasm
+      # ~keep publish-wasm/publish-kotlin-android resolve to `skipped` (not `failure`)
+      # when their build dependency fails, since a failed `needs:` entry makes GHA skip
+      # the dependent job outright without evaluating its own `if:`. That skip is
+      # invisible to `!contains(needs.*.result, 'failure')` below: if every other publish
+      # path had succeeded, a wasm/kotlin-android build failure alone would have let this
+      # job finalize/announce the release as complete while those two registries got
+      # nothing. Listing the build jobs directly surfaces their real failure/success
+      # here; a legitimate skip (release_wasm/release_kotlin_android == false) stays a
+      # harmless `skipped`.
+      - wasm-bindings
       - publish-packagist
       - publish-maven
       - publish-kotlin-android
+      - kotlin-android-natives
       - publish-nuget
       - publish-hex
       - publish-zig
@@ -2409,9 +2420,12 @@ jobs:
       - publish-rubygems
       - publish-node
       - publish-wasm
+      # ~keep see the matching comment on release-finalize's needs: list.
+      - wasm-bindings
       - publish-packagist
       - publish-maven
       - publish-kotlin-android
+      - kotlin-android-natives
       - publish-nuget
       - publish-hex
       - publish-zig
