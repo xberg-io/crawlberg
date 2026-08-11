@@ -617,8 +617,13 @@ root = "packages/elixir"
 workspace = true
 files = "packages/elixir/**/*.{ex,exs}"
 
+# ~keep `workspace = true` is deliberately absent: it promotes this into `poly lint .`'s
+# ~keep whole-project phase, which CI runs via a reusable workflow that installs no alef,
+# ~keep so every lint run failed with `alef: not found`. The check still runs in CI, as a
+# ~keep dedicated job in ci-lint.yaml that installs alef first. NOTE alef regenerates this
+# ~keep file and re-adds the flag on every `alef all --clean` — re-remove it after a regen
+# ~keep until alef stops defaulting it on.
 [hooks.pre-commit.commands.alef-snippets]
 run = "alef snippets check --strict --cache off"
 root = "."
 files = "{alef.toml,fixtures/**/*.json,docs-site/src/snippets/**}"
-workspace = true

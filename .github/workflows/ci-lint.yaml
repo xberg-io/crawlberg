@@ -53,5 +53,26 @@ jobs:
       - name: Install alef
         uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
+      # ~keep dart, elixir and zig are the only three toolchains `alef snippets check`
+      # needs that ubuntu-latest does not preinstall. Without them those snippets report
+      # Unavailable, which --strict counts as a failure — so the job failed while every
+      # snippet it could actually run passed. Installing them keeps --strict meaningful
+      # rather than dropping the flag and silently not checking three languages.
+      - name: Setup Elixir
+        uses: xberg-io/actions/setup-elixir@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        with:
+          elixir-version: "1.17"
+          otp-version: "27"
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.11.6"
+
+      - name: Setup Zig
+        uses: xberg-io/actions/setup-zig@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        with:
+          version: "0.16.0"
+
       - name: Check snippets
         run: alef snippets check --strict --cache off
