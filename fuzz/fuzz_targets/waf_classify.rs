@@ -21,6 +21,7 @@ fuzz_target!(|data: &[u8]| {
         headers: std::collections::HashMap::new(),
         browser_extras: None,
         final_url: String::new(),
+        screenshot: None,
     };
 
     let classifier = TomlClassifier::builtin();
