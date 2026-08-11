@@ -27,6 +27,9 @@
 //! pattern used by the other browser integration tests in this directory (e.g.
 //! `test_browser_native.rs`).
 
+// Feature-gated skip diagnostics; `allow` (not `expect`) so a clippy run with the
+// browser feature disabled — where the eprintln is dead code — doesn't warn.
+#![allow(clippy::print_stderr)]
 #![cfg(feature = "browser")]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,11 +37,28 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, batch_scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, batch_scrape,
     create_engine, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+/// Whether an error message indicates the runner has no usable Chrome, rather
+/// than a genuine pool-lifecycle regression. The first two substrings mirror
+/// the detection used by `test_interact.rs`'s
+/// `chromiumoxide_interact_click_wait_screenshot_and_scrape`: ubuntu-24.04-arm
+/// CI runners ship no Chrome at all, so chromiumoxide reports that as a config
+/// error at build time ("auto detect a chrome executable") rather than the
+/// launch-time failure ("failed to launch browser") seen when a binary exists
+/// but cannot start. This suite drives the browser through an explicit
+/// `BrowserPool` (see `pool_config` below), whose own error wording
+/// ("failed to launch Chrome", `crates/crawlberg/src/browser_pool.rs`) differs
+/// from `browser.rs`'s, so it is matched too.
+fn is_missing_chrome_message(message: &str) -> bool {
+    message.contains("failed to launch browser")
+        || message.contains("failed to launch Chrome")
+        || message.contains("auto detect a chrome executable")
+}
 
 static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 
@@ -92,6 +112,15 @@ async fn pool_page_survives_sequential_fetches_without_being_closed_mid_navigati
     for iteration in 0..6 {
         let url = format!("{}/iter-{iteration}", server.base_url);
         let result = scrape(&engine, &url).await;
+        if let Err(CrawlError::BrowserError(message)) = &result
+            && is_missing_chrome_message(message)
+        {
+            eprintln!(
+                "skipping pool_page_survives_sequential_fetches_without_being_closed_mid_navigation \
+                 because no usable Chrome was found: {message}"
+            );
+            return;
+        }
         assert!(
             result.is_ok(),
             "iteration {iteration}: scrape must succeed, got {:?}",
@@ -126,6 +155,16 @@ async fn pool_bounds_concurrent_navigations_to_max_pages() {
         .map(|index| format!("{}/concurrent-{index}", server.base_url))
         .collect::<Vec<_>>();
     let results = batch_scrape(&engine, urls).await.expect("batch_scrape must run");
+
+    if let Some(message) = results.results.iter().find_map(|entry| entry.error.as_deref())
+        && is_missing_chrome_message(message)
+    {
+        eprintln!(
+            "skipping pool_bounds_concurrent_navigations_to_max_pages because no usable Chrome was found: \
+             {message}"
+        );
+        return;
+    }
 
     assert_eq!(results.total_count, 4, "all four URLs must have been attempted");
     for entry in &results.results {

@@ -1231,6 +1231,15 @@ mod tests {
 
     fn assert_send<T: Send>(_: T) {}
 
+    /// Outer `tokio::time::timeout` margin layered on top of `EXECUTE_JS_TIMEOUT` /
+    /// `EVAL_SCRIPT_TIMEOUT` in the watchdog-recovery tests below. It only bounds how
+    /// long the test itself waits for the watchdog to act — the watchdog's actual
+    /// reclaim deadline is `EXECUTE_JS_TIMEOUT` / `EVAL_SCRIPT_TIMEOUT`, unchanged.
+    /// ~keep Widened from 15s: CI runners are slower than local dev machines and were
+    /// ~keep occasionally exceeding a 15s margin even though the watchdog reclaimed the
+    /// ~keep isolate correctly, producing a false failure rather than a real regression.
+    const WATCHDOG_RECLAIM_OUTER_SAFETY_MARGIN: Duration = Duration::from_secs(45);
+
     #[test]
     fn native_browser_executor_futures_are_send() {
         let executor =
@@ -1358,7 +1367,7 @@ mod tests {
             },
         ];
         let same_job_outcome = tokio::time::timeout(
-            EXECUTE_JS_TIMEOUT + Duration::from_secs(15),
+            EXECUTE_JS_TIMEOUT + WATCHDOG_RECLAIM_OUTER_SAFETY_MARGIN,
             executor.interact_url(&server.base_url, &config, &same_job_actions, None),
         )
         .await
