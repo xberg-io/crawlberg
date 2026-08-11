@@ -17,7 +17,10 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, create_engine, scrape};
+use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, create_engine, scrape};
+
+mod common;
+use common::{announce_chrome_skip, is_missing_chrome_message};
 
 static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 
@@ -92,7 +95,15 @@ async fn scrape_captures_a_real_png_screenshot_when_requested() {
     let base_url = start_server().await;
     let engine = create_engine(Some(chromiumoxide_config(true))).expect("engine must build");
 
-    let result = scrape(&engine, &base_url).await.expect("scrape must succeed");
+    let result = scrape(&engine, &base_url).await;
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip("scrape_captures_a_real_png_screenshot_when_requested", &message);
+            return;
+        }
+        Err(error) => panic!("scrape must succeed: {error:?}"),
+    };
 
     assert!(
         result.html.contains("screenshot-marker"),
@@ -137,7 +148,15 @@ async fn scrape_does_not_capture_a_screenshot_when_not_requested() {
     let base_url = start_server().await;
     let engine = create_engine(Some(chromiumoxide_config(false))).expect("engine must build");
 
-    let result = scrape(&engine, &base_url).await.expect("scrape must succeed");
+    let result = scrape(&engine, &base_url).await;
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip("scrape_does_not_capture_a_screenshot_when_not_requested", &message);
+            return;
+        }
+        Err(error) => panic!("scrape must succeed: {error:?}"),
+    };
 
     assert!(
         result.html.contains("screenshot-marker"),

@@ -1,6 +1,7 @@
-// Feature-gated test diagnostics; `allow` (not `expect`) so a clippy run with the
-// browser features disabled — where the eprintln is cfg'd out — doesn't warn.
-#![allow(clippy::print_stderr)]
+#[cfg(feature = "browser-chromiumoxide")]
+mod common;
+#[cfg(feature = "browser-chromiumoxide")]
+use common::{announce_chrome_skip, is_missing_chrome_message};
 
 #[cfg(feature = "browser-native")]
 use std::sync::OnceLock;
@@ -113,13 +114,8 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
 
     let result = match result {
         Ok(result) => result,
-        // ~keep Both variants mean the same thing: this runner has no usable Chrome.
-        // ubuntu-24.04-arm ships none, and chromiumoxide reports that as a config
-        // error at build time rather than a launch failure.
-        Err(CrawlError::BrowserError(message))
-            if message.contains("failed to launch browser") || message.contains("auto detect a chrome executable") =>
-        {
-            eprintln!("skipping chromiumoxide interact test because no usable Chrome was found: {message}");
+        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip("chromiumoxide_interact_click_wait_screenshot_and_scrape", &message);
             return;
         }
         Err(error) => panic!("interact should succeed: {error:?}"),

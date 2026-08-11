@@ -23,9 +23,14 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, BrowserProfile, CrawlConfig, create_engine, scrape};
+use crawlberg::{
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserProfile, CrawlConfig, CrawlError, create_engine, scrape,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+mod common;
+use common::{announce_chrome_skip, is_missing_chrome_message};
 
 static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 static NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -128,6 +133,12 @@ async fn missing_profile_is_created_and_populated_when_saved() {
     let server = TestServer::start().await;
     let engine = create_engine(Some(config_with_profile(&name, true))).expect("engine must build");
     let result = scrape(&engine, &format!("{}/", server.base_url)).await;
+    if let Err(CrawlError::BrowserError(message)) = &result
+        && is_missing_chrome_message(message)
+    {
+        announce_chrome_skip("missing_profile_is_created_and_populated_when_saved", message);
+        return;
+    }
     assert!(result.is_ok(), "scrape must succeed: {:?}", result.err());
     assert!(result.unwrap().html.contains("profile-wiring-marker"));
 
@@ -168,6 +179,12 @@ async fn unsaved_profile_changes_are_not_written_back() {
     let server = TestServer::start().await;
     let engine = create_engine(Some(config_with_profile(&name, false))).expect("engine must build");
     let result = scrape(&engine, &format!("{}/", server.base_url)).await;
+    if let Err(CrawlError::BrowserError(message)) = &result
+        && is_missing_chrome_message(message)
+    {
+        announce_chrome_skip("unsaved_profile_changes_are_not_written_back", message);
+        return;
+    }
     assert!(result.is_ok(), "scrape must succeed: {:?}", result.err());
     assert!(result.unwrap().html.contains("profile-wiring-marker"));
 

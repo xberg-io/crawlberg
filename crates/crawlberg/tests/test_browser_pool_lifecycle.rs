@@ -27,9 +27,6 @@
 //! pattern used by the other browser integration tests in this directory (e.g.
 //! `test_browser_native.rs`).
 
-// Feature-gated skip diagnostics; `allow` (not `expect`) so a clippy run with the
-// browser feature disabled — where the eprintln is dead code — doesn't warn.
-#![allow(clippy::print_stderr)]
 #![cfg(feature = "browser")]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -43,22 +40,8 @@ use crawlberg::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// Whether an error message indicates the runner has no usable Chrome, rather
-/// than a genuine pool-lifecycle regression. The first two substrings mirror
-/// the detection used by `test_interact.rs`'s
-/// `chromiumoxide_interact_click_wait_screenshot_and_scrape`: ubuntu-24.04-arm
-/// CI runners ship no Chrome at all, so chromiumoxide reports that as a config
-/// error at build time ("auto detect a chrome executable") rather than the
-/// launch-time failure ("failed to launch browser") seen when a binary exists
-/// but cannot start. This suite drives the browser through an explicit
-/// `BrowserPool` (see `pool_config` below), whose own error wording
-/// ("failed to launch Chrome", `crates/crawlberg/src/browser_pool.rs`) differs
-/// from `browser.rs`'s, so it is matched too.
-fn is_missing_chrome_message(message: &str) -> bool {
-    message.contains("failed to launch browser")
-        || message.contains("failed to launch Chrome")
-        || message.contains("auto detect a chrome executable")
-}
+mod common;
+use common::{announce_chrome_skip, is_missing_chrome_message};
 
 static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
 
@@ -115,9 +98,9 @@ async fn pool_page_survives_sequential_fetches_without_being_closed_mid_navigati
         if let Err(CrawlError::BrowserError(message)) = &result
             && is_missing_chrome_message(message)
         {
-            eprintln!(
-                "skipping pool_page_survives_sequential_fetches_without_being_closed_mid_navigation \
-                 because no usable Chrome was found: {message}"
+            announce_chrome_skip(
+                "pool_page_survives_sequential_fetches_without_being_closed_mid_navigation",
+                message,
             );
             return;
         }
@@ -159,10 +142,7 @@ async fn pool_bounds_concurrent_navigations_to_max_pages() {
     if let Some(message) = results.results.iter().find_map(|entry| entry.error.as_deref())
         && is_missing_chrome_message(message)
     {
-        eprintln!(
-            "skipping pool_bounds_concurrent_navigations_to_max_pages because no usable Chrome was found: \
-             {message}"
-        );
+        announce_chrome_skip("pool_bounds_concurrent_navigations_to_max_pages", message);
         return;
     }
 
