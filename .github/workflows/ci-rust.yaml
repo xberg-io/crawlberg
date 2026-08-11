@@ -77,6 +77,16 @@ jobs:
         run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm --all-features -- -D warnings
         shell: bash
 
+      # ~keep macOS runners ship Chrome preinstalled (see actions/runner-images macos
+      # readme), so installing here would only double CI time for no coverage gain.
+      # Linux-only closes the gap where browser-gated tests in crates/crawlberg/tests
+      # (test_browser_pool_lifecycle, test_browser_profile, test_browser_screenshot,
+      # test_interact) previously had no Chrome binary at all and silently skipped via
+      # common::is_missing_chrome_message on every CI run.
+      - name: Setup Chrome
+        if: runner.os == 'Linux'
+        uses: xberg-io/actions/setup-chrome@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+
       - name: Run tests
         run: task rust:test:ci
         shell: bash
