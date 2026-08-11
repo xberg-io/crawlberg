@@ -1,12 +1,13 @@
 //! Rate limiter implementations.
 
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ahash::AHashMap;
 use async_trait::async_trait;
 
 use crate::error::CrawlError;
+use crate::time::Instant;
 use crate::traits::RateLimiter;
 
 /// Maximum backoff duration for 429 responses.

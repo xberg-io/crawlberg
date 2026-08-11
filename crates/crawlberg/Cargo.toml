@@ -110,6 +110,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "signal", "
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+# ~keep std::time::Instant::now() traps at runtime on wasm32-unknown-unknown (no clock
+# ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
+web-time = "1"
 
 [dev-dependencies]
 async-trait = { workspace = true }

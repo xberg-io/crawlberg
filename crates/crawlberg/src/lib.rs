@@ -45,6 +45,7 @@ mod scrape;
 pub mod sink;
 pub mod sitemap;
 pub mod telemetry;
+pub(crate) mod time;
 pub(crate) mod tower;
 pub mod traits;
 mod types;
