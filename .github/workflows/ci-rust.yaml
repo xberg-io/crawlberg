@@ -68,13 +68,27 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
+      # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
+      # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
+      # already trusts for the php e2e job, so this is not a newly-introduced toolchain.
+      - name: Setup PHP
+        uses: xberg-io/actions/setup-php@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        with:
+          php-version: "8.4"
+          tools: composer
+          extensions: "dom, json, libxml, mbstring, tokenizer, xml, xmlwriter, ctype"
+
       # ~keep --all-features must match the test step: both build the `crawlberg` bin
       # into the same target dir and CARGO_BIN_EXE_crawlberg resolves to the fixed
       # target/debug/crawlberg path, so a featureless build here uplifts a binary with
       # no `mcp` subcommand and the stdio MCP test then spawns that one. It also closes
       # a lint gap, since feature-gated code was otherwise never linted.
+      #
+      # ~keep crawlberg-node and crawlberg-wasm are not excluded: napi-build's setup()
+      # only reads cargo-set env vars (no `node` binary needed) and crawlberg-wasm has no
+      # build.rs at all, so both lint cleanly on every runner without extra setup.
       - name: Run clippy
-        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --all-features -- -D warnings
         shell: bash
 
       # ~keep macOS runners ship Chrome preinstalled (see actions/runner-images macos

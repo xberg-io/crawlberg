@@ -167,11 +167,11 @@ tasks:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
       - cargo fmt --all
-      # ~keep php/node/wasm are excluded because their build scripts need toolchains that
-      # are not present everywhere: ext-php-rs shells out to a `php` binary and fails the
-      # whole run without it. Removing these excludes passes locally (where php is
-      # installed) and breaks CI, which installs no PHP.
-      - cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm
+      # ~keep node/wasm need no extra toolchain (napi-build only reads cargo-set env vars;
+      # crawlberg-wasm has no build.rs), so they lint cleanly everywhere and are no longer
+      # excluded. php stays excluded here: ext-php-rs's build script shells out to a `php`
+      # binary, which CI now installs for this job but a local machine may not have.
+      - cargo clippy --workspace --fix --allow-dirty --allow-staged --exclude crawlberg-php
 
   lint:check:
     desc: Check Rust code linting without modifications
@@ -180,7 +180,9 @@ tasks:
     cmds:
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
-      - cargo clippy --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm -- -D warnings -A clippy::inherent_to_string
+      # ~keep php stays excluded: ext-php-rs's build script shells out to a `php` binary,
+      # which is not guaranteed to be present on every local machine (CI installs it).
+      - cargo clippy --workspace --exclude crawlberg-php -- -D warnings -A clippy::inherent_to_string
       - task: fuzz:check
       - task: config:check
 
