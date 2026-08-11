@@ -148,4 +148,35 @@ mod tests {
         let result = convert_to_markdown("", &ContentConfig::default()).await;
         assert!(result.is_some(), "empty html should still return Some");
     }
+
+    #[tokio::test]
+    async fn drops_noscript_fallback_content_by_default() {
+        let html = r#"<html><body>
+            <p>Real content.</p>
+            <noscript>
+                <p>Please enable JavaScript to view this site.</p>
+                <img src="https://track.example.com/pixel.gif" alt="">
+                <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-XXXX"></iframe>
+            </noscript>
+            <p>More content.</p>
+        </body></html>"#;
+        let result = convert_to_markdown(html, &ContentConfig::default()).await;
+        let result = result.expect("should produce markdown");
+        assert_eq!(result.content, "Real content.\n\nMore content.\n");
+    }
+
+    #[tokio::test]
+    async fn preserves_content_when_no_noscript_present() {
+        let html = r#"<html><body>
+            <h1>Hello World</h1>
+            <p>This is a paragraph.</p>
+            <a href="/link">Click here</a>
+        </body></html>"#;
+        let result = convert_to_markdown(html, &ContentConfig::default()).await;
+        let result = result.expect("should produce markdown");
+        assert_eq!(
+            result.content,
+            "# Hello World\n\nThis is a paragraph.\n\n[Click here](/link)\n"
+        );
+    }
 }

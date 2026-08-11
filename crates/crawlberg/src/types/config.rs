@@ -234,7 +234,7 @@ pub struct ContentConfig {
     /// Remove form elements. Default: `true`.
     pub remove_forms: bool,
     /// HTML tag names to strip (render children only, remove the tag wrapper).
-    /// Default: `["noscript"]`.
+    /// Default: `[]`.
     #[serde(default)]
     pub strip_tags: Vec<String>,
     /// HTML tag names to preserve as raw HTML in output.
@@ -245,6 +245,12 @@ pub struct ContentConfig {
     /// Unlike `strip_tags` (which removes the wrapper but keeps children),
     /// excluded elements and all descendants are dropped. Supports CSS selectors:
     /// `.class`, `#id`, `[attribute]`, compound selectors.
+    ///
+    /// Default: `["noscript"]`. `<noscript>` fallback content (no-JS notices,
+    /// tracking pixels, GTM iframes) is meant for browsers with JavaScript
+    /// disabled, not for a markdown reader, and `strip_tags` cannot drop it —
+    /// on `preprocessing_preset: "standard"` (crawlberg's only path) it only
+    /// removes the wrapper and still renders the children. ~keep
     ///
     /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
     #[serde(default)]
@@ -268,9 +274,9 @@ impl Default for ContentConfig {
             preprocessing_preset: "standard".to_owned(),
             remove_navigation: true,
             remove_forms: true,
-            strip_tags: vec!["noscript".to_owned()],
+            strip_tags: Vec::new(),
             preserve_tags: Vec::new(),
-            exclude_selectors: Vec::new(),
+            exclude_selectors: vec!["noscript".to_owned()],
             skip_images: false,
             max_depth: None,
             wrap: false,
