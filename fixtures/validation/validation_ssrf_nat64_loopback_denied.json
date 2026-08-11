@@ -12,6 +12,10 @@
     "ipv6",
     "nat64"
   ],
+  "skip": {
+    "languages": ["elixir"],
+    "reason": "SSRF is enforced per-request during scrape, not at create_engine time, so create_engine returning Ok is correct. The alef Elixir error-assertion template asserts {:error, _} = Crawlberg.create_engine(engine_config) and never calls Crawlberg.scrape, making the generated assertion vacuous for this fixture. Other languages (python, go, ruby, rust, etc.) correctly build the engine then assert the error on the scrape call. Remove this skip once the alef Elixir template is fixed to call scrape before asserting."
+  },
   "input": {
     "url": "http://[64:ff9b::7f00:1]/",
     "config": {

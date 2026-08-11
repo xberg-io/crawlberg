@@ -107,30 +107,6 @@ defmodule E2e.ValidationTest do
     end
   end
 
-  describe "validation_ssrf_ipv4_mapped_ipv6_denied" do
-    test "validation_ssrf_ipv4_mapped_ipv6_denied" do
-      engine_config = "{\"ssrf\":{\"deny_private\":true},\"ssrf_deny_private_explicit\":true}"
-      assert {:error, _} = Crawlberg.create_engine(engine_config)
-      url = (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/validation_ssrf_ipv4_mapped_ipv6_denied"
-    end
-  end
-
-  describe "validation_ssrf_loopback_denied" do
-    test "validation_ssrf_loopback_denied" do
-      engine_config = "{\"ssrf_deny_private_explicit\":true}"
-      assert {:error, _} = Crawlberg.create_engine(engine_config)
-      url = (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/validation_ssrf_loopback_denied"
-    end
-  end
-
-  describe "validation_ssrf_nat64_loopback_denied" do
-    test "validation_ssrf_nat64_loopback_denied" do
-      engine_config = "{\"ssrf\":{\"deny_private\":true},\"ssrf_deny_private_explicit\":true}"
-      assert {:error, _} = Crawlberg.create_engine(engine_config)
-      url = (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/validation_ssrf_nat64_loopback_denied"
-    end
-  end
-
   describe "validation_timeout_zero" do
     test "validation_timeout_zero" do
       engine_config = "{\"request_timeout\":0}"
