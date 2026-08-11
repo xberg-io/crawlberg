@@ -370,34 +370,40 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
-      # ~keep This drift check runs on all e2e langs except python and php.
-      # alef's [crates.e2e.format] table (alef.toml) shells out to a real
-      # formatter for only 7 langs: rust, python, go, ruby, php, dart, zig.
-      # The other 9 langs in this matrix (node, java, csharp, elixir, wasm,
-      # brew, c, swift, kotlin_android) have no format entry at all, so
-      # regenerating them needs nothing but alef itself — zero risk of a
-      # missing-toolchain false positive. Of the 7 formatted langs, rust
-      # (rustup default profile ships rustfmt), go (gofmt ships with the Go
-      # toolchain), dart (dart format ships with the Dart SDK), zig (zig fmt
-      # ships with the zig binary) and ruby (bundle exec rubocop — the Setup
-      # Ruby step above runs bundler-cache with working-directory: e2e/ruby,
-      # and rubocop is a Gemfile dependency there) are all reliably
-      # provisioned by the Setup steps earlier in this same job, which is
-      # why this check runs after them. python and php are excluded: alef
-      # calls a bare `ruff` binary directly (not `uv run ruff`) and ruff is
-      # not a project dependency anywhere in this repo, and php's formatter
-      # is packages/php/vendor/bin/php-cs-fixer, which this job's php leg
-      # never installs (only e2e/php's own composer deps get installed, not
-      # packages/php's). Regenerating those two here would produce
-      # unformatted output that diffs against the formatted, committed tree
-      # — a false positive, not real drift, so we exclude them rather than
-      # ship a check that can fail for reasons unrelated to actual staleness.
+      # ~keep This drift check is only sound when the formatting alef applies
+      # here is byte-identical to the formatting already in the committed tree.
+      # `alef e2e generate` formats in-process as part of generation and it
+      # CANNOT be turned off (the --format flag was removed upstream), so any
+      # formatter skew between this runner and the machine that committed the
+      # tree surfaces as drift that has nothing to do with fixture staleness.
+      # Four langs are excluded for two distinct kinds of skew:
+      #
+      #   python, php — formatter MISSING here. alef calls a bare `ruff`
+      #   binary (not `uv run ruff`) and ruff is not a dependency anywhere in
+      #   this repo; php's is packages/php/vendor/bin/php-cs-fixer, which this
+      #   job never installs. Both would emit UNformatted output against a
+      #   formatted tree.
+      #
+      #   ruby, c — formatter PRESENT here but not equivalent to the one that
+      #   produced the committed tree, which is the inverse failure and was
+      #   observed live on 9aaaf3410. ruby's formatter is `bundle exec
+      #   rubocop`; when bundler is not set up alef degrades to a WARN and
+      #   silently skips formatting, so the committed spec files still use the
+      #   multi-line `expect {` form that rubocop rewrites the moment it does
+      #   run. c is gated on require_tool("clang-format") and formats in both
+      #   places, but clang-format output is version-dependent and the runner's
+      #   version differs from the one used locally.
+      #
+      # Excluding these keeps the check meaningful for the 8 remaining langs
+      # rather than shipping one that fails for toolchain reasons. The real
+      # fix is pinning the formatter toolchain so generation is reproducible;
+      # tracked separately, and the silent WARN-and-skip is an alef defect.
       - name: Install alef (pinned)
-        if: matrix.lang != 'python' && matrix.lang != 'php'
+        if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
         uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
 
       - name: Check e2e/${{ matrix.lang }} freshness against fixtures/
-        if: matrix.lang != 'python' && matrix.lang != 'php'
+        if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
         shell: bash
         run: |
           set -euo pipefail
