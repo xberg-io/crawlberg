@@ -1,6 +1,6 @@
 [package]
 name = "crawlberg-py"
-version = "1.1.4"
+version = "1.2.0"
 edition = "2024"
 license = "MIT"
 description = "High-performance web crawling engine"
@@ -25,7 +25,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module", "pyo3/abi3-py310"]
 
 [dependencies]
-crawlberg = { version = "1.1.4", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
+crawlberg = { version = "1.2.0", path = "../crawlberg", features = ["interact", "browser-chromiumoxide"] }
 futures = "0.3"
 pyo3 = { version = "0.29" }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
@@ -38,7 +38,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # `match s { "x" => return Ok(..), _ => {} }` per enum variant, which collapses into a
 # single_match when the enum has exactly ONE variant (DocumentContentEncoding). alef's dart
 # and swift templates already ship these in their generated `#![allow(..)]` headers; the
-# pyo3 template does not yet. NOTE: alef rewrites this file as a scaffold, so a regen drops
-# this block — re-add it until alef emits the allows itself. ~keep
+# pyo3 template does not yet (accepted into alef 0.60.1). NOTE: alef rewrites this file as a
+# scaffold, so every regen drops this block — re-add it until alef emits the allows. ~keep
 collapsible_match = "allow"
 single_match = "allow"

@@ -1,6 +1,6 @@
 [package]
 name = "crawlberg_nif"
-version = "1.1.4"
+version = "1.2.0"
 edition = "2024"
 license = "MIT"
 description = "High-performance web crawling engine"
@@ -25,7 +25,7 @@ default = []
 alloc-no-stdlib = "=2.0.4"
 alloc-stdlib = "=0.2.2"
 brotli-decompressor = "=5.0.1"
-crawlberg = { version = "1.1.4", path = "../../../../crates/crawlberg", features = ["interact", "browser-chromiumoxide"] }
+crawlberg = { version = "1.2.0", path = "../../../../crates/crawlberg", features = ["interact", "browser-chromiumoxide"] }
 futures-util = "0.3"
 rustler = "0.38"
 serde = { version = "1", features = ["derive"] }

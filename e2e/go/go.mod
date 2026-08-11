@@ -3,7 +3,7 @@ module github.com/xberg-io/crawlberg/packages/go/e2e
 go 1.26
 
 require (
-	github.com/xberg-io/crawlberg/packages/go v1.1.4
+	github.com/xberg-io/crawlberg/packages/go v1.2.0
 	github.com/stretchr/testify v1.11.1
 )
 
