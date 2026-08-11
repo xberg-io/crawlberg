@@ -2,6 +2,29 @@
 title: "Changelog"
 ---
 
+## [1.2.1] - 2026-08-11
+
+**1.2.0 did not publish completely — use this release instead.** Its publish run failed partway: `crawlberg` never
+reached crates.io (it stayed at 1.1.4), and the kotlin-android and WASM packages were never published. Only
+`crawlberg-browser` 1.2.0 made it to crates.io. Everything listed under 1.2.0 below ships here.
+
+### Fixed
+
+- The crate now compiles under default features and for `wasm32-unknown-unknown`. `interact`'s screenshot encoder was
+  compiled unconditionally while all of its call sites are behind a browser feature, and a `PathBuf` import was unused
+  on wasm32. Under `-D warnings` both were hard errors, which broke the kotlin-android native builds, the WASM package
+  build, and `cargo publish`'s tarball verification — the latter is why 1.2.0 never reached crates.io.
+
+### Performance
+
+- Response bodies and headers are no longer cloned for hooks that are not configured. The per-attempt
+  `HttpResponse` handed to the WAF classifier and antibot strategy (two full-body copies plus a header-map deep copy)
+  is now built only when one of them is actually present, and the retry loop's fallback response is moved rather than
+  cloned.
+- The WAF classifier is built once per process instead of once per response. It previously re-parsed the embedded
+  fingerprint corpus and rebuilt its matcher set on every robots.txt, asset, sitemap, and wasm page fetch.
+- `http_fetch` walks the response header map at most once instead of up to three times per response.
+
 ## [1.2.0] - 2026-08-11
 
 ### Added
