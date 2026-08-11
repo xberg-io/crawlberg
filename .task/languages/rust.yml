@@ -181,6 +181,36 @@ tasks:
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
       - cargo clippy --workspace --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm -- -D warnings -A clippy::inherent_to_string
+      - task: fuzz:check
+      - task: config:check
+
+  fuzz:check:
+    desc: Type-check the fuzz targets (separate workspace, not covered by --workspace)
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+    cmds:
+      # ~keep fuzz/ has its own Cargo.toml and is NOT a workspace member, so
+      # `cargo clippy --workspace --all-targets` never compiles it. A field added to
+      # HttpResponse broke the fuzz targets and stayed invisible until ci-fuzz went red.
+      - cargo check --manifest-path fuzz/Cargo.toml --bins
+
+  config:check:
+    desc: Compile the configurations CI's --all-features lint hides
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+      # ~keep Without this the check is inert: both failures below were plain warnings
+      # locally and only became errors in CI, where setup-rust injects -D warnings.
+      RUSTFLAGS: "-D warnings"
+    cmds:
+      # ~keep --all-features always enables the browser features, so the default-feature
+      # build is never linted. That is how dead code reached the v1.2.0 publish run and
+      # broke kotlin-android, WASM and crates.io at once — `cargo publish` verifies the
+      # package tarball by compiling it with default features too.
+      - cargo check -p crawlberg-jni -p crawlberg
+      # ~keep wasm32 is likewise never built by --all-features; an unused import that is
+      # only unused on wasm32 blocked the WASM package build of v1.2.0.
+      - rustup target add wasm32-unknown-unknown
+      - cargo check -p crawlberg --target wasm32-unknown-unknown
 
   format:
     desc: Format Rust code with modifications (cargo fmt)
