@@ -6,7 +6,9 @@
 //! cannot diverge.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;

@@ -19,6 +19,7 @@ pub use actions::{
 };
 pub use validation::validate_actions;
 
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use base64::Engine as _;
 
 use crate::engine::CrawlEngine;
@@ -29,6 +30,7 @@ use crate::types::{BrowserBackend, InteractionResult};
 ///
 /// Shared by both interact backends so a screenshot captured via chromiumoxide
 /// or the native renderer reaches bindings the same way scrape/crawl results do.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 pub(crate) fn encode_screenshot_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
