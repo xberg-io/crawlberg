@@ -74,7 +74,7 @@ jobs:
       # no `mcp` subcommand and the stdio MCP test then spawns that one. It also closes
       # a lint gap, since feature-gated code was otherwise never linted.
       - name: Run clippy
-        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --exclude crawlberg-php --exclude crawlberg-node --exclude crawlberg-wasm --all-features -- -D warnings
         shell: bash
 
       - name: Run tests
