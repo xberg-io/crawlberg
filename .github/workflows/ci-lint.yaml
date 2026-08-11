@@ -64,10 +64,15 @@ jobs:
           elixir-version: "1.17"
           otp-version: "27"
 
+      # ~keep Dart 3.11.6 hits a dart-lang/sdk analysis-server bug where `dart analyze`
+      # crashes on shutdown with "No state location, so plugin could not be copied"
+      # (https://github.com/dart-lang/sdk/issues/62420), failing every snippet check
+      # even though the snippet itself is valid. Fixed upstream in commit 3ece23ddc,
+      # first in a stable release with 3.12.0. Pin to 3.12.2 to pick up the fix.
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:
-          sdk: "3.11.6"
+          sdk: "3.12.2"
 
       - name: Setup Zig
         uses: xberg-io/actions/setup-zig@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
