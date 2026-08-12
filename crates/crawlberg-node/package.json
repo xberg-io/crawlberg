@@ -16,11 +16,7 @@
       "default": "./index.js"
     }
   },
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "*.node"
-  ],
+  "files": ["index.js", "index.d.ts", "*.node"],
   "optionalDependencies": {
     "@xberg-io/crawlberg-linux-x64-gnu": "1.2.1",
     "@xberg-io/crawlberg-linux-arm64-gnu": "1.2.1",

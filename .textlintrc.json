@@ -2,10 +2,7 @@
   "filters": {
     "comments": true,
     "node-types": {
-      "nodeTypes": [
-        "CodeBlock",
-        "Code"
-      ]
+      "nodeTypes": ["CodeBlock", "Code"]
     }
   },
   "rules": {
@@ -18,11 +15,7 @@
     },
     "terminology": {
       "defaultTerms": false,
-      "terms": [
-        "Kreuzberg",
-        "Xberg",
-        "Zensical"
-      ]
+      "terms": ["Kreuzberg", "Xberg", "Zensical"]
     },
     "no-zero-width-spaces": true,
     "@textlint-rule/no-invalid-control-character": true,

@@ -7,15 +7,9 @@
     "url": "git+https://github.com/xberg-io/crawlberg.git"
   },
   "main": "crawlberg-node.win32-arm64-msvc.node",
-  "files": [
-    "crawlberg-node.win32-arm64-msvc.node"
-  ],
-  "os": [
-    "win32"
-  ],
-  "cpu": [
-    "arm64"
-  ],
+  "files": ["crawlberg-node.win32-arm64-msvc.node"],
+  "os": ["win32"],
+  "cpu": ["arm64"],
   "engines": {
     "node": ">= 22"
   },

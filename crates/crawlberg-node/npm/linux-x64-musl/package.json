@@ -7,18 +7,10 @@
     "url": "git+https://github.com/xberg-io/crawlberg.git"
   },
   "main": "crawlberg-node.linux-x64-musl.node",
-  "files": [
-    "crawlberg-node.linux-x64-musl.node"
-  ],
-  "os": [
-    "linux"
-  ],
-  "cpu": [
-    "x64"
-  ],
-  "libc": [
-    "musl"
-  ],
+  "files": ["crawlberg-node.linux-x64-musl.node"],
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["musl"],
   "engines": {
     "node": ">= 22"
   },
