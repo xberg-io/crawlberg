@@ -119,10 +119,14 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
         let mut matches_wildcard = false;
 
         for agent in agents {
+            // ~keep RFC 9309 §2.2.1 matches in one direction only: the group's product token
+            // ~keep must prefix our user-agent (so `User-agent: crawlberg` matches the default
+            // ~keep `crawlberg/1.2.1`). Also accepting the reverse let UA `crawlberg` claim a
+            // ~keep group written for a different, more specific bot such as `crawlberg-news`,
+            // ~keep silently substituting that bot's rules for the `*` block the site meant for us.
             if agent == "*" {
                 matches_wildcard = true;
-            } else if ua_lower != "*" && (ua_lower.starts_with(agent.as_str()) || agent.starts_with(ua_lower.as_str()))
-            {
+            } else if ua_lower != "*" && ua_lower.starts_with(agent.as_str()) {
                 matches_specific = true;
             }
         }
@@ -336,6 +340,48 @@ mod tests {
         assert!(
             rules.is_wildcard_block,
             "falling back to `User-agent: *` must set is_wildcard_block"
+        );
+    }
+
+    #[test]
+    fn a_group_token_longer_than_our_user_agent_does_not_match() {
+        // ~keep Regression: matching in both directions let UA `crawlberg` adopt the group a
+        // site wrote for the unrelated `crawlberg-news` bot, escaping the `*` rules meant for us.
+        let body = "User-agent: *\nDisallow: /private\n\nUser-agent: crawlberg-news\nAllow: /\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/private".to_string()],
+            "`crawlberg-news` is a different product token, so the wildcard block must apply, \
+             got disallow: {:?}",
+            rules.disallow
+        );
+        assert!(
+            rules.is_wildcard_block,
+            "no specific group matches `crawlberg`, so the wildcard block must be flagged"
+        );
+        assert!(
+            !is_path_allowed("/private", &rules),
+            "/private must stay disallowed by the wildcard block"
+        );
+    }
+
+    #[test]
+    fn a_group_token_that_prefixes_our_versioned_user_agent_matches() {
+        let body = "User-agent: *\nDisallow: /private\n\nUser-agent: crawlberg\nDisallow: /only-us\n";
+        let rules = parse_robots_txt(body, "crawlberg/1.2.1");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/only-us".to_string()],
+            "`crawlberg` prefixes the versioned UA and must select the specific block, \
+             got disallow: {:?}",
+            rules.disallow
+        );
+        assert!(
+            !rules.is_wildcard_block,
+            "a specific match must not be flagged as using the wildcard block"
         );
     }
 
