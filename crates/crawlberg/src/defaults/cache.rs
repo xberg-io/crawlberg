@@ -155,14 +155,22 @@ impl CrawlCache for DiskCache {
         let ttl_secs = self.ttl_secs;
 
         tokio::task::spawn_blocking(move || {
-            if !path.exists() {
-                return Ok(None);
-            }
-            let data =
-                std::fs::read_to_string(&path).map_err(|e| CrawlError::Other(format!("cache read error: {e}")))?;
+            // ~keep No `exists()` pre-check: a concurrent eviction or TTL sweep unlinking the
+            // ~keep entry between the two syscalls is an ordinary miss, and the pre-check turned
+            // ~keep that race into a propagated error.
+            let data = match std::fs::read_to_string(&path) {
+                Ok(data) => data,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(CrawlError::Other(format!("cache read error: {e}"))),
+            };
             let page: CachedPage = match serde_json::from_str(&data) {
                 Ok(p) => p,
-                Err(_) => {
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %error,
+                        "discarding unparseable disk cache entry"
+                    );
                     let _ = std::fs::remove_file(&path);
                     return Ok(None);
                 }
@@ -182,7 +190,10 @@ impl CrawlCache for DiskCache {
             Ok(Some(page))
         })
         .await
-        .unwrap_or(Ok(None))
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "disk cache read task failed; treating as a miss");
+            Ok(None)
+        })
     }
 
     async fn set(&self, key: &str, page: &CachedPage) -> Result<(), CrawlError> {
@@ -204,12 +215,22 @@ impl CrawlCache for DiskCache {
 
         tokio::task::spawn_blocking(move || {
             if max_entries > 0 {
+                // ~keep A failed eviction scan must not skip the write: returning Ok(()) here
+                // ~keep reported a successful cache write to every caller while storing nothing,
+                // ~keep permanently and silently, for as long as the directory stayed unreadable.
                 let entries: Vec<_> = match std::fs::read_dir(&cache_dir) {
                     Ok(dir) => dir
                         .filter_map(|e| e.ok())
                         .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
                         .collect(),
-                    Err(_) => return Ok(()),
+                    Err(error) => {
+                        tracing::warn!(
+                            cache_dir = %cache_dir.display(),
+                            %error,
+                            "cache eviction scan failed; writing entry without evicting"
+                        );
+                        Vec::new()
+                    }
                 };
 
                 if entries.len() >= max_entries {
@@ -232,7 +253,7 @@ impl CrawlCache for DiskCache {
             write_cache_entry(&path, &data)
         })
         .await
-        .unwrap_or(Ok(()))
+        .unwrap_or_else(|error| Err(CrawlError::Other(format!("cache write task failed: {error}"))))
     }
 
     async fn has(&self, key: &str) -> Result<bool, CrawlError> {
