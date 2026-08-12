@@ -2,35 +2,31 @@
 
 globalThis.__crawlberg_errors = [];
 
-globalThis.addEventListener = globalThis.addEventListener || function() {};
-globalThis.onunhandledrejection = function(e) {
-  if (e?.preventDefault)
-    e.preventDefault();
+globalThis.addEventListener = globalThis.addEventListener || function () {};
+globalThis.onunhandledrejection = function (e) {
+  if (e?.preventDefault) e.preventDefault();
 };
 
-globalThis.onerror = function(msg, src, line, col, error) {
+globalThis.onerror = function (msg, src, line, col, error) {
   globalThis.__crawlberg_errors.push({
-    msg : String(msg),
-    src : String(src || ""),
+    msg: String(msg),
+    src: String(src || ""),
     line,
-    error : String(error || ""),
+    error: String(error || ""),
   });
 };
 globalThis.__windowListeners = {};
-globalThis.addEventListener = function(type, fn) {
-  if (!globalThis.__windowListeners[type])
-    globalThis.__windowListeners[type] = [];
+globalThis.addEventListener = function (type, fn) {
+  if (!globalThis.__windowListeners[type]) globalThis.__windowListeners[type] = [];
   globalThis.__windowListeners[type].push(fn);
 };
-globalThis.removeEventListener = function(type, fn) {
+globalThis.removeEventListener = function (type, fn) {
   if (globalThis.__windowListeners[type]) {
-    globalThis.__windowListeners[type] =
-        globalThis.__windowListeners[type].filter((h) => h !== fn);
+    globalThis.__windowListeners[type] = globalThis.__windowListeners[type].filter((h) => h !== fn);
   }
 };
-globalThis.dispatchEvent = function(event) {
-  if (!event)
-    return true;
+globalThis.dispatchEvent = function (event) {
+  if (!event) return true;
   const handlers = globalThis.__windowListeners[event.type] || [];
   for (const h of handlers) {
     try {
@@ -42,47 +38,41 @@ globalThis.dispatchEvent = function(event) {
   return !event.defaultPrevented;
 };
 
-const _dom = (cmd, a1, a2) =>
-    Deno.core.ops.op_dom(cmd, String(a1 ?? ""), String(a2 ?? ""));
+const _dom = (cmd, a1, a2) => Deno.core.ops.op_dom(cmd, String(a1 ?? ""), String(a2 ?? ""));
 
 const _nativeFns = new Set();
 const _origToString = Function.prototype.toString;
-Function.prototype.toString = function() {
+Function.prototype.toString = function () {
   if (_nativeFns.has(this)) {
     return `function ${this.name || ""}() { [native code] }`;
   }
   return _origToString.call(this);
 };
 function _markNative(fn) {
-  if (typeof fn === "function")
-    _nativeFns.add(fn);
+  if (typeof fn === "function") _nativeFns.add(fn);
   return fn;
 }
 _nativeFns.add(Function.prototype.toString);
 
-[Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError]
-    .forEach((E) => {
-      try {
-        Object.defineProperty(E.prototype, "name", {
-          value : E.name,
-          writable : true,
-          enumerable : false,
-          configurable : false,
-        });
-      } catch (e) {
-      }
+[Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError].forEach((E) => {
+  try {
+    Object.defineProperty(E.prototype, "name", {
+      value: E.name,
+      writable: true,
+      enumerable: false,
+      configurable: false,
     });
+  } catch (e) {}
+});
 
 const _stackCache = new WeakMap();
-const _origStackDesc =
-    Object.getOwnPropertyDescriptor(Error.prototype, "stack");
+const _origStackDesc = Object.getOwnPropertyDescriptor(Error.prototype, "stack");
 if (_origStackDesc && _origStackDesc.get) {
   Object.defineProperty(Error.prototype, "stack", {
-    configurable : false,
-    enumerable : false,
-    get : function() {
-      if (!_stackCache.has(this))
-        _stackCache.set(this, _origStackDesc.get.call(this));
+    configurable: false,
+    enumerable: false,
+    get: function () {
+      if (!_stackCache.has(this)) _stackCache.set(this, _origStackDesc.get.call(this));
       return _stackCache.get(this);
     },
   });
@@ -101,8 +91,7 @@ function _fpNoise(x, y, channel) {
 
 var _fpCache = null;
 function _getFp() {
-  if (_fpCache)
-    return _fpCache;
+  if (_fpCache) return _fpCache;
   const gpuPool = [
     "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
     "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 SUPER Direct3D11 vs_5_0 ps_5_0, D3D11)",
@@ -133,37 +122,37 @@ function _getFp() {
   ];
   const idx = Math.floor(_fpRand(42) * gpuPool.length);
   const screenPool = [
-    [ 1920, 1080 ],
-    [ 2560, 1440 ],
-    [ 1366, 768 ],
-    [ 1536, 864 ],
-    [ 1440, 900 ],
-    [ 1680, 1050 ],
-    [ 1280, 720 ],
-    [ 3840, 2160 ],
+    [1920, 1080],
+    [2560, 1440],
+    [1366, 768],
+    [1536, 864],
+    [1440, 900],
+    [1680, 1050],
+    [1280, 720],
+    [3840, 2160],
   ];
-  const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let cfp = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
-  for (let i = 0; i < 40; i++)
-    cfp += chars[Math.floor(_fpRand(500 + i) * 64)];
+  for (let i = 0; i < 40; i++) cfp += chars[Math.floor(_fpRand(500 + i) * 64)];
   cfp += "==";
   _fpCache = {
-    gpu : gpuPool[idx],
-    gpuVendor : gpuVendorPool[idx],
-    audioBaseLatency : 0.002 + _fpRand(100) * 0.008,
-    audioSampleRate : [ 44100, 48000 ][Math.floor(_fpRand(101) * 2)],
-    compThreshold : -24 + (_fpRand(102) - 0.5) * 4,
-    compKnee : 30 + (_fpRand(103) - 0.5) * 4,
-    compRatio : 12 + (_fpRand(104) - 0.5) * 4,
-    batteryLevel : 0.5 + _fpRand(200) * 0.5,
-    batteryCharging : _fpRand(201) > 0.3,
-    screen : screenPool[Math.floor(_fpRand(300) * screenPool.length)],
-    canvasFingerprint : cfp,
+    gpu: gpuPool[idx],
+    gpuVendor: gpuVendorPool[idx],
+    audioBaseLatency: 0.002 + _fpRand(100) * 0.008,
+    audioSampleRate: [44100, 48000][Math.floor(_fpRand(101) * 2)],
+    compThreshold: -24 + (_fpRand(102) - 0.5) * 4,
+    compKnee: 30 + (_fpRand(103) - 0.5) * 4,
+    compRatio: 12 + (_fpRand(104) - 0.5) * 4,
+    batteryLevel: 0.5 + _fpRand(200) * 0.5,
+    batteryCharging: _fpRand(201) > 0.3,
+    screen: screenPool[Math.floor(_fpRand(300) * screenPool.length)],
+    canvasFingerprint: cfp,
   };
   return _fpCache;
 }
-function _fp(key) { return _getFp()[key]; }
+function _fp(key) {
+  return _getFp()[key];
+}
 globalThis._eventRegistry = globalThis._eventRegistry || {};
 globalThis._formValues = globalThis._formValues || {};
 globalThis._formChecked = globalThis._formChecked || {};
@@ -180,53 +169,48 @@ const _domParse = (cmd, a1, a2) => {
 const _consoleFn = (level, args) => {
   try {
     Deno.core.ops.op_console_msg(
-        level,
-        args.map((a) => {
-              if (a === null)
-                return "null";
-              if (a === undefined)
-                return "undefined";
-              if (a instanceof Error)
-                return a.stack || a.message || String(a);
-              if (typeof a === "object") {
-                try {
-                  const s = JSON.stringify(a);
-                  return s === "{}" && a.message ? a.message : s;
-                } catch {
-                  return String(a);
-                }
-              }
+      level,
+      args
+        .map((a) => {
+          if (a === null) return "null";
+          if (a === undefined) return "undefined";
+          if (a instanceof Error) return a.stack || a.message || String(a);
+          if (typeof a === "object") {
+            try {
+              const s = JSON.stringify(a);
+              return s === "{}" && a.message ? a.message : s;
+            } catch {
               return String(a);
-            })
-            .join(" "),
+            }
+          }
+          return String(a);
+        })
+        .join(" "),
     );
-  } catch {
-  }
+  } catch {}
 };
 
 globalThis.console = {
-  log : (...a) => _consoleFn("log", a),
-  warn : (...a) => _consoleFn("warn", a),
-  error : (...a) => _consoleFn("error", a),
-  info : (...a) => _consoleFn("log", a),
-  debug : () => {},
-  dir : () => {},
-  trace : () => {},
-  table : () => {},
-  group : () => {},
-  groupEnd : () => {},
-  groupCollapsed : () => {},
-  time : () => {},
-  timeEnd : () => {},
-  timeLog : () => {},
-  count : () => {},
-  countReset : () => {},
-  clear : () => {},
-  assert:
-      (c, ...a) => {
-        if (!c)
-          _consoleFn("error", [ "Assertion failed:", ...a ]);
-      },
+  log: (...a) => _consoleFn("log", a),
+  warn: (...a) => _consoleFn("warn", a),
+  error: (...a) => _consoleFn("error", a),
+  info: (...a) => _consoleFn("log", a),
+  debug: () => {},
+  dir: () => {},
+  trace: () => {},
+  table: () => {},
+  group: () => {},
+  groupEnd: () => {},
+  groupCollapsed: () => {},
+  time: () => {},
+  timeEnd: () => {},
+  timeLog: () => {},
+  count: () => {},
+  countReset: () => {},
+  clear: () => {},
+  assert: (c, ...a) => {
+    if (!c) _consoleFn("error", ["Assertion failed:", ...a]);
+  },
 };
 
 let _tid = 0;
@@ -234,10 +218,9 @@ const _pendingTimers = new Map();
 const _clearedTimers = new Set();
 
 globalThis.setTimeout = (fn, delay = 0, ...args) => {
-  if (typeof fn !== "function")
-    return ++_tid;
+  if (typeof fn !== "function") return ++_tid;
   const id = ++_tid;
-  _pendingTimers.set(id, {fn, args, delay});
+  _pendingTimers.set(id, { fn, args, delay });
   Promise.resolve().then(() => {
     if (!_clearedTimers.has(id) && _pendingTimers.has(id)) {
       _pendingTimers.delete(id);
@@ -255,40 +238,38 @@ globalThis.clearTimeout = (id) => {
   _clearedTimers.add(id);
   _pendingTimers.delete(id);
 };
-globalThis.setInterval =
-    (fn, delay, ...args) => { return setTimeout(fn, delay, ...args); };
+globalThis.setInterval = (fn, delay, ...args) => {
+  return setTimeout(fn, delay, ...args);
+};
 globalThis.clearInterval = globalThis.clearTimeout;
 globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
 globalThis.cancelAnimationFrame = globalThis.clearTimeout;
-globalThis.queueMicrotask =
-    globalThis.queueMicrotask || ((fn) => Promise.resolve().then(fn));
+globalThis.queueMicrotask = globalThis.queueMicrotask || ((fn) => Promise.resolve().then(fn));
 
 class MessageChannel {
   constructor() {
     this.port1 = {
-      onmessage : null,
-      postMessage : () => {},
+      onmessage: null,
+      postMessage: () => {},
       close() {},
       addEventListener() {},
       removeEventListener() {},
     };
     this.port2 = {
-      onmessage : null,
-      postMessage : () => {},
+      onmessage: null,
+      postMessage: () => {},
       close() {},
       addEventListener() {},
       removeEventListener() {},
     };
     this.port1.postMessage = (data) => {
       Promise.resolve().then(() => {
-        if (this.port2.onmessage)
-          this.port2.onmessage({data});
+        if (this.port2.onmessage) this.port2.onmessage({ data });
       });
     };
     this.port2.postMessage = (data) => {
       Promise.resolve().then(() => {
-        if (this.port1.onmessage)
-          this.port1.onmessage({data});
+        if (this.port1.onmessage) this.port1.onmessage({ data });
       });
     };
   }
@@ -303,49 +284,57 @@ globalThis.MessagePort = class MessagePort {
 };
 
 class CSSStyleDeclaration {
-  constructor() { this._props = {}; }
-  setProperty(name, value) { this._props[name] = String(value); }
+  constructor() {
+    this._props = {};
+  }
+  setProperty(name, value) {
+    this._props[name] = String(value);
+  }
   removeProperty(name) {
     const old = this._props[name];
     delete this._props[name];
     return old || "";
   }
-  getPropertyValue(name) { return this._props[name] || ""; }
+  getPropertyValue(name) {
+    return this._props[name] || "";
+  }
   get cssText() {
     return Object.entries(this._props)
-        .map(([ k, v ]) => `${k}: ${v}`)
-        .join("; ");
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("; ");
   }
   set cssText(v) {
     this._props = {};
     if (v)
       v.split(";").forEach((p) => {
         const [k, ...rest] = p.split(":");
-        if (k && rest.length)
-          this._props[k.trim()] = rest.join(":").trim();
+        if (k && rest.length) this._props[k.trim()] = rest.join(":").trim();
       });
   }
-  get length() { return Object.keys(this._props).length; }
-  item(i) { return Object.keys(this._props)[i] || ""; }
+  get length() {
+    return Object.keys(this._props).length;
+  }
+  item(i) {
+    return Object.keys(this._props)[i] || "";
+  }
 }
 
-const _styleProxy = (decl) => new Proxy(decl, {
-  get(t, p) {
-    if (typeof p === "symbol" || p in t)
-      return t[p];
-    if (typeof p === "string")
-      return t._props[p] || "";
-    return undefined;
-  },
-  set(t, p, v) {
-    if (typeof p === "string") {
-      t._props[p] = String(v);
+const _styleProxy = (decl) =>
+  new Proxy(decl, {
+    get(t, p) {
+      if (typeof p === "symbol" || p in t) return t[p];
+      if (typeof p === "string") return t._props[p] || "";
+      return undefined;
+    },
+    set(t, p, v) {
+      if (typeof p === "string") {
+        t._props[p] = String(v);
+        return true;
+      }
+      t[p] = v;
       return true;
-    }
-    t[p] = v;
-    return true;
-  },
-});
+    },
+  });
 
 class Node {
   static ELEMENT_NODE = 1;
@@ -354,15 +343,24 @@ class Node {
   static DOCUMENT_NODE = 9;
   static DOCUMENT_FRAGMENT_NODE = 11;
 
-  constructor(nid) { this._nid = nid; }
-  get nodeType() { return +_dom("node_type", this._nid); }
-  get nodeName() { return _domParse("node_name", this._nid) || ""; }
-  get ownerDocument() { return globalThis.document; }
-  get textContent() { return _domParse("text_content", this._nid) ?? ""; }
+  constructor(nid) {
+    this._nid = nid;
+  }
+  get nodeType() {
+    return +_dom("node_type", this._nid);
+  }
+  get nodeName() {
+    return _domParse("node_name", this._nid) || "";
+  }
+  get ownerDocument() {
+    return globalThis.document;
+  }
+  get textContent() {
+    return _domParse("text_content", this._nid) ?? "";
+  }
   set textContent(v) {
     const children = _domParse("child_nodes", this._nid) || [];
-    for (const c of children)
-      _dom("remove_child", c);
+    for (const c of children) _dom("remove_child", c);
     if (v != null && v !== "") {
       const tn = +_dom("create_text_node", String(v));
       _dom("append_child", this._nid, tn);
@@ -370,16 +368,16 @@ class Node {
   }
   get nodeValue() {
     const t = this.nodeType;
-    if (t === 3 || t === 8)
-      return _domParse("text_content", this._nid) ?? "";
+    if (t === 3 || t === 8) return _domParse("text_content", this._nid) ?? "";
     return null;
   }
   set nodeValue(v) {
     const t = this.nodeType;
-    if (t === 3 || t === 8)
-      _dom("set_text_content", this._nid, String(v ?? ""));
+    if (t === 3 || t === 8) _dom("set_text_content", this._nid, String(v ?? ""));
   }
-  get parentNode() { return _wrap(+_dom("parent_node", this._nid)); }
+  get parentNode() {
+    return _wrap(+_dom("parent_node", this._nid));
+  }
   get parentElement() {
     const p = this.parentNode;
     return p && p.nodeType === 1 ? p : null;
@@ -390,30 +388,33 @@ class Node {
     list.item = (i) => list[i] || null;
     return list;
   }
-  get firstChild() { return _wrap(+_dom("first_child", this._nid)); }
-  get lastChild() { return _wrap(+_dom("last_child", this._nid)); }
-  get nextSibling() { return _wrap(+_dom("next_sibling", this._nid)); }
-  get previousSibling() { return _wrap(+_dom("prev_sibling", this._nid)); }
+  get firstChild() {
+    return _wrap(+_dom("first_child", this._nid));
+  }
+  get lastChild() {
+    return _wrap(+_dom("last_child", this._nid));
+  }
+  get nextSibling() {
+    return _wrap(+_dom("next_sibling", this._nid));
+  }
+  get previousSibling() {
+    return _wrap(+_dom("prev_sibling", this._nid));
+  }
   appendChild(c) {
-    if (!c)
-      return c;
+    if (!c) return c;
     _dom("append_child", this._nid, c._nid);
-    if (globalThis.__mutationObservers?.length)
-      globalThis.__notifyMutation("childList", this._nid, [ c._nid ], []);
+    if (globalThis.__mutationObservers?.length) globalThis.__notifyMutation("childList", this._nid, [c._nid], []);
     if (c instanceof Element && c.tagName === "SCRIPT") {
       const scriptType = c.getAttribute("type") || "";
-      if (scriptType && scriptType !== "text/javascript" &&
-          scriptType !== "application/javascript") {
+      if (scriptType && scriptType !== "text/javascript" && scriptType !== "application/javascript") {
         return c;
       }
       const src = c.getAttribute("src");
       if (src) {
-        const fullUrl =
-            src.startsWith("http")
-                ? src
-                : new URL(src, globalThis.location?.href || "http://localhost/")
-                      .href;
-        const pageOrigin = (function() {
+        const fullUrl = src.startsWith("http")
+          ? src
+          : new URL(src, globalThis.location?.href || "http://localhost/").href;
+        const pageOrigin = (function () {
           try {
             return new URL(globalThis.location?.href || "about:blank").origin;
           } catch (e) {
@@ -422,33 +423,28 @@ class Node {
         })();
         (async () => {
           try {
-            const raw = await Deno.core.ops.op_fetch_url(
-                fullUrl, "GET", "{}", "", pageOrigin, "no-cors");
+            const raw = await Deno.core.ops.op_fetch_url(fullUrl, "GET", "{}", "", pageOrigin, "no-cors");
             const parsed = JSON.parse(raw);
             if (parsed.body) {
               try {
                 (0, eval)(parsed.body);
               } catch (e) {
-                console.error("Dynamic script error (" + fullUrl + "):",
-                              e.message);
+                console.error("Dynamic script error (" + fullUrl + "):", e.message);
               }
             }
             if (typeof c.onload === "function")
               try {
                 c.onload(new Event("load"));
-              } catch (e) {
-              }
+              } catch (e) {}
             try {
               c.dispatchEvent(new Event("load"));
-            } catch (e) {
-            }
+            } catch (e) {}
           } catch (e) {
             console.error("Dynamic script fetch error:", e.message);
             if (typeof c.onerror === "function")
               try {
                 c.onerror(e);
-              } catch (ex) {
-              }
+              } catch (ex) {}
           }
         })();
       } else {
@@ -465,23 +461,19 @@ class Node {
     return c;
   }
   removeChild(c) {
-    if (!c)
-      return c;
+    if (!c) return c;
     _dom("remove_child", c._nid);
-    if (globalThis.__mutationObservers?.length)
-      globalThis.__notifyMutation("childList", this._nid, [], [ c._nid ]);
+    if (globalThis.__mutationObservers?.length) globalThis.__notifyMutation("childList", this._nid, [], [c._nid]);
     return c;
   }
   replaceChild(newChild, oldChild) {
-    if (!oldChild || !newChild)
-      return oldChild;
+    if (!oldChild || !newChild) return oldChild;
     _dom("insert_before", this._nid, newChild._nid, oldChild._nid);
     _dom("remove_child", oldChild._nid);
     return oldChild;
   }
   insertBefore(n, ref) {
-    if (!n)
-      return n;
+    if (!n) return n;
     if (!ref) {
       this.appendChild(n);
       return n;
@@ -492,7 +484,9 @@ class Node {
   contains(o) {
     return o ? _dom("contains", this._nid, o._nid) === "true" : false;
   }
-  hasChildNodes() { return _dom("has_child_nodes", this._nid) === "true"; }
+  hasChildNodes() {
+    return _dom("has_child_nodes", this._nid) === "true";
+  }
   cloneNode(deep) {
     const t = this.nodeType;
     if (t === 1) {
@@ -507,53 +501,59 @@ class Node {
       const attrMatch = html.match(/^<[a-zA-Z][^\s>]*([\s\S]*?)>/);
       if (attrMatch && attrMatch[1]) {
         const attrStr = attrMatch[1].trim();
-        const re =
-            /([a-zA-Z_:][a-zA-Z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
+        const re = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
         let m;
         while ((m = re.exec(attrStr)) !== null) {
           const name = m[1];
-          const val = m[2] !== undefined   ? m[2]
-                      : m[3] !== undefined ? m[3]
-                                           : m[4] || "";
-          if (name !== this.nodeName.toLowerCase())
-            el.setAttribute(name, val);
+          const val = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] || "";
+          if (name !== this.nodeName.toLowerCase()) el.setAttribute(name, val);
         }
       }
       return el;
     }
-    if (t === 3)
-      return document.createTextNode(this.textContent);
-    if (t === 8)
-      return document.createComment(this.nodeValue || "");
+    if (t === 3) return document.createTextNode(this.textContent);
+    if (t === 8) return document.createComment(this.nodeValue || "");
     return null;
   }
   compareDocumentPosition(other) {
-    if (!other)
-      return 0;
-    if (this._nid === other._nid)
-      return 0;
-    if (this.contains(other))
-      return 16 | 4;
-    if (other.contains && other.contains(this))
-      return 8 | 2;
+    if (!other) return 0;
+    if (this._nid === other._nid) return 0;
+    if (this.contains(other)) return 16 | 4;
+    if (other.contains && other.contains(this)) return 8 | 2;
     return 4;
   }
-  getRootNode() { return globalThis.document; }
+  getRootNode() {
+    return globalThis.document;
+  }
   normalize() {}
-  isEqualNode(other) { return other && this._nid === other._nid; }
-  isSameNode(other) { return other && this._nid === other._nid; }
+  isEqualNode(other) {
+    return other && this._nid === other._nid;
+  }
+  isSameNode(other) {
+    return other && this._nid === other._nid;
+  }
   addEventListener() {}
   removeEventListener() {}
-  dispatchEvent() { return true; }
+  dispatchEvent() {
+    return true;
+  }
 }
 class CharacterData extends Node {
-  get data() { return _domParse("text_content", this._nid) ?? ""; }
-  set data(v) { _dom("set_text_content", this._nid, String(v ?? "")); }
-  get length() { return this.data.length; }
+  get data() {
+    return _domParse("text_content", this._nid) ?? "";
+  }
+  set data(v) {
+    _dom("set_text_content", this._nid, String(v ?? ""));
+  }
+  get length() {
+    return this.data.length;
+  }
   substringData(offset, count) {
     return this.data.substring(offset, offset + count);
   }
-  appendData(s) { this.data += s; }
+  appendData(s) {
+    this.data += s;
+  }
   insertData(offset, s) {
     const d = this.data;
     this.data = d.slice(0, offset) + s + d.slice(offset);
@@ -569,9 +569,15 @@ class CharacterData extends Node {
 }
 
 class Text extends CharacterData {
-  get nodeName() { return "#text"; }
-  get nodeType() { return 3; }
-  get wholeText() { return this.data; }
+  get nodeName() {
+    return "#text";
+  }
+  get nodeType() {
+    return 3;
+  }
+  get wholeText() {
+    return this.data;
+  }
   splitText(offset) {
     const d = this.data;
     const tail = d.substring(offset);
@@ -584,13 +590,21 @@ class Text extends CharacterData {
     }
     return _wrap(newNid);
   }
-  cloneNode() { return document.createTextNode(this.data); }
+  cloneNode() {
+    return document.createTextNode(this.data);
+  }
 }
 
 class Comment extends CharacterData {
-  get nodeName() { return "#comment"; }
-  get nodeType() { return 8; }
-  cloneNode() { return document.createComment(this.data); }
+  get nodeName() {
+    return "#comment";
+  }
+  get nodeType() {
+    return 8;
+  }
+  cloneNode() {
+    return document.createComment(this.data);
+  }
 }
 
 class Element extends Node {
@@ -598,19 +612,32 @@ class Element extends Node {
     super(nid);
     this._style = _styleProxy(new CSSStyleDeclaration());
   }
-  get tagName() { return _domParse("tag_name", this._nid) || ""; }
-  get localName() { return (this.tagName || "").toLowerCase(); }
-  get id() { return this.getAttribute("id") || ""; }
-  set id(v) { this.setAttribute("id", v); }
-  get className() { return this.getAttribute("class") || ""; }
-  set className(v) { this.setAttribute("class", v); }
+  get tagName() {
+    return _domParse("tag_name", this._nid) || "";
+  }
+  get localName() {
+    return (this.tagName || "").toLowerCase();
+  }
+  get id() {
+    return this.getAttribute("id") || "";
+  }
+  set id(v) {
+    this.setAttribute("id", v);
+  }
+  get className() {
+    return this.getAttribute("class") || "";
+  }
+  set className(v) {
+    this.setAttribute("class", v);
+  }
   get namespaceURI() {
     const tag = this.localName;
-    if (tag === "svg" || this._ns === "http://www.w3.org/2000/svg")
-      return "http://www.w3.org/2000/svg";
+    if (tag === "svg" || this._ns === "http://www.w3.org/2000/svg") return "http://www.w3.org/2000/svg";
     return "http://www.w3.org/1999/xhtml";
   }
-  get innerHTML() { return _domParse("inner_html", this._nid) ?? ""; }
+  get innerHTML() {
+    return _domParse("inner_html", this._nid) ?? "";
+  }
   set innerHTML(v) {
     if (this.localName === "template") {
       this.content.innerHTML = v;
@@ -618,53 +645,59 @@ class Element extends Node {
     }
     _dom("set_inner_html", this._nid, String(v ?? ""));
   }
-  get outerHTML() { return _domParse("outer_html", this._nid) ?? ""; }
-  get innerText() { return this.textContent; }
-  set innerText(v) { this.textContent = v; }
+  get outerHTML() {
+    return _domParse("outer_html", this._nid) ?? "";
+  }
+  get innerText() {
+    return this.textContent;
+  }
+  set innerText(v) {
+    this.textContent = v;
+  }
   get children() {
     const ids = _domParse("element_children", this._nid) || [];
     return ids.map(_wrapEl).filter(Boolean);
   }
   get content() {
-    if (this.localName !== "template")
-      return undefined;
-    if (!this._templateContent)
-      this._templateContent = document.createDocumentFragment();
+    if (this.localName !== "template") return undefined;
+    if (!this._templateContent) this._templateContent = document.createDocumentFragment();
     return this._templateContent;
   }
-  get childElementCount() { return this.children.length; }
-  get firstElementChild() { return this.children[0] || null; }
+  get childElementCount() {
+    return this.children.length;
+  }
+  get firstElementChild() {
+    return this.children[0] || null;
+  }
   get lastElementChild() {
     const ch = this.children;
     return ch[ch.length - 1] || null;
   }
   get nextElementSibling() {
     let s = this.nextSibling;
-    while (s && s.nodeType !== 1)
-      s = s.nextSibling;
+    while (s && s.nodeType !== 1) s = s.nextSibling;
     return s;
   }
   get previousElementSibling() {
     let s = this.previousSibling;
-    while (s && s.nodeType !== 1)
-      s = s.previousSibling;
+    while (s && s.nodeType !== 1) s = s.previousSibling;
     return s;
   }
   get classList() {
     const el = this;
     const obj = {
-      add : (...c) => {
+      add: (...c) => {
         const s = new Set((el.className || "").split(/\s+/).filter(Boolean));
         c.forEach((x) => s.add(x));
-        el.className = [...s ].join(" ");
+        el.className = [...s].join(" ");
       },
-      remove : (...c) => {
+      remove: (...c) => {
         const s = new Set((el.className || "").split(/\s+/).filter(Boolean));
         c.forEach((x) => s.delete(x));
-        el.className = [...s ].join(" ");
+        el.className = [...s].join(" ");
       },
-      contains : (c) => (el.className || "").split(/\s+/).includes(c),
-      toggle : (c, force) => {
+      contains: (c) => (el.className || "").split(/\s+/).includes(c),
+      toggle: (c, force) => {
         const has = obj.contains(c);
         if (force === true || (!has && force !== false)) {
           obj.add(c);
@@ -676,32 +709,46 @@ class Element extends Node {
       get length() {
         return (el.className || "").split(/\s+/).filter(Boolean).length;
       },
-      item : (i) =>
-          (el.className || "").split(/\s+/).filter(Boolean)[i] || null,
-      forEach : (cb) =>
-          (el.className || "").split(/\s+/).filter(Boolean).forEach(cb),
-      toString : () => el.className || "",
+      item: (i) => (el.className || "").split(/\s+/).filter(Boolean)[i] || null,
+      forEach: (cb) => (el.className || "").split(/\s+/).filter(Boolean).forEach(cb),
+      toString: () => el.className || "",
     };
     return obj;
   }
-  get style() { return this._style; }
-  set style(v) {
-    if (typeof v === "string")
-      this._style.cssText = v;
+  get style() {
+    return this._style;
   }
-  getAttribute(n) { return _domParse("get_attribute", this._nid, n); }
+  set style(v) {
+    if (typeof v === "string") this._style.cssText = v;
+  }
+  getAttribute(n) {
+    return _domParse("get_attribute", this._nid, n);
+  }
   setAttribute(n, v) {
     _dom("set_attribute", this._nid, n + "\0" + String(v));
-    if (globalThis.__mutationObservers?.length)
-      globalThis.__notifyMutation("attributes", this._nid, [], [], n);
+    if (globalThis.__mutationObservers?.length) globalThis.__notifyMutation("attributes", this._nid, [], [], n);
   }
-  setAttributeNS(ns, n, v) { this.setAttribute(n, v); }
-  removeAttribute(n) { _dom("remove_attribute", this._nid, n); }
-  removeAttributeNS(ns, n) { this.removeAttribute(n); }
-  hasAttribute(n) { return this.getAttribute(n) !== null; }
-  hasAttributes() { return true; }
-  getAttributeNS(ns, n) { return this.getAttribute(n); }
-  querySelector(s) { return _wrapEl(+_dom("query_selector", s)); }
+  setAttributeNS(ns, n, v) {
+    this.setAttribute(n, v);
+  }
+  removeAttribute(n) {
+    _dom("remove_attribute", this._nid, n);
+  }
+  removeAttributeNS(ns, n) {
+    this.removeAttribute(n);
+  }
+  hasAttribute(n) {
+    return this.getAttribute(n) !== null;
+  }
+  hasAttributes() {
+    return true;
+  }
+  getAttributeNS(ns, n) {
+    return this.getAttribute(n);
+  }
+  querySelector(s) {
+    return _wrapEl(+_dom("query_selector", s));
+  }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
     const list = ids.map(_wrapEl).filter(Boolean);
@@ -709,24 +756,25 @@ class Element extends Node {
     list.forEach = Array.prototype.forEach.bind(list);
     return list;
   }
-  getElementsByTagName(t) { return this.querySelectorAll(t); }
-  getElementsByClassName(c) { return this.querySelectorAll("." + c); }
+  getElementsByTagName(t) {
+    return this.querySelectorAll(t);
+  }
+  getElementsByClassName(c) {
+    return this.querySelectorAll("." + c);
+  }
   matches(s) {
     const parent = this.parentNode;
-    if (!parent || !parent.querySelectorAll)
-      return false;
+    if (!parent || !parent.querySelectorAll) return false;
     const matches = parent.querySelectorAll(s);
     for (let i = 0; i < matches.length; i++) {
-      if (matches[i]._nid === this._nid)
-        return true;
+      if (matches[i]._nid === this._nid) return true;
     }
     return false;
   }
   closest(s) {
     let el = this;
     while (el) {
-      if (el.nodeType === 1 && el.matches && el.matches(s))
-        return el;
+      if (el.nodeType === 1 && el.matches && el.matches(s)) return el;
       el = el.parentNode;
     }
     return null;
@@ -734,62 +782,57 @@ class Element extends Node {
   insertAdjacentHTML(position, html) {
     const parent = this.parentNode;
     switch (position) {
-    case "beforebegin":
-      if (parent) {
-        const tmp = document.createElement("div");
-        tmp.innerHTML = html;
-        const children = tmp.childNodes;
-        for (let i = 0; i < children.length; i++)
-          parent.insertBefore(children[i], this);
-      }
-      break;
-    case "afterbegin": {
-      const tmp = document.createElement("div");
-      tmp.innerHTML = html;
-      const children = tmp.childNodes;
-      const first = this.firstChild;
-      for (let i = children.length - 1; i >= 0; i--)
-        this.insertBefore(children[i], first);
-    } break;
-    case "beforeend": {
-      const tmp = document.createElement("div");
-      tmp.innerHTML = html;
-      const children = tmp.childNodes;
-      for (let i = 0; i < children.length; i++)
-        this.appendChild(children[i]);
-    } break;
-    case "afterend":
-      if (parent) {
-        const tmp = document.createElement("div");
-        tmp.innerHTML = html;
-        const children = tmp.childNodes;
-        const next = this.nextSibling;
-        for (let i = 0; i < children.length; i++)
-          parent.insertBefore(children[i], next);
-      }
-      break;
+      case "beforebegin":
+        if (parent) {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = html;
+          const children = tmp.childNodes;
+          for (let i = 0; i < children.length; i++) parent.insertBefore(children[i], this);
+        }
+        break;
+      case "afterbegin":
+        {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = html;
+          const children = tmp.childNodes;
+          const first = this.firstChild;
+          for (let i = children.length - 1; i >= 0; i--) this.insertBefore(children[i], first);
+        }
+        break;
+      case "beforeend":
+        {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = html;
+          const children = tmp.childNodes;
+          for (let i = 0; i < children.length; i++) this.appendChild(children[i]);
+        }
+        break;
+      case "afterend":
+        if (parent) {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = html;
+          const children = tmp.childNodes;
+          const next = this.nextSibling;
+          for (let i = 0; i < children.length; i++) parent.insertBefore(children[i], next);
+        }
+        break;
     }
   }
   addEventListener(type, handler, opts) {
     const key = this._nid;
-    if (!_eventRegistry[key])
-      _eventRegistry[key] = {};
-    if (!_eventRegistry[key][type])
-      _eventRegistry[key][type] = [];
+    if (!_eventRegistry[key]) _eventRegistry[key] = {};
+    if (!_eventRegistry[key][type]) _eventRegistry[key][type] = [];
     _eventRegistry[key][type].push(handler);
   }
   removeEventListener(type, handler) {
     const key = this._nid;
     if (_eventRegistry[key] && _eventRegistry[key][type]) {
-      _eventRegistry[key][type] =
-          _eventRegistry[key][type].filter((h) => h !== handler);
+      _eventRegistry[key][type] = _eventRegistry[key][type].filter((h) => h !== handler);
     }
   }
   dispatchEvent(event) {
-    if (!event)
-      return true;
-    if (!event.target)
-      event.target = this;
+    if (!event) return true;
+    if (!event.target) event.target = this;
     event.currentTarget = this;
     const handlers = (_eventRegistry[this._nid] || {})[event.type] || [];
     for (const h of handlers) {
@@ -798,8 +841,7 @@ class Element extends Node {
       } catch (e) {
         console.error(e);
       }
-      if (event._immediatePropagationStopped)
-        break;
+      if (event._immediatePropagationStopped) break;
     }
     if (event.bubbles && !event._propagationStopped && this.parentNode) {
       this.parentNode.dispatchEvent(event);
@@ -807,12 +849,9 @@ class Element extends Node {
     return !event.defaultPrevented;
   }
   click() {
-    const cancelled = !this.dispatchEvent(
-        new MouseEvent("click", {bubbles : true, cancelable : true}));
+    const cancelled = !this.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     if (!cancelled) {
-      const link = this.tagName === "A" ? this
-                   : this.closest       ? this.closest("a[href]")
-                                        : null;
+      const link = this.tagName === "A" ? this : this.closest ? this.closest("a[href]") : null;
       if (link) {
         const href = link.getAttribute("href");
         if (href && !href.startsWith("#") && !href.startsWith("javascript:")) {
@@ -821,8 +860,7 @@ class Element extends Node {
         }
       }
       const type = (this.getAttribute("type") || "").toLowerCase();
-      if (type === "submit" || (this.localName === "button" &&
-                                type !== "button" && type !== "reset")) {
+      if (type === "submit" || (this.localName === "button" && type !== "button" && type !== "reset")) {
         const form = this.closest ? this.closest("form") : null;
         if (form && typeof form.submit === "function") {
           form.submit(this);
@@ -835,15 +873,12 @@ class Element extends Node {
     globalThis.__crawlberg_click_target = this;
   }
   blur() {
-    if (globalThis.__crawlberg_focused === this)
-      globalThis.__crawlberg_focused = null;
+    if (globalThis.__crawlberg_focused === this) globalThis.__crawlberg_focused = null;
   }
   get value() {
-    if (_formValues[this._nid] !== undefined)
-      return _formValues[this._nid];
+    if (_formValues[this._nid] !== undefined) return _formValues[this._nid];
     const tag = this.localName;
-    if (tag === "textarea")
-      return this.textContent;
+    if (tag === "textarea") return this.textContent;
     return this.getAttribute("value") || "";
   }
   set value(v) {
@@ -854,36 +889,53 @@ class Element extends Node {
     }
   }
   get checked() {
-    if (_formChecked[this._nid] !== undefined)
-      return _formChecked[this._nid];
+    if (_formChecked[this._nid] !== undefined) return _formChecked[this._nid];
     return this.hasAttribute("checked");
   }
-  set checked(v) { _formChecked[this._nid] = !!v; }
+  set checked(v) {
+    _formChecked[this._nid] = !!v;
+  }
   get selected() {
-    if (this._selected !== undefined)
-      return this._selected;
+    if (this._selected !== undefined) return this._selected;
     return this.hasAttribute("selected");
   }
-  set selected(v) { this._selected = !!v; }
-  get disabled() { return this.hasAttribute("disabled"); }
+  set selected(v) {
+    this._selected = !!v;
+  }
+  get disabled() {
+    return this.hasAttribute("disabled");
+  }
   set disabled(v) {
-    if (v)
-      this.setAttribute("disabled", "");
-    else
-      this.removeAttribute("disabled");
+    if (v) this.setAttribute("disabled", "");
+    else this.removeAttribute("disabled");
   }
   get type() {
-    return this.getAttribute("type") ||
-           (this.localName === "input" ? "text" : "");
+    return this.getAttribute("type") || (this.localName === "input" ? "text" : "");
   }
-  set type(v) { this.setAttribute("type", v); }
-  get name() { return this.getAttribute("name") || ""; }
-  set name(v) { this.setAttribute("name", v); }
-  get placeholder() { return this.getAttribute("placeholder") || ""; }
-  set placeholder(v) { this.setAttribute("placeholder", v); }
-  get href() { return this.getAttribute("href") || ""; }
-  set href(v) { this.setAttribute("href", v); }
-  get src() { return this.getAttribute("src") || ""; }
+  set type(v) {
+    this.setAttribute("type", v);
+  }
+  get name() {
+    return this.getAttribute("name") || "";
+  }
+  set name(v) {
+    this.setAttribute("name", v);
+  }
+  get placeholder() {
+    return this.getAttribute("placeholder") || "";
+  }
+  set placeholder(v) {
+    this.setAttribute("placeholder", v);
+  }
+  get href() {
+    return this.getAttribute("href") || "";
+  }
+  set href(v) {
+    this.setAttribute("href", v);
+  }
+  get src() {
+    return this.getAttribute("src") || "";
+  }
   set src(v) {
     this.setAttribute("src", v);
     if (this.localName === "iframe" && v && v !== "about:blank") {
@@ -895,120 +947,111 @@ class Element extends Node {
     if (!url.includes("://")) {
       try {
         fullUrl = new URL(url, _domParse("document_url") || "about:blank").href;
-      } catch (e) {
-      }
+      } catch (e) {}
     }
     const el = this;
-    fetch(fullUrl, {mode : "no-cors"})
-        .then(async (resp) => {
-          if (resp.ok || resp.type === "opaque") {
-            const html = await resp.text();
-            el._iframeDoc = new _IframeDocument(html, fullUrl, el);
-            el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-          } else {
-            el._iframeDoc = new _IframeDocument(
-                "<!DOCTYPE html><html><head></head><body></body></html>",
-                fullUrl, el);
-            el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-          }
-          _registerIframe(el);
-          if (typeof el.onload === "function") {
-            try {
-              el.onload();
-            } catch (e) {
-            }
-          } else {
-            var onloadAttr = el.getAttribute("onload");
-            if (onloadAttr)
-              try {
-                (0, eval)(onloadAttr);
-              } catch (e) {
-              }
-          }
-        })
-        .catch(() => {
-          el._iframeDoc = new _IframeDocument(
-              "<!DOCTYPE html><html><head></head><body></body></html>", fullUrl,
-              el);
+    fetch(fullUrl, { mode: "no-cors" })
+      .then(async (resp) => {
+        if (resp.ok || resp.type === "opaque") {
+          const html = await resp.text();
+          el._iframeDoc = new _IframeDocument(html, fullUrl, el);
           el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-          _registerIframe(el);
-          if (typeof el.onload === "function")
+        } else {
+          el._iframeDoc = new _IframeDocument("<!DOCTYPE html><html><head></head><body></body></html>", fullUrl, el);
+          el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
+        }
+        _registerIframe(el);
+        if (typeof el.onload === "function") {
+          try {
+            el.onload();
+          } catch (e) {}
+        } else {
+          var onloadAttr = el.getAttribute("onload");
+          if (onloadAttr)
             try {
-              el.onload();
-            } catch (e) {
-            }
-        });
+              (0, eval)(onloadAttr);
+            } catch (e) {}
+        }
+      })
+      .catch(() => {
+        el._iframeDoc = new _IframeDocument("<!DOCTYPE html><html><head></head><body></body></html>", fullUrl, el);
+        el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
+        _registerIframe(el);
+        if (typeof el.onload === "function")
+          try {
+            el.onload();
+          } catch (e) {}
+      });
   }
   get contentDocument() {
-    if (this.localName !== "iframe")
-      return undefined;
+    if (this.localName !== "iframe") return undefined;
     if (this._iframeDoc) {
-      const pageOrigin = (function() {
+      const pageOrigin = (function () {
         try {
           return new URL(_domParse("document_url")).origin;
         } catch (e) {
           return "";
         }
       })();
-      const iframeOrigin = (function(url) {
+      const iframeOrigin = (function (url) {
         try {
           return new URL(url).origin;
         } catch (e) {
           return "";
         }
       })(this.src);
-      if (pageOrigin === iframeOrigin || this.src === "" ||
-          this.src === "about:blank" || !this.src.includes("://")) {
+      if (pageOrigin === iframeOrigin || this.src === "" || this.src === "about:blank" || !this.src.includes("://")) {
         return this._iframeDoc;
       }
       return null;
     }
     if (!this._iframeDoc) {
       this._iframeDoc = new _IframeDocument(
-          "<!DOCTYPE html><html><head></head><body></body></html>",
-          "about:blank",
-          this,
+        "<!DOCTYPE html><html><head></head><body></body></html>",
+        "about:blank",
+        this,
       );
       this._iframeWin = new _IframeWindow(this._iframeDoc, "about:blank");
     }
     return this._iframeDoc;
   }
   get contentWindow() {
-    if (this.localName !== "iframe")
-      return undefined;
+    if (this.localName !== "iframe") return undefined;
     if (!this._iframeWin) {
       this.contentDocument;
     }
     return this._iframeWin;
   }
   get action() {
-    const action =
-        this.getAttribute("action") || _domParse("document_url") || "";
+    const action = this.getAttribute("action") || _domParse("document_url") || "";
     try {
       return new URL(action, _domParse("document_url") || "about:blank").href;
     } catch (e) {
       return action;
     }
   }
-  set action(v) { this.setAttribute("action", v); }
-  get method() { return this.getAttribute("method") || "get"; }
-  set method(v) { this.setAttribute("method", v); }
+  set action(v) {
+    this.setAttribute("action", v);
+  }
+  get method() {
+    return this.getAttribute("method") || "get";
+  }
+  set method(v) {
+    this.setAttribute("method", v);
+  }
   get form() {
     let p = this.parentNode;
-    while (p && p.localName !== "form")
-      p = p.parentNode;
+    while (p && p.localName !== "form") p = p.parentNode;
     return p;
   }
   get options() {
-    if (this.localName !== "select")
-      return [];
+    if (this.localName !== "select") return [];
     return this.querySelectorAll("option");
   }
   get selectedIndex() {
     const opts = this.options;
     for (let i = 0; i < opts.length; i++) {
-      if (opts[i].selected || opts[i].hasAttribute("selected"))
-        return i;
+      if (opts[i].selected || opts[i].hasAttribute("selected")) return i;
     }
     return -1;
   }
@@ -1019,50 +1062,36 @@ class Element extends Node {
     }
   }
   submit(submitter) {
-    const cancelled = !this.dispatchEvent(
-        new Event("submit", {bubbles : true, cancelable : true}));
-    if (cancelled)
-      return;
+    const cancelled = !this.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    if (cancelled) return;
 
     const pairs = [];
     const fields = this.querySelectorAll("input, select, textarea");
     for (let i = 0; i < fields.length; i++) {
       const f = fields[i];
       const name = f.getAttribute("name");
-      if (!name)
-        continue;
-      if (f.getAttribute("disabled") !== null)
-        continue;
+      if (!name) continue;
+      if (f.getAttribute("disabled") !== null) continue;
       const tag = f.localName;
       const type = (f.getAttribute("type") || "").toLowerCase();
-      if ((type === "checkbox" || type === "radio") && !f.checked)
-        continue;
-      if (type === "file" || type === "reset")
-        continue;
-      if (type === "button")
-        continue;
+      if ((type === "checkbox" || type === "radio") && !f.checked) continue;
+      if (type === "file" || type === "reset") continue;
+      if (type === "button") continue;
       if (type === "submit" || tag === "button") {
-        if (submitter && f !== submitter)
-          continue;
-        if (!submitter)
-          continue;
+        if (submitter && f !== submitter) continue;
+        if (!submitter) continue;
       }
 
       let val;
       if (tag === "select") {
-        const opt =
-            f.querySelector("option[selected]") || f.querySelector("option");
-        val = opt ? (opt.getAttribute("value") !== null
-                         ? opt.getAttribute("value")
-                         : opt.textContent)
-                  : "";
+        const opt = f.querySelector("option[selected]") || f.querySelector("option");
+        val = opt ? (opt.getAttribute("value") !== null ? opt.getAttribute("value") : opt.textContent) : "";
       } else if (tag === "textarea") {
         val = f.value || f.textContent || "";
       } else {
         val = f.value !== undefined ? f.value : f.getAttribute("value") || "";
       }
-      const enc = (s) =>
-          encodeURIComponent(s).replace(/%20/g, "+").replace(/!/g, "%21");
+      const enc = (s) => encodeURIComponent(s).replace(/%20/g, "+").replace(/!/g, "%21");
       pairs.push(enc(name) + "=" + enc(val));
     }
 
@@ -1081,67 +1110,92 @@ class Element extends Node {
       Deno.core.ops.op_navigate(targetUrl, "POST", encoded);
     } else {
       const sep = targetUrl.includes("?") ? "&" : "?";
-      Deno.core.ops.op_navigate(targetUrl + (encoded ? sep + encoded : ""),
-                                "GET", "");
+      Deno.core.ops.op_navigate(targetUrl + (encoded ? sep + encoded : ""), "GET", "");
     }
   }
-  reset() { this.dispatchEvent(new Event("reset", {bubbles : true})); }
+  reset() {
+    this.dispatchEvent(new Event("reset", { bubbles: true }));
+  }
   get dataset() {
     const el = this;
     return new Proxy(
-        {},
-        {
-          get(_, k) {
-            if (typeof k !== "string")
-              return undefined;
-            return el.getAttribute("data-" +
-                                   k.replace(/([A-Z])/g, "-$1").toLowerCase());
-          },
-          set(_, k, v) {
-            el.setAttribute(
-                "data-" + k.replace(/([A-Z])/g, "-$1").toLowerCase(), v);
-            return true;
-          },
+      {},
+      {
+        get(_, k) {
+          if (typeof k !== "string") return undefined;
+          return el.getAttribute("data-" + k.replace(/([A-Z])/g, "-$1").toLowerCase());
         },
+        set(_, k, v) {
+          el.setAttribute("data-" + k.replace(/([A-Z])/g, "-$1").toLowerCase(), v);
+          return true;
+        },
+      },
     );
   }
-  get offsetWidth() { return 100; }
-  get offsetHeight() { return 20; }
-  get offsetTop() { return 0; }
-  get offsetLeft() { return 0; }
-  get clientWidth() { return 100; }
-  get clientHeight() { return 20; }
-  get scrollWidth() { return 100; }
-  get scrollHeight() { return 20; }
-  get scrollTop() { return 0; }
+  get offsetWidth() {
+    return 100;
+  }
+  get offsetHeight() {
+    return 20;
+  }
+  get offsetTop() {
+    return 0;
+  }
+  get offsetLeft() {
+    return 0;
+  }
+  get clientWidth() {
+    return 100;
+  }
+  get clientHeight() {
+    return 20;
+  }
+  get scrollWidth() {
+    return 100;
+  }
+  get scrollHeight() {
+    return 20;
+  }
+  get scrollTop() {
+    return 0;
+  }
   set scrollTop(v) {}
-  get scrollLeft() { return 0; }
+  get scrollLeft() {
+    return 0;
+  }
   set scrollLeft(v) {}
   getBoundingClientRect() {
     globalThis.__crawlberg_click_target = this;
     return {
-      x : 8,
-      y : 8,
-      width : 100,
-      height : 20,
-      top : 8,
-      right : 108,
-      bottom : 28,
-      left : 8,
-      toJSON() { return this; },
+      x: 8,
+      y: 8,
+      width: 100,
+      height: 20,
+      top: 8,
+      right: 108,
+      bottom: 28,
+      left: 8,
+      toJSON() {
+        return this;
+      },
     };
   }
-  getClientRects() { return [ this.getBoundingClientRect() ]; }
-  scrollIntoView() { globalThis.__crawlberg_click_target = this; }
+  getClientRects() {
+    return [this.getBoundingClientRect()];
+  }
+  scrollIntoView() {
+    globalThis.__crawlberg_click_target = this;
+  }
   animate(keyframes, options) {
-    const duration =
-        typeof options === "number" ? options : options?.duration || 0;
+    const duration = typeof options === "number" ? options : options?.duration || 0;
     return {
-      finished : Promise.resolve(),
-      currentTime : 0,
-      playState : "finished",
-      effect : {
-        getComputedTiming() { return {duration}; },
+      finished: Promise.resolve(),
+      currentTime: 0,
+      playState: "finished",
+      effect: {
+        getComputedTiming() {
+          return { duration };
+        },
       },
       cancel() {},
       finish() {},
@@ -1150,65 +1204,102 @@ class Element extends Node {
       reverse() {},
       addEventListener() {},
       removeEventListener() {},
-      onfinish : null,
-      oncancel : null,
+      onfinish: null,
+      oncancel: null,
     };
   }
-  getAnimations() { return []; }
-  get isConnected() { return true; }
+  getAnimations() {
+    return [];
+  }
+  get isConnected() {
+    return true;
+  }
   after() {}
   before() {}
   remove() {
-    if (this.parentNode)
-      this.parentNode.removeChild(this);
+    if (this.parentNode) this.parentNode.removeChild(this);
   }
   append(...nodes) {
     for (const n of nodes) {
-      if (typeof n === "string")
-        this.appendChild(document.createTextNode(n));
-      else
-        this.appendChild(n);
+      if (typeof n === "string") this.appendChild(document.createTextNode(n));
+      else this.appendChild(n);
     }
   }
   prepend() {}
 }
 
 class Document extends Node {
-  get documentElement() { return _wrapEl(+_dom("document_element")); }
-  get head() { return this.querySelector("head"); }
-  get body() { return this.querySelector("body"); }
+  get documentElement() {
+    return _wrapEl(+_dom("document_element"));
+  }
+  get head() {
+    return this.querySelector("head");
+  }
+  get body() {
+    return this.querySelector("body");
+  }
   get doctype() {
-    if (this._doctype !== undefined)
-      return this._doctype;
+    if (this._doctype !== undefined) return this._doctype;
     const info = _domParse("document_doctype");
     if (info && info.name) {
-      this._doctype = new DocumentType(
-          info.nodeId, info.name, info.publicId || "", info.systemId || "");
+      this._doctype = new DocumentType(info.nodeId, info.name, info.publicId || "", info.systemId || "");
     } else {
       this._doctype = null;
     }
     return this._doctype;
   }
-  get title() { return _domParse("document_title") ?? ""; }
+  get title() {
+    return _domParse("document_title") ?? "";
+  }
   set title(v) {}
-  get URL() { return _domParse("document_url") ?? ""; }
-  get documentURI() { return this.URL; }
-  get location() { return globalThis.location; }
+  get URL() {
+    return _domParse("document_url") ?? "";
+  }
+  get documentURI() {
+    return this.URL;
+  }
+  get location() {
+    return globalThis.location;
+  }
   set location(url) {
     Deno.core.ops.op_navigate(_resolveUrl(String(url)), "GET", "");
   }
-  get defaultView() { return globalThis; }
-  get nodeType() { return 9; }
-  get nodeName() { return "#document"; }
-  get ownerDocument() { return null; }
-  get compatMode() { return "CSS1Compat"; }
-  get characterSet() { return "UTF-8"; }
-  get contentType() { return "text/html"; }
-  get readyState() { return "complete"; }
-  get hidden() { return false; }
-  get visibilityState() { return "visible"; }
-  getElementById(id) { return _wrapEl(+_dom("get_element_by_id", id)); }
-  querySelector(s) { return _wrapEl(+_dom("query_selector", s)); }
+  get defaultView() {
+    return globalThis;
+  }
+  get nodeType() {
+    return 9;
+  }
+  get nodeName() {
+    return "#document";
+  }
+  get ownerDocument() {
+    return null;
+  }
+  get compatMode() {
+    return "CSS1Compat";
+  }
+  get characterSet() {
+    return "UTF-8";
+  }
+  get contentType() {
+    return "text/html";
+  }
+  get readyState() {
+    return "complete";
+  }
+  get hidden() {
+    return false;
+  }
+  get visibilityState() {
+    return "visible";
+  }
+  getElementById(id) {
+    return _wrapEl(+_dom("get_element_by_id", id));
+  }
+  querySelector(s) {
+    return _wrapEl(+_dom("query_selector", s));
+  }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
     const list = ids.map(_wrapEl).filter(Boolean);
@@ -1216,8 +1307,12 @@ class Document extends Node {
     list.forEach = Array.prototype.forEach.bind(list);
     return list;
   }
-  getElementsByTagName(t) { return this.querySelectorAll(t); }
-  getElementsByClassName(c) { return this.querySelectorAll("." + c); }
+  getElementsByTagName(t) {
+    return this.querySelectorAll(t);
+  }
+  getElementsByClassName(c) {
+    return this.querySelectorAll("." + c);
+  }
   createElement(t) {
     const el = _wrapEl(+_dom("create_element", t.toLowerCase()));
     if (el && t.toLowerCase() === "template") {
@@ -1227,11 +1322,12 @@ class Document extends Node {
   }
   createElementNS(ns, t) {
     const el = this.createElement(t);
-    if (el)
-      el._ns = ns;
+    if (el) el._ns = ns;
     return el;
   }
-  createTextNode(t) { return _wrap(+_dom("create_text_node", String(t))); }
+  createTextNode(t) {
+    return _wrap(+_dom("create_text_node", String(t)));
+  }
   createComment(t) {
     const nid = +_dom("create_comment_node", String(t ?? ""));
     const n = new Comment(nid);
@@ -1246,22 +1342,22 @@ class Document extends Node {
   }
   createEvent(type) {
     const map = {
-      customevent : CustomEvent,
-      customevents : CustomEvent,
-      mouseevent : MouseEvent,
-      mouseevents : MouseEvent,
-      keyboardevent : KeyboardEvent,
-      keyboardevents : KeyboardEvent,
-      focusevent : FocusEvent,
-      inputevent : InputEvent,
-      uievent : UIEvent,
-      uievents : UIEvent,
-      wheelevent : WheelEvent,
-      pointerevent : PointerEvent,
-      errorevent : ErrorEvent,
-      popstateevent : PopStateEvent,
-      animationevent : AnimationEvent,
-      transitionevent : TransitionEvent,
+      customevent: CustomEvent,
+      customevents: CustomEvent,
+      mouseevent: MouseEvent,
+      mouseevents: MouseEvent,
+      keyboardevent: KeyboardEvent,
+      keyboardevents: KeyboardEvent,
+      focusevent: FocusEvent,
+      inputevent: InputEvent,
+      uievent: UIEvent,
+      uievents: UIEvent,
+      wheelevent: WheelEvent,
+      pointerevent: PointerEvent,
+      errorevent: ErrorEvent,
+      popstateevent: PopStateEvent,
+      animationevent: AnimationEvent,
+      transitionevent: TransitionEvent,
     };
     const Cls = map[String(type || "").toLowerCase()] || Event;
     return new Cls("");
@@ -1272,29 +1368,30 @@ class Document extends Node {
       setEnd() {},
       collapse() {},
       selectNodeContents() {},
-      cloneContents() { return document.createDocumentFragment(); },
+      cloneContents() {
+        return document.createDocumentFragment();
+      },
     };
   }
   addEventListener(type, fn, opts) {}
   removeEventListener() {}
-  dispatchEvent() { return true; }
+  dispatchEvent() {
+    return true;
+  }
   createTreeWalker(root, whatToShow, filter) {
     whatToShow = whatToShow || 0xffffffff;
     const walker = {
-      root : root,
-      currentNode : root,
-      whatToShow : whatToShow,
-      filter : filter || null,
+      root: root,
+      currentNode: root,
+      whatToShow: whatToShow,
+      filter: filter || null,
       _accept(node) {
         const nodeType = node.nodeType;
         const show = (whatToShow >> (nodeType - 1)) & 1;
-        if (!show)
-          return false;
+        if (!show) return false;
         if (this.filter) {
-          if (typeof this.filter === "function")
-            return this.filter(node) === 1;
-          if (this.filter.acceptNode)
-            return this.filter.acceptNode(node) === 1;
+          if (typeof this.filter === "function") return this.filter(node) === 1;
+          if (this.filter.acceptNode) return this.filter.acceptNode(node) === 1;
         }
         return true;
       },
@@ -1322,19 +1419,16 @@ class Document extends Node {
             }
             parent = parent.parentNode;
           }
-          if (!parent || parent === this.root)
-            return null;
+          if (!parent || parent === this.root) return null;
         }
         return null;
       },
       previousNode() {
         const node = this.currentNode;
-        if (node === this.root)
-          return null;
+        if (node === this.root) return null;
         let sibling = node.previousSibling;
         if (sibling) {
-          while (sibling.lastChild)
-            sibling = sibling.lastChild;
+          while (sibling.lastChild) sibling = sibling.lastChild;
           if (this._accept(sibling)) {
             this.currentNode = sibling;
             return sibling;
@@ -1405,33 +1499,52 @@ class Document extends Node {
   createNodeIterator(root, whatToShow, filter) {
     return this.createTreeWalker(root, whatToShow, filter);
   }
-  getSelection() { return globalThis.getSelection(); }
-  get activeElement() { return globalThis.__crawlberg_focused || this.body; }
+  getSelection() {
+    return globalThis.getSelection();
+  }
+  get activeElement() {
+    return globalThis.__crawlberg_focused || this.body;
+  }
   get implementation() {
     return {
-      createHTMLDocument(title) { return globalThis.document; },
-      createDocument() { return globalThis.document; },
-      hasFeature() { return true; },
+      createHTMLDocument(title) {
+        return globalThis.document;
+      },
+      createDocument() {
+        return globalThis.document;
+      },
+      hasFeature() {
+        return true;
+      },
     };
   }
-  get styleSheets() { return []; }
-  get forms() { return []; }
-  get images() { return []; }
-  get links() { return []; }
-  get scripts() { return this.querySelectorAll("script"); }
-  get cookie() { return Deno.core.ops.op_get_cookies(); }
+  get styleSheets() {
+    return [];
+  }
+  get forms() {
+    return [];
+  }
+  get images() {
+    return [];
+  }
+  get links() {
+    return [];
+  }
+  get scripts() {
+    return this.querySelectorAll("script");
+  }
+  get cookie() {
+    return Deno.core.ops.op_get_cookies();
+  }
   set cookie(v) {
-    if (!v)
-      return;
+    if (!v) return;
     Deno.core.ops.op_set_cookie(v);
   }
   write(...args) {
     var html = args.join("");
-    if (!html)
-      return;
+    if (!html) return;
     var body = this.body;
-    if (!body)
-      return;
+    if (!body) return;
     var temp = this.createElement("div");
     temp.innerHTML = html;
     var children = temp.childNodes;
@@ -1439,24 +1552,41 @@ class Document extends Node {
       body.appendChild(children[i]);
     }
   }
-  writeln(...args) { this.write(args.join("") + "\n"); }
+  writeln(...args) {
+    this.write(args.join("") + "\n");
+  }
   open() {
     var body = this.body;
-    if (body)
-      body.innerHTML = "";
+    if (body) body.innerHTML = "";
     return this;
   }
-  close() { return; }
-  hasFocus() { return true; }
-  execCommand() { return false; }
+  close() {
+    return;
+  }
+  hasFocus() {
+    return true;
+  }
+  execCommand() {
+    return false;
+  }
 }
 
 class DocumentFragment extends Node {
-  get nodeType() { return 11; }
-  get nodeName() { return "#document-fragment"; }
-  get innerHTML() { return _domParse("inner_html", this._nid) ?? ""; }
-  set innerHTML(v) { _dom("set_inner_html", this._nid, String(v ?? "")); }
-  querySelector(s) { return _wrapEl(+_dom("query_selector", s)); }
+  get nodeType() {
+    return 11;
+  }
+  get nodeName() {
+    return "#document-fragment";
+  }
+  get innerHTML() {
+    return _domParse("inner_html", this._nid) ?? "";
+  }
+  set innerHTML(v) {
+    _dom("set_inner_html", this._nid, String(v ?? ""));
+  }
+  querySelector(s) {
+    return _wrapEl(+_dom("query_selector", s));
+  }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
     const list = ids.map(_wrapEl).filter(Boolean);
@@ -1467,16 +1597,19 @@ class DocumentFragment extends Node {
     const ids = _domParse("element_children", this._nid) || [];
     return ids.map(_wrapEl).filter(Boolean);
   }
-  get firstElementChild() { return this.children[0] || null; }
+  get firstElementChild() {
+    return this.children[0] || null;
+  }
   get lastElementChild() {
     const ch = this.children;
     return ch[ch.length - 1] || null;
   }
-  getElementById(id) { return null; }
+  getElementById(id) {
+    return null;
+  }
   cloneNode(deep) {
     const frag = document.createDocumentFragment();
-    if (deep)
-      frag.innerHTML = this.innerHTML;
+    if (deep) frag.innerHTML = this.innerHTML;
     return frag;
   }
 }
@@ -1488,40 +1621,43 @@ class DocumentType extends Node {
     this._publicId = publicId;
     this._systemId = systemId;
   }
-  get nodeType() { return 10; }
-  get nodeName() { return this._name; }
-  get name() { return this._name; }
-  get publicId() { return this._publicId; }
-  get systemId() { return this._systemId; }
-  get ownerDocument() { return globalThis.document; }
+  get nodeType() {
+    return 10;
+  }
+  get nodeName() {
+    return this._name;
+  }
+  get name() {
+    return this._name;
+  }
+  get publicId() {
+    return this._publicId;
+  }
+  get systemId() {
+    return this._systemId;
+  }
+  get ownerDocument() {
+    return globalThis.document;
+  }
 }
 
 const _cache = new Map();
 function _wrap(nid) {
-  if (nid < 0 || nid === null || nid === undefined || isNaN(nid))
-    return null;
-  if (_cache.has(nid))
-    return _cache.get(nid);
+  if (nid < 0 || nid === null || nid === undefined || isNaN(nid)) return null;
+  if (_cache.has(nid)) return _cache.get(nid);
   const t = +_dom("node_type", nid);
   let n;
-  if (t === 1)
-    n = new Element(nid);
-  else if (t === 3)
-    n = new Text(nid);
-  else if (t === 8)
-    n = new Comment(nid);
-  else if (t === 9)
-    n = new Document(nid);
-  else
-    n = new Node(nid);
+  if (t === 1) n = new Element(nid);
+  else if (t === 3) n = new Text(nid);
+  else if (t === 8) n = new Comment(nid);
+  else if (t === 9) n = new Document(nid);
+  else n = new Node(nid);
   _cache.set(nid, n);
   return n;
 }
 function _wrapEl(nid) {
-  if (nid < 0 || nid === null || nid === undefined || isNaN(nid))
-    return null;
-  if (_cache.has(nid))
-    return _cache.get(nid);
+  if (nid < 0 || nid === null || nid === undefined || isNaN(nid)) return null;
+  if (_cache.has(nid)) return _cache.get(nid);
   const n = new Element(nid);
   _cache.set(nid, n);
   return n;
@@ -1529,11 +1665,8 @@ function _wrapEl(nid) {
 
 globalThis.document = null;
 function _resolveUrl(url) {
-  if (!url)
-    return url;
-  if (url.startsWith("http://") || url.startsWith("https://") ||
-      url.startsWith("about:"))
-    return url;
+  if (!url) return url;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:")) return url;
   try {
     return new URL(url, _domParse("document_url") || "about:blank").href;
   } catch (e) {
@@ -1541,8 +1674,12 @@ function _resolveUrl(url) {
   }
 }
 globalThis.location = {
-  get href() { return _domParse("document_url") ?? "about:blank"; },
-  set href(url) { Deno.core.ops.op_navigate(_resolveUrl(url), "GET", ""); },
+  get href() {
+    return _domParse("document_url") ?? "about:blank";
+  },
+  set href(url) {
+    Deno.core.ops.op_navigate(_resolveUrl(url), "GET", "");
+  },
   get origin() {
     try {
       return new URL(this.href).origin;
@@ -1599,17 +1736,27 @@ globalThis.location = {
       return "";
     }
   },
-  toString() { return this.href; },
-  assign(url) { Deno.core.ops.op_navigate(_resolveUrl(url), "GET", ""); },
+  toString() {
+    return this.href;
+  },
+  assign(url) {
+    Deno.core.ops.op_navigate(_resolveUrl(url), "GET", "");
+  },
   reload() {},
-  replace(url) { Deno.core.ops.op_navigate(_resolveUrl(url), "GET", ""); },
+  replace(url) {
+    Deno.core.ops.op_navigate(_resolveUrl(url), "GET", "");
+  },
 };
 const _locationObj = globalThis.location;
 Object.defineProperty(globalThis, "location", {
-  get() { return _locationObj; },
-  set(url) { Deno.core.ops.op_navigate(_resolveUrl(String(url)), "GET", ""); },
-  configurable : false,
-  enumerable : true,
+  get() {
+    return _locationObj;
+  },
+  set(url) {
+    Deno.core.ops.op_navigate(_resolveUrl(String(url)), "GET", "");
+  },
+  configurable: false,
+  enumerable: true,
 });
 
 globalThis.window = globalThis;
@@ -1622,8 +1769,10 @@ globalThis.length = 0;
 
 globalThis.Window = globalThis.Window || function Window() {};
 Object.defineProperty(globalThis.Window, Symbol.hasInstance, {
-  value(obj) { return obj === globalThis || (obj && obj.window === obj); },
-  configurable : true,
+  value(obj) {
+    return obj === globalThis || (obj && obj.window === obj);
+  },
+  configurable: true,
 });
 
 const _iframeRegistry = [];
@@ -1632,65 +1781,71 @@ function _registerIframe(iframeEl) {
   _iframeRegistry.push(iframeEl);
   globalThis.length = _iframeRegistry.length;
   Object.defineProperty(globalThis, idx, {
-    get() { return iframeEl._iframeWin || null; },
-    configurable : true,
-    enumerable : false,
+    get() {
+      return iframeEl._iframeWin || null;
+    },
+    configurable: true,
+    enumerable: false,
   });
 }
 globalThis.navigator = {
   get userAgent() {
     return (
-        globalThis.__crawlberg_ua ||
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36");
+      globalThis.__crawlberg_ua ||
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+    );
   },
-  get appVersion() { return this.userAgent.replace("Mozilla/", ""); },
-  language : "en-US",
-  languages : [ "en-US", "en" ],
-  platform : "Linux x86_64",
-  onLine : true,
-  cookieEnabled : true,
-  hardwareConcurrency : 8,
-  maxTouchPoints : 0,
-  vendor : "Google Inc.",
-  product : "Gecko",
-  productSub : "20030107",
-  doNotTrack : null,
-  deviceMemory : 8,
-  connection :
-      {effectiveType : "4g", rtt : 50, downlink : 10, saveData : false},
-  get webdriver() { return undefined; },
-  pdfViewerEnabled : true,
+  get appVersion() {
+    return this.userAgent.replace("Mozilla/", "");
+  },
+  language: "en-US",
+  languages: ["en-US", "en"],
+  platform: "Linux x86_64",
+  onLine: true,
+  cookieEnabled: true,
+  hardwareConcurrency: 8,
+  maxTouchPoints: 0,
+  vendor: "Google Inc.",
+  product: "Gecko",
+  productSub: "20030107",
+  doNotTrack: null,
+  deviceMemory: 8,
+  connection: { effectiveType: "4g", rtt: 50, downlink: 10, saveData: false },
+  get webdriver() {
+    return undefined;
+  },
+  pdfViewerEnabled: true,
   get plugins() {
     const p = [
       {
-        name : "PDF Viewer",
-        filename : "internal-pdf-viewer",
-        description : "Portable Document Format",
-        length : 1,
+        name: "PDF Viewer",
+        filename: "internal-pdf-viewer",
+        description: "Portable Document Format",
+        length: 1,
       },
       {
-        name : "Chrome PDF Viewer",
-        filename : "internal-pdf-viewer",
-        description : "Portable Document Format",
-        length : 1,
+        name: "Chrome PDF Viewer",
+        filename: "internal-pdf-viewer",
+        description: "Portable Document Format",
+        length: 1,
       },
       {
-        name : "Chromium PDF Viewer",
-        filename : "internal-pdf-viewer",
-        description : "Portable Document Format",
-        length : 1,
+        name: "Chromium PDF Viewer",
+        filename: "internal-pdf-viewer",
+        description: "Portable Document Format",
+        length: 1,
       },
       {
-        name : "Microsoft Edge PDF Viewer",
-        filename : "internal-pdf-viewer",
-        description : "Portable Document Format",
-        length : 1,
+        name: "Microsoft Edge PDF Viewer",
+        filename: "internal-pdf-viewer",
+        description: "Portable Document Format",
+        length: 1,
       },
       {
-        name : "WebKit built-in PDF",
-        filename : "internal-pdf-viewer",
-        description : "Portable Document Format",
-        length : 1,
+        name: "WebKit built-in PDF",
+        filename: "internal-pdf-viewer",
+        description: "Portable Document Format",
+        length: 1,
       },
     ];
     p.item = (i) => p[i] || null;
@@ -1701,87 +1856,91 @@ globalThis.navigator = {
   get mimeTypes() {
     const m = [
       {
-        type : "application/pdf",
-        description : "Portable Document Format",
-        suffixes : "pdf",
-        enabledPlugin : null,
+        type: "application/pdf",
+        description: "Portable Document Format",
+        suffixes: "pdf",
+        enabledPlugin: null,
       },
       {
-        type : "text/pdf",
-        description : "Portable Document Format",
-        suffixes : "pdf",
-        enabledPlugin : null,
+        type: "text/pdf",
+        description: "Portable Document Format",
+        suffixes: "pdf",
+        enabledPlugin: null,
       },
     ];
     m.item = (i) => m[i] || null;
     m.namedItem = (name) => m.find((x) => x.type === name) || null;
     return m;
   },
-  userAgentData : {
-    brands : [
-      {brand : "Google Chrome", version : "145"},
-      {brand : "Chromium", version : "145"},
-      {brand : "Not=A?Brand", version : "24"},
+  userAgentData: {
+    brands: [
+      { brand: "Google Chrome", version: "145" },
+      { brand: "Chromium", version: "145" },
+      { brand: "Not=A?Brand", version: "24" },
     ],
-    mobile : false,
-    platform : "Linux",
+    mobile: false,
+    platform: "Linux",
     getHighEntropyValues(hints) {
       return Promise.resolve({
-        architecture : "x86",
-        bitness : "64",
-        brands : [
-          {brand : "Google Chrome", version : "145"},
-          {brand : "Chromium", version : "145"},
-          {brand : "Not=A?Brand", version : "24"},
+        architecture: "x86",
+        bitness: "64",
+        brands: [
+          { brand: "Google Chrome", version: "145" },
+          { brand: "Chromium", version: "145" },
+          { brand: "Not=A?Brand", version: "24" },
         ],
-        fullVersionList : [
-          {brand : "Google Chrome", version : "145.0.0.0"},
-          {brand : "Chromium", version : "145.0.0.0"},
-          {brand : "Not=A?Brand", version : "24.0.0.0"},
+        fullVersionList: [
+          { brand: "Google Chrome", version: "145.0.0.0" },
+          { brand: "Chromium", version: "145.0.0.0" },
+          { brand: "Not=A?Brand", version: "24.0.0.0" },
         ],
-        mobile : false,
-        model : "",
-        platform : "Linux",
-        platformVersion : "6.8.0",
-        uaFullVersion : "145.0.0.0",
+        mobile: false,
+        model: "",
+        platform: "Linux",
+        platformVersion: "6.8.0",
+        uaFullVersion: "145.0.0.0",
       });
     },
     toJSON() {
       return {
-        brands : this.brands,
-        mobile : this.mobile,
-        platform : this.platform,
+        brands: this.brands,
+        mobile: this.mobile,
+        platform: this.platform,
       };
     },
   },
-  serviceWorker : {
-    ready : Promise.resolve(),
-    register() { return Promise.resolve(); },
-    getRegistrations() { return Promise.resolve([]); },
-    controller : null,
+  serviceWorker: {
+    ready: Promise.resolve(),
+    register() {
+      return Promise.resolve();
+    },
+    getRegistrations() {
+      return Promise.resolve([]);
+    },
+    controller: null,
   },
-  mediaDevices : {
+  mediaDevices: {
     enumerateDevices() {
       return Promise.resolve([
         {
-          deviceId : "default",
-          kind : "audioinput",
-          label : "",
-          groupId : "default",
+          deviceId: "default",
+          kind: "audioinput",
+          label: "",
+          groupId: "default",
         },
         {
-          deviceId : "comms",
-          kind : "audioinput",
-          label : "",
-          groupId : "comms",
+          deviceId: "comms",
+          kind: "audioinput",
+          label: "",
+          groupId: "comms",
         },
         {
-          deviceId : "default",
-          kind : "audiooutput",
-          label : "",
-          groupId : "default",
+          deviceId: "default",
+          kind: "audiooutput",
+          label: "",
+          groupId: "default",
         },
-        {deviceId : "", kind : "videoinput", label : "", groupId : ""},
+        { deviceId: "", kind: "videoinput", label: "", groupId: "" },
       ]);
     },
     getUserMedia() {
@@ -1793,64 +1952,79 @@ globalThis.navigator = {
     addEventListener() {},
     removeEventListener() {},
   },
-  clipboard : {
-    writeText() { return Promise.resolve(); },
-    readText() { return Promise.resolve(""); },
+  clipboard: {
+    writeText() {
+      return Promise.resolve();
+    },
+    readText() {
+      return Promise.resolve("");
+    },
   },
-  permissions : {
+  permissions: {
     query(params) {
-      if (params?.name === "notifications")
-        return Promise.resolve({state : "prompt", onchange : null});
-      return Promise.resolve({state : "granted"});
+      if (params?.name === "notifications") return Promise.resolve({ state: "prompt", onchange: null });
+      return Promise.resolve({ state: "granted" });
     },
   },
   getBattery() {
     return Promise.resolve({
-      charging : _fp("batteryCharging"),
-      chargingTime : _fp("batteryCharging") ? 0 : Infinity,
-      dischargingTime : _fp("batteryCharging")
-                            ? Infinity
-                            : Math.floor(3600 + _fpRand(250) * 7200),
-      level : _fp("batteryLevel"),
+      charging: _fp("batteryCharging"),
+      chargingTime: _fp("batteryCharging") ? 0 : Infinity,
+      dischargingTime: _fp("batteryCharging") ? Infinity : Math.floor(3600 + _fpRand(250) * 7200),
+      level: _fp("batteryLevel"),
       addEventListener() {},
     });
   },
-  getGamepads() { return []; },
-  sendBeacon() { return true; },
-  javaEnabled() { return false; },
+  getGamepads() {
+    return [];
+  },
+  sendBeacon() {
+    return true;
+  },
+  javaEnabled() {
+    return false;
+  },
 };
 
 globalThis.chrome = {
-  app : {
-    isInstalled : false,
-    InstallState : {
-      DISABLED : "disabled",
-      INSTALLED : "installed",
-      NOT_INSTALLED : "not_installed",
+  app: {
+    isInstalled: false,
+    InstallState: {
+      DISABLED: "disabled",
+      INSTALLED: "installed",
+      NOT_INSTALLED: "not_installed",
     },
-    RunningState : {
-      CANNOT_RUN : "cannot_run",
-      READY_TO_RUN : "ready_to_run",
-      RUNNING : "running",
+    RunningState: {
+      CANNOT_RUN: "cannot_run",
+      READY_TO_RUN: "ready_to_run",
+      RUNNING: "running",
     },
   },
-  runtime : {
-    OnInstalledReason : {},
-    OnRestartRequiredReason : {},
-    PlatformArch : {},
-    PlatformNaclArch : {},
-    PlatformOs : {},
-    RequestUpdateCheckStatus : {},
-    connect() { return {}; },
+  runtime: {
+    OnInstalledReason: {},
+    OnRestartRequiredReason: {},
+    PlatformArch: {},
+    PlatformNaclArch: {},
+    PlatformOs: {},
+    RequestUpdateCheckStatus: {},
+    connect() {
+      return {};
+    },
     sendMessage() {},
   },
-  csi() { return {}; },
-  loadTimes() { return {}; },
+  csi() {
+    return {};
+  },
+  loadTimes() {
+    return {};
+  },
 };
 
 globalThis.Notification = class Notification {
   static permission = "default";
-  static requestPermission() { return Promise.resolve("default"); }
+  static requestPermission() {
+    return Promise.resolve("default");
+  }
   constructor() {}
 };
 
@@ -1858,28 +2032,30 @@ globalThis.WebGLRenderingContext = class WebGLRenderingContext {};
 globalThis.WebGL2RenderingContext = class WebGL2RenderingContext {};
 
 globalThis.screen = {
-  width : 1920,
-  height : 1080,
-  availWidth : 1920,
-  availHeight : 1040,
-  colorDepth : 24,
-  pixelDepth : 24,
-  availTop : 0,
-  availLeft : 0,
-  orientation : {
-    type : "landscape-primary",
-    angle : 0,
+  width: 1920,
+  height: 1080,
+  availWidth: 1920,
+  availHeight: 1040,
+  colorDepth: 24,
+  pixelDepth: 24,
+  availTop: 0,
+  availLeft: 0,
+  orientation: {
+    type: "landscape-primary",
+    angle: 0,
     addEventListener() {},
     removeEventListener() {},
-    dispatchEvent() { return true; },
+    dispatchEvent() {
+      return true;
+    },
   },
 };
 globalThis.visualViewport = {
-  width : 1920,
-  height : 1000,
-  offsetLeft : 0,
-  offsetTop : 0,
-  scale : 1,
+  width: 1920,
+  height: 1000,
+  offsetLeft: 0,
+  offsetTop: 0,
+  scale: 1,
   addEventListener() {},
   removeEventListener() {},
 };
@@ -1898,10 +2074,8 @@ globalThis.__fetchInterceptCallback = null;
 
 function _base64ToUint8Array(b64) {
   const clean = String(b64 || "").replace(/[\r\n\s]/g, "");
-  if (!clean)
-    return new Uint8Array();
-  const alphabet =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if (!clean) return new Uint8Array();
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
   const bytes = new Uint8Array(((clean.length * 3) >> 2) - padding);
   let out = 0;
@@ -1911,39 +2085,28 @@ function _base64ToUint8Array(b64) {
     const c = clean[i + 2] === "=" ? 0 : alphabet.indexOf(clean[i + 2]);
     const d = clean[i + 3] === "=" ? 0 : alphabet.indexOf(clean[i + 3]);
     const n = (a << 18) | (b << 12) | (c << 6) | d;
-    if (out < bytes.length)
-      bytes[out++] = (n >> 16) & 0xff;
-    if (out < bytes.length)
-      bytes[out++] = (n >> 8) & 0xff;
-    if (out < bytes.length)
-      bytes[out++] = n & 0xff;
+    if (out < bytes.length) bytes[out++] = (n >> 16) & 0xff;
+    if (out < bytes.length) bytes[out++] = (n >> 8) & 0xff;
+    if (out < bytes.length) bytes[out++] = n & 0xff;
   }
   return bytes;
 }
 
 function _bodyToUint8Array(body) {
-  if (body == null)
-    return new Uint8Array();
-  if (body instanceof Uint8Array)
-    return body;
-  if (body instanceof ArrayBuffer)
-    return new Uint8Array(body);
-  if (ArrayBuffer.isView(body))
-    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  if (body == null) return new Uint8Array();
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
   return new TextEncoder().encode(String(body));
 }
 
 function _arrayBufferFromBytes(bytes) {
-  return bytes.buffer.slice(bytes.byteOffset,
-                            bytes.byteOffset + bytes.byteLength);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
 function _installWasmStreamingFallback() {
-  if (typeof WebAssembly === "undefined")
-    return;
-  if (WebAssembly.instantiateStreaming &&
-      WebAssembly.instantiateStreaming.__crawlbergFallback)
-    return;
+  if (typeof WebAssembly === "undefined") return;
+  if (WebAssembly.instantiateStreaming && WebAssembly.instantiateStreaming.__crawlbergFallback) return;
   const nativeInstantiateStreaming = WebAssembly.instantiateStreaming;
   const fallback = async function instantiateStreaming(source, imports) {
     const response = await source;
@@ -1961,29 +2124,27 @@ function _installWasmStreamingFallback() {
 _installWasmStreamingFallback();
 
 globalThis.fetch = async (input, init = {}) => {
-  let url = typeof input === "string"  ? input
-            : input instanceof Request ? input.url
-            : typeof URL === "function" && input instanceof URL
-                ? input.href
-                : input?.url || input?.href || String(input || "");
+  let url =
+    typeof input === "string"
+      ? input
+      : input instanceof Request
+        ? input.url
+        : typeof URL === "function" && input instanceof URL
+          ? input.href
+          : input?.url || input?.href || String(input || "");
   if (url && !url.includes("://")) {
     try {
       const base = _domParse("document_url") || "about:blank";
       url = new URL(url, base).href;
-    } catch (e) {
-    }
+    } catch (e) {}
   }
-  const method =
-      init.method || (input instanceof Request ? input.method : "GET");
+  const method = init.method || (input instanceof Request ? input.method : "GET");
   const hdrs = JSON.stringify(
-      init.headers instanceof Headers
-          ? Object.fromEntries(init.headers.entries())
-          : init.headers || {},
+    init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : init.headers || {},
   );
   const body = init.body ? String(init.body) : "";
-  const fetchMode =
-      init.mode || (input instanceof Request ? input.mode : "cors");
-  const pageOrigin = (function() {
+  const fetchMode = init.mode || (input instanceof Request ? input.mode : "cors");
+  const pageOrigin = (function () {
     try {
       const u = new URL(_domParse("document_url") || "about:blank");
       return u.origin;
@@ -1991,8 +2152,7 @@ globalThis.fetch = async (input, init = {}) => {
       return "";
     }
   })();
-  const raw = await Deno.core.ops.op_fetch_url(url, method, hdrs, body,
-                                               pageOrigin, fetchMode);
+  const raw = await Deno.core.ops.op_fetch_url(url, method, hdrs, body, pageOrigin, fetchMode);
   const parsed = JSON.parse(raw);
   if (parsed.blocked) {
     const err = new TypeError("net::ERR_FAILED");
@@ -2001,22 +2161,17 @@ globalThis.fetch = async (input, init = {}) => {
     throw err;
   }
   if (parsed.corsBlocked) {
-    throw new TypeError("Failed to fetch: " +
-                        (parsed.corsError || "CORS error"));
+    throw new TypeError("Failed to fetch: " + (parsed.corsError || "CORS error"));
   }
-  const respType = parsed.status === 0       ? "opaque"
-                   : fetchMode === "no-cors" ? "opaque"
-                                             : "basic";
-  const responseBody = parsed.bodyBase64
-                           ? _base64ToUint8Array(parsed.bodyBase64)
-                           : parsed.body || "";
+  const respType = parsed.status === 0 ? "opaque" : fetchMode === "no-cors" ? "opaque" : "basic";
+  const responseBody = parsed.bodyBase64 ? _base64ToUint8Array(parsed.bodyBase64) : parsed.body || "";
   return new Response(responseBody, {
-    status : parsed.status,
-    statusText : "",
-    headers : parsed.headers || {},
-    type : respType,
-    url : parsed.url || url,
-    redirected : false,
+    status: parsed.status,
+    statusText: "",
+    headers: parsed.headers || {},
+    type: respType,
+    url: parsed.url || url,
+    redirected: false,
   });
 };
 
@@ -2026,26 +2181,44 @@ if (typeof Headers === "undefined") {
       this._h = {};
       if (init) {
         if (init instanceof Headers) {
-          init.forEach((v, k) => { this._h[k] = v; });
+          init.forEach((v, k) => {
+            this._h[k] = v;
+          });
         } else if (typeof init === "object") {
-          for (const [k, v] of Object.entries(init))
-            this._h[k.toLowerCase()] = String(v);
+          for (const [k, v] of Object.entries(init)) this._h[k.toLowerCase()] = String(v);
         }
       }
     }
-    get(n) { return this._h[n.toLowerCase()] ?? null; }
-    set(n, v) { this._h[n.toLowerCase()] = String(v); }
-    has(n) { return n.toLowerCase() in this._h; }
-    delete(n) { delete this._h[n.toLowerCase()]; }
-    append(n, v) { this._h[n.toLowerCase()] = String(v); }
-    forEach(cb) {
-      for (const [k, v] of Object.entries(this._h))
-        cb(v, k, this);
+    get(n) {
+      return this._h[n.toLowerCase()] ?? null;
     }
-    entries() { return Object.entries(this._h)[Symbol.iterator](); }
-    keys() { return Object.keys(this._h)[Symbol.iterator](); }
-    values() { return Object.values(this._h)[Symbol.iterator](); }
-    [Symbol.iterator]() { return this.entries(); }
+    set(n, v) {
+      this._h[n.toLowerCase()] = String(v);
+    }
+    has(n) {
+      return n.toLowerCase() in this._h;
+    }
+    delete(n) {
+      delete this._h[n.toLowerCase()];
+    }
+    append(n, v) {
+      this._h[n.toLowerCase()] = String(v);
+    }
+    forEach(cb) {
+      for (const [k, v] of Object.entries(this._h)) cb(v, k, this);
+    }
+    entries() {
+      return Object.entries(this._h)[Symbol.iterator]();
+    }
+    keys() {
+      return Object.keys(this._h)[Symbol.iterator]();
+    }
+    values() {
+      return Object.values(this._h)[Symbol.iterator]();
+    }
+    [Symbol.iterator]() {
+      return this.entries();
+    }
   };
 }
 
@@ -2072,7 +2245,7 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
     this.response = null;
     this.timeout = 0;
     this.withCredentials = false;
-    this.upload = {addEventListener() {}, removeEventListener() {}};
+    this.upload = { addEventListener() {}, removeEventListener() {} };
     this._method = "GET";
     this._url = "";
     this._headers = {};
@@ -2102,30 +2275,31 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
     this._setReadyState(1);
   }
 
-  setRequestHeader(name, value) { this._headers[name] = value; }
+  setRequestHeader(name, value) {
+    this._headers[name] = value;
+  }
 
   getResponseHeader(name) {
     const lower = name.toLowerCase();
     for (const [k, v] of Object.entries(this._responseHeaders)) {
-      if (k.toLowerCase() === lower)
-        return v;
+      if (k.toLowerCase() === lower) return v;
     }
     return null;
   }
 
   getAllResponseHeaders() {
     return Object.entries(this._responseHeaders)
-        .map(([ k, v ]) => k + ": " + v)
-        .join("\r\n");
+      .map(([k, v]) => k + ": " + v)
+      .join("\r\n");
   }
 
-  overrideMimeType(mime) { this._overrideMime = mime; }
+  overrideMimeType(mime) {
+    this._overrideMime = mime;
+  }
 
   send(body) {
-    if (this.readyState !== 1)
-      return;
-    if (this._aborted)
-      return;
+    if (this.readyState !== 1) return;
+    if (this._aborted) return;
 
     const xhr = this;
     this._fireEvent("loadstart");
@@ -2135,38 +2309,37 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
       try {
         const base = _domParse("document_url") || "about:blank";
         url = new URL(url, base).href;
-      } catch (e) {
-      }
+      } catch (e) {}
     }
 
     fetch(url, {
-      method : this._method,
-      headers : this._headers,
-      body : body || undefined,
-      mode : "cors",
+      method: this._method,
+      headers: this._headers,
+      body: body || undefined,
+      mode: "cors",
     })
-        .then(async (resp) => {
-          if (xhr._aborted)
-            return;
+      .then(async (resp) => {
+        if (xhr._aborted) return;
 
-          xhr.status = resp.status;
-          xhr.statusText = resp.statusText || "";
-          xhr.responseURL = resp.url || url;
+        xhr.status = resp.status;
+        xhr.statusText = resp.statusText || "";
+        xhr.responseURL = resp.url || url;
 
-          if (resp.headers) {
-            resp.headers.forEach((v, k) => { xhr._responseHeaders[k] = v; });
-          }
+        if (resp.headers) {
+          resp.headers.forEach((v, k) => {
+            xhr._responseHeaders[k] = v;
+          });
+        }
 
-          xhr._setReadyState(2);
+        xhr._setReadyState(2);
 
-          const text = await resp.text();
-          if (xhr._aborted)
-            return;
+        const text = await resp.text();
+        if (xhr._aborted) return;
 
-          xhr.responseText = text;
-          xhr._setReadyState(3);
+        xhr.responseText = text;
+        xhr._setReadyState(3);
 
-          switch (xhr.responseType) {
+        switch (xhr.responseType) {
           case "json":
             try {
               xhr.response = JSON.parse(text);
@@ -2182,38 +2355,35 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
             xhr.response = new TextEncoder().encode(text).buffer;
             break;
           case "blob":
-            xhr.response = new Blob([ text ]);
+            xhr.response = new Blob([text]);
             break;
           case "document":
             xhr.response = text;
             break;
           default:
             xhr.response = text;
-          }
+        }
 
-          xhr._setReadyState(4);
-          xhr._fireEvent("load");
+        xhr._setReadyState(4);
+        xhr._fireEvent("load");
+        xhr._fireEvent("loadend");
+      })
+      .catch((err) => {
+        if (xhr._aborted) return;
+        xhr.status = 0;
+        xhr.readyState = 4;
+        xhr._fireEvent("readystatechange");
+        if (err && err.__aborted) {
+          xhr._aborted = true;
+          xhr._fireEvent("abort");
           xhr._fireEvent("loadend");
-        })
-        .catch((err) => {
-          if (xhr._aborted)
-            return;
-          xhr.status = 0;
-          xhr.readyState = 4;
-          xhr._fireEvent("readystatechange");
-          if (err && err.__aborted) {
-            xhr._aborted = true;
-            xhr._fireEvent("abort");
-            xhr._fireEvent("loadend");
-            if (xhr.onabort)
-              xhr.onabort(err);
-          } else {
-            xhr._fireEvent("error");
-            xhr._fireEvent("loadend");
-            if (xhr.onerror)
-              xhr.onerror(err);
-          }
-        });
+          if (xhr.onabort) xhr.onabort(err);
+        } else {
+          xhr._fireEvent("error");
+          xhr._fireEvent("loadend");
+          if (xhr.onerror) xhr.onerror(err);
+        }
+      });
   }
 
   abort() {
@@ -2227,15 +2397,13 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
   }
 
   addEventListener(type, handler) {
-    if (!this._listeners[type])
-      this._listeners[type] = [];
+    if (!this._listeners[type]) this._listeners[type] = [];
     this._listeners[type].push(handler);
   }
 
   removeEventListener(type, handler) {
     if (this._listeners[type]) {
-      this._listeners[type] =
-          this._listeners[type].filter((h) => h !== handler);
+      this._listeners[type] = this._listeners[type].filter((h) => h !== handler);
     }
   }
 
@@ -2245,26 +2413,23 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
     if (this.onreadystatechange) {
       try {
         this.onreadystatechange();
-      } catch (e) {
-      }
+      } catch (e) {}
     }
   }
 
   _fireEvent(type) {
-    const event = {type, target : this, currentTarget : this, bubbles : false};
+    const event = { type, target: this, currentTarget: this, bubbles: false };
     const handlers = this._listeners[type] || [];
     for (const h of handlers) {
       try {
         h.call(this, event);
-      } catch (e) {
-      }
+      } catch (e) {}
     }
     const prop = "on" + type;
     if (type !== "readystatechange" && typeof this[prop] === "function") {
       try {
         this[prop](event);
-      } catch (e) {
-      }
+      } catch (e) {}
     }
   }
 };
@@ -2295,8 +2460,7 @@ if (typeof URL === "undefined" || !URL.prototype) {
           }
         }
       }
-      const m =
-          full.match(/^(https?):\/\/([^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
+      const m = full.match(/^(https?):\/\/([^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/);
       if (m) {
         this.protocol = m[1] + ":";
         this.host = m[2];
@@ -2318,8 +2482,12 @@ if (typeof URL === "undefined" || !URL.prototype) {
       this.origin = this.protocol + "//" + this.host;
       this.searchParams = new URLSearchParams(this.search);
     }
-    toString() { return this.href; }
-    toJSON() { return this.href; }
+    toString() {
+      return this.href;
+    }
+    toJSON() {
+      return this.href;
+    }
     static createObjectURL() {
       return "blob:null/fake-" + Math.random().toString(36).slice(2);
     }
@@ -2328,18 +2496,23 @@ if (typeof URL === "undefined" || !URL.prototype) {
 }
 
 globalThis.requestIdleCallback =
-    globalThis.requestIdleCallback || function requestIdleCallback(cb, opts) {
-      const start = Date.now();
-      return setTimeout(() => {
-        cb({
-          didTimeout : false,
-          timeRemaining() { return Math.max(0, 50 - (Date.now() - start)); },
-        });
-      }, 1);
-    };
+  globalThis.requestIdleCallback ||
+  function requestIdleCallback(cb, opts) {
+    const start = Date.now();
+    return setTimeout(() => {
+      cb({
+        didTimeout: false,
+        timeRemaining() {
+          return Math.max(0, 50 - (Date.now() - start));
+        },
+      });
+    }, 1);
+  };
 globalThis.cancelIdleCallback =
-    globalThis.cancelIdleCallback || function cancelIdleCallback(
-                                         id) { clearTimeout(id); };
+  globalThis.cancelIdleCallback ||
+  function cancelIdleCallback(id) {
+    clearTimeout(id);
+  };
 _markNative(globalThis.requestIdleCallback);
 _markNative(globalThis.cancelIdleCallback);
 
@@ -2350,7 +2523,7 @@ if (typeof Request === "undefined") {
         this.url = input;
       } else if (input instanceof Request) {
         this.url = input.url;
-        init = {...input, ...init};
+        init = { ...input, ...init };
       } else if (typeof URL === "function" && input instanceof URL) {
         this.url = input.href;
       } else {
@@ -2364,19 +2537,21 @@ if (typeof Request === "undefined") {
       this.redirect = init.redirect || "follow";
       this.referrer = init.referrer || "";
       this.signal = init.signal || {
-        aborted : false,
+        aborted: false,
         addEventListener() {},
         removeEventListener() {},
       };
       this.cache = init.cache || "default";
     }
     clone() {
-      return new Request(
-          this.url,
-          {method : this.method, headers : this.headers, body : this.body});
+      return new Request(this.url, { method: this.method, headers: this.headers, body: this.body });
     }
-    async text() { return this.body ? String(this.body) : ""; }
-    async json() { return JSON.parse(await this.text()); }
+    async text() {
+      return this.body ? String(this.body) : "";
+    }
+    async json() {
+      return JSON.parse(await this.text());
+    }
     async arrayBuffer() {
       return new TextEncoder().encode(await this.text()).buffer;
     }
@@ -2395,74 +2570,74 @@ if (typeof Response === "undefined") {
       this.url = init.url || "";
       this.redirected = !!init.redirected;
     }
-    async text() { return new TextDecoder().decode(this._bodyBytes); }
-    async json() { return JSON.parse(await this.text()); }
-    async arrayBuffer() { return _arrayBufferFromBytes(this._bodyBytes); }
-    async blob() { return new Blob([ this._bodyBytes ]); }
+    async text() {
+      return new TextDecoder().decode(this._bodyBytes);
+    }
+    async json() {
+      return JSON.parse(await this.text());
+    }
+    async arrayBuffer() {
+      return _arrayBufferFromBytes(this._bodyBytes);
+    }
+    async blob() {
+      return new Blob([this._bodyBytes]);
+    }
     clone() {
       return new Response(this._bodyBytes, {
-        status : this.status,
-        statusText : this.statusText,
-        headers : this.headers,
-        type : this.type,
-        url : this.url,
-        redirected : this.redirected,
+        status: this.status,
+        statusText: this.statusText,
+        headers: this.headers,
+        type: this.type,
+        url: this.url,
+        redirected: this.redirected,
       });
     }
-    static error() { return new Response(null, {status : 0}); }
+    static error() {
+      return new Response(null, { status: 0 });
+    }
     static redirect(url, status) {
-      return new Response(null,
-                          {status : status || 302, headers : {Location : url}});
+      return new Response(null, { status: status || 302, headers: { Location: url } });
     }
     static json(data, init) {
       return new Response(JSON.stringify(data), {
         ...init,
-        headers : {"content-type" : "application/json", ...init?.headers},
+        headers: { "content-type": "application/json", ...init?.headers },
       });
     }
   };
 }
 
 if (!Element.prototype.replaceWith) {
-  Element.prototype.replaceWith = function(...nodes) {
+  Element.prototype.replaceWith = function (...nodes) {
     const parent = this.parentNode;
-    if (!parent)
-      return;
+    if (!parent) return;
     for (const n of nodes) {
-      if (typeof n === "string")
-        parent.insertBefore(document.createTextNode(n), this);
-      else
-        parent.insertBefore(n, this);
+      if (typeof n === "string") parent.insertBefore(document.createTextNode(n), this);
+      else parent.insertBefore(n, this);
     }
     parent.removeChild(this);
   };
   _markNative(Element.prototype.replaceWith);
 }
 if (!Element.prototype.before) {
-  Element.prototype.before = function(...nodes) {
+  Element.prototype.before = function (...nodes) {
     const parent = this.parentNode;
-    if (!parent)
-      return;
+    if (!parent) return;
     for (const n of nodes) {
-      if (typeof n === "string")
-        parent.insertBefore(document.createTextNode(n), this);
-      else
-        parent.insertBefore(n, this);
+      if (typeof n === "string") parent.insertBefore(document.createTextNode(n), this);
+      else parent.insertBefore(n, this);
     }
   };
   _markNative(Element.prototype.before);
 }
 if (!Element.prototype.after) {
-  Element.prototype.after = function(...nodes) {
+  Element.prototype.after = function (...nodes) {
     const parent = this.parentNode;
-    if (!parent)
-      return;
+    if (!parent) return;
     const ref = this.nextSibling;
     for (const n of nodes) {
-      if (typeof n === "string")
-        parent.insertBefore(document.createTextNode(n), ref);
-      else
-        parent.insertBefore(n, ref);
+      if (typeof n === "string") parent.insertBefore(document.createTextNode(n), ref);
+      else parent.insertBefore(n, ref);
     }
   };
   _markNative(Element.prototype.after);
@@ -2473,8 +2648,7 @@ if (!("isConnected" in Node.prototype)) {
     get() {
       let node = this;
       while (node) {
-        if (node.nodeType === 9)
-          return true;
+        if (node.nodeType === 9) return true;
         node = node.parentNode;
       }
       return false;
@@ -2491,50 +2665,53 @@ globalThis.ResizeObserver = class ResizeObserver {
     this._targets.push(el);
     Promise.resolve().then(() => {
       this._callback(
-          [
-            {
-              target : el,
-              contentRect : {
-                x : 0,
-                y : 0,
-                width : 100,
-                height : 20,
-                top : 0,
-                left : 0,
-                bottom : 20,
-                right : 100,
-              },
-              borderBoxSize : [ {blockSize : 20, inlineSize : 100} ],
-              contentBoxSize : [ {blockSize : 20, inlineSize : 100} ],
+        [
+          {
+            target: el,
+            contentRect: {
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 20,
+              top: 0,
+              left: 0,
+              bottom: 20,
+              right: 100,
             },
-          ],
-          this,
+            borderBoxSize: [{ blockSize: 20, inlineSize: 100 }],
+            contentBoxSize: [{ blockSize: 20, inlineSize: 100 }],
+          },
+        ],
+        this,
       );
     });
   }
-  unobserve(el) { this._targets = this._targets.filter((t) => t !== el); }
-  disconnect() { this._targets = []; }
+  unobserve(el) {
+    this._targets = this._targets.filter((t) => t !== el);
+  }
+  disconnect() {
+    this._targets = [];
+  }
 };
 
 if (typeof TextEncoder === "undefined") {
   globalThis.TextEncoder = class TextEncoder {
-    get encoding() { return "utf-8"; }
+    get encoding() {
+      return "utf-8";
+    }
     encode(str) {
       str = String(str);
       const buf = [];
       for (let i = 0; i < str.length; i++) {
         let c = str.charCodeAt(i);
-        if (c < 0x80)
-          buf.push(c);
+        if (c < 0x80) buf.push(c);
         else if (c < 0x800) {
           buf.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
         } else if (c < 0xd800 || c >= 0xe000) {
-          buf.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f),
-                   0x80 | (c & 0x3f));
+          buf.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
         } else {
           c = 0x10000 + (((c & 0x3ff) << 10) | (str.charCodeAt(++i) & 0x3ff));
-          buf.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f),
-                   0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+          buf.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
         }
       }
       return new Uint8Array(buf);
@@ -2542,41 +2719,39 @@ if (typeof TextEncoder === "undefined") {
     encodeInto(str, dest) {
       const enc = this.encode(str);
       dest.set(enc.slice(0, dest.length));
-      return {read : str.length, written : Math.min(enc.length, dest.length)};
+      return { read: str.length, written: Math.min(enc.length, dest.length) };
     }
   };
 }
 if (typeof TextDecoder === "undefined") {
   globalThis.TextDecoder = class TextDecoder {
-    constructor(label) { this.encoding = label || "utf-8"; }
+    constructor(label) {
+      this.encoding = label || "utf-8";
+    }
     decode(buf) {
-      if (!buf)
-        return "";
-      const bytes =
-          ArrayBuffer.isView(buf)
-              ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
-              : new Uint8Array(buf);
-      let str = "", i = 0;
+      if (!buf) return "";
+      const bytes = ArrayBuffer.isView(buf)
+        ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+        : new Uint8Array(buf);
+      let str = "",
+        i = 0;
       while (i < bytes.length) {
         const c = bytes[i++];
-        if (c < 0x80)
-          str += String.fromCharCode(c);
-        else if (c < 0xe0)
-          str += String.fromCharCode(((c & 0x1f) << 6) | (bytes[i++] & 0x3f));
+        if (c < 0x80) str += String.fromCharCode(c);
+        else if (c < 0xe0) str += String.fromCharCode(((c & 0x1f) << 6) | (bytes[i++] & 0x3f));
         else if (c < 0xf0) {
-          const b1 = bytes[i++], b2 = bytes[i++];
-          str += String.fromCharCode(((c & 0x0f) << 12) | ((b1 & 0x3f) << 6) |
-                                     (b2 & 0x3f));
+          const b1 = bytes[i++],
+            b2 = bytes[i++];
+          str += String.fromCharCode(((c & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f));
         } else {
-          const b1 = bytes[i++], b2 = bytes[i++], b3 = bytes[i++];
-          const cp = ((c & 0x07) << 18) | ((b1 & 0x3f) << 12) |
-                     ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+          const b1 = bytes[i++],
+            b2 = bytes[i++],
+            b3 = bytes[i++];
+          const cp = ((c & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
           if (cp > 0xffff) {
             const s = cp - 0x10000;
-            str +=
-                String.fromCharCode(0xd800 + (s >> 10), 0xdc00 + (s & 0x3ff));
-          } else
-            str += String.fromCharCode(cp);
+            str += String.fromCharCode(0xd800 + (s >> 10), 0xdc00 + (s & 0x3ff));
+          } else str += String.fromCharCode(cp);
         }
       }
       return str;
@@ -2586,115 +2761,109 @@ if (typeof TextDecoder === "undefined") {
 
 globalThis.matchMedia = _markNative(function matchMedia(q) {
   return {
-    matches : false,
-    media : q,
+    matches: false,
+    media: q,
     addListener() {},
     removeListener() {},
     addEventListener() {},
     removeEventListener() {},
-    dispatchEvent() { return true; },
+    dispatchEvent() {
+      return true;
+    },
   };
 });
 globalThis.getComputedStyle = (el) => {
-  if (!el)
-    el = document.body || {};
+  if (!el) el = document.body || {};
   const style = el?.style || el?._style || new CSSStyleDeclaration();
   return new Proxy(style, {
     get(target, prop) {
-      if (prop === Symbol.toPrimitive || prop === Symbol.toStringTag)
-        return undefined;
-      if (prop in target)
-        return target[prop];
+      if (prop === Symbol.toPrimitive || prop === Symbol.toStringTag) return undefined;
+      if (prop in target) return target[prop];
       if (typeof prop === "string") {
         const v = target.getPropertyValue ? target.getPropertyValue(prop) : "";
-        if (v)
-          return v;
+        if (v) return v;
         const defaults = {
-          display : "block",
-          visibility : "visible",
-          opacity : "1",
-          position : "static",
-          overflow : "visible",
-          transform : "none",
-          transition : "none",
-          animation : "none",
-          float : "none",
-          clear : "none",
-          width : "auto",
-          height : "auto",
-          top : "auto",
-          left : "auto",
-          right : "auto",
-          bottom : "auto",
-          margin : "0px",
-          padding : "0px",
-          "margin-top" : "0px",
-          "margin-right" : "0px",
-          "margin-bottom" : "0px",
-          "margin-left" : "0px",
-          "padding-top" : "0px",
-          "padding-right" : "0px",
-          "padding-bottom" : "0px",
-          "padding-left" : "0px",
-          "font-size" : "16px",
-          "line-height" : "normal",
-          "font-weight" : "400",
-          color : "rgb(0, 0, 0)",
-          "background-color" : "rgba(0, 0, 0, 0)",
-          "border-width" : "0px",
-          "border-style" : "none",
-          "border-color" : "rgb(0, 0, 0)",
-          "z-index" : "auto",
-          "pointer-events" : "auto",
-          "box-sizing" : "content-box",
-          cursor : "auto",
+          display: "block",
+          visibility: "visible",
+          opacity: "1",
+          position: "static",
+          overflow: "visible",
+          transform: "none",
+          transition: "none",
+          animation: "none",
+          float: "none",
+          clear: "none",
+          width: "auto",
+          height: "auto",
+          top: "auto",
+          left: "auto",
+          right: "auto",
+          bottom: "auto",
+          margin: "0px",
+          padding: "0px",
+          "margin-top": "0px",
+          "margin-right": "0px",
+          "margin-bottom": "0px",
+          "margin-left": "0px",
+          "padding-top": "0px",
+          "padding-right": "0px",
+          "padding-bottom": "0px",
+          "padding-left": "0px",
+          "font-size": "16px",
+          "line-height": "normal",
+          "font-weight": "400",
+          color: "rgb(0, 0, 0)",
+          "background-color": "rgba(0, 0, 0, 0)",
+          "border-width": "0px",
+          "border-style": "none",
+          "border-color": "rgb(0, 0, 0)",
+          "z-index": "auto",
+          "pointer-events": "auto",
+          "box-sizing": "content-box",
+          cursor: "auto",
         };
         const kebabProp = prop.replace(/([A-Z])/g, "-$1").toLowerCase();
-        if (defaults[prop])
-          return defaults[prop];
-        if (defaults[kebabProp])
-          return defaults[kebabProp];
+        if (defaults[prop]) return defaults[prop];
+        if (defaults[kebabProp]) return defaults[kebabProp];
         return "";
       }
       if (prop === "getPropertyValue") {
         return (name) => {
-          const v =
-              target.getPropertyValue ? target.getPropertyValue(name) : "";
-          if (v)
-            return v;
+          const v = target.getPropertyValue ? target.getPropertyValue(name) : "";
+          if (v) return v;
           const defaults = {
-            transform : "none",
-            opacity : "1",
-            display : "block",
-            visibility : "visible",
+            transform: "none",
+            opacity: "1",
+            display: "block",
+            visibility: "visible",
           };
-          return defaults[name] ||
-                 defaults[name.replace(/-([a-z])/g,
-                                       (_, c) => c.toUpperCase())] ||
-                 "";
+          return defaults[name] || defaults[name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] || "";
         };
       }
-      if (prop === "length")
-        return 0;
+      if (prop === "length") return 0;
       return undefined;
     },
   });
 };
 globalThis.getSelection = _markNative(function getSelection() {
   return {
-    rangeCount : 0,
-    anchorNode : null,
-    anchorOffset : 0,
-    focusNode : null,
-    focusOffset : 0,
-    isCollapsed : true,
-    type : "None",
-    removeAllRanges() { this.rangeCount = 0; },
+    rangeCount: 0,
+    anchorNode: null,
+    anchorOffset: 0,
+    focusNode: null,
+    focusOffset: 0,
+    isCollapsed: true,
+    type: "None",
+    removeAllRanges() {
+      this.rangeCount = 0;
+    },
     addRange(range) {
       this.rangeCount = 1;
       this._range = range;
     },
-    getRangeAt(i) { return this._range || null; },
+    getRangeAt(i) {
+      return this._range || null;
+    },
     collapse(node, offset) {
       this.anchorNode = node;
       this.anchorOffset = offset || 0;
@@ -2706,8 +2875,12 @@ globalThis.getSelection = _markNative(function getSelection() {
     },
     selectAllChildren(node) {},
     deleteFromDocument() {},
-    containsNode(node) { return false; },
-    toString() { return ""; },
+    containsNode(node) {
+      return false;
+    },
+    toString() {
+      return "";
+    },
   };
 });
 
@@ -2720,7 +2893,7 @@ globalThis.CSSStyleSheet = class CSSStyleSheet {
   }
   insertRule(rule, index) {
     const idx = index ?? this._rules.length;
-    this._rules.splice(idx, 0, {cssText : rule, type : 1});
+    this._rules.splice(idx, 0, { cssText: rule, type: 1 });
     this.cssRules = this._rules;
     return idx;
   }
@@ -2731,21 +2904,27 @@ globalThis.CSSStyleSheet = class CSSStyleSheet {
   addRule(selector, style, index) {
     return this.insertRule(selector + "{" + style + "}", index);
   }
-  removeRule(index) { this.deleteRule(index); }
+  removeRule(index) {
+    this.deleteRule(index);
+  }
   replace(text) {
-    this._rules = [ {cssText : text, type : 1} ];
+    this._rules = [{ cssText: text, type: 1 }];
     this.cssRules = this._rules;
     return Promise.resolve(this);
   }
   replaceSync(text) {
-    this._rules = [ {cssText : text, type : 1} ];
+    this._rules = [{ cssText: text, type: 1 }];
     this.cssRules = this._rules;
   }
 };
 
 Object.defineProperty(Document.prototype, "adoptedStyleSheets", {
-  get() { return this._adoptedStyleSheets || []; },
-  set(sheets) { this._adoptedStyleSheets = sheets; },
+  get() {
+    return this._adoptedStyleSheets || [];
+  },
+  set(sheets) {
+    this._adoptedStyleSheets = sheets;
+  },
 });
 
 globalThis.__mutationObservers = [];
@@ -2756,14 +2935,13 @@ globalThis.MutationObserver = class MutationObserver {
     this._records = [];
   }
   observe(target, options) {
-    this._targets.push({target, options : options || {}});
+    this._targets.push({ target, options: options || {} });
     globalThis.__mutationObservers.push(this);
   }
   disconnect() {
     this._targets = [];
     const idx = globalThis.__mutationObservers.indexOf(this);
-    if (idx >= 0)
-      globalThis.__mutationObservers.splice(idx, 1);
+    if (idx >= 0) globalThis.__mutationObservers.splice(idx, 1);
   }
   takeRecords() {
     const r = this._records.slice();
@@ -2777,38 +2955,29 @@ globalThis.MutationObserver = class MutationObserver {
         const batch = this._records.splice(0);
         try {
           this._callback(batch, this);
-        } catch (e) {
-        }
+        } catch (e) {}
       }
     });
   }
 };
-globalThis.__notifyMutation = function(type, target_nid, addedNodes,
-                                       removedNodes, attributeName) {
-  if (!globalThis.__mutationObservers.length)
-    return;
+globalThis.__notifyMutation = function (type, target_nid, addedNodes, removedNodes, attributeName) {
+  if (!globalThis.__mutationObservers.length) return;
   const target = globalThis._cache?.get(target_nid) || null;
-  if (!target)
-    return;
+  if (!target) return;
   const record = {
-    type : type,
-    target : target,
-    addedNodes : (addedNodes || [])
-                     .map((nid) => globalThis._cache?.get(nid) || null)
-                     .filter(Boolean),
-    removedNodes : (removedNodes || [])
-                       .map((nid) => globalThis._cache?.get(nid) || null)
-                       .filter(Boolean),
-    attributeName : attributeName || null,
-    oldValue : null,
-    previousSibling : null,
-    nextSibling : null,
+    type: type,
+    target: target,
+    addedNodes: (addedNodes || []).map((nid) => globalThis._cache?.get(nid) || null).filter(Boolean),
+    removedNodes: (removedNodes || []).map((nid) => globalThis._cache?.get(nid) || null).filter(Boolean),
+    attributeName: attributeName || null,
+    oldValue: null,
+    previousSibling: null,
+    nextSibling: null,
   };
   for (const obs of globalThis.__mutationObservers) {
     for (const t of obs._targets) {
-      if (t.target._nid === target_nid ||
-          (t.options.subtree && target.contains && target.closest && true)) {
-        obs._notify([ record ]);
+      if (t.target._nid === target_nid || (t.options.subtree && target.contains && target.closest && true)) {
+        obs._notify([record]);
         break;
       }
     }
@@ -2817,16 +2986,22 @@ globalThis.__notifyMutation = function(type, target_nid, addedNodes,
 
 globalThis.ShadowRoot = class ShadowRoot {};
 globalThis.customElements = {
-  _registry : new Map(),
-  define(name, cls, opts) { this._registry.set(name, cls); },
-  get(name) { return this._registry.get(name); },
-  whenDefined(name) { return Promise.resolve(this._registry.get(name)); },
+  _registry: new Map(),
+  define(name, cls, opts) {
+    this._registry.set(name, cls);
+  },
+  get(name) {
+    return this._registry.get(name);
+  },
+  whenDefined(name) {
+    return Promise.resolve(this._registry.get(name));
+  },
   upgrade() {},
 };
 globalThis.NodeFilter = {
-  SHOW_ELEMENT : 1,
-  SHOW_TEXT : 4,
-  SHOW_ALL : 0xffffffff,
+  SHOW_ELEMENT: 1,
+  SHOW_TEXT: 4,
+  SHOW_ALL: 0xffffffff,
 };
 globalThis.ResizeObserver = class {
   constructor() {}
@@ -2835,26 +3010,27 @@ globalThis.ResizeObserver = class {
   disconnect() {}
 };
 globalThis.IntersectionObserver = class {
-  constructor(callback) { this._callback = callback; }
+  constructor(callback) {
+    this._callback = callback;
+  }
   observe(el) {
     Promise.resolve().then(() => {
       this._callback(
-          [
-            {
-              target : el,
-              isIntersecting : true,
-              intersectionRatio : 1,
-              boundingClientRect :
-                  el.getBoundingClientRect
-                      ? el.getBoundingClientRect()
-                      : {x : 0, y : 0, width : 100, height : 20},
-              intersectionRect : el.getBoundingClientRect
-                                     ? el.getBoundingClientRect()
-                                     : {x : 0, y : 0, width : 100, height : 20},
-              rootBounds : {x : 0, y : 0, width : 1280, height : 720},
-            },
-          ],
-          this,
+        [
+          {
+            target: el,
+            isIntersecting: true,
+            intersectionRatio: 1,
+            boundingClientRect: el.getBoundingClientRect
+              ? el.getBoundingClientRect()
+              : { x: 0, y: 0, width: 100, height: 20 },
+            intersectionRect: el.getBoundingClientRect
+              ? el.getBoundingClientRect()
+              : { x: 0, y: 0, width: 100, height: 20 },
+            rootBounds: { x: 0, y: 0, width: 1280, height: 720 },
+          },
+        ],
+        this,
       );
     });
   }
@@ -2881,12 +3057,15 @@ globalThis.Event = class Event {
     this._propagationStopped = false;
     this._immediatePropagationStopped = false;
   }
-  get isTrusted() { return true; }
-  preventDefault() {
-    if (this.cancelable)
-      this.defaultPrevented = true;
+  get isTrusted() {
+    return true;
   }
-  stopPropagation() { this._propagationStopped = true; }
+  preventDefault() {
+    if (this.cancelable) this.defaultPrevented = true;
+  }
+  stopPropagation() {
+    this._propagationStopped = true;
+  }
   stopImmediatePropagation() {
     this._propagationStopped = true;
     this._immediatePropagationStopped = true;
@@ -2942,7 +3121,9 @@ globalThis.ErrorEvent = class extends Event {
   }
 };
 globalThis.PointerEvent = class extends Event {
-  constructor(t, o = {}) { super(t, o); }
+  constructor(t, o = {}) {
+    super(t, o);
+  }
 };
 globalThis.AnimationEvent = class extends Event {};
 globalThis.TransitionEvent = class extends Event {};
@@ -2962,17 +3143,19 @@ globalThis.SubmitEvent = class extends Event {};
 globalThis.AbortController = class AbortController {
   constructor() {
     this.signal = {
-      aborted : false,
+      aborted: false,
       addEventListener() {},
       removeEventListener() {},
-      onabort : null,
+      onabort: null,
     };
   }
-  abort() { this.signal.aborted = true; }
+  abort() {
+    this.signal.aborted = true;
+  }
 };
 globalThis.AbortSignal = {
   timeout(ms) {
-    return {aborted : false, addEventListener() {}, removeEventListener() {}};
+    return { aborted: false, addEventListener() {}, removeEventListener() {} };
   },
 };
 if (typeof Blob === "undefined")
@@ -2982,7 +3165,9 @@ if (typeof Blob === "undefined")
       this.size = this._data.length;
       this.type = opts.type || "";
     }
-    async text() { return this._data; }
+    async text() {
+      return this._data;
+    }
   };
 if (typeof File === "undefined")
   globalThis.File = class extends Blob {
@@ -2993,38 +3178,52 @@ if (typeof File === "undefined")
   };
 if (typeof FormData === "undefined")
   globalThis.FormData = class FormData {
-    constructor() { this._d = []; }
-    append(k, v) { this._d.push([ k, v ]); }
+    constructor() {
+      this._d = [];
+    }
+    append(k, v) {
+      this._d.push([k, v]);
+    }
     get(k) {
-      const e = this._d.find(([ a ]) => a === k);
+      const e = this._d.find(([a]) => a === k);
       return e ? e[1] : null;
     }
-    getAll(k) { return this._d.filter(([ a ]) => a === k).map(([, v ]) => v); }
-    has(k) { return this._d.some(([ a ]) => a === k); }
-    entries() { return this._d[Symbol.iterator](); }
-    forEach(cb) { this._d.forEach(([ k, v ]) => cb(v, k)); }
+    getAll(k) {
+      return this._d.filter(([a]) => a === k).map(([, v]) => v);
+    }
+    has(k) {
+      return this._d.some(([a]) => a === k);
+    }
+    entries() {
+      return this._d[Symbol.iterator]();
+    }
+    forEach(cb) {
+      this._d.forEach(([k, v]) => cb(v, k));
+    }
   };
 if (typeof URLSearchParams === "undefined")
   globalThis.URLSearchParams = class {
     constructor(init = "") {
       this._p = [];
       if (typeof init === "string") {
-        init.replace(/^\?/, "").split("&").forEach((p) => {
-          const [k, ...v] = p.split("=");
-          if (k)
-            this.append(decodeURIComponent(k), decodeURIComponent(v.join("=")));
-        });
+        init
+          .replace(/^\?/, "")
+          .split("&")
+          .forEach((p) => {
+            const [k, ...v] = p.split("=");
+            if (k) this.append(decodeURIComponent(k), decodeURIComponent(v.join("=")));
+          });
       } else if (init && typeof init[Symbol.iterator] === "function") {
-        for (const pair of init)
-          if (pair && pair.length >= 2)
-            this.append(pair[0], pair[1]);
+        for (const pair of init) if (pair && pair.length >= 2) this.append(pair[0], pair[1]);
       } else if (init && typeof init === "object") {
         Object.keys(init).forEach((k) => this.append(k, init[k]));
       }
     }
-    append(k, v) { this._p.push([ String(k), String(v) ]); }
+    append(k, v) {
+      this._p.push([String(k), String(v)]);
+    }
     get(k) {
-      const p = this._p.find(([ key ]) => key === String(k));
+      const p = this._p.find(([key]) => key === String(k));
       return p ? p[1] : null;
     }
     set(k, v) {
@@ -3033,104 +3232,117 @@ if (typeof URLSearchParams === "undefined")
     }
     delete(k) {
       k = String(k);
-      this._p = this._p.filter(([ key ]) => key !== k);
+      this._p = this._p.filter(([key]) => key !== k);
     }
     has(k) {
       k = String(k);
-      return this._p.some(([ key ]) => key === k);
+      return this._p.some(([key]) => key === k);
     }
     toString() {
-      return this._p
-          .map(([ k, v ]) =>
-                   `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-          .join("&");
+      return this._p.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
     }
-    forEach(cb) { this._p.forEach(([ k, v ]) => cb(v, k, this)); }
+    forEach(cb) {
+      this._p.forEach(([k, v]) => cb(v, k, this));
+    }
   };
 
 globalThis.DOMParser = class {
-  parseFromString(s, t) { return globalThis.document; }
+  parseFromString(s, t) {
+    return globalThis.document;
+  }
 };
 globalThis.XMLSerializer = class XMLSerializer {
   serializeToString(node) {
-    if (!node)
-      return "";
+    if (!node) return "";
     if (node.nodeType === 10) {
       let s = "<!DOCTYPE " + (node.name || "html");
-      if (node.publicId)
-        s += ' PUBLIC "' + node.publicId + '"';
+      if (node.publicId) s += ' PUBLIC "' + node.publicId + '"';
       if (node.systemId) {
-        if (!node.publicId)
-          s += " SYSTEM";
+        if (!node.publicId) s += " SYSTEM";
         s += ' "' + node.systemId + '"';
       }
       s += ">";
       return s;
     }
-    if (node.outerHTML !== undefined)
-      return node.outerHTML;
+    if (node.outerHTML !== undefined) return node.outerHTML;
     if (node.nodeType === 9) {
       let s = "";
-      if (node.doctype)
-        s += this.serializeToString(node.doctype);
-      if (node.documentElement)
-        s += node.documentElement.outerHTML;
+      if (node.doctype) s += this.serializeToString(node.doctype);
+      if (node.documentElement) s += node.documentElement.outerHTML;
       return s;
     }
-    if (node.nodeType === 3)
-      return node.textContent || "";
-    if (node.nodeType === 8)
-      return "<!--" + (node.textContent || "") + "-->";
+    if (node.nodeType === 3) return node.textContent || "";
+    if (node.nodeType === 8) return "<!--" + (node.textContent || "") + "-->";
     return "";
   }
 };
 globalThis.performance = globalThis.performance || {
-  now : () => Date.now(),
+  now: () => Date.now(),
   mark() {},
   measure() {},
   clearMarks() {},
   clearMeasures() {},
   clearResourceTimings() {},
-  getEntries() { return []; },
-  getEntriesByName() { return []; },
-  getEntriesByType() { return []; },
+  getEntries() {
+    return [];
+  },
+  getEntriesByName() {
+    return [];
+  },
+  getEntriesByType() {
+    return [];
+  },
   setResourceTimingBufferSize() {},
-  timeOrigin : 0,
-  timing :
-      {navigationStart : 0, domContentLoadedEventEnd : 0, loadEventEnd : 0},
-  navigation : {type : 0, redirectCount : 0},
-  memory : {
-    jsHeapSizeLimit : 2172649472,
-    totalJSHeapSize : 19321856,
-    usedJSHeapSize : 16781520,
+  timeOrigin: 0,
+  timing: { navigationStart: 0, domContentLoadedEventEnd: 0, loadEventEnd: 0 },
+  navigation: { type: 0, redirectCount: 0 },
+  memory: {
+    jsHeapSizeLimit: 2172649472,
+    totalJSHeapSize: 19321856,
+    usedJSHeapSize: 16781520,
   },
 };
 
 Object.defineProperty(Document.prototype, "fonts", {
   get() {
     return {
-      ready : Promise.resolve(),
-      check() { return true; },
-      load() { return Promise.resolve([]); },
+      ready: Promise.resolve(),
+      check() {
+        return true;
+      },
+      load() {
+        return Promise.resolve([]);
+      },
       add() {},
-      delete () { return false; },
+      delete() {
+        return false;
+      },
       clear() {},
-      has() { return false; },
+      has() {
+        return false;
+      },
       forEach() {},
-      get size() { return 0; },
-      get status() { return "loaded"; },
+      get size() {
+        return 0;
+      },
+      get status() {
+        return "loaded";
+      },
       addEventListener() {},
       removeEventListener() {},
-      dispatchEvent() { return true; },
-      [Symbol.iterator]() { return [][Symbol.iterator](); },
+      dispatchEvent() {
+        return true;
+      },
+      [Symbol.iterator]() {
+        return [][Symbol.iterator]();
+      },
     };
   },
-  configurable : true,
+  configurable: true,
 });
 globalThis.crypto = globalThis.crypto || {
   getRandomValues(arr) {
-    for (let i = 0; i < arr.length; i++)
-      arr[i] = Math.floor(Math.random() * 256);
+    for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
     return arr;
   },
   randomUUID() {
@@ -3140,67 +3352,75 @@ globalThis.crypto = globalThis.crypto || {
     });
   },
 };
-globalThis.structuredClone =
-    globalThis.structuredClone || ((v) => JSON.parse(JSON.stringify(v)));
+globalThis.structuredClone = globalThis.structuredClone || ((v) => JSON.parse(JSON.stringify(v)));
 globalThis.reportError = globalThis.reportError || ((e) => console.error(e));
 
 const _mkStore = () => {
   const s = {};
   return {
-    getItem : (k) => s[k] ?? null,
-    setItem : (k, v) => { s[k] = String(v); },
-    removeItem : (k) => { delete s[k]; },
-    clear : () => {
-      for (const k in s)
-        delete s[k];
+    getItem: (k) => s[k] ?? null,
+    setItem: (k, v) => {
+      s[k] = String(v);
     },
-    get length() { return Object.keys(s).length; },
-    key : (i) => Object.keys(s)[i] ?? null,
+    removeItem: (k) => {
+      delete s[k];
+    },
+    clear: () => {
+      for (const k in s) delete s[k];
+    },
+    get length() {
+      return Object.keys(s).length;
+    },
+    key: (i) => Object.keys(s)[i] ?? null,
   };
 };
 globalThis.localStorage = _mkStore();
 globalThis.sessionStorage = _mkStore();
 
 globalThis.btoa =
-    globalThis.btoa || ((s) => {
-      const b = new TextEncoder().encode(s);
-      const c =
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      let r = "";
-      for (let i = 0; i < b.length; i += 3) {
-        const a = b[i], bb = b[i + 1] ?? 0, cc = b[i + 2] ?? 0;
-        r += c[a >> 2] + c[((a & 3) << 4) | (bb >> 4)] +
-             (i + 1 < b.length ? c[((bb & 15) << 2) | (cc >> 6)] : "=") +
-             (i + 2 < b.length ? c[cc & 63] : "=");
-      }
-      return r;
-    });
+  globalThis.btoa ||
+  ((s) => {
+    const b = new TextEncoder().encode(s);
+    const c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let r = "";
+    for (let i = 0; i < b.length; i += 3) {
+      const a = b[i],
+        bb = b[i + 1] ?? 0,
+        cc = b[i + 2] ?? 0;
+      r +=
+        c[a >> 2] +
+        c[((a & 3) << 4) | (bb >> 4)] +
+        (i + 1 < b.length ? c[((bb & 15) << 2) | (cc >> 6)] : "=") +
+        (i + 2 < b.length ? c[cc & 63] : "=");
+    }
+    return r;
+  });
 globalThis.atob =
-    globalThis.atob || ((s) => {
-      const c =
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      const r = [];
-      for (let i = 0; i < s.length; i += 4) {
-        const a = c.indexOf(s[i]), b = c.indexOf(s[i + 1]),
-              cc = c.indexOf(s[i + 2]), d = c.indexOf(s[i + 3]);
-        r.push((a << 2) | (b >> 4));
-        if (cc >= 0)
-          r.push(((b & 15) << 4) | (cc >> 2));
-        if (d >= 0)
-          r.push(((cc & 3) << 6) | d);
-      }
-      return String.fromCharCode(...r);
-    });
+  globalThis.atob ||
+  ((s) => {
+    const c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const r = [];
+    for (let i = 0; i < s.length; i += 4) {
+      const a = c.indexOf(s[i]),
+        b = c.indexOf(s[i + 1]),
+        cc = c.indexOf(s[i + 2]),
+        d = c.indexOf(s[i + 3]);
+      r.push((a << 2) | (b >> 4));
+      if (cc >= 0) r.push(((b & 15) << 4) | (cc >> 2));
+      if (d >= 0) r.push(((cc & 3) << 6) | d);
+    }
+    return String.fromCharCode(...r);
+  });
 
 globalThis.history = {
-  length : 1,
-  state : null,
+  length: 1,
+  state: null,
   pushState() {},
   replaceState() {},
   go() {},
   back() {},
   forward() {},
-  scrollRestoration : "auto",
+  scrollRestoration: "auto",
 };
 globalThis.screenX = 0;
 globalThis.screenY = 0;
@@ -3212,8 +3432,12 @@ globalThis.scrollX = 0;
 globalThis.scrollY = 0;
 
 globalThis.CSS = {
-  supports() { return false; },
-  escape(s) { return s; },
+  supports() {
+    return false;
+  },
+  escape(s) {
+    return s;
+  },
 };
 
 globalThis.HTMLElement = Element;
@@ -3273,109 +3497,111 @@ globalThis.Range = class Range {
   collapse() {}
   selectNodeContents() {}
   deleteContents() {}
-  cloneContents() { return document.createDocumentFragment(); }
+  cloneContents() {
+    return document.createDocumentFragment();
+  }
   insertNode() {}
   getBoundingClientRect() {
     return {
-      x : 0,
-      y : 0,
-      width : 0,
-      height : 0,
-      top : 0,
-      right : 0,
-      bottom : 0,
-      left : 0,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
     };
   }
 };
 
-[navigator.getBattery,
- navigator.getGamepads,
- navigator.sendBeacon,
- navigator.javaEnabled,
- navigator.serviceWorker?.register,
- navigator.permissions?.query,
- navigator.credentials?.get,
- globalThis.fetch,
- globalThis.matchMedia,
- globalThis.getComputedStyle,
- globalThis.getSelection,
- globalThis.requestAnimationFrame,
- globalThis.cancelAnimationFrame,
- globalThis.setTimeout,
- globalThis.clearTimeout,
- globalThis.setInterval,
- globalThis.clearInterval,
- globalThis.queueMicrotask,
- globalThis.structuredClone,
- globalThis.reportError,
- globalThis.btoa,
- globalThis.atob,
- console.log,
- console.warn,
- console.error,
- console.info,
- console.debug,
- console.dir,
- console.assert,
- Element.prototype.getAttribute,
- Element.prototype.setAttribute,
- Element.prototype.removeAttribute,
- Element.prototype.hasAttribute,
- Element.prototype.querySelector,
- Element.prototype.querySelectorAll,
- Element.prototype.getElementsByTagName,
- Element.prototype.getElementsByClassName,
- Element.prototype.matches,
- Element.prototype.closest,
- Element.prototype.getBoundingClientRect,
- Element.prototype.getClientRects,
- Element.prototype.addEventListener,
- Element.prototype.removeEventListener,
- Element.prototype.dispatchEvent,
- Element.prototype.click,
- Element.prototype.focus,
- Element.prototype.blur,
- Element.prototype.cloneNode,
- Element.prototype.attachShadow,
- Element.prototype.insertAdjacentHTML,
- Element.prototype.scrollIntoView,
- Element.prototype.append,
- Element.prototype.remove,
- Element.prototype.getContext,
- Element.prototype.toDataURL,
- Element.prototype.toBlob,
- Node.prototype.appendChild,
- Node.prototype.removeChild,
- Node.prototype.replaceChild,
- Node.prototype.insertBefore,
- Node.prototype.contains,
- Node.prototype.hasChildNodes,
- Node.prototype.cloneNode,
- Document.prototype.getElementById,
- Document.prototype.querySelector,
- Document.prototype.querySelectorAll,
- Document.prototype.getElementsByTagName,
- Document.prototype.createElement,
- Document.prototype.createElementNS,
- Document.prototype.createTextNode,
- Document.prototype.createComment,
- Document.prototype.createDocumentFragment,
- Document.prototype.createEvent,
- Document.prototype.hasFocus,
- Notification,
- Notification.requestPermission,
- window.chrome?.csi,
- window.chrome?.loadTimes,
- MutationObserver,
- ResizeObserver,
- IntersectionObserver,
- PerformanceObserver,
- XMLSerializer,
- XMLSerializer.prototype.serializeToString,
+[
+  navigator.getBattery,
+  navigator.getGamepads,
+  navigator.sendBeacon,
+  navigator.javaEnabled,
+  navigator.serviceWorker?.register,
+  navigator.permissions?.query,
+  navigator.credentials?.get,
+  globalThis.fetch,
+  globalThis.matchMedia,
+  globalThis.getComputedStyle,
+  globalThis.getSelection,
+  globalThis.requestAnimationFrame,
+  globalThis.cancelAnimationFrame,
+  globalThis.setTimeout,
+  globalThis.clearTimeout,
+  globalThis.setInterval,
+  globalThis.clearInterval,
+  globalThis.queueMicrotask,
+  globalThis.structuredClone,
+  globalThis.reportError,
+  globalThis.btoa,
+  globalThis.atob,
+  console.log,
+  console.warn,
+  console.error,
+  console.info,
+  console.debug,
+  console.dir,
+  console.assert,
+  Element.prototype.getAttribute,
+  Element.prototype.setAttribute,
+  Element.prototype.removeAttribute,
+  Element.prototype.hasAttribute,
+  Element.prototype.querySelector,
+  Element.prototype.querySelectorAll,
+  Element.prototype.getElementsByTagName,
+  Element.prototype.getElementsByClassName,
+  Element.prototype.matches,
+  Element.prototype.closest,
+  Element.prototype.getBoundingClientRect,
+  Element.prototype.getClientRects,
+  Element.prototype.addEventListener,
+  Element.prototype.removeEventListener,
+  Element.prototype.dispatchEvent,
+  Element.prototype.click,
+  Element.prototype.focus,
+  Element.prototype.blur,
+  Element.prototype.cloneNode,
+  Element.prototype.attachShadow,
+  Element.prototype.insertAdjacentHTML,
+  Element.prototype.scrollIntoView,
+  Element.prototype.append,
+  Element.prototype.remove,
+  Element.prototype.getContext,
+  Element.prototype.toDataURL,
+  Element.prototype.toBlob,
+  Node.prototype.appendChild,
+  Node.prototype.removeChild,
+  Node.prototype.replaceChild,
+  Node.prototype.insertBefore,
+  Node.prototype.contains,
+  Node.prototype.hasChildNodes,
+  Node.prototype.cloneNode,
+  Document.prototype.getElementById,
+  Document.prototype.querySelector,
+  Document.prototype.querySelectorAll,
+  Document.prototype.getElementsByTagName,
+  Document.prototype.createElement,
+  Document.prototype.createElementNS,
+  Document.prototype.createTextNode,
+  Document.prototype.createComment,
+  Document.prototype.createDocumentFragment,
+  Document.prototype.createEvent,
+  Document.prototype.hasFocus,
+  Notification,
+  Notification.requestPermission,
+  window.chrome?.csi,
+  window.chrome?.loadTimes,
+  MutationObserver,
+  ResizeObserver,
+  IntersectionObserver,
+  PerformanceObserver,
+  XMLSerializer,
+  XMLSerializer.prototype.serializeToString,
 ].forEach((fn) => {
-  if (typeof fn === "function")
-    _markNative(fn);
+  if (typeof fn === "function") _markNative(fn);
 });
 
 class _IframeDocument {
@@ -3395,11 +3621,12 @@ class _IframeDocument {
     this._body = document.createElement("body");
     this._root.appendChild(this._head);
     this._root.appendChild(this._body);
-    var bodyContent = html.replace(/^<!DOCTYPE[^>]*>/i, "")
-                          .replace(/<\/?html[^>]*>/gi, "")
-                          .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "")
-                          .replace(/<\/?body[^>]*>/gi, "")
-                          .replace(/^\s+/, "");
+    var bodyContent = html
+      .replace(/^<!DOCTYPE[^>]*>/i, "")
+      .replace(/<\/?html[^>]*>/gi, "")
+      .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "")
+      .replace(/<\/?body[^>]*>/gi, "")
+      .replace(/^\s+/, "");
     if (bodyContent) {
       this._body.innerHTML = bodyContent;
     }
@@ -3407,54 +3634,109 @@ class _IframeDocument {
     this._title = "";
     if (this._head) {
       const titleEl = this._head.querySelector("title");
-      if (titleEl)
-        this._title = titleEl.textContent;
+      if (titleEl) this._title = titleEl.textContent;
     }
   }
 
-  get documentElement() { return this._root; }
-  get head() { return this._head; }
-  get body() { return this._body; }
-  get title() { return this._title; }
-  set title(v) { this._title = v; }
-  get URL() { return this._url; }
-  get documentURI() { return this._url; }
-  get location() { return this._iframeEl?.contentWindow?.location; }
-  get defaultView() { return this._iframeEl?.contentWindow; }
-  get ownerDocument() { return null; }
-  get compatMode() { return "CSS1Compat"; }
-  get activeElement() { return this._body; }
+  get documentElement() {
+    return this._root;
+  }
+  get head() {
+    return this._head;
+  }
+  get body() {
+    return this._body;
+  }
+  get title() {
+    return this._title;
+  }
+  set title(v) {
+    this._title = v;
+  }
+  get URL() {
+    return this._url;
+  }
+  get documentURI() {
+    return this._url;
+  }
+  get location() {
+    return this._iframeEl?.contentWindow?.location;
+  }
+  get defaultView() {
+    return this._iframeEl?.contentWindow;
+  }
+  get ownerDocument() {
+    return null;
+  }
+  get compatMode() {
+    return "CSS1Compat";
+  }
+  get activeElement() {
+    return this._body;
+  }
 
-  getElementById(id) { return this._root.querySelector("#" + id); }
-  querySelector(sel) { return this._root.querySelector(sel); }
-  querySelectorAll(sel) { return this._root.querySelectorAll(sel); }
-  getElementsByTagName(tag) { return this._root.querySelectorAll(tag); }
-  getElementsByClassName(cls) { return this._root.querySelectorAll("." + cls); }
-  createElement(tag) { return document.createElement(tag); }
-  createElementNS(ns, tag) { return document.createElementNS(ns, tag); }
-  createTextNode(text) { return document.createTextNode(text); }
-  createComment(text) { return document.createComment(text); }
-  createDocumentFragment() { return document.createDocumentFragment(); }
-  createEvent(type) { return document.createEvent(type); }
-  hasFocus() { return false; }
+  getElementById(id) {
+    return this._root.querySelector("#" + id);
+  }
+  querySelector(sel) {
+    return this._root.querySelector(sel);
+  }
+  querySelectorAll(sel) {
+    return this._root.querySelectorAll(sel);
+  }
+  getElementsByTagName(tag) {
+    return this._root.querySelectorAll(tag);
+  }
+  getElementsByClassName(cls) {
+    return this._root.querySelectorAll("." + cls);
+  }
+  createElement(tag) {
+    return document.createElement(tag);
+  }
+  createElementNS(ns, tag) {
+    return document.createElementNS(ns, tag);
+  }
+  createTextNode(text) {
+    return document.createTextNode(text);
+  }
+  createComment(text) {
+    return document.createComment(text);
+  }
+  createDocumentFragment() {
+    return document.createDocumentFragment();
+  }
+  createEvent(type) {
+    return document.createEvent(type);
+  }
+  hasFocus() {
+    return false;
+  }
 
-  get cookie() { return ""; }
+  get cookie() {
+    return "";
+  }
   set cookie(v) {}
-  get implementation() { return document.implementation; }
-  get styleSheets() { return []; }
+  get implementation() {
+    return document.implementation;
+  }
+  get styleSheets() {
+    return [];
+  }
 
   addEventListener() {}
   removeEventListener() {}
-  dispatchEvent() { return true; }
+  dispatchEvent() {
+    return true;
+  }
 
   write(html) {
-    if (this._body)
-      this._body.innerHTML += html;
+    if (this._body) this._body.innerHTML += html;
   }
-  writeln(html) { this.write(html + "\n"); }
+  writeln(html) {
+    this.write(html + "\n");
+  }
   open() {
-    if (this._body)
-      this._body.innerHTML = "";
+    if (this._body) this._body.innerHTML = "";
   }
   close() {}
 }
@@ -3489,32 +3771,36 @@ class _IframeWindow {
     try {
       const u = new URL(url);
       this.location = {
-        href : url,
-        origin : u.origin,
-        protocol : u.protocol,
-        host : u.host,
-        hostname : u.hostname,
-        port : u.port,
-        pathname : u.pathname,
-        search : u.search,
-        hash : u.hash,
-        toString() { return url; },
+        href: url,
+        origin: u.origin,
+        protocol: u.protocol,
+        host: u.host,
+        hostname: u.hostname,
+        port: u.port,
+        pathname: u.pathname,
+        search: u.search,
+        hash: u.hash,
+        toString() {
+          return url;
+        },
         assign() {},
         reload() {},
         replace() {},
       };
     } catch (e) {
       this.location = {
-        href : url,
-        origin : "",
-        protocol : "",
-        host : "",
-        hostname : "",
-        port : "",
-        pathname : "/",
-        search : "",
-        hash : "",
-        toString() { return url; },
+        href: url,
+        origin: "",
+        protocol: "",
+        host: "",
+        hostname: "",
+        port: "",
+        pathname: "/",
+        search: "",
+        hash: "",
+        toString() {
+          return url;
+        },
         assign() {},
         reload() {},
         replace() {},
@@ -3524,24 +3810,34 @@ class _IframeWindow {
 
   postMessage(data, origin) {
     const event = new MessageEvent("message", {
-      data : data,
-      origin : this.location.origin,
-      source : this,
+      data: data,
+      origin: this.location.origin,
+      source: this,
     });
-    Promise.resolve().then(() => { globalThis.dispatchEvent?.(event); });
+    Promise.resolve().then(() => {
+      globalThis.dispatchEvent?.(event);
+    });
   }
 
-  setTimeout(fn, ms) { return globalThis.setTimeout(fn, ms); }
-  clearTimeout(id) { globalThis.clearTimeout(id); }
-  setInterval(fn, ms) { return globalThis.setInterval(fn, ms); }
-  clearInterval(id) { globalThis.clearInterval(id); }
-  requestAnimationFrame(fn) { return globalThis.requestAnimationFrame(fn); }
+  setTimeout(fn, ms) {
+    return globalThis.setTimeout(fn, ms);
+  }
+  clearTimeout(id) {
+    globalThis.clearTimeout(id);
+  }
+  setInterval(fn, ms) {
+    return globalThis.setInterval(fn, ms);
+  }
+  clearInterval(id) {
+    globalThis.clearInterval(id);
+  }
+  requestAnimationFrame(fn) {
+    return globalThis.requestAnimationFrame(fn);
+  }
 
   addEventListener(type, fn) {
-    if (!this._listeners)
-      this._listeners = {};
-    if (!this._listeners[type])
-      this._listeners[type] = [];
+    if (!this._listeners) this._listeners = {};
+    if (!this._listeners[type]) this._listeners[type] = [];
     this._listeners[type].push(fn);
   }
   removeEventListener(type, fn) {
@@ -3554,23 +3850,34 @@ class _IframeWindow {
     for (const h of handlers) {
       try {
         h.call(this, event);
-      } catch (e) {
-      }
+      } catch (e) {}
     }
     return true;
   }
 
-  getComputedStyle(el) { return globalThis.getComputedStyle(el); }
-  matchMedia(q) { return globalThis.matchMedia(q); }
-  getSelection() { return globalThis.getSelection(); }
-  fetch(input, init) { return globalThis.fetch(input, init); }
-  close() { this.closed = true; }
+  getComputedStyle(el) {
+    return globalThis.getComputedStyle(el);
+  }
+  matchMedia(q) {
+    return globalThis.matchMedia(q);
+  }
+  getSelection() {
+    return globalThis.getSelection();
+  }
+  fetch(input, init) {
+    return globalThis.fetch(input, init);
+  }
+  close() {
+    this.closed = true;
+  }
   focus() {}
   blur() {}
 }
 
-globalThis.__ariaQuerySelector = function(root, selector) { return null; };
-globalThis.__ariaQuerySelectorAll = async function*(root, selector) {};
+globalThis.__ariaQuerySelector = function (root, selector) {
+  return null;
+};
+globalThis.__ariaQuerySelectorAll = async function* (root, selector) {};
 class _Canvas2D {
   constructor(canvas) {
     this.canvas = canvas;
@@ -3578,12 +3885,9 @@ class _Canvas2D {
     this._h = canvas.height || 150;
     this._buf = new Uint8ClampedArray(this._w * this._h * 4);
     for (let i = 0; i < this._w * this._h; i++) {
-      this._buf[i * 4 + 0] =
-          255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 0));
-      this._buf[i * 4 + 1] =
-          255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 1));
-      this._buf[i * 4 + 2] =
-          255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 2));
+      this._buf[i * 4 + 0] = 255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 0));
+      this._buf[i * 4 + 1] = 255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 1));
+      this._buf[i * 4 + 2] = 255 + Math.floor(_fpNoise(i % this._w, Math.floor(i / this._w), 2));
       this._buf[i * 4 + 3] = 255;
     }
     this.fillStyle = "#000000";
@@ -3597,20 +3901,13 @@ class _Canvas2D {
     this._stateStack = [];
   }
   _parseColor(css) {
-    if (!css || css === "none")
-      return [ 0, 0, 0, 0 ];
+    if (!css || css === "none") return [0, 0, 0, 0];
     if (css.startsWith("#")) {
       const hex = css.slice(1);
       if (hex.length === 3)
-        return [
-          parseInt(hex[0] + hex[0], 16), parseInt(hex[1] + hex[1], 16),
-          parseInt(hex[2] + hex[2], 16), 255
-        ];
+        return [parseInt(hex[0] + hex[0], 16), parseInt(hex[1] + hex[1], 16), parseInt(hex[2] + hex[2], 16), 255];
       if (hex.length === 6)
-        return [
-          parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16),
-          parseInt(hex.slice(4, 6), 16), 255
-        ];
+        return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 255];
       if (hex.length === 8)
         return [
           parseInt(hex.slice(0, 2), 16),
@@ -3620,38 +3917,30 @@ class _Canvas2D {
         ];
     }
     const m = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-    if (m)
-      return [
-        +m[1], +m[2], +m[3], m[4] !== undefined ? Math.round(+m[4] * 255) : 255
-      ];
+    if (m) return [+m[1], +m[2], +m[3], m[4] !== undefined ? Math.round(+m[4] * 255) : 255];
     const named = {
-      red : [ 255, 0, 0, 255 ],
-      green : [ 0, 128, 0, 255 ],
-      blue : [ 0, 0, 255, 255 ],
-      white : [ 255, 255, 255, 255 ],
-      black : [ 0, 0, 0, 255 ],
-      yellow : [ 255, 255, 0, 255 ],
-      orange : [ 255, 165, 0, 255 ],
-      gray : [ 128, 128, 128, 255 ],
-      transparent : [ 0, 0, 0, 0 ],
+      red: [255, 0, 0, 255],
+      green: [0, 128, 0, 255],
+      blue: [0, 0, 255, 255],
+      white: [255, 255, 255, 255],
+      black: [0, 0, 0, 255],
+      yellow: [255, 255, 0, 255],
+      orange: [255, 165, 0, 255],
+      gray: [128, 128, 128, 255],
+      transparent: [0, 0, 0, 0],
     };
-    return named[css] || [ 0, 0, 0, 255 ];
+    return named[css] || [0, 0, 0, 255];
   }
   _setPixel(x, y, r, g, b, a) {
     x = Math.round(x);
     y = Math.round(y);
-    if (x < 0 || x >= this._w || y < 0 || y >= this._h)
-      return;
+    if (x < 0 || x >= this._w || y < 0 || y >= this._h) return;
     const idx = (y * this._w + x) * 4;
     const alpha = (a / 255) * this.globalAlpha;
-    this._buf[idx + 0] =
-        Math.round(r * alpha + this._buf[idx + 0] * (1 - alpha));
-    this._buf[idx + 1] =
-        Math.round(g * alpha + this._buf[idx + 1] * (1 - alpha));
-    this._buf[idx + 2] =
-        Math.round(b * alpha + this._buf[idx + 2] * (1 - alpha));
-    this._buf[idx + 3] =
-        Math.min(255, Math.round(a * alpha + this._buf[idx + 3] * (1 - alpha)));
+    this._buf[idx + 0] = Math.round(r * alpha + this._buf[idx + 0] * (1 - alpha));
+    this._buf[idx + 1] = Math.round(g * alpha + this._buf[idx + 1] * (1 - alpha));
+    this._buf[idx + 2] = Math.round(b * alpha + this._buf[idx + 2] * (1 - alpha));
+    this._buf[idx + 3] = Math.min(255, Math.round(a * alpha + this._buf[idx + 3] * (1 - alpha)));
   }
   fillRect(x, y, w, h) {
     const [r, g, b, a] = this._parseColor(this.fillStyle);
@@ -3673,8 +3962,7 @@ class _Canvas2D {
     for (let py = Math.max(0, y); py < Math.min(this._h, y + h); py++) {
       for (let px = Math.max(0, x); px < Math.min(this._w, x + w); px++) {
         const idx = (py * this._w + px) * 4;
-        this._buf[idx] = this._buf[idx + 1] = this._buf[idx + 2] =
-            this._buf[idx + 3] = 0;
+        this._buf[idx] = this._buf[idx + 1] = this._buf[idx + 2] = this._buf[idx + 3] = 0;
       }
     }
   }
@@ -3704,15 +3992,13 @@ class _Canvas2D {
       const code = str.charCodeAt(i);
       for (let row = 0; row < 7; row++) {
         for (let col = 0; col < 5; col++) {
-          const on = (_fpRand(code * 100 + row * 10 + col) > 0.45 && row > 0 &&
-                      row < 6 && col > 0 && col < 4) ||
-                     _fpRand(code * 200 + row * 7 + col) > 0.7;
+          const on =
+            (_fpRand(code * 100 + row * 10 + col) > 0.45 && row > 0 && row < 6 && col > 0 && col < 4) ||
+            _fpRand(code * 200 + row * 7 + col) > 0.7;
           if (on) {
             for (let sy = 0; sy < scale; sy++) {
               for (let sx = 0; sx < scale; sx++) {
-                this._setPixel(cx + col * scale + sx,
-                               Math.round(y) - 7 * scale + row * scale + sy, r,
-                               g, b, a);
+                this._setPixel(cx + col * scale + sx, Math.round(y) - 7 * scale + row * scale + sy, r, g, b, a);
               }
             }
           }
@@ -3721,14 +4007,16 @@ class _Canvas2D {
       cx += 6 * scale;
     }
   }
-  strokeText(text, x, y) { this.fillText(text, x, y); }
+  strokeText(text, x, y) {
+    this.fillText(text, x, y);
+  }
   measureText(t) {
     const fontSize = parseInt(this.font) || 10;
     const scale = Math.max(1, Math.round(fontSize / 10));
     return {
-      width : String(t).length * 6 * scale,
-      actualBoundingBoxAscent : 7 * scale,
-      actualBoundingBoxDescent : 2 * scale,
+      width: String(t).length * 6 * scale,
+      actualBoundingBoxAscent: 7 * scale,
+      actualBoundingBoxDescent: 2 * scale,
     };
   }
   getImageData(x, y, w, h) {
@@ -3739,7 +4027,8 @@ class _Canvas2D {
     const data = new Uint8ClampedArray(w * h * 4);
     for (let py = 0; py < h; py++) {
       for (let px = 0; px < w; px++) {
-        const srcX = x + px, srcY = y + py;
+        const srcX = x + px,
+          srcY = y + py;
         const dstIdx = (py * w + px) * 4;
         if (srcX >= 0 && srcX < this._w && srcY >= 0 && srcY < this._h) {
           const srcIdx = (srcY * this._w + srcX) * 4;
@@ -3750,16 +4039,17 @@ class _Canvas2D {
         }
       }
     }
-    return {data, width : w, height : h};
+    return { data, width: w, height: h };
   }
   putImageData(imageData, dx, dy) {
     dx = Math.round(dx);
     dy = Math.round(dy);
-    const {data, width : w, height : h} = imageData;
+    const { data, width: w, height: h } = imageData;
     for (let py = 0; py < h; py++) {
       for (let px = 0; px < w; px++) {
         const srcIdx = (py * w + px) * 4;
-        const x = dx + px, y = dy + py;
+        const x = dx + px,
+          y = dy + py;
         if (x >= 0 && x < this._w && y >= 0 && y < this._h) {
           const dstIdx = (y * this._w + x) * 4;
           this._buf[dstIdx] = data[srcIdx];
@@ -3771,7 +4061,7 @@ class _Canvas2D {
     }
   }
   createImageData(w, h) {
-    return {data : new Uint8ClampedArray(w * h * 4), width : w, height : h};
+    return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h };
   }
   drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh) {
     if (img && img._ctx && img._ctx._buf) {
@@ -3787,52 +4077,52 @@ class _Canvas2D {
           if (srcX >= 0 && srcX < src._w && srcY >= 0 && srcY < src._h) {
             const srcIdx = (srcY * src._w + srcX) * 4;
             this._setPixel(
-                dx + px,
-                dy + py,
-                src._buf[srcIdx],
-                src._buf[srcIdx + 1],
-                src._buf[srcIdx + 2],
-                src._buf[srcIdx + 3],
+              dx + px,
+              dy + py,
+              src._buf[srcIdx],
+              src._buf[srcIdx + 1],
+              src._buf[srcIdx + 2],
+              src._buf[srcIdx + 3],
             );
           }
         }
       }
     }
   }
-  beginPath() { this._path = []; }
+  beginPath() {
+    this._path = [];
+  }
   closePath() {}
   moveTo(x, y) {
-    if (this._path)
-      this._path.push({t : "M", x, y});
+    if (this._path) this._path.push({ t: "M", x, y });
   }
   lineTo(x, y) {
-    if (this._path)
-      this._path.push({t : "L", x, y});
+    if (this._path) this._path.push({ t: "L", x, y });
   }
   bezierCurveTo() {}
   quadraticCurveTo() {}
   arc(x, y, r, s, e) {
-    if (this._path)
-      this._path.push({t : "A", x, y, r});
+    if (this._path) this._path.push({ t: "A", x, y, r });
   }
   arcTo() {}
-  rect(x, y, w, h) { this.fillRect(x, y, w, h); }
+  rect(x, y, w, h) {
+    this.fillRect(x, y, w, h);
+  }
   fill() {}
   stroke() {}
   clip() {}
   save() {
     this._stateStack.push({
-      fillStyle : this.fillStyle,
-      strokeStyle : this.strokeStyle,
-      globalAlpha : this.globalAlpha,
-      font : this.font,
-      lineWidth : this.lineWidth,
+      fillStyle: this.fillStyle,
+      strokeStyle: this.strokeStyle,
+      globalAlpha: this.globalAlpha,
+      font: this.font,
+      lineWidth: this.lineWidth,
     });
   }
   restore() {
     const s = this._stateStack.pop();
-    if (s)
-      Object.assign(this, s);
+    if (s) Object.assign(this, s);
   }
   translate() {}
   rotate() {}
@@ -3841,14 +4131,20 @@ class _Canvas2D {
   resetTransform() {}
   transform() {}
   createLinearGradient(x0, y0, x1, y1) {
-    return {addColorStop() {}, _x0 : x0, _y0 : y0, _x1 : x1, _y1 : y1};
+    return { addColorStop() {}, _x0: x0, _y0: y0, _x1: x1, _y1: y1 };
   }
   createRadialGradient() {
-    return {addColorStop() {}};
+    return { addColorStop() {} };
   }
-  createPattern() { return {}; }
-  isPointInPath() { return false; }
-  isPointInStroke() { return false; }
+  createPattern() {
+    return {};
+  }
+  isPointInPath() {
+    return false;
+  }
+  isPointInStroke() {
+    return false;
+  }
 }
 
 Element.prototype.getContext = function getContext(type) {
@@ -3860,28 +4156,22 @@ Element.prototype.getContext = function getContext(type) {
   }
   if (type === "webgl" || type === "experimental-webgl" || type === "webgl2") {
     return {
-      canvas : this,
+      canvas: this,
       getExtension(name) {
         if (name === "WEBGL_debug_renderer_info")
           return {
-            UNMASKED_VENDOR_WEBGL : 0x9245,
-            UNMASKED_RENDERER_WEBGL : 0x9246,
+            UNMASKED_VENDOR_WEBGL: 0x9245,
+            UNMASKED_RENDERER_WEBGL: 0x9246,
           };
         return null;
       },
       getParameter(pname) {
-        if (pname === 0x9245)
-          return _fp("gpuVendor");
-        if (pname === 0x9246)
-          return _fp("gpu");
-        if (pname === 0x1f01)
-          return "WebKit WebGL";
-        if (pname === 0x1f00)
-          return "WebKit";
-        if (pname === 0x1f02)
-          return "OpenGL ES 3.0 (ANGLE)";
-        if (pname === 0x8b8c)
-          return "WebGL GLSL ES 3.00 (ANGLE)";
+        if (pname === 0x9245) return _fp("gpuVendor");
+        if (pname === 0x9246) return _fp("gpu");
+        if (pname === 0x1f01) return "WebKit WebGL";
+        if (pname === 0x1f00) return "WebKit";
+        if (pname === 0x1f02) return "OpenGL ES 3.0 (ANGLE)";
+        if (pname === 0x8b8c) return "WebGL GLSL ES 3.00 (ANGLE)";
         return 0;
       },
       getSupportedExtensions() {
@@ -3893,16 +4183,24 @@ Element.prototype.getContext = function getContext(type) {
         ];
       },
       getShaderPrecisionFormat() {
-        return {rangeMin : 127, rangeMax : 127, precision : 23};
+        return { rangeMin: 127, rangeMax: 127, precision: 23 };
       },
-      createBuffer() { return {}; },
-      createShader() { return {}; },
-      createProgram() { return {}; },
+      createBuffer() {
+        return {};
+      },
+      createShader() {
+        return {};
+      },
+      createProgram() {
+        return {};
+      },
       shaderSource() {},
       compileShader() {},
       attachShader() {},
       linkProgram() {},
-      getProgramParameter() { return true; },
+      getProgramParameter() {
+        return true;
+      },
       useProgram() {},
       deleteShader() {},
       bindBuffer() {},
@@ -3918,52 +4216,59 @@ Element.prototype.getContext = function getContext(type) {
       disable() {},
       blendFunc() {},
       depthFunc() {},
-      getUniformLocation() { return {}; },
-      getAttribLocation() { return 0; },
+      getUniformLocation() {
+        return {};
+      },
+      getAttribLocation() {
+        return 0;
+      },
       uniform1f() {},
       uniform1i() {},
       uniformMatrix4fv() {},
-      createTexture() { return {}; },
+      createTexture() {
+        return {};
+      },
       bindTexture() {},
       texImage2D() {},
       texParameteri() {},
       activeTexture() {},
       pixelStorei() {},
       generateMipmap() {},
-      createFramebuffer() { return {}; },
+      createFramebuffer() {
+        return {};
+      },
       bindFramebuffer() {},
       framebufferTexture2D() {},
       readPixels(x, y, w, h, f, t, d) {
-        if (d)
-          for (let i = 0; i < d.length; i++)
-            d[i] = Math.floor(Math.random() * 256);
+        if (d) for (let i = 0; i < d.length; i++) d[i] = Math.floor(Math.random() * 256);
       },
-      VERTEX_SHADER : 0x8b31,
-      FRAGMENT_SHADER : 0x8b30,
-      LINK_STATUS : 0x8b82,
-      ARRAY_BUFFER : 0x8892,
-      STATIC_DRAW : 0x88e4,
-      FLOAT : 0x1406,
-      TRIANGLES : 0x0004,
-      COLOR_BUFFER_BIT : 0x4000,
-      DEPTH_BUFFER_BIT : 0x100,
-      TEXTURE_2D : 0x0de1,
-      RGBA : 0x1908,
-      UNSIGNED_BYTE : 0x1401,
+      VERTEX_SHADER: 0x8b31,
+      FRAGMENT_SHADER: 0x8b30,
+      LINK_STATUS: 0x8b82,
+      ARRAY_BUFFER: 0x8892,
+      STATIC_DRAW: 0x88e4,
+      FLOAT: 0x1406,
+      TRIANGLES: 0x0004,
+      COLOR_BUFFER_BIT: 0x4000,
+      DEPTH_BUFFER_BIT: 0x100,
+      TEXTURE_2D: 0x0de1,
+      RGBA: 0x1908,
+      UNSIGNED_BYTE: 0x1401,
     };
   }
   return null;
 };
-Element.prototype.toDataURL = function(type) {
+Element.prototype.toDataURL = function (type) {
   if (this._ctx && this._ctx._buf) {
     const ctx = this._ctx;
-    const w = ctx._w, h = ctx._h, buf = ctx._buf;
+    const w = ctx._w,
+      h = ctx._h,
+      buf = ctx._buf;
     let hash = _fpSeed;
     for (let i = 0; i < buf.length; i += 37) {
       hash = ((hash << 5) - hash + buf[i]) | 0;
     }
-    const chars =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg";
     for (let i = 0; i < 60; i++) {
       hash = ((hash << 5) - hash + i) | 0;
@@ -3973,7 +4278,9 @@ Element.prototype.toDataURL = function(type) {
   }
   return _fp("canvasFingerprint");
 };
-Element.prototype.toBlob = function(cb, type, q) { cb(new Blob([ "" ])); };
+Element.prototype.toBlob = function (cb, type, q) {
+  cb(new Blob([""]));
+};
 
 _markNative(Element.prototype.getContext);
 _markNative(Element.prototype.toDataURL);
@@ -3983,8 +4290,8 @@ Element.prototype.attachShadow = function attachShadow(opts) {
   const host = this;
   const children = [];
   const shadow = {
-    mode : opts?.mode || "open",
-    host : host,
+    mode: opts?.mode || "open",
+    host: host,
     get innerHTML() {
       return children.map((c) => c.outerHTML || c.textContent || "").join("");
     },
@@ -3993,30 +4300,35 @@ Element.prototype.attachShadow = function attachShadow(opts) {
       if (v) {
         const tmp = document.createElement("div");
         tmp.innerHTML = v;
-        for (let i = 0; i < tmp.childNodes.length; i++)
-          children.push(tmp.childNodes[i]);
+        for (let i = 0; i < tmp.childNodes.length; i++) children.push(tmp.childNodes[i]);
       }
     },
-    get childNodes() { return children; },
-    get firstChild() { return children[0] || null; },
-    get lastChild() { return children[children.length - 1] || null; },
+    get childNodes() {
+      return children;
+    },
+    get firstChild() {
+      return children[0] || null;
+    },
+    get lastChild() {
+      return children[children.length - 1] || null;
+    },
     get firstElementChild() {
       return children.find((c) => c.nodeType === 1) || null;
     },
-    get children() { return children.filter((c) => c.nodeType === 1); },
+    get children() {
+      return children.filter((c) => c.nodeType === 1);
+    },
     appendChild(c) {
       if (c) {
         children.push(c);
         try {
           c.parentNode = shadow;
-        } catch (_) {
-        }
+        } catch (_) {}
       }
       return c;
     },
     insertBefore(n, ref) {
-      if (!n)
-        return n;
+      if (!n) return n;
       if (!ref) {
         shadow.appendChild(n);
         return n;
@@ -4026,16 +4338,13 @@ Element.prototype.attachShadow = function attachShadow(opts) {
         children.splice(idx, 0, n);
         try {
           n.parentNode = shadow;
-        } catch (_) {
-        }
-      } else
-        shadow.appendChild(n);
+        } catch (_) {}
+      } else shadow.appendChild(n);
       return n;
     },
     removeChild(c) {
       const idx = children.indexOf(c);
-      if (idx >= 0)
-        children.splice(idx, 1);
+      if (idx >= 0) children.splice(idx, 1);
       return c;
     },
     replaceChild(n, o) {
@@ -4044,19 +4353,16 @@ Element.prototype.attachShadow = function attachShadow(opts) {
         children[idx] = n;
         try {
           n.parentNode = shadow;
-        } catch (_) {
-        }
+        } catch (_) {}
       }
       return o;
     },
     querySelector(s) {
       for (const c of children) {
-        if (c.matches && c.matches(s))
-          return c;
+        if (c.matches && c.matches(s)) return c;
         if (c.querySelector) {
           const r = c.querySelector(s);
-          if (r)
-            return r;
+          if (r) return r;
         }
       }
       return null;
@@ -4064,23 +4370,37 @@ Element.prototype.attachShadow = function attachShadow(opts) {
     querySelectorAll(s) {
       const results = [];
       for (const c of children) {
-        if (c.matches && c.matches(s))
-          results.push(c);
-        if (c.querySelectorAll)
-          results.push(...c.querySelectorAll(s));
+        if (c.matches && c.matches(s)) results.push(c);
+        if (c.querySelectorAll) results.push(...c.querySelectorAll(s));
       }
       return results;
     },
-    getElementById(id) { return shadow.querySelector("#" + id); },
-    contains(n) { return children.includes(n); },
-    getRootNode() { return shadow; },
-    get ownerDocument() { return document; },
-    get nodeType() { return 11; },
-    get nodeName() { return "#document-fragment"; },
+    getElementById(id) {
+      return shadow.querySelector("#" + id);
+    },
+    contains(n) {
+      return children.includes(n);
+    },
+    getRootNode() {
+      return shadow;
+    },
+    get ownerDocument() {
+      return document;
+    },
+    get nodeType() {
+      return 11;
+    },
+    get nodeName() {
+      return "#document-fragment";
+    },
     addEventListener() {},
     removeEventListener() {},
-    dispatchEvent() { return true; },
-    cloneNode() { return shadow; },
+    dispatchEvent() {
+      return true;
+    },
+    cloneNode() {
+      return shadow;
+    },
   };
   this.shadowRoot = shadow;
   return shadow;
@@ -4095,16 +4415,16 @@ globalThis.AudioContext = class AudioContext {
     this.currentTime = 0;
     this.baseLatency = _fp("audioBaseLatency");
     this.destination = {
-      maxChannelCount : 2,
-      numberOfInputs : 1,
-      numberOfOutputs : 0,
-      channelCount : 2,
+      maxChannelCount: 2,
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+      channelCount: 2,
     };
   }
   createOscillator() {
     return {
-      type : "sine",
-      frequency : {value : 440, setValueAtTime() {}},
+      type: "sine",
+      frequency: { value: 440, setValueAtTime() {} },
       connect() {},
       start() {},
       stop() {},
@@ -4114,69 +4434,69 @@ globalThis.AudioContext = class AudioContext {
   }
   createDynamicsCompressor() {
     return {
-      threshold : {value : _fp("compThreshold")},
-      knee : {value : _fp("compKnee")},
-      ratio : {value : _fp("compRatio")},
-      attack : {value : 0.003},
-      release : {value : 0.25},
-      reduction : 0,
+      threshold: { value: _fp("compThreshold") },
+      knee: { value: _fp("compKnee") },
+      ratio: { value: _fp("compRatio") },
+      attack: { value: 0.003 },
+      release: { value: 0.25 },
+      reduction: 0,
       connect() {},
       disconnect() {},
     };
   }
   createAnalyser() {
     return {
-      fftSize : 2048,
-      frequencyBinCount : 1024,
+      fftSize: 2048,
+      frequencyBinCount: 1024,
       connect() {},
       disconnect() {},
       getByteFrequencyData(a) {
-        for (let i = 0; i < a.length; i++)
-          a[i] = Math.floor(_fpRand(600 + i) * 10);
+        for (let i = 0; i < a.length; i++) a[i] = Math.floor(_fpRand(600 + i) * 10);
       },
       getFloatFrequencyData(a) {
-        for (let i = 0; i < a.length; i++)
-          a[i] = -100 + _fpRand(700 + i) * 5;
+        for (let i = 0; i < a.length; i++) a[i] = -100 + _fpRand(700 + i) * 5;
       },
     };
   }
   createGain() {
     return {
-      gain : {value : 1, setValueAtTime() {}},
+      gain: { value: 1, setValueAtTime() {} },
       connect() {},
       disconnect() {},
     };
   }
   createBiquadFilter() {
     return {
-      type : "lowpass",
-      frequency : {value : 350},
-      Q : {value : 1},
+      type: "lowpass",
+      frequency: { value: 350 },
+      Q: { value: 1 },
       connect() {},
       disconnect() {},
     };
   }
   createBufferSource() {
     return {
-      buffer : null,
+      buffer: null,
       connect() {},
       start() {},
       stop() {},
       disconnect() {},
-      loop : false,
+      loop: false,
     };
   }
   createBuffer(ch, len, rate) {
     return {
-      length : len,
-      sampleRate : rate,
-      numberOfChannels : ch,
-      getChannelData(c) { return new Float32Array(len); },
-      duration : len / rate,
+      length: len,
+      sampleRate: rate,
+      numberOfChannels: ch,
+      getChannelData(c) {
+        return new Float32Array(len);
+      },
+      duration: len / rate,
     };
   }
   createScriptProcessor() {
-    return {connect() {}, disconnect() {}, onaudioprocess : null};
+    return { connect() {}, disconnect() {}, onaudioprocess: null };
   }
   decodeAudioData(buf) {
     return Promise.resolve(this.createBuffer(2, 44100, 44100));
@@ -4194,8 +4514,7 @@ globalThis.AudioContext = class AudioContext {
     return Promise.resolve();
   }
 };
-globalThis.OfflineAudioContext =
-    class OfflineAudioContext extends AudioContext {
+globalThis.OfflineAudioContext = class OfflineAudioContext extends AudioContext {
   constructor(ch, len, rate) {
     super();
     this.length = len || 44100;
@@ -4207,17 +4526,17 @@ globalThis.OfflineAudioContext =
 globalThis.webkitAudioContext = globalThis.AudioContext;
 
 globalThis.speechSynthesis = {
-  speaking : false,
-  pending : false,
-  paused : false,
+  speaking: false,
+  pending: false,
+  paused: false,
   getVoices() {
     return [
       {
-        name : "Google US English",
-        lang : "en-US",
-        default : true,
-        localService : true,
-        voiceURI : "Google US English",
+        name: "Google US English",
+        lang: "en-US",
+        default: true,
+        localService: true,
+        voiceURI: "Google US English",
       },
     ];
   },
@@ -4227,7 +4546,7 @@ globalThis.speechSynthesis = {
   resume() {},
   addEventListener() {},
   removeEventListener() {},
-  onvoiceschanged : null,
+  onvoiceschanged: null,
 };
 globalThis.SpeechSynthesisUtterance = class SpeechSynthesisUtterance {
   constructor(t) {
@@ -4244,12 +4563,20 @@ globalThis.MediaStream = class MediaStream {
     this.id = "";
     this.active = true;
   }
-  getTracks() { return []; }
-  getAudioTracks() { return []; }
-  getVideoTracks() { return []; }
+  getTracks() {
+    return [];
+  }
+  getAudioTracks() {
+    return [];
+  }
+  getVideoTracks() {
+    return [];
+  }
   addTrack() {}
   removeTrack() {}
-  clone() { return new MediaStream(); }
+  clone() {
+    return new MediaStream();
+  }
 };
 globalThis.MediaStreamTrack = class MediaStreamTrack {
   constructor() {
@@ -4258,7 +4585,9 @@ globalThis.MediaStreamTrack = class MediaStreamTrack {
     this.readyState = "live";
   }
   stop() {}
-  clone() { return new MediaStreamTrack(); }
+  clone() {
+    return new MediaStreamTrack();
+  }
 };
 globalThis.RTCPeerConnection = class RTCPeerConnection {
   constructor() {
@@ -4269,11 +4598,21 @@ globalThis.RTCPeerConnection = class RTCPeerConnection {
     this.signalingState = "stable";
     this.connectionState = "new";
   }
-  createOffer() { return Promise.resolve({type : "offer", sdp : ""}); }
-  createAnswer() { return Promise.resolve({type : "answer", sdp : ""}); }
-  setLocalDescription() { return Promise.resolve(); }
-  setRemoteDescription() { return Promise.resolve(); }
-  addIceCandidate() { return Promise.resolve(); }
+  createOffer() {
+    return Promise.resolve({ type: "offer", sdp: "" });
+  }
+  createAnswer() {
+    return Promise.resolve({ type: "answer", sdp: "" });
+  }
+  setLocalDescription() {
+    return Promise.resolve();
+  }
+  setRemoteDescription() {
+    return Promise.resolve();
+  }
+  addIceCandidate() {
+    return Promise.resolve();
+  }
   close() {}
   createDataChannel() {
     return {
@@ -4285,7 +4624,9 @@ globalThis.RTCPeerConnection = class RTCPeerConnection {
   }
   addEventListener() {}
   removeEventListener() {}
-  getStats() { return Promise.resolve(new Map()); }
+  getStats() {
+    return Promise.resolve(new Map());
+  }
 };
 globalThis.RTCSessionDescription = class RTCSessionDescription {
   constructor(d) {
@@ -4294,67 +4635,104 @@ globalThis.RTCSessionDescription = class RTCSessionDescription {
   }
 };
 globalThis.RTCIceCandidate = class RTCIceCandidate {
-  constructor(d) { this.candidate = d?.candidate || ""; }
+  constructor(d) {
+    this.candidate = d?.candidate || "";
+  }
 };
 
 globalThis.indexedDB = {
   open(name, version) {
     const req = {
-      result : null,
-      error : null,
-      onsuccess : null,
-      onerror : null,
-      onupgradeneeded : null,
+      result: null,
+      error: null,
+      onsuccess: null,
+      onerror: null,
+      onupgradeneeded: null,
     };
     Promise.resolve().then(() => {
       req.result = {
         name,
-        version : version || 1,
-        objectStoreNames : {
-          contains() { return false; },
-          length : 0,
+        version: version || 1,
+        objectStoreNames: {
+          contains() {
+            return false;
+          },
+          length: 0,
         },
-        createObjectStore() { return {createIndex() {}}; },
+        createObjectStore() {
+          return { createIndex() {} };
+        },
         transaction() {
           return {
             objectStore() {
               return {
-                get() { return {onsuccess : null, onerror : null}; },
-                put() { return {onsuccess : null}; },
-                delete () { return {onsuccess : null}; },
+                get() {
+                  return { onsuccess: null, onerror: null };
+                },
+                put() {
+                  return { onsuccess: null };
+                },
+                delete() {
+                  return { onsuccess: null };
+                },
               };
             },
           };
         },
         close() {},
       };
-      if (req.onsuccess)
-        req.onsuccess({target : req});
+      if (req.onsuccess) req.onsuccess({ target: req });
     });
     return req;
   },
-  deleteDatabase() { return {onsuccess : null, onerror : null}; },
+  deleteDatabase() {
+    return { onsuccess: null, onerror: null };
+  },
 };
 globalThis.IDBKeyRange = {
-  only(v) { return v; },
-  lowerBound(v) { return v; },
-  upperBound(v) { return v; },
-  bound(l, u) { return [ l, u ]; },
+  only(v) {
+    return v;
+  },
+  lowerBound(v) {
+    return v;
+  },
+  upperBound(v) {
+    return v;
+  },
+  bound(l, u) {
+    return [l, u];
+  },
 };
 
 globalThis.caches = {
   open() {
     return Promise.resolve({
-      match() { return Promise.resolve(undefined); },
-      put() { return Promise.resolve(); },
-      delete () { return Promise.resolve(false); },
-      keys() { return Promise.resolve([]); },
+      match() {
+        return Promise.resolve(undefined);
+      },
+      put() {
+        return Promise.resolve();
+      },
+      delete() {
+        return Promise.resolve(false);
+      },
+      keys() {
+        return Promise.resolve([]);
+      },
     });
   },
-  match() { return Promise.resolve(undefined); },
-  has() { return Promise.resolve(false); },
-  delete () { return Promise.resolve(false); },
-  keys() { return Promise.resolve([]); },
+  match() {
+    return Promise.resolve(undefined);
+  },
+  has() {
+    return Promise.resolve(false);
+  },
+  delete() {
+    return Promise.resolve(false);
+  },
+  keys() {
+    return Promise.resolve([]);
+  },
 };
 
 _markNative(AudioContext);
@@ -4368,20 +4746,17 @@ _markNative(RTCIceCandidate);
 
 const _OrigDateTimeFormat = Intl.DateTimeFormat;
 const _defaultTZ = "America/New_York";
-Intl.DateTimeFormat = function(locales, options) {
-  if (!options)
-    options = {};
-  if (!options.timeZone)
-    options.timeZone = _defaultTZ;
+Intl.DateTimeFormat = function (locales, options) {
+  if (!options) options = {};
+  if (!options.timeZone) options.timeZone = _defaultTZ;
   return new _OrigDateTimeFormat(locales, options);
 };
 Intl.DateTimeFormat.prototype = _OrigDateTimeFormat.prototype;
 Intl.DateTimeFormat.supportedLocalesOf = _OrigDateTimeFormat.supportedLocalesOf;
 const _origResolved = _OrigDateTimeFormat.prototype.resolvedOptions;
-_OrigDateTimeFormat.prototype.resolvedOptions = function() {
+_OrigDateTimeFormat.prototype.resolvedOptions = function () {
   const r = _origResolved.call(this);
-  if (r.timeZone === "UTC")
-    r.timeZone = _defaultTZ;
+  if (r.timeZone === "UTC") r.timeZone = _defaultTZ;
   return r;
 };
 
@@ -4400,10 +4775,18 @@ if (typeof PointerEvent === "undefined") {
 
 if (typeof navigator.credentials === "undefined") {
   navigator.credentials = {
-    get() { return Promise.resolve(null); },
-    create() { return Promise.resolve(null); },
-    store() { return Promise.resolve(); },
-    preventSilentAccess() { return Promise.resolve(); },
+    get() {
+      return Promise.resolve(null);
+    },
+    create() {
+      return Promise.resolve(null);
+    },
+    store() {
+      return Promise.resolve();
+    },
+    preventSilentAccess() {
+      return Promise.resolve();
+    },
   };
 }
 
@@ -4417,8 +4800,7 @@ globalThis.Worker = class Worker {
     this._listeners = {};
     const worker = this;
 
-    if (typeof url === "string" &&
-        (url.startsWith("blob:") || url.startsWith("http"))) {
+    if (typeof url === "string" && (url.startsWith("blob:") || url.startsWith("http"))) {
       const blobContent = globalThis.__blobStore?.[url];
       if (blobContent) {
         this._code = blobContent;
@@ -4428,100 +4810,110 @@ globalThis.Worker = class Worker {
             const resp = await fetch(url);
             worker._code = await resp.text();
           } catch (e) {
-            if (worker.onerror)
-              worker.onerror(e);
+            if (worker.onerror) worker.onerror(e);
           }
         })();
       }
     }
   }
   postMessage(data) {
-    if (this._terminated)
-      return;
+    if (this._terminated) return;
     const worker = this;
     setTimeout(() => {
-      if (worker._terminated || !worker._code)
-        return;
+      if (worker._terminated || !worker._code) return;
       try {
         const workerSelf = {
-          onmessage : null,
-          postMessage : (msg) => {
-            const evt = {data : msg};
-            if (worker.onmessage)
-              worker.onmessage(evt);
+          onmessage: null,
+          postMessage: (msg) => {
+            const evt = { data: msg };
+            if (worker.onmessage) worker.onmessage(evt);
             const handlers = worker._listeners["message"] || [];
-            for (const h of handlers)
-              h(evt);
+            for (const h of handlers) h(evt);
           },
-          addEventListener : (type, fn) => { workerSelf["on" + type] = fn; },
-          close : () => { worker._terminated = true; },
-          crypto : globalThis.crypto,
-          TextEncoder : globalThis.TextEncoder,
-          TextDecoder : globalThis.TextDecoder,
-          atob : globalThis.atob,
-          btoa : globalThis.btoa,
-          setTimeout : globalThis.setTimeout,
-          setInterval : globalThis.setInterval,
-          clearTimeout : globalThis.clearTimeout,
-          clearInterval : globalThis.clearInterval,
-          fetch : globalThis.fetch,
-          console : globalThis.console,
+          addEventListener: (type, fn) => {
+            workerSelf["on" + type] = fn;
+          },
+          close: () => {
+            worker._terminated = true;
+          },
+          crypto: globalThis.crypto,
+          TextEncoder: globalThis.TextEncoder,
+          TextDecoder: globalThis.TextDecoder,
+          atob: globalThis.atob,
+          btoa: globalThis.btoa,
+          setTimeout: globalThis.setTimeout,
+          setInterval: globalThis.setInterval,
+          clearTimeout: globalThis.clearTimeout,
+          clearInterval: globalThis.clearInterval,
+          fetch: globalThis.fetch,
+          console: globalThis.console,
         };
-        const fn = new Function("self", "postMessage", "addEventListener",
-                                "close", worker._code);
-        fn(workerSelf, workerSelf.postMessage, workerSelf.addEventListener,
-           workerSelf.close);
-        if (workerSelf.onmessage)
-          workerSelf.onmessage({data});
+        const fn = new Function("self", "postMessage", "addEventListener", "close", worker._code);
+        fn(workerSelf, workerSelf.postMessage, workerSelf.addEventListener, workerSelf.close);
+        if (workerSelf.onmessage) workerSelf.onmessage({ data });
       } catch (e) {
         console.error("Worker error:", e.message);
-        if (worker.onerror)
-          worker.onerror(e);
+        if (worker.onerror) worker.onerror(e);
       }
     }, 0);
   }
-  terminate() { this._terminated = true; }
+  terminate() {
+    this._terminated = true;
+  }
   addEventListener(type, fn) {
-    if (!this._listeners[type])
-      this._listeners[type] = [];
+    if (!this._listeners[type]) this._listeners[type] = [];
     this._listeners[type].push(fn);
   }
   removeEventListener(type, fn) {
-    if (this._listeners[type])
-      this._listeners[type] = this._listeners[type].filter((h) => h !== fn);
+    if (this._listeners[type]) this._listeners[type] = this._listeners[type].filter((h) => h !== fn);
   }
 };
 
 globalThis.__blobStore = globalThis.__blobStore || {};
 const _origCreateObjectURL = URL.createObjectURL;
-URL.createObjectURL = function(blob) {
+URL.createObjectURL = function (blob) {
   if (blob && typeof blob.text === "function") {
     const id = "blob:crawlberg/" + Math.random().toString(36).substring(2);
-    blob.text().then((text) => { globalThis.__blobStore[id] = text; });
+    blob.text().then((text) => {
+      globalThis.__blobStore[id] = text;
+    });
     return id;
   }
   return "blob:crawlberg/fallback";
 };
-URL.revokeObjectURL = function(url) { delete globalThis.__blobStore[url]; };
+URL.revokeObjectURL = function (url) {
+  delete globalThis.__blobStore[url];
+};
 
-globalThis.scrollTo = function(x, y) {};
-globalThis.scrollBy = function(x, y) {};
-globalThis.scroll = function(x, y) {};
-globalThis.focus = function() {};
-globalThis.blur = function() {};
-globalThis.print = function() {};
-globalThis.alert = function() {};
-globalThis.confirm = function() { return true; };
-globalThis.prompt = function() { return null; };
-globalThis.open = function() { return null; };
-globalThis.close = function() {};
-globalThis.stop = function() {};
-globalThis.postMessage = function() {};
+globalThis.scrollTo = function (x, y) {};
+globalThis.scrollBy = function (x, y) {};
+globalThis.scroll = function (x, y) {};
+globalThis.focus = function () {};
+globalThis.blur = function () {};
+globalThis.print = function () {};
+globalThis.alert = function () {};
+globalThis.confirm = function () {
+  return true;
+};
+globalThis.prompt = function () {
+  return null;
+};
+globalThis.open = function () {
+  return null;
+};
+globalThis.close = function () {};
+globalThis.stop = function () {};
+globalThis.postMessage = function () {};
 globalThis.requestIdleCallback =
-    globalThis.requestIdleCallback || function(
-                                          cb) { return setTimeout(cb, 0); };
+  globalThis.requestIdleCallback ||
+  function (cb) {
+    return setTimeout(cb, 0);
+  };
 globalThis.cancelIdleCallback =
-    globalThis.cancelIdleCallback || function(id) { clearTimeout(id); };
+  globalThis.cancelIdleCallback ||
+  function (id) {
+    clearTimeout(id);
+  };
 if (typeof ReadableStream === "undefined") {
   globalThis.ReadableStream = class ReadableStream {
     constructor(source = {}, strategy = {}) {
@@ -4531,9 +4923,11 @@ if (typeof ReadableStream === "undefined") {
       this.locked = false;
       if (source.start)
         source.start({
-          enqueue : (chunk) => this._queue.push(chunk),
-          close : () => { this._closed = true; },
-          error : () => {},
+          enqueue: (chunk) => this._queue.push(chunk),
+          close: () => {
+            this._closed = true;
+          },
+          error: () => {},
         });
     }
     getReader() {
@@ -4541,14 +4935,13 @@ if (typeof ReadableStream === "undefined") {
       const stream = this;
       return {
         read() {
-          if (stream._queue.length > 0)
-            return Promise.resolve(
-                {value : stream._queue.shift(), done : false});
-          if (stream._closed)
-            return Promise.resolve({value : undefined, done : true});
-          return Promise.resolve({value : undefined, done : true});
+          if (stream._queue.length > 0) return Promise.resolve({ value: stream._queue.shift(), done: false });
+          if (stream._closed) return Promise.resolve({ value: undefined, done: true });
+          return Promise.resolve({ value: undefined, done: true });
         },
-        releaseLock() { stream.locked = false; },
+        releaseLock() {
+          stream.locked = false;
+        },
         cancel() {
           stream._closed = true;
           return Promise.resolve();
@@ -4562,18 +4955,22 @@ if (typeof ReadableStream === "undefined") {
       this._closed = true;
       return Promise.resolve();
     }
-    pipeTo(dest) { return Promise.resolve(); }
+    pipeTo(dest) {
+      return Promise.resolve();
+    }
     pipeThrough(transform) {
       return transform.readable || new ReadableStream();
     }
-    tee() { return [ new ReadableStream(), new ReadableStream() ]; }
+    tee() {
+      return [new ReadableStream(), new ReadableStream()];
+    }
     [Symbol.asyncIterator]() {
       const reader = this.getReader();
       return {
-        next : () => reader.read(),
-        return : () => {
+        next: () => reader.read(),
+        return: () => {
           reader.releaseLock();
-          return Promise.resolve({done : true});
+          return Promise.resolve({ done: true });
         },
       };
     }
@@ -4590,24 +4987,36 @@ if (typeof WritableStream === "undefined") {
       const stream = this;
       return {
         write(chunk) {
-          if (stream._sink.write)
-            stream._sink.write(chunk);
+          if (stream._sink.write) stream._sink.write(chunk);
           return Promise.resolve();
         },
         close() {
-          if (stream._sink.close)
-            stream._sink.close();
+          if (stream._sink.close) stream._sink.close();
           return Promise.resolve();
         },
-        abort() { return Promise.resolve(); },
-        releaseLock() { stream.locked = false; },
-        get ready() { return Promise.resolve(); },
-        get closed() { return Promise.resolve(); },
-        get desiredSize() { return 1; },
+        abort() {
+          return Promise.resolve();
+        },
+        releaseLock() {
+          stream.locked = false;
+        },
+        get ready() {
+          return Promise.resolve();
+        },
+        get closed() {
+          return Promise.resolve();
+        },
+        get desiredSize() {
+          return 1;
+        },
       };
     }
-    close() { return Promise.resolve(); }
-    abort() { return Promise.resolve(); }
+    close() {
+      return Promise.resolve();
+    }
+    abort() {
+      return Promise.resolve();
+    }
   };
 }
 if (typeof TransformStream === "undefined") {
@@ -4619,15 +5028,12 @@ if (typeof TransformStream === "undefined") {
   };
 }
 
-if (!globalThis.crypto)
-  globalThis.crypto = {};
+if (!globalThis.crypto) globalThis.crypto = {};
 if (!globalThis.crypto.subtle) {
   globalThis.crypto.subtle = {
     async digest(algorithm, data) {
-      const name = typeof algorithm === "string" ? algorithm
-                                                 : algorithm?.name || "SHA-256";
-      const bytes = new Uint8Array(
-          data instanceof ArrayBuffer ? data : data.buffer || data);
+      const name = typeof algorithm === "string" ? algorithm : algorithm?.name || "SHA-256";
+      const bytes = new Uint8Array(data instanceof ArrayBuffer ? data : data.buffer || data);
       let hash = 0x811c9dc5;
       for (let i = 0; i < bytes.length; i++) {
         hash ^= bytes[i];
@@ -4641,43 +5047,57 @@ if (!globalThis.crypto.subtle) {
       }
       return result.buffer;
     },
-    async encrypt() { throw new DOMException("NotSupportedError"); },
-    async decrypt() { throw new DOMException("NotSupportedError"); },
-    async sign() { return new ArrayBuffer(32); },
-    async verify() { return true; },
+    async encrypt() {
+      throw new DOMException("NotSupportedError");
+    },
+    async decrypt() {
+      throw new DOMException("NotSupportedError");
+    },
+    async sign() {
+      return new ArrayBuffer(32);
+    },
+    async verify() {
+      return true;
+    },
     async generateKey() {
       return {
-        type : "secret",
-        algorithm : {},
-        extractable : false,
-        usages : [],
+        type: "secret",
+        algorithm: {},
+        extractable: false,
+        usages: [],
       };
     },
     async importKey() {
       return {
-        type : "secret",
-        algorithm : {},
-        extractable : false,
-        usages : [],
+        type: "secret",
+        algorithm: {},
+        extractable: false,
+        usages: [],
       };
     },
-    async exportKey() { return new ArrayBuffer(32); },
-    async deriveBits() { return new ArrayBuffer(32); },
+    async exportKey() {
+      return new ArrayBuffer(32);
+    },
+    async deriveBits() {
+      return new ArrayBuffer(32);
+    },
     async deriveKey() {
       return {
-        type : "secret",
-        algorithm : {},
-        extractable : false,
-        usages : [],
+        type: "secret",
+        algorithm: {},
+        extractable: false,
+        usages: [],
       };
     },
-    async wrapKey() { return new ArrayBuffer(32); },
+    async wrapKey() {
+      return new ArrayBuffer(32);
+    },
     async unwrapKey() {
       return {
-        type : "secret",
-        algorithm : {},
-        extractable : false,
-        usages : [],
+        type: "secret",
+        algorithm: {},
+        extractable: false,
+        usages: [],
       };
     },
   };
@@ -4697,17 +5117,19 @@ if (typeof DOMRect === "undefined") {
     }
     toJSON() {
       return {
-        x : this.x,
-        y : this.y,
-        width : this.width,
-        height : this.height,
-        top : this.top,
-        right : this.right,
-        bottom : this.bottom,
-        left : this.left,
+        x: this.x,
+        y: this.y,
+        width: this.width,
+        height: this.height,
+        top: this.top,
+        right: this.right,
+        bottom: this.bottom,
+        left: this.left,
       };
     }
-    static fromRect(r = {}) { return new DOMRect(r.x, r.y, r.width, r.height); }
+    static fromRect(r = {}) {
+      return new DOMRect(r.x, r.y, r.width, r.height);
+    }
   };
 }
 if (typeof DOMPoint === "undefined") {
@@ -4718,7 +5140,9 @@ if (typeof DOMPoint === "undefined") {
       this.z = z;
       this.w = w;
     }
-    static fromPoint(p = {}) { return new DOMPoint(p.x, p.y, p.z, p.w); }
+    static fromPoint(p = {}) {
+      return new DOMPoint(p.x, p.y, p.z, p.w);
+    }
   };
 }
 if (typeof DOMMatrix === "undefined") {
@@ -4733,15 +5157,33 @@ if (typeof DOMMatrix === "undefined") {
       this.is2D = true;
       this.isIdentity = true;
     }
-    static fromMatrix() { return new DOMMatrix(); }
-    static fromFloat32Array() { return new DOMMatrix(); }
-    static fromFloat64Array() { return new DOMMatrix(); }
-    multiply() { return new DOMMatrix(); }
-    inverse() { return new DOMMatrix(); }
-    translate() { return new DOMMatrix(); }
-    scale() { return new DOMMatrix(); }
-    rotate() { return new DOMMatrix(); }
-    transformPoint(p) { return new DOMPoint(p?.x || 0, p?.y || 0); }
+    static fromMatrix() {
+      return new DOMMatrix();
+    }
+    static fromFloat32Array() {
+      return new DOMMatrix();
+    }
+    static fromFloat64Array() {
+      return new DOMMatrix();
+    }
+    multiply() {
+      return new DOMMatrix();
+    }
+    inverse() {
+      return new DOMMatrix();
+    }
+    translate() {
+      return new DOMMatrix();
+    }
+    scale() {
+      return new DOMMatrix();
+    }
+    rotate() {
+      return new DOMMatrix();
+    }
+    transformPoint(p) {
+      return new DOMPoint(p?.x || 0, p?.y || 0);
+    }
   };
 }
 
@@ -4767,7 +5209,9 @@ if (typeof Image === "undefined") {
           this.onload();
         }, 0);
     }
-    getAttribute(k) { return this[k]; }
+    getAttribute(k) {
+      return this[k];
+    }
   };
 }
 
@@ -4780,8 +5224,12 @@ if (typeof Audio === "undefined") {
       this.currentTime = 0;
       this.duration = 0;
     }
-    play() { return Promise.resolve(); }
-    pause() { this.paused = true; }
+    play() {
+      return Promise.resolve();
+    }
+    pause() {
+      this.paused = true;
+    }
     load() {}
     addEventListener() {}
     removeEventListener() {}
@@ -4801,26 +5249,24 @@ if (typeof FileReader === "undefined") {
         blob.text().then((t) => {
           this.result = t;
           this.readyState = 2;
-          if (this.onload)
-            this.onload({target : this});
+          if (this.onload) this.onload({ target: this });
         });
     }
     readAsDataURL(blob) {
       this.result = "data:;base64,";
       this.readyState = 2;
-      if (this.onload)
-        setTimeout(() => this.onload({target : this}), 0);
+      if (this.onload) setTimeout(() => this.onload({ target: this }), 0);
     }
     readAsArrayBuffer(blob) {
       this.result = new ArrayBuffer(0);
       this.readyState = 2;
-      if (this.onload)
-        setTimeout(() => this.onload({target : this}), 0);
+      if (this.onload) setTimeout(() => this.onload({ target: this }), 0);
     }
-    abort() { this.readyState = 0; }
+    abort() {
+      this.readyState = 0;
+    }
     addEventListener(t, fn) {
-      if (t === "load")
-        this.onload = fn;
+      if (t === "load") this.onload = fn;
     }
     removeEventListener() {}
   };
@@ -4835,7 +5281,9 @@ if (typeof EventSource === "undefined") {
       this.onmessage = null;
       this.onerror = null;
     }
-    close() { this.readyState = 2; }
+    close() {
+      this.readyState = 2;
+    }
     addEventListener() {}
     removeEventListener() {}
     static CONNECTING = 0;
@@ -4859,9 +5307,7 @@ if (typeof WebSocket === "undefined") {
     send(data) {}
     close(code, reason) {
       this.readyState = 3;
-      if (this.onclose)
-        this.onclose(
-            {code : code || 1000, reason : reason || "", wasClean : true});
+      if (this.onclose) this.onclose({ code: code || 1000, reason: reason || "", wasClean: true });
     }
     addEventListener() {}
     removeEventListener() {}
@@ -4925,11 +5371,14 @@ if (typeof OffscreenCanvas === "undefined") {
       this.height = h;
     }
     getContext(type) {
-      return globalThis.document?.createElement("canvas")?.getContext(type) ||
-             null;
+      return globalThis.document?.createElement("canvas")?.getContext(type) || null;
     }
-    convertToBlob() { return Promise.resolve(new Blob([ "" ])); }
-    transferToImageBitmap() { return {}; }
+    convertToBlob() {
+      return Promise.resolve(new Blob([""]));
+    }
+    transferToImageBitmap() {
+      return {};
+    }
   };
 }
 
@@ -4953,8 +5402,9 @@ if (typeof ImageBitmap === "undefined") {
     }
     close() {}
   };
-  globalThis.createImageBitmap =
-      function() { return Promise.resolve(new ImageBitmap()); };
+  globalThis.createImageBitmap = function () {
+    return Promise.resolve(new ImageBitmap());
+  };
 }
 
 if (typeof Selection === "undefined") {
@@ -4966,7 +5416,9 @@ if (typeof Selection === "undefined") {
       this.isCollapsed = true;
       this.type = "None";
     }
-    getRangeAt() { return null; }
+    getRangeAt() {
+      return null;
+    }
     collapse() {}
     extend() {}
     selectAllChildren() {}
@@ -4974,19 +5426,21 @@ if (typeof Selection === "undefined") {
     addRange() {}
     removeRange() {}
     removeAllRanges() {}
-    toString() { return ""; }
+    toString() {
+      return "";
+    }
   };
 }
 
 if (typeof NodeFilter === "undefined") {
   globalThis.NodeFilter = {
-    SHOW_ALL : 0xffffffff,
-    SHOW_ELEMENT : 1,
-    SHOW_TEXT : 4,
-    SHOW_COMMENT : 128,
-    FILTER_ACCEPT : 1,
-    FILTER_REJECT : 2,
-    FILTER_SKIP : 3,
+    SHOW_ALL: 0xffffffff,
+    SHOW_ELEMENT: 1,
+    SHOW_TEXT: 4,
+    SHOW_COMMENT: 128,
+    FILTER_ACCEPT: 1,
+    FILTER_REJECT: 2,
+    FILTER_SKIP: 3,
   };
 }
 
@@ -4998,13 +5452,27 @@ if (typeof TreeWalker === "undefined") {
       this.whatToShow = 0xffffffff;
       this.filter = null;
     }
-    parentNode() { return this.currentNode?.parentNode || null; }
-    firstChild() { return this.currentNode?.firstChild || null; }
-    lastChild() { return this.currentNode?.lastChild || null; }
-    previousSibling() { return this.currentNode?.previousSibling || null; }
-    nextSibling() { return this.currentNode?.nextSibling || null; }
-    nextNode() { return null; }
-    previousNode() { return null; }
+    parentNode() {
+      return this.currentNode?.parentNode || null;
+    }
+    firstChild() {
+      return this.currentNode?.firstChild || null;
+    }
+    lastChild() {
+      return this.currentNode?.lastChild || null;
+    }
+    previousSibling() {
+      return this.currentNode?.previousSibling || null;
+    }
+    nextSibling() {
+      return this.currentNode?.nextSibling || null;
+    }
+    nextNode() {
+      return null;
+    }
+    previousNode() {
+      return null;
+    }
   };
 }
 
@@ -5029,13 +5497,23 @@ if (typeof Range === "undefined") {
     collapse() {}
     selectNode() {}
     selectNodeContents() {}
-    cloneContents() { return document?.createDocumentFragment(); }
+    cloneContents() {
+      return document?.createDocumentFragment();
+    }
     deleteContents() {}
     insertNode() {}
-    getBoundingClientRect() { return new DOMRect(); }
-    getClientRects() { return []; }
-    cloneRange() { return new Range(); }
-    toString() { return ""; }
+    getBoundingClientRect() {
+      return new DOMRect();
+    }
+    getClientRects() {
+      return [];
+    }
+    cloneRange() {
+      return new Range();
+    }
+    toString() {
+      return "";
+    }
   };
 }
 
@@ -5044,7 +5522,7 @@ if (typeof SharedWorker === "undefined") {
     constructor() {
       this.port = {
         postMessage() {},
-        onmessage : null,
+        onmessage: null,
         start() {},
         close() {},
         addEventListener() {},
@@ -5056,28 +5534,38 @@ if (typeof SharedWorker === "undefined") {
 }
 if (typeof ServiceWorkerContainer === "undefined") {
   globalThis.ServiceWorkerContainer = class {
-    register() { return Promise.resolve(); }
-    getRegistrations() { return Promise.resolve([]); }
+    register() {
+      return Promise.resolve();
+    }
+    getRegistrations() {
+      return Promise.resolve([]);
+    }
   };
 }
 
 if (typeof URLPattern === "undefined") {
   globalThis.URLPattern = class URLPattern {
-    constructor(pattern) { this._pattern = pattern || {}; }
-    test() { return false; }
-    exec() { return null; }
+    constructor(pattern) {
+      this._pattern = pattern || {};
+    }
+    test() {
+      return false;
+    }
+    exec() {
+      return null;
+    }
   };
 }
 
 if (typeof Document !== "undefined" && !Document.prototype.importNode) {
-  Document.prototype.importNode = function(
-      node, deep) { return node?.cloneNode(!!deep) || null; };
+  Document.prototype.importNode = function (node, deep) {
+    return node?.cloneNode(!!deep) || null;
+  };
 }
 
 if (typeof Document !== "undefined" && !Document.prototype.elementFromPoint) {
-  Document.prototype.elementFromPoint = function(x, y) {
-    if (typeof x !== "number" || typeof y !== "number" || !isFinite(x) ||
-        !isFinite(y)) {
+  Document.prototype.elementFromPoint = function (x, y) {
+    if (typeof x !== "number" || typeof y !== "number" || !isFinite(x) || !isFinite(y)) {
       return null;
     }
     var w = (typeof window !== "undefined" && window.innerWidth) || 0;
@@ -5087,24 +5575,21 @@ if (typeof Document !== "undefined" && !Document.prototype.elementFromPoint) {
     }
     return this.body || this.documentElement || null;
   };
-  Document.prototype.elementsFromPoint = function(x, y) {
+  Document.prototype.elementsFromPoint = function (x, y) {
     var el = this.elementFromPoint(x, y);
-    return el ? [ el ] : [];
+    return el ? [el] : [];
   };
 }
-if (typeof ShadowRoot !== "undefined" &&
-    !ShadowRoot.prototype.elementFromPoint) {
-  ShadowRoot.prototype.elementFromPoint = function(x, y) {
-    return Document.prototype.elementFromPoint.call(globalThis.document || this,
-                                                    x, y);
+if (typeof ShadowRoot !== "undefined" && !ShadowRoot.prototype.elementFromPoint) {
+  ShadowRoot.prototype.elementFromPoint = function (x, y) {
+    return Document.prototype.elementFromPoint.call(globalThis.document || this, x, y);
   };
-  ShadowRoot.prototype.elementsFromPoint = function(x, y) {
-    return Document.prototype.elementsFromPoint.call(
-        globalThis.document || this, x, y);
+  ShadowRoot.prototype.elementsFromPoint = function (x, y) {
+    return Document.prototype.elementsFromPoint.call(globalThis.document || this, x, y);
   };
 }
 
-globalThis.__crawlberg_init = function() {
+globalThis.__crawlberg_init = function () {
   _fpSeed = Date.now() ^ ((Math.random() * 0xffffffff) >>> 0);
   _fpCache = null;
   _installWasmStreamingFallback();
@@ -5112,30 +5597,33 @@ globalThis.__crawlberg_init = function() {
   globalThis.document = new Document(+_dom("document_node_id"));
 
   const scr = _fp("screen");
-  const sw = scr[0], sh = scr[1];
+  const sw = scr[0],
+    sh = scr[1];
   globalThis.screen = {
-    width : sw,
-    height : sh,
-    availWidth : sw,
-    availHeight : sh - 40,
-    colorDepth : 24,
-    pixelDepth : 24,
-    availTop : 0,
-    availLeft : 0,
-    orientation : {
-      type : "landscape-primary",
-      angle : 0,
+    width: sw,
+    height: sh,
+    availWidth: sw,
+    availHeight: sh - 40,
+    colorDepth: 24,
+    pixelDepth: 24,
+    availTop: 0,
+    availLeft: 0,
+    orientation: {
+      type: "landscape-primary",
+      angle: 0,
       addEventListener() {},
       removeEventListener() {},
-      dispatchEvent() { return true; },
+      dispatchEvent() {
+        return true;
+      },
     },
   };
   globalThis.visualViewport = {
-    width : sw,
-    height : sh - 80,
-    offsetLeft : 0,
-    offsetTop : 0,
-    scale : 1,
+    width: sw,
+    height: sh - 80,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
     addEventListener() {},
     removeEventListener() {},
   };
@@ -5148,32 +5636,27 @@ globalThis.__crawlberg_init = function() {
   const t0 = Date.now();
   globalThis.performance.timeOrigin = t0;
   globalThis.performance.timing = {
-    navigationStart : t0,
-    domContentLoadedEventEnd : t0,
-    loadEventEnd : t0,
+    navigationStart: t0,
+    domContentLoadedEventEnd: t0,
+    loadEventEnd: t0,
   };
 
   const hide = (obj, props) => {
     for (const p of props) {
       if (p in obj) {
         try {
-          Object.defineProperty(obj, p,
-                                {enumerable : false, configurable : true});
-        } catch (e) {
-        }
+          Object.defineProperty(obj, p, { enumerable: false, configurable: true });
+        } catch (e) {}
       }
     }
   };
-  const toHide = Object.keys(globalThis)
-                     .filter(
-                         (k) => k.startsWith("_") || k.includes("crawlberg") ||
-                                k.includes("Crawlberg"),
-                     );
+  const toHide = Object.keys(globalThis).filter(
+    (k) => k.startsWith("_") || k.includes("crawlberg") || k.includes("Crawlberg"),
+  );
   for (const p of toHide) {
     try {
-      Object.defineProperty(globalThis, p, {enumerable : false});
-    } catch (e) {
-    }
+      Object.defineProperty(globalThis, p, { enumerable: false });
+    } catch (e) {}
   }
   delete globalThis.__crawlberg_init;
 };
