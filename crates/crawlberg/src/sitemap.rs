@@ -195,6 +195,19 @@ pub(crate) async fn fetch_sitemap_tree(
 /// while still growing unbounded.
 const MAX_SITEMAP_INDEX_DEPTH: u32 = 10;
 
+/// Maximum number of child sitemaps followed from a single index document.
+const MAX_SITEMAP_INDEX_CHILDREN: usize = 100;
+
+/// Maximum number of distinct sitemap documents fetched across a whole tree walk.
+///
+/// ~keep Depth and per-tier breadth bound the tree's *shape*, not its size: 100 distinct
+/// children at each of 10 tiers is 100^10 fetches, and the visited set stops only repeats,
+/// never distinct URLs. `map_limit` does not help — it bounds the URLs *returned*, so an
+/// index tree whose leaves are all empty or all filtered out never reaches it and keeps
+/// fetching. This is the only bound on total fetch work, so it counts documents the walk
+/// commits to fetching rather than the ones it successfully parses.
+const MAX_SITEMAP_DOCUMENTS: usize = 1_000;
+
 /// Process an already-fetched sitemap response body, following sitemap index
 /// references if needed. Avoids re-fetching a URL that was already retrieved.
 ///
@@ -292,9 +305,20 @@ async fn process_sitemap_response_inner(
     let child_urls = parse_sitemap_index(xml_body);
     let base = Url::parse(sitemap_url).ok();
     let mut all_urls = Vec::new();
-    let max_children = 100;
-    for child_url in child_urls.iter().take(max_children) {
+    for child_url in child_urls.iter().take(MAX_SITEMAP_INDEX_CHILDREN) {
         if reached_limit(all_urls.len()) {
+            break;
+        }
+        // ~keep `visited` holds every document the walk has committed to fetching, root
+        // included, and is shared across the whole recursion — so its length is the
+        // running total this cap is expressed in.
+        if visited.len() >= MAX_SITEMAP_DOCUMENTS {
+            tracing::warn!(
+                sitemap_url = %sitemap_url,
+                fetched = visited.len(),
+                max_documents = MAX_SITEMAP_DOCUMENTS,
+                "stopping sitemap walk: fetched the maximum number of sitemap documents"
+            );
             break;
         }
         let resolved = if let Some(ref base_parsed) = base {
@@ -498,6 +522,65 @@ mod tests {
             urls.is_empty(),
             "a sitemap-index chain deeper than MAX_SITEMAP_INDEX_DEPTH must be cut off \
              before reaching the leaf, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_stops_at_max_sitemap_documents() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        // ~keep A tree that is shallow (depth 2, well under MAX_SITEMAP_INDEX_DEPTH) and
+        // ~keep narrow per tier (100 children, exactly the per-tier cap), so neither
+        // ~keep existing bound fires. Only the aggregate document cap can stop it.
+        let tier_one: Vec<String> = (0..MAX_SITEMAP_INDEX_CHILDREN)
+            .map(|i| format!("{base}/tier1-{i}.xml"))
+            .collect();
+        mount_xml(
+            &mock,
+            "/root.xml",
+            sitemap_index_xml(&tier_one.iter().map(String::as_str).collect::<Vec<_>>()),
+        )
+        .await;
+
+        // ~keep Every tier-1 index but the last points at 100 children that are never
+        // ~keep mounted: they resolve, get counted, fail to fetch, and burn budget. The
+        // ~keep single real leaf hangs off the LAST tier-1 index, so it is reachable only
+        // ~keep if the walk is still fetching after ~9,900 dead children.
+        for (index, _) in tier_one.iter().enumerate() {
+            let is_last = index + 1 == MAX_SITEMAP_INDEX_CHILDREN;
+            let children: Vec<String> = if is_last {
+                vec![format!("{base}/leaf.xml")]
+            } else {
+                (0..MAX_SITEMAP_INDEX_CHILDREN)
+                    .map(|child| format!("{base}/dead-{index}-{child}.xml"))
+                    .collect()
+            };
+            mount_xml(
+                &mock,
+                &format!("/tier1-{index}.xml"),
+                sitemap_index_xml(&children.iter().map(String::as_str).collect::<Vec<_>>()),
+            )
+            .await;
+        }
+        mount_xml(&mock, "/leaf.xml", urlset(1)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(&format!("{base}/root.xml"), &config, &client, &filter, None).await;
+
+        assert!(
+            urls.is_empty(),
+            "the walk must stop after MAX_SITEMAP_DOCUMENTS fetches, long before reaching \
+             the leaf behind ~9,900 dead children, got {urls:?}"
+        );
+        assert!(
+            mock.received_requests()
+                .await
+                .is_some_and(|requests| requests.len() <= MAX_SITEMAP_DOCUMENTS),
+            "the walk must issue at most MAX_SITEMAP_DOCUMENTS ({MAX_SITEMAP_DOCUMENTS}) fetches"
         );
     }
 
