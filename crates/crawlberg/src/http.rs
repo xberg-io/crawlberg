@@ -610,11 +610,39 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
     if let Some(provider) = config.proxy_provider.clone() {
         let proxy = reqwest::Proxy::custom(move |url| {
             let host = url.host_str().unwrap_or("");
+            // ~keep `None` here is the provider deliberately routing this host direct
+            // (a no-proxy list), not a failure — so it is not logged.
             let cfg = provider.next_proxy(host)?;
-            let mut parsed = reqwest::Url::parse(&cfg.url).ok()?;
+
+            // ~keep `Proxy::custom` can only answer Some/None: there is no channel to
+            // fail the request, and `None` means "connect directly". A malformed proxy
+            // URL therefore silently becomes an egress-control bypass — the one outcome
+            // an operator most needs to know about — so it is logged at ERROR. Failing
+            // closed is not reachable from inside this closure.
+            //
+            // ~keep The offending URL is deliberately NOT logged: `redact_url_credentials`
+            // returns its input unchanged when the input does not parse, which is exactly
+            // the case here — so naming it would print any embedded `user:pass@` verbatim.
+            let Ok(mut parsed) = reqwest::Url::parse(&cfg.url) else {
+                tracing::error!(
+                    target_host = %host,
+                    "proxy provider returned an unparseable URL; connecting DIRECTLY, bypassing the proxy"
+                );
+                return None;
+            };
+
             if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
-                let _ = parsed.set_username(user);
-                let _ = parsed.set_password(Some(pass));
+                // ~keep Deliberately still proxied when the credentials cannot be
+                // attached: the proxy answers 407 and the request fails visibly, whereas
+                // returning `None` would send the traffic direct and defeat egress
+                // control outright. The louder failure is the safer one.
+                if parsed.set_username(user).is_err() || parsed.set_password(Some(pass)).is_err() {
+                    tracing::error!(
+                        target_host = %host,
+                        proxy_url = %crate::net::redact_url_credentials(&cfg.url),
+                        "proxy URL does not accept credentials; connecting through the proxy unauthenticated"
+                    );
+                }
             }
             Some(parsed)
         });
