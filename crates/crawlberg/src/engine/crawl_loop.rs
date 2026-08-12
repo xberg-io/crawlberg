@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use opentelemetry::KeyValue;
 
+use super::DEFAULT_MAX_LINKS_PER_PAGE;
 use crate::error::CrawlError;
 use crate::helpers::{compile_regexes, fetch_robots_rules, find_ascii_case_insensitive};
 use crate::html::{
@@ -60,9 +61,6 @@ fn escalation_strategy_label(strategy: EscalationStrategy) -> &'static str {
 
 /// Default concurrency limit when `max_concurrent` is not set.
 const DEFAULT_MAX_CONCURRENT: usize = 10;
-
-/// Default cap on links enqueued from one page, when `max_links_per_page` is unset.
-const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
 
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {

@@ -44,7 +44,10 @@ pub(crate) fn normalize_url(raw: &str) -> String {
 ///
 /// Strips query parameters and fragments, removes trailing slashes (except root),
 /// and fixes double slashes in the path.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// ~keep Shared by the native and wasm crawl loops. The wasm loop used to carry its own
+/// copy that omitted the `//` collapse, so the two targets disagreed on which URLs were
+/// duplicates — one normalizer is the only way that stays fixed.
 pub(crate) fn normalize_url_for_dedup(raw: &str) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
@@ -137,6 +140,28 @@ mod tests {
         assert_eq!(
             normalized, "http://example.com/path",
             "expected fragment removed and trailing slash trimmed, got {normalized:?}"
+        );
+    }
+
+    /// ~keep The wasm crawl loop used to carry its own dedup normalizer that did all of
+    /// this *except* the `//` collapse, so the two targets disagreed on which URLs were
+    /// duplicates. Both now call this function; this pins the contract they share.
+    #[test]
+    fn dedup_key_collapses_double_slashes_alongside_query_fragment_and_trailing_slash() {
+        let normalized = normalize_url_for_dedup("http://example.com/a//b/?q=1#top");
+        assert_eq!(
+            normalized, "http://example.com/a/b",
+            "expected query, fragment, trailing slash and doubled path separator all \
+             normalized away, got {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn dedup_key_maps_a_doubled_separator_onto_its_single_separator_twin() {
+        assert_eq!(
+            normalize_url_for_dedup("http://example.com/a//b"),
+            normalize_url_for_dedup("http://example.com/a/b"),
+            "a doubled path separator must not produce a second frontier entry for one page"
         );
     }
 }

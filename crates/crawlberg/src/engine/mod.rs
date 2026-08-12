@@ -13,6 +13,12 @@ use std::sync::Arc;
 use crate::error::CrawlError;
 use crate::telemetry::attributes::URL_FULL;
 
+/// Default cap on links enqueued from one page, when `max_links_per_page` is unset.
+///
+/// ~keep Lives here rather than in `crawl_loop` because that module is native-only and
+/// the wasm loop needs the same value; it previously carried its own copy.
+pub(crate) const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn escalation_reason_label(reason: &crate::types::EscalationReason) -> &'static str {
     use crate::types::EscalationReason;
@@ -1001,24 +1007,6 @@ impl CrawlEngine {
 /// strategy logic sequentially using `.await` only — no concurrency primitives.
 #[cfg(target_arch = "wasm32")]
 impl CrawlEngine {
-    /// Normalize a URL for deduplication on wasm.
-    ///
-    /// Strips query parameters and fragment, removes trailing slash (except root).
-    /// Mirrors `normalize::normalize_url_for_dedup` which is cfg-gated to non-wasm.
-    fn wasm_dedup_key(raw: &str) -> String {
-        if let Ok(mut u) = url::Url::parse(raw) {
-            u.set_fragment(None);
-            u.set_query(None);
-            let path = u.path().to_owned();
-            if path.len() > 1 && path.ends_with('/') {
-                u.set_path(&path[..path.len() - 1]);
-            }
-            u.to_string()
-        } else {
-            raw.to_owned()
-        }
-    }
-
     /// Convert a `ScrapeResult` into a `CrawlPageResult` at the given depth.
     fn scrape_to_crawl_page(scrape: ScrapeResult, url: &str, depth: usize, base_host: &str) -> CrawlPageResult {
         let domain = url::Url::parse(url)
@@ -1088,7 +1076,7 @@ impl CrawlEngine {
 
         let mut seen: HashSet<String> = HashSet::new();
 
-        let seed_dedup = Self::wasm_dedup_key(url);
+        let seed_dedup = crate::normalize::normalize_url_for_dedup(url);
         seen.insert(seed_dedup.clone());
         let _ = self.frontier.mark_seen(&seed_dedup).await;
 
@@ -1197,18 +1185,26 @@ impl CrawlEngine {
                 // ~keep Mirrors the native crawl_loop: `max_links_per_page` is user-settable and
                 // ~keep the constant is only the fallback. Hardcoding it here silently ignored the
                 // ~keep caller's setting on wasm, which native honours.
-                const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
                 let link_cap = self.config.max_links_per_page.unwrap_or(DEFAULT_MAX_LINKS_PER_PAGE);
-                if scrape.links.len() > link_cap {
-                    tracing::warn!(
-                        target: "crawlberg.frontier",
-                        url = %entry.url,
-                        link_count = scrape.links.len(),
-                        cap = link_cap,
-                        "page link fan-out exceeds cap, truncating discovered links"
-                    );
-                }
-                for link in scrape.links.iter().take(link_cap) {
+                // ~keep Counts links actually *enqueued*, exactly as the native loop counts
+                // accepted candidates. Taking the first `link_cap` raw anchors instead would
+                // let a run of external or already-seen links exhaust the budget and hide
+                // eligible internal links sitting behind them — a page whose first 10,000
+                // anchors are outbound would discover nothing at all on wasm and everything
+                // on native.
+                let mut enqueued_from_page = 0usize;
+                for link in &scrape.links {
+                    if enqueued_from_page >= link_cap {
+                        tracing::warn!(
+                            target: "crawlberg.frontier",
+                            url = %entry.url,
+                            link_count = scrape.links.len(),
+                            cap = link_cap,
+                            "page link fan-out exceeds cap, truncating discovered links"
+                        );
+                        break;
+                    }
+
                     let is_doc_link = link.link_type == LinkType::Document;
 
                     if link.link_type != LinkType::Internal && !is_doc_link {
@@ -1240,7 +1236,7 @@ impl CrawlEngine {
                         }
                     }
 
-                    let dedup_key = Self::wasm_dedup_key(&link_url);
+                    let dedup_key = crate::normalize::normalize_url_for_dedup(&link_url);
                     if !seen.contains(&dedup_key) {
                         seen.insert(dedup_key.clone());
                         let _ = self.frontier.mark_seen(&dedup_key).await;
@@ -1254,6 +1250,7 @@ impl CrawlEngine {
                             priority,
                         });
                         urls_discovered += 1;
+                        enqueued_from_page += 1;
                         self.event_emitter.on_discovered(&link_url, child_depth).await;
                     }
                 }
