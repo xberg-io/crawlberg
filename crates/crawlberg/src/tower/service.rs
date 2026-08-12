@@ -55,17 +55,27 @@ fn apply_headers(
         }
     }
 
+    // ~keep Withhold configured credentials once a redirect chain has left its origin host;
+    // ~keep reqwest's own cross-host stripping never runs because we follow redirects manually.
     if let Some(ref auth) = config.auth {
-        match auth {
-            crate::types::AuthConfig::Basic { username, password } => {
-                req = req.basic_auth(username, Some(password));
+        if crawl_req.is_on_origin_host() {
+            match auth {
+                crate::types::AuthConfig::Basic { username, password } => {
+                    req = req.basic_auth(username, Some(password));
+                }
+                crate::types::AuthConfig::Bearer { token } => {
+                    req = req.bearer_auth(token);
+                }
+                crate::types::AuthConfig::Header { name, value } => {
+                    req = req.header(name.as_str(), value.as_str());
+                }
             }
-            crate::types::AuthConfig::Bearer { token } => {
-                req = req.bearer_auth(token);
-            }
-            crate::types::AuthConfig::Header { name, value } => {
-                req = req.header(name.as_str(), value.as_str());
-            }
+        } else {
+            tracing::debug!(
+                origin = crawl_req.origin_host.as_deref().unwrap_or(""),
+                target = crawl_req.domain().unwrap_or_default(),
+                "withholding configured credentials from a cross-host redirect hop"
+            );
         }
     }
 

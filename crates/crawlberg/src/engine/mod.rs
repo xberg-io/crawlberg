@@ -124,7 +124,14 @@ impl CrawlEngine {
     /// This is intentionally `#[cfg(not(target_arch = "wasm32"))]`-only: wasm
     /// has its own simpler inline path inside `scrape`.
     #[cfg(not(target_arch = "wasm32"))]
-    async fn fetch_response(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+    /// `origin_host` is the host that started the redirect chain `url` belongs to, or
+    /// `None` when `url` is itself the origin. It scopes configured credentials to that
+    /// host — see [`crate::tower::CrawlRequest::is_on_origin_host`].
+    async fn fetch_response(
+        &self,
+        url: &str,
+        origin_host: Option<&str>,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if matches!(
             self.config.browser.mode,
@@ -258,7 +265,7 @@ impl CrawlEngine {
                 }
             }
 
-            let tier_result = self.run_tier(current_tier, url).await;
+            let tier_result = self.run_tier(current_tier, url, origin_host).await;
 
             match tier_result {
                 Ok((resp, browser_used)) => {
@@ -502,13 +509,14 @@ impl CrawlEngine {
         &self,
         tier: crate::types::Tier,
         url: &str,
+        origin_host: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         match tier {
             crate::types::Tier::Http => {
                 let client = crate::http::build_client(&self.config)?;
                 let mut service = self.build_service(&client);
                 use tower::Service;
-                let mut req = CrawlRequest::new(url);
+                let mut req = CrawlRequest::new(url).with_origin_host(origin_host.map(str::to_owned));
                 req.tier = Some(Self::tier_name(tier));
                 let resp = service.call(req).await?;
                 Ok((resp, false))

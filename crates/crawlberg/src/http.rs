@@ -9,6 +9,7 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::net::cookie::validate_cookie_domain;
+use crate::net::origin::same_host;
 use crate::net::ssrf::validate_url;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::types::CookieInfo;
@@ -233,20 +234,32 @@ pub(crate) async fn http_fetch(
             req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
         }
 
-        match config.auth {
-            Some(AuthConfig::Basic {
-                ref username,
-                ref password,
-            }) => {
-                req = req.basic_auth(username, Some(password));
+        // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
+        // ~keep strip-credentials-on-cross-host behaviour never runs and we must do it here:
+        // ~keep an open redirect off an authenticated origin would otherwise hand the
+        // ~keep configured Authorization header straight to the redirect target.
+        if same_host(&initial_url, &current_url) {
+            match config.auth {
+                Some(AuthConfig::Basic {
+                    ref username,
+                    ref password,
+                }) => {
+                    req = req.basic_auth(username, Some(password));
+                }
+                Some(AuthConfig::Bearer { ref token }) => {
+                    req = req.bearer_auth(token);
+                }
+                Some(AuthConfig::Header { ref name, ref value }) => {
+                    req = req.header(name.as_str(), value.as_str());
+                }
+                None => {}
             }
-            Some(AuthConfig::Bearer { ref token }) => {
-                req = req.bearer_auth(token);
-            }
-            Some(AuthConfig::Header { ref name, ref value }) => {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            None => {}
+        } else if config.auth.is_some() {
+            tracing::debug!(
+                origin = initial_url.host_str().unwrap_or(""),
+                target = current_url.host_str().unwrap_or(""),
+                "withholding configured credentials from a cross-host redirect hop"
+            );
         }
 
         for (k, v) in &config.custom_headers {
@@ -652,10 +665,22 @@ fn should_retry_status(error: &CrawlError, retry_codes: &[u16]) -> bool {
     }
 }
 
+/// First retry delay, doubled on each subsequent attempt.
+const RETRY_BACKOFF_BASE_MS: u64 = 100;
+
+/// Upper bound on the backoff doubling exponent.
+///
+/// ~keep `retry_count` is caller-supplied and unbounded, so an uncapped `1 << attempt`
+/// ~keep panics on overflow in debug builds and silently wraps to a near-zero delay in
+/// ~keep release — defeating backoff exactly when a server is asking us to slow down.
+/// ~keep 100ms << 13 is ~13.6 minutes, already far past a useful retry delay.
+const MAX_RETRY_BACKOFF_SHIFT: u32 = 13;
+
 /// Fetch a URL with retry logic based on configuration.
 ///
 /// Retries on server errors and rate limiting if the corresponding status codes
-/// are included in `config.retry_codes`. Uses exponential backoff between retries.
+/// are included in `config.retry_codes`. Uses exponential backoff between retries,
+/// capped at [`MAX_RETRY_BACKOFF_SHIFT`] doublings.
 pub(crate) async fn fetch_with_retry(
     url: &str,
     config: &CrawlConfig,
@@ -672,7 +697,10 @@ pub(crate) async fn fetch_with_retry(
             Err(e) => {
                 let should_retry = should_retry_status(&e, &retry_codes);
                 if should_retry && attempt < retries {
-                    let delay = Duration::from_millis(100 * (1 << attempt));
+                    let shift = u32::try_from(attempt)
+                        .unwrap_or(MAX_RETRY_BACKOFF_SHIFT)
+                        .min(MAX_RETRY_BACKOFF_SHIFT);
+                    let delay = Duration::from_millis(RETRY_BACKOFF_BASE_MS << shift);
                     tokio::time::sleep(delay).await;
                     last_err = Some(e);
                     continue;

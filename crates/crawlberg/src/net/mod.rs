@@ -6,6 +6,7 @@ pub(crate) mod browser_policy;
 // reqwest's hyper backend; wasm32 uses the browser's own fetch/cookie handling instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cookie;
+pub(crate) mod origin;
 pub mod redact;
 pub mod ssrf;
 

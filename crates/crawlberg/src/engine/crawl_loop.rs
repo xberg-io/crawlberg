@@ -118,9 +118,15 @@ pub(crate) async fn follow_redirects(
     let mut redirect_count: usize = 0;
     let mut intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)> = Vec::new();
 
+    // ~keep Scopes configured credentials to the host the chain started on; hops that leave
+    // ~keep it must not carry the caller's Authorization header to a redirect target.
+    let origin_host = url::Url::parse(initial_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned));
+
     let mut browser_used = false;
     loop {
-        let (resp, hop_browser_used) = match engine.fetch_response(&current_url).await {
+        let (resp, hop_browser_used) = match engine.fetch_response(&current_url, origin_host.as_deref()).await {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -656,7 +662,7 @@ impl CrawlEngine {
                     let _permit = permit;
 
                     let (resp, browser_used) = engine
-                        .fetch_response(&entry.url)
+                        .fetch_response(&entry.url, None)
                         .await
                         .map_err(|e| (entry.clone(), e))?;
 
