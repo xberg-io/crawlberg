@@ -110,6 +110,36 @@ struct BrowserState {
     user_data_dir: Option<std::path::PathBuf>,
 }
 
+/// Wait for the CDP handler loop to finish, aborting it if it outlives the timeout.
+///
+/// ~keep Dropping a `JoinHandle` detaches its task rather than stopping it, so simply
+/// ~keep discarding the timeout result leaked one handler loop per relaunch — unbounded
+/// ~keep for a domain that keeps crashing Chrome.
+async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
+    let abort = handle.abort_handle();
+    if tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handle).await.is_err() {
+        tracing::warn!(
+            timeout_secs = HANDLER_SHUTDOWN_TIMEOUT.as_secs(),
+            "CDP handler did not exit before the shutdown timeout; aborting it"
+        );
+        abort.abort();
+    }
+}
+
+/// Remove a Chrome profile directory, logging rather than ignoring a failure.
+///
+/// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
+/// ~keep while the pool's state mutex was held, stalling every waiting `acquire_page`.
+async fn remove_profile_dir(dir: std::path::PathBuf) {
+    if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
+        tracing::warn!(
+            dir = %dir.display(),
+            %error,
+            "failed to remove the Chrome profile directory"
+        );
+    }
+}
+
 /// A pool that keeps a single Chrome browser alive and hands out pages (tabs),
 /// limiting concurrency via a semaphore. If Chrome crashes the pool will
 /// attempt to relaunch on the next [`acquire_page`](Self::acquire_page) call.
@@ -215,9 +245,9 @@ impl BrowserPool {
             let _ = browser.close().await;
             let _ = browser.wait().await;
             drop(browser);
-            let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, bs.handler_handle).await;
+            abort_handler_after_timeout(bs.handler_handle).await;
             if let Some(dir) = bs.user_data_dir {
-                let _ = std::fs::remove_dir_all(dir);
+                remove_profile_dir(dir).await;
             }
         }
     }
@@ -232,7 +262,7 @@ impl BrowserPool {
             if let Some(old) = guard.take() {
                 old.handler_handle.abort();
                 if let Some(dir) = old.user_data_dir {
-                    let _ = std::fs::remove_dir_all(dir);
+                    remove_profile_dir(dir).await;
                 }
             }
             let bs = self.launch_browser().await?;
@@ -265,9 +295,9 @@ impl BrowserPool {
             let _ = browser.close().await;
             let _ = browser.wait().await;
             drop(browser);
-            let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, old.handler_handle).await;
+            abort_handler_after_timeout(old.handler_handle).await;
             if let Some(dir) = old.user_data_dir {
-                let _ = std::fs::remove_dir_all(dir);
+                remove_profile_dir(dir).await;
             }
         }
 
@@ -383,11 +413,21 @@ impl PooledPage {
 }
 
 impl Drop for PooledPage {
+    // ~keep `tokio::spawn` panics when no runtime is active on the current thread. These
+    // ~keep handles cross an FFI boundary into host GC/finalizer threads, so an unguarded
+    // ~keep spawn here turns a late drop into a panic that aborts the embedding process.
     fn drop(&mut self) {
         if let Some(page) = self.page.take() {
-            tokio::spawn(async move {
-                let _ = page.close().await;
-            });
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(async move {
+                        let _ = page.close().await;
+                    });
+                }
+                Err(_) => {
+                    tracing::warn!("dropping a pooled page outside a Tokio runtime; its CDP target is left to Chrome");
+                }
+            }
         }
     }
 }

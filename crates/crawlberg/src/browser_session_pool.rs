@@ -70,11 +70,22 @@ impl Drop for PooledSession {
     // ~keep Without this, evicted/replaced sessions leaked their Chrome tab: chromiumoxide::Page
     // ~keep is a cheap Arc handle with no Drop of its own, so letting it fall out of the map
     // ~keep silently abandoned the CDP target instead of closing it.
+    // ~keep `tokio::spawn` panics with no active runtime, and these sessions can be dropped
+    // ~keep from an FFI teardown or GC-finalizer thread; guard rather than abort the host.
     fn drop(&mut self) {
         if let Some(page) = self.page.take() {
-            tokio::spawn(async move {
-                let _ = page.close().await;
-            });
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(async move {
+                        let _ = page.close().await;
+                    });
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "dropping a pooled session outside a Tokio runtime; its CDP target is left to Chrome"
+                    );
+                }
+            }
         }
     }
 }
