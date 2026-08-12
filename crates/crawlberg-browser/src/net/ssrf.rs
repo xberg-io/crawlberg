@@ -29,7 +29,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -37,7 +37,13 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
+    // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
+    "100.64.0.0/10",
     "::1/128",
+    // ~keep The IPv6 analogue of 0.0.0.0: a kernel routes connect(::) to a local address, so it
+    // ~keep is denied for the same reason 0.0.0.0/8 is. `::1/128` matches only loopback, not `::`.
+    "::/128",
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",

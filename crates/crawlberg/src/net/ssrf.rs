@@ -13,7 +13,7 @@ use std::sync::{LazyLock, RwLock};
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -21,7 +21,13 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 11] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
+    // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
+    "100.64.0.0/10",
     "::1/128",
+    // ~keep The IPv6 analogue of 0.0.0.0: a kernel routes connect(::) to a local address, so it
+    // ~keep is denied for the same reason 0.0.0.0/8 is. `::1/128` matches only loopback, not `::`.
+    "::/128",
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
@@ -535,6 +541,7 @@ fn classify_private_ip(ip: IpAddr) -> &'static str {
                 {
                     "loopback"
                 }
+                0x0000 if ipv6.segments() == [0; 8] => "unspecified",
                 0xfe80 => "link_local",
                 0xfc00 | 0xfd00 => "unique_local",
                 0xff00..=0xffff => "multicast",
@@ -890,6 +897,43 @@ mod tests {
             matches!(err, SsrfError::DeniedByPolicy { reason: "unspecified" }),
             "expected DeniedByPolicy unspecified, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_ipv6_unspecified() {
+        let policy = SsrfPolicy::default();
+        let url = "http://[::]/".parse::<url::Url>().unwrap();
+        let err = validate_url(&url, &policy).await.unwrap_err();
+        assert!(
+            matches!(err, SsrfError::DeniedByPolicy { reason: "unspecified" }),
+            "expected DeniedByPolicy unspecified for the IPv6 unspecified address, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_shared_address_space() {
+        let policy = SsrfPolicy::default();
+        for host in ["100.100.100.200", "100.64.0.1", "100.127.255.254"] {
+            let url = format!("http://{host}/").parse::<url::Url>().unwrap();
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err("RFC 6598 shared address space must be denied");
+            assert!(
+                matches!(err, SsrfError::DeniedByPolicy { .. }),
+                "expected DeniedByPolicy for RFC 6598 address {host}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_permits_public_addresses_adjacent_to_shared_address_space() {
+        let policy = SsrfPolicy::default();
+        for host in ["100.63.255.255", "100.128.0.1"] {
+            let url = format!("http://{host}/").parse::<url::Url>().unwrap();
+            validate_url(&url, &policy)
+                .await
+                .unwrap_or_else(|e| panic!("{host} is outside 100.64.0.0/10 and must be permitted: {e:?}"));
+        }
     }
 
     #[tokio::test]
