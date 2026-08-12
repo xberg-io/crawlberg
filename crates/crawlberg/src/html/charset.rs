@@ -11,6 +11,15 @@
 /// occur as a spurious match inside a multi-byte sequence of any encoding this crate
 /// targets, so no char-boundary bookkeeping is needed.
 pub(crate) fn detect_charset(content_type: &str, body_bytes: &[u8]) -> Option<String> {
+    // ~keep BOM outranks the transport layer, per the WHATWG encoding sniffing algorithm.
+    // ~keep Checking the header first silently corrupted BOM-tagged bodies whenever the two
+    // ~keep disagreed: a stale `charset=utf-8` header on a real UTF-16 body made
+    // ~keep `redecode_with_charset` short-circuit on "utf-8" and keep the lossy decode, so
+    // ~keep every non-ASCII character became U+FFFD with no error anywhere.
+    if let Some(charset) = detect_bom_charset(body_bytes) {
+        return Some(charset);
+    }
+
     if let Some(pos) = ascii_find_case_insensitive(content_type.as_bytes(), b"charset=") {
         let charset = content_type[pos + 8..]
             .split(';')
@@ -22,10 +31,6 @@ pub(crate) fn detect_charset(content_type: &str, body_bytes: &[u8]) -> Option<St
         if !charset.is_empty() {
             return Some(charset);
         }
-    }
-
-    if let Some(charset) = detect_bom_charset(body_bytes) {
-        return Some(charset);
     }
 
     let search_len = body_bytes.len().min(2048);
@@ -148,6 +153,43 @@ mod tests {
             result,
             Some("utf-8".to_owned()),
             "UTF-8 BOM must be detected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn bom_outranks_a_contradicting_content_type_header() {
+        // ~keep Regression: the header used to win, so a stale `charset=utf-8` on a real
+        // UTF-16 body made `redecode_with_charset` short-circuit and keep the lossy decode —
+        // every non-ASCII character silently became U+FFFD.
+        let mut body = vec![0xFF, 0xFE];
+        body.extend_from_slice(b"h\0e\0l\0l\0o\0");
+        let result = detect_charset("text/html; charset=utf-8", &body);
+        assert_eq!(
+            result,
+            Some("utf-16le".to_owned()),
+            "the BOM must outrank a contradicting Content-Type charset, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn bom_outranks_a_contradicting_legacy_content_type_header() {
+        let mut body = vec![0xEF, 0xBB, 0xBF];
+        body.extend_from_slice("héllo".as_bytes());
+        let result = detect_charset("text/html; charset=iso-8859-1", &body);
+        assert_eq!(
+            result,
+            Some("utf-8".to_owned()),
+            "a UTF-8 BOM must outrank a contradicting Content-Type charset, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn content_type_charset_still_wins_when_no_bom_is_present() {
+        let result = detect_charset("text/html; charset=iso-8859-1", b"<html>caf\xe9</html>");
+        assert_eq!(
+            result,
+            Some("iso-8859-1".to_owned()),
+            "without a BOM the transport-layer charset is authoritative, got {result:?}"
         );
     }
 
