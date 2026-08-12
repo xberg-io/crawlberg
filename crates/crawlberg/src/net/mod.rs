@@ -8,6 +8,10 @@ pub(crate) mod browser_policy;
 pub mod cookie;
 pub(crate) mod origin;
 pub mod redact;
+// ~keep `reqwest::dns::Resolve` only exists under reqwest's hyper backend; wasm32 has no
+// DNS surface at all (see the wasm32 note on `ssrf::validate_url`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod resolver;
 pub mod ssrf;
 
 pub use redact::redact_url_credentials;

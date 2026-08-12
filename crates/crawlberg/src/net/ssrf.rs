@@ -495,7 +495,7 @@ fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     ip
 }
 
-fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
+pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
     if !policy.deny_private {
         return true;
     }
@@ -510,7 +510,7 @@ fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
 }
 
 /// Classify a private IP into a category for error messaging.
-fn classify_private_ip(ip: IpAddr) -> &'static str {
+pub(crate) fn classify_private_ip(ip: IpAddr) -> &'static str {
     // ~keep Classify the address actually routed to, so ::ffff:127.0.0.1 reports
     // "loopback" rather than falling through to the generic IPv6 arm.
     match canonicalize_ip(ip) {

@@ -483,6 +483,7 @@ struct ClientCacheKey {
     cookies_enabled: bool,
     proxy: String,
     auth: String,
+    ssrf: String,
 }
 
 impl ClientCacheKey {
@@ -492,8 +493,21 @@ impl ClientCacheKey {
             cookies_enabled: config.cookies_enabled,
             proxy: proxy_identity(config),
             auth: auth_identity(config),
+            ssrf: ssrf_identity(config),
         }
     }
+}
+
+/// Encode the part of `config`'s SSRF policy that is baked into the client's DNS resolver.
+///
+/// ~keep The resolver captures the policy at build time, so two configs with different
+/// policies must not share a cached client — otherwise the first caller's policy would
+/// silently govern the second's connections. Only `deny_private` and `allowlist` reach the
+/// resolver: `scheme_allowlist` and `max_redirects` are enforced in `validate_url` against
+/// the URL, never during resolution, so folding them in would fragment the cache for
+/// nothing.
+fn ssrf_identity(config: &CrawlConfig) -> String {
+    format!("{}:{:?}", config.ssrf.deny_private, config.ssrf.allowlist)
 }
 
 /// Encode `config`'s proxy configuration as an opaque identity string.
@@ -612,6 +626,24 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
             proxy = proxy.basic_auth(user, pass);
         }
         builder = builder.proxy(proxy);
+    }
+
+    // ~keep Closes the DNS-rebinding TOCTOU: `validate_url` resolves the host and checks
+    // the answers, then hyper resolves it *again* to connect, so the checked addresses are
+    // not the connected ones. `PolicyResolver` re-checks inside the resolution hyper
+    // actually uses, leaving no second lookup to disagree with the first.
+    //
+    // Skipped whenever a proxy is configured, because hyper then resolves the *proxy*
+    // host rather than the target: the policy would be applied to the wrong name (a proxy
+    // on a private address is a normal, previously-working setup), and the target's
+    // resolution happens at the proxy, out of this process's reach, so client-side
+    // pinning cannot be achieved through a proxy at all. `validate_url`'s own pre-check
+    // still runs on the target in that case.
+    #[cfg(not(target_arch = "wasm32"))]
+    if config.proxy_provider.is_none() && config.proxy.is_none() {
+        builder = builder.dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
+            config.ssrf.clone(),
+        )));
     }
 
     let client = builder
@@ -904,6 +936,8 @@ pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String,
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::net::ssrf::SsrfPolicy;
+    use crate::types::ProxyConfig;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1361,6 +1395,117 @@ mod tests {
         assert!(
             client_cache_contains(&config),
             "the cache entry must still be present after a second build with a matching identity"
+        );
+    }
+
+    /// Join an error with every error in its `source()` chain.
+    ///
+    /// ~keep reqwest reports a resolver refusal as a generic connect error and keeps the
+    /// underlying cause only in the chain, so the policy reason is invisible to `Display`
+    /// on the outermost error alone.
+    fn error_chain(error: &dyn std::error::Error) -> String {
+        let mut parts = vec![error.to_string()];
+        let mut current = error.source();
+        while let Some(cause) = current {
+            parts.push(cause.to_string());
+            current = cause.source();
+        }
+        parts.join(" / ")
+    }
+
+    /// The end-to-end proof that [`build_client`] actually installs [`PolicyResolver`].
+    ///
+    /// ~keep The resolver's own unit tests exercise it in isolation, so all of them still
+    /// pass if the `dns_resolver` call is dropped from `build_client`. This one fails,
+    /// because it goes through a real client and asserts on what the connection did.
+    #[tokio::test]
+    async fn build_client_enforces_the_ssrf_policy_during_dns_resolution() {
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_276),
+            ssrf: SsrfPolicy {
+                deny_private: true,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+
+        // ~keep Port 1 is never listening, so a request that got past the resolver would
+        // fail with a connection-refused error instead — a different message, which is
+        // exactly what distinguishes "policy enforced" from "policy absent" here.
+        let error = client
+            .get("http://localhost:1/")
+            .send()
+            .await
+            .expect_err("localhost resolves to loopback and must be refused by the policy");
+
+        let chain = error_chain(&error);
+        assert!(
+            chain.contains("denied by SSRF policy: loopback"),
+            "expected the resolver to refuse the loopback answer, got: {chain}"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_client_skips_the_policy_resolver_when_a_proxy_is_configured() {
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_277),
+            proxy: Some(ProxyConfig {
+                url: "http://127.0.0.1:1".to_owned(),
+                ..ProxyConfig::default()
+            }),
+            ssrf: SsrfPolicy {
+                deny_private: true,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+
+        let error = client
+            .get("http://localhost:1/")
+            .send()
+            .await
+            .expect_err("the proxy is not listening, so the request must fail");
+
+        let chain = error_chain(&error);
+        assert!(
+            !chain.contains("denied by SSRF policy"),
+            "hyper resolves the proxy host, not the target, so the policy must not be \
+             applied during resolution here; got: {chain}"
+        );
+    }
+
+    #[test]
+    fn build_client_uses_distinct_cache_entries_for_distinct_ssrf_policies() {
+        let permissive = CrawlConfig {
+            request_timeout: Duration::from_millis(918_278),
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let restrictive = CrawlConfig {
+            request_timeout: Duration::from_millis(918_278),
+            ssrf: SsrfPolicy {
+                deny_private: true,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+
+        let _permissive_client = build_client(&permissive).expect("permissive client must build");
+        assert!(
+            !client_cache_contains(&restrictive),
+            "a client built under deny_private=false must not be served to a deny_private=true \
+             config — its resolver carries the permissive policy"
+        );
+
+        let _restrictive_client = build_client(&restrictive).expect("restrictive client must build");
+        assert!(
+            client_cache_contains(&permissive) && client_cache_contains(&restrictive),
+            "both policies must hold their own cache entry"
         );
     }
 
