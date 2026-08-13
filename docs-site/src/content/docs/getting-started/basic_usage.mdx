@@ -4,6 +4,7 @@ description: Minimal scrape + crawl example for every crawlberg binding
 ---
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Content as Snip_rust_getting_started_basic_usage } from "../../../snippets/rust/getting-started/basic_usage.md";
 import { Content as Snip_python_getting_started_basic_usage } from "../../../snippets/python/getting-started/basic_usage.md";
 import { Content as Snip_typescript_getting_started_basic_usage } from "../../../snippets/typescript/getting-started/basic_usage.md";
 import { Content as Snip_ruby_getting_started_basic_usage } from "../../../snippets/ruby/getting-started/basic_usage.md";
@@ -26,6 +27,11 @@ then **crawl** a small site — in every supported binding. Each tab is the cano
 `CrawlConfig(max_depth=1, max_pages=5)`, `crawl(engine, url)`.
 
 <Tabs syncKey="lang">
+<TabItem label="Rust">
+
+<Snip_rust_getting_started_basic_usage />
+
+</TabItem>
 <TabItem label="Python">
 
 <Snip_python_getting_started_basic_usage />
