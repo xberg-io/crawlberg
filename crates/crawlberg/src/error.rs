@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-/// A clonable, downcastable wrapper around the error a [`CrawlError`] was built from.
+/// A cloneable, downcastable wrapper around the error a [`CrawlError`] was built from.
 ///
 /// ~keep `Arc<dyn Error>`, not `Box<dyn Error>`, because [`CrawlError`] derives `Clone` and
 /// that derive is load-bearing — `engine/mod.rs` clones an error into `AttemptOutcome` on
@@ -15,6 +15,14 @@ use thiserror::Error;
 /// ~keep A single trait object rather than a concrete type per variant: `Other`,
 /// `BrowserError`, and `InvalidConfig` each wrap several unrelated error types
 /// (`io::Error`, `regex::Error`, `url::ParseError`, `serde_json::Error`, chromiumoxide's).
+///
+/// ~keep Every `source` field is `alef(skip)`ed, so this type is Rust-only and never
+/// reaches a binding. alef can only flatten a trait object to its `Display` string, and
+/// that string is already in the variant's `message` — every construction site formats it
+/// in (`format!("[network:{tag}] {e}")`). What would not survive the flattening is the
+/// only reason the field exists: `downcast_ref::<reqwest::Error>()` on the chain, to read
+/// `is_connect()`/`url()` off the original. Exporting it would add 18 duplicate fields
+/// across 14 languages and cost `alef verify` 18 `lossy_sanitized_surface` errors.
 #[derive(Debug, Clone)]
 pub struct ErrorSource(Arc<dyn std::error::Error + Send + Sync>);
 
@@ -129,6 +137,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -138,6 +147,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -147,6 +157,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -172,6 +183,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -181,6 +193,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -190,6 +203,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -199,6 +213,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -208,6 +223,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -217,6 +233,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -226,6 +243,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -235,6 +253,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -244,6 +263,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -253,6 +273,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -262,6 +283,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -271,6 +293,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -280,6 +303,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
@@ -291,6 +315,7 @@ pub enum CrawlError {
         /// Reason for rejection (e.g., "loopback", "private_network", "disallowed_scheme: ftp").
         reason: String,
         /// The policy error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<Arc<crate::net::ssrf::SsrfError>>,
     },
@@ -300,6 +325,7 @@ pub enum CrawlError {
         /// Human-readable description of the failure.
         message: String,
         /// The error this was built from, when one was available.
+        #[cfg_attr(alef, alef(skip))]
         #[source]
         source: Option<ErrorSource>,
     },
