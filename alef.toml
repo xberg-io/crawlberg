@@ -596,7 +596,7 @@ e2e = "cd e2e/python && python3 -m pytest tests/ -q"
 [crates.test.node]
 precondition = "command -v node >/dev/null 2>&1"
 command = "task node:test"
-e2e = "cd e2e/typescript && pnpm dlx vitest run"
+e2e = "cd e2e/node && pnpm test"
 
 [crates.test.go]
 precondition = "command -v go >/dev/null 2>&1"
@@ -644,7 +644,7 @@ before = "cargo build --release -p crawlberg-ffi"
 precondition = "command -v swift >/dev/null 2>&1"
 before = ["cargo build --release -p crawlberg-swift", "bash scripts/setup-swift-bridge.sh"]
 command = "cd packages/swift && swift test"
-e2e = "cd packages/swift && swift test"
+e2e = "bash scripts/e2e/swift/test.sh"
 
 [crates.test.dart]
 precondition = "command -v dart >/dev/null 2>&1"
