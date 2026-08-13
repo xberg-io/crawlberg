@@ -1,6 +1,4 @@
 ```java title="Java"
-import java.util.Optional;
-
 import io.xberg.crawlberg.CrawlConfig;
 import io.xberg.crawlberg.CrawlEngineHandle;
 import io.xberg.crawlberg.CrawlResult;
@@ -20,8 +18,8 @@ public final class BasicUsage {
 
         // Crawl from a seed URL, limited to one hop and a handful of pages.
         CrawlConfig config = CrawlConfig.builder()
-            .withMaxDepth(Optional.of(1L))
-            .withMaxPages(Optional.of(5L))
+            .withMaxDepth(1L)
+            .withMaxPages(5L)
             .build();
         CrawlEngineHandle crawlEngine = Crawlberg.createEngine(config);
         CrawlResult crawlResult = Crawlberg.crawl(

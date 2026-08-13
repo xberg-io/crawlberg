@@ -28,10 +28,10 @@ func main() {
     fmt.Printf("Links found: %d\n", len(result.Links))
 
     // Crawl from a seed URL, limited to one hop and a handful of pages.
-    config := crawlberg.NewCrawlConfig(
-        crawlberg.WithCrawlConfigMaxDepth(1),
-        crawlberg.WithCrawlConfigMaxPages(5),
-    )
+    config := &crawlberg.CrawlConfig{
+        MaxDepth: crawlberg.Ptr(uint(1)),
+        MaxPages: crawlberg.Ptr(uint(5)),
+    }
     crawlEngine, err := crawlberg.CreateEngine(config)
     if err != nil {
         log.Fatalf("create crawl engine: %v", err)
