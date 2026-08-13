@@ -2,6 +2,93 @@
 
 All notable changes to crawlberg are documented here.
 
+## [1.3.0] - 2026-08-13
+
+This release contains a source-breaking change to `CrawlError`. It is a minor bump rather than a major one, so
+`cargo update` will pull it into an existing `crawlberg = "1"` dependency — pin to `=1.2.1` if you are not ready to
+adapt. Only the Rust crates ship in this release; the language bindings stay on 1.2.1 until their generator is fixed.
+
+### Changed
+
+- **Breaking.** The 17 message-only `CrawlError` variants are now struct variants carrying `{ message, source }`, and
+  `SsrfPolicyViolation` gains a `source`. `CrawlError::Timeout(text)` becomes
+  `CrawlError::Timeout { message: text, source: None }`; matches and constructions must be updated. Every `#[error]`
+  format string is byte-identical to 1.2.1, so `Display` output — and anything keyed on it, including the
+  `[network:<tag>]` prefix and the 500/503/504 suffix matchers — is unchanged.
+- `Error::source()` now yields the originating error on every variant instead of `None`. This is what makes
+  `downcast_ref::<reqwest::Error>()` work again, recovering `is_connect()`, `is_timeout()`, and `.url()` from the
+  underlying failure. The source is `Arc`-backed because `CrawlError: Clone` is load-bearing in the retry path.
+- `html-to-markdown-rs` moves to 3.11. The full suite passes unchanged, so this release carries no markdown
+  output drift.
+
+### Added
+
+- The HTTP cache honours the response's own `Cache-Control` instead of storing any 2xx for a flat TTL. `no-store`,
+  `private`, `no-cache`, and `max-age` are respected, with `s-maxage` taking precedence. A crawl cache is shared —
+  one entry is replayed to whoever asks next — so storing a `private` or `no-store` response could hand one tenant's
+  content to another.
+- Conditional revalidation, making good on the `etag` and `last_modified` doc comments that previously promised it.
+  A stale-but-validatable entry now earns a 304 for the cost of one bodiless round trip. `DiskCache` no longer unlinks
+  a TTL-expired entry, since that entry is exactly what a conditional request needs; the `max_entries` sweep still
+  reclaims it.
+- `CrawlCache::get_stale`, defaulted to `Ok(None)` so implementations outside this crate keep compiling and simply
+  decline revalidation.
+
+### Security
+
+- Closed a DNS-rebinding TOCTOU in SSRF enforcement. `validate_url` resolved the host and checked every answer, then
+  hyper resolved it again to open the connection — so the addresses checked were never the addresses connected to. A
+  host with `TTL=0` could answer the validation lookup publicly and the connect lookup with a loopback or
+  cloud-metadata address. The check now runs inside the resolution hyper actually uses. It is skipped when a proxy is
+  configured, because hyper then resolves the proxy host and client-side pinning is impossible through a proxy anyway.
+- Configured credentials are now scoped to the origin host across redirects. Redirects are followed manually under
+  `redirect::Policy::none()`, so reqwest's own cross-host credential stripping never ran, and every hop reattached
+  `config.auth` unconditionally — an open redirect off an authenticated origin handed the caller's `Authorization`
+  header to the redirect target. Both redirect drivers were affected. Hostless or unparseable hop URLs fail closed;
+  scheme and port are deliberately not compared, since an http→https upgrade does not change the party the
+  credentials were issued to.
+- The default deny-private SSRF policy now covers RFC 6598 shared address space (`100.64.0.0/10`, which carries
+  Alibaba Cloud's metadata endpoint at `100.100.100.200` and Tailscale/CGNAT node addresses) and the IPv6
+  unspecified address `::`, the analogue of the already-denied `0.0.0.0/8`.
+- A `ProxyProvider` returning an unparseable URL no longer connects directly with no trace. `Proxy::custom` can only
+  answer `Some`/`None` and `None` means direct, so failing closed is unreachable from inside it — the bypass is now
+  logged instead. The URL itself is deliberately not logged, because the redaction helper returns its input unchanged
+  when the input does not parse, which is exactly this branch.
+- An unset `max_body_size` is capped at 100 MiB. reqwest is built with gzip and brotli and `Response::chunk` yields
+  decompressed bytes, so no cap let a few hundred compressed bytes expand to gigabytes in memory before any
+  downstream truncation ran. Enforced at the read site rather than in `CrawlConfig::default`, so a config
+  deserialized from JSON or built by a binding that omits the field cannot bypass it. Reading above the ceiling is
+  now an explicit opt-in.
+- Sitemap index walks are bounded by total fetches, not just depth and per-tier breadth. Those bound the tree's
+  shape, not its size: 100 children per tier across 10 tiers is 100^10 fetches, and `map_limit` does not help
+  because it bounds URLs returned, so a tree whose leaves are empty or filtered never reaches it and keeps fetching.
+
+### Fixed
+
+- A byte-order mark now outranks the `Content-Type` charset, as the WHATWG sniffing algorithm requires. When the two
+  disagreed the body was silently corrupted — a stale `charset=utf-8` header on a real UTF-16 body replaced every
+  non-ASCII character with U+FFFD across html, metadata, links, and markdown, with no error raised.
+- robots.txt user-agent groups match in one direction only, as RFC 9309 specifies. Accepting the reverse let the UA
+  `crawlberg` claim a group written for a more specific bot such as `crawlberg-news`, silently substituting that
+  bot's rules for the `*` block meant for us.
+- `DiskCache::set` no longer reports success for writes that never happened. It returned `Ok(())` before writing
+  whenever the eviction scan's `read_dir` failed, so a cache directory deleted at runtime made every subsequent write
+  a silent no-op for the life of the process. The scan now degrades to writing without evicting. Related: a
+  concurrent eviction between `exists()` and `read_to_string()` is an ordinary miss rather than an error, and a
+  panicking write task propagates instead of reporting success.
+- Browser pool teardown is guarded against runtime-less drops and leaks. `tokio::spawn` panics with no active
+  runtime, and `PooledPage`/`PooledSession` cross an FFI boundary into host GC and finalizer threads, so a late drop
+  could abort the embedding process; both `Drop` impls now spawn only via `Handle::try_current()`. Discarding the
+  handler-shutdown timeout also leaked one CDP handler loop per relaunch.
+- The wasm crawl loop no longer traps at engine construction. `Instant::now()` compiles for
+  `wasm32-unknown-unknown` but its backend traps with `unreachable` at runtime, and `PerDomainThrottle::new()` called
+  it from `CrawlEngineBuilder::build()` — so every wasm scrape and crawl died there. The published
+  `@xberg-io/crawlberg-wasm` was broken for real users, not only in tests.
+- The wasm crawl loop honours `max_links_per_page` instead of a hardcoded 10,000 cap, and matches native on URL
+  dedup and link counting. Its dedup key omitted the `//` path collapse, so the two targets disagreed on which URLs
+  were duplicates, and its link cap counted raw anchors rather than enqueued links, so a page whose first N anchors
+  were external or already seen discovered nothing on wasm and everything on native.
+
 ## [1.2.1] - 2026-08-11
 
 **1.2.0 did not publish completely — use this release instead.** Its publish run failed partway: `crawlberg` never
