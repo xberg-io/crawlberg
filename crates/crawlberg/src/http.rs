@@ -101,6 +101,26 @@ pub(crate) fn redecode_with_charset(charset: &str, body_bytes: &[u8]) -> Option<
     if had_errors { None } else { Some(decoded.into_owned()) }
 }
 
+/// Safety ceiling on a response body when `max_body_size` is unset.
+///
+/// ~keep reqwest is built with gzip and brotli, and `Response::chunk` yields
+/// *decompressed* bytes, so an unset cap let a few hundred compressed bytes expand to
+/// gigabytes in memory. 100 MiB sits far above any real HTML page while still bounding
+/// the process; the document path applies its own, smaller
+/// [`crate::document::DEFAULT_DOCUMENT_MAX_SIZE`] before this is reached.
+pub(crate) const DEFAULT_MAX_BODY_SIZE: usize = 100 * 1024 * 1024;
+
+/// The body cap actually enforced for `config`.
+///
+/// ~keep Resolved here rather than in `CrawlConfig::default` so it cannot be bypassed:
+/// a config deserialized from JSON, or built by a language binding that omits the field,
+/// gets `None` for the field regardless of what `Default` says. Every fetch path routes
+/// through this, so the ceiling holds for all of them. A caller who genuinely wants an
+/// unbounded read opts in explicitly with a large `max_body_size`.
+pub(crate) fn effective_max_body_size(config: &CrawlConfig) -> Option<usize> {
+    Some(config.max_body_size.unwrap_or(DEFAULT_MAX_BODY_SIZE))
+}
+
 /// Read a response body in bounded chunks, stopping once more than `max_size` bytes
 /// have been received. Returns the bytes read together with whether the read stopped
 /// early because the cap was hit (as opposed to a natural end-of-body).
@@ -296,8 +316,9 @@ pub(crate) async fn http_fetch(
                 let next_url = match current_url.join(&location) {
                     Ok(u) => u,
                     Err(_) => {
-                        let (body_bytes_vec, _) =
-                            read_body_bounded(resp, config.max_body_size).await.unwrap_or_default();
+                        let (body_bytes_vec, _) = read_body_bounded(resp, effective_max_body_size(config))
+                            .await
+                            .unwrap_or_default();
                         let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
                         let headers_map = build_headers_map(&headers);
                         return Ok(HttpResponse {
@@ -342,7 +363,7 @@ pub(crate) async fn http_fetch(
         match status {
             401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
             403 => {
-                let body = read_text_bounded(resp, config.max_body_size).await;
+                let body = read_text_bounded(resp, effective_max_body_size(config)).await;
                 let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
                 let partial_response = build_partial_response(status, &body, headers_map);
                 let classifier = &WAF_CLASSIFIER;
@@ -380,7 +401,7 @@ pub(crate) async fn http_fetch(
             let headers_only_response = build_partial_response(status, "", headers_map);
             let classifier = &WAF_CLASSIFIER;
             if let Ok(Some(signal)) = classifier.classify(&headers_only_response) {
-                let body = read_text_bounded(resp, config.max_body_size).await;
+                let body = read_text_bounded(resp, effective_max_body_size(config)).await;
                 let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
                 let partial_response = build_partial_response(status, &body, headers_map);
                 let vendor = classifier
@@ -401,24 +422,27 @@ pub(crate) async fn http_fetch(
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<usize>().ok());
 
-        let (body_bytes_vec, hit_cap) = read_body_bounded(resp, config.max_body_size).await.map_err(|e| {
-            let chain = error_chain_string(&e);
-            let is_body_error = chain.contains("content-length")
-                || chain.contains("truncate")
-                || chain.contains("incomplete")
-                || chain.contains("end of file")
-                || chain.contains("body error")
-                || chain.contains("body from connection")
-                || chain.contains("decoding response body")
-                || chain.contains("error decoding");
-            #[cfg(not(target_arch = "wasm32"))]
-            let is_body_error = is_body_error || e.is_body();
-            if is_body_error {
-                CrawlError::DataLoss(format!("data_loss: {e}"))
-            } else {
-                classify_reqwest_error(&e)
-            }
-        })?;
+        let (body_bytes_vec, hit_cap) =
+            read_body_bounded(resp, effective_max_body_size(config))
+                .await
+                .map_err(|e| {
+                    let chain = error_chain_string(&e);
+                    let is_body_error = chain.contains("content-length")
+                        || chain.contains("truncate")
+                        || chain.contains("incomplete")
+                        || chain.contains("end of file")
+                        || chain.contains("body error")
+                        || chain.contains("body from connection")
+                        || chain.contains("decoding response body")
+                        || chain.contains("error decoding");
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let is_body_error = is_body_error || e.is_body();
+                    if is_body_error {
+                        CrawlError::DataLoss(format!("data_loss: {e}"))
+                    } else {
+                        classify_reqwest_error(&e)
+                    }
+                })?;
 
         // ~keep A capped read stopping short of `content-length` is expected (that is the
         // point of `max_body_size`), not evidence of a truncated/failed transfer.
@@ -1397,6 +1421,42 @@ mod tests {
             "bounded read must stop far short of the bomb's full decompressed size \
              ({decompressed_size} bytes), got {} bytes",
             bytes.len()
+        );
+    }
+
+    #[test]
+    fn an_unset_body_cap_resolves_to_the_safety_ceiling() {
+        let config = CrawlConfig {
+            max_body_size: None,
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            effective_max_body_size(&config),
+            Some(DEFAULT_MAX_BODY_SIZE),
+            "an unset cap must resolve to the ceiling, not to an unbounded read"
+        );
+    }
+
+    #[test]
+    fn an_explicit_body_cap_is_passed_through_untouched() {
+        let config = CrawlConfig {
+            max_body_size: Some(4096),
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            effective_max_body_size(&config),
+            Some(4096),
+            "an explicit cap must win over the ceiling, in both directions"
+        );
+
+        let unbounded_by_opt_in = CrawlConfig {
+            max_body_size: Some(DEFAULT_MAX_BODY_SIZE * 4),
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            effective_max_body_size(&unbounded_by_opt_in),
+            Some(DEFAULT_MAX_BODY_SIZE * 4),
+            "raising the cap above the ceiling is the documented opt-in for large bodies"
         );
     }
 

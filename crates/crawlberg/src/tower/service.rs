@@ -140,7 +140,7 @@ async fn do_fetch(
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if (300..400).contains(&status) {
-        let (body_bytes, _) = crate::http::read_body_bounded(resp, config.max_body_size)
+        let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
             .await
             .unwrap_or_default();
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
@@ -161,7 +161,7 @@ async fn do_fetch(
                 .and_then(|v| v.first())
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
-            let body = crate::http::read_text_bounded(resp, config.max_body_size).await;
+            let body = crate::http::read_text_bounded(resp, crate::http::effective_max_body_size(config)).await;
             if crate::http::is_waf_blocked(&server, &body, &headers) {
                 let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
                 return Err(CrawlError::WafBlocked {
@@ -183,7 +183,7 @@ async fn do_fetch(
         _ => {}
     }
 
-    let (body_vec, hit_cap) = crate::http::read_body_bounded(resp, config.max_body_size)
+    let (body_vec, hit_cap) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
         .map_err(|e| {
             let chain = crate::error::error_chain_string(&e);

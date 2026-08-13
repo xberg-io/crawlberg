@@ -416,6 +416,11 @@ pub struct CrawlConfig {
     /// Authentication configuration.
     pub auth: Option<AuthConfig>,
     /// Maximum response body size in bytes.
+    ///
+    /// `None` does not mean unbounded: an unset cap falls back to a 100 MiB safety
+    /// ceiling, because HTTP responses are decompressed while being read and a few
+    /// hundred compressed bytes can otherwise expand to gigabytes in memory. To read
+    /// bodies larger than that, set this explicitly.
     pub max_body_size: Option<usize>,
     /// CSS selectors for tags to remove from HTML before processing.
     #[serde(default)]

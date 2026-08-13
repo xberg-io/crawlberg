@@ -633,10 +633,10 @@ impl CrawlEngine {
                     .await
                     .map_err(|_| CrawlError::Other("semaphore closed".into()))?;
 
-                // ~keep `http.rs::read_body_bounded` (not ours to edit) is the only place that
-                // bounds the network read, and it is driven solely by `config.max_body_size`
-                // (default `None` — unbounded). When `download_documents` is on (its default)
-                // and the URL looks like a document, lift this per-task clone's `max_body_size`
+                // ~keep `http.rs::read_body_bounded` is the only place that bounds the network
+                // read, and it is driven by `http::effective_max_body_size`, which falls back
+                // to a 100 MiB ceiling. When `download_documents` is on (its default) and the
+                // URL looks like a document, lift this per-task clone's `max_body_size`
                 // to `document_max_size` so a large PDF/DOCX/etc. is never fully materialized
                 // in memory regardless of `document_max_size`, matching how `read_body_bounded`
                 // already bounds the HTML body path. Scoped to document-shaped URLs (rather than
