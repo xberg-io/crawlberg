@@ -182,7 +182,11 @@ impl CrawlCache for DiskCache {
                     .unwrap_or_default()
                     .as_secs();
                 if now.saturating_sub(page.cached_at) > ttl_secs {
-                    let _ = std::fs::remove_file(&path);
+                    // ~keep Deliberately not unlinked. An entry past its TTL is exactly the
+                    // input `get_stale` needs for a conditional request: its ETag can still
+                    // earn a 304, which costs no body. Deleting it here would have made
+                    // revalidation impossible, since `get` runs first. Expired entries are
+                    // reclaimed by the `max_entries` sweep in `set`.
                     return Ok(None);
                 }
             }
@@ -192,6 +196,36 @@ impl CrawlCache for DiskCache {
         .await
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "disk cache read task failed; treating as a miss");
+            Ok(None)
+        })
+    }
+
+    /// Read an entry ignoring the TTL, so an expired one can still be revalidated.
+    async fn get_stale(&self, key: &str) -> Result<Option<CachedPage>, CrawlError> {
+        let path = self.cache_path(key);
+
+        tokio::task::spawn_blocking(move || {
+            let data = match std::fs::read_to_string(&path) {
+                Ok(data) => data,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(CrawlError::Other(format!("cache read error: {e}"))),
+            };
+            match serde_json::from_str(&data) {
+                Ok(page) => Ok(Some(page)),
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %error,
+                        "discarding unparseable disk cache entry"
+                    );
+                    let _ = std::fs::remove_file(&path);
+                    Ok(None)
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "disk cache stale read task failed; treating as a miss");
             Ok(None)
         })
     }
@@ -287,6 +321,8 @@ mod tests {
             etag: Some("\"abc\"".to_owned()),
             last_modified: None,
             cached_at: now_secs(),
+            max_age_secs: None,
+            must_revalidate: false,
         }
     }
 

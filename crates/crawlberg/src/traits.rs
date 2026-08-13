@@ -205,10 +205,25 @@ pub trait ContentFilter: Send + Sync {
 /// HTTP response cache for avoiding re-fetching unchanged pages.
 #[async_trait]
 pub trait CrawlCache: Send + Sync {
-    /// Get a cached page by URL key.
+    /// Get a cached page by URL key. Must not return an entry the backend considers expired.
     async fn get(&self, key: &str) -> Result<Option<CachedPage>, CrawlError>;
     /// Store a page in the cache.
     async fn set(&self, key: &str, page: &CachedPage) -> Result<(), CrawlError>;
     /// Check if a URL is cached.
     async fn has(&self, key: &str) -> Result<bool, CrawlError>;
+
+    /// Get a cached page *including* one the backend considers expired, for conditional
+    /// revalidation against the origin.
+    ///
+    /// An expired entry still carries its `ETag`/`Last-Modified`, so it is worth an
+    /// `If-None-Match` request: a `304` costs one round trip with no body and refreshes
+    /// the entry, where a plain re-fetch costs the whole body.
+    ///
+    /// ~keep Defaulted to `Ok(None)` so existing `CrawlCache` implementations outside this
+    /// crate keep compiling. Returning `None` simply declines revalidation — the caller
+    /// falls back to an ordinary request, which is always correct, only slower.
+    async fn get_stale(&self, key: &str) -> Result<Option<CachedPage>, CrawlError> {
+        let _ = key;
+        Ok(None)
+    }
 }

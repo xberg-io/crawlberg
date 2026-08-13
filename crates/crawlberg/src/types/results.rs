@@ -456,10 +456,24 @@ pub struct CachedPage {
     pub content_type: String,
     /// Raw response body stored verbatim in the cache.
     pub body: String,
-    /// `ETag` header value, if any — used for conditional revalidation.
+    /// `ETag` header value, if any. Sent back as `If-None-Match` to revalidate this entry.
     pub etag: Option<String>,
-    /// `Last-Modified` header value, if any — used for conditional revalidation.
+    /// `Last-Modified` header value, if any. Sent back as `If-Modified-Since` to revalidate
+    /// this entry when no `ETag` is available.
     pub last_modified: Option<String>,
     /// Unix timestamp (seconds) when the entry was written to the cache.
     pub cached_at: u64,
+    /// Freshness lifetime in seconds declared by the origin via `Cache-Control`
+    /// (`s-maxage` if present, else `max-age`).
+    ///
+    /// `None` means the origin declared no lifetime, in which case only the cache
+    /// backend's own TTL governs the entry. When set, it applies *in addition* to that
+    /// TTL — whichever expires first wins, because the origin's word cannot extend a
+    /// lifetime the operator configured to be shorter.
+    #[serde(default)]
+    pub max_age_secs: Option<u64>,
+    /// The origin sent `Cache-Control: no-cache`, so this entry may be stored but must
+    /// never be served without first revalidating it against the origin.
+    #[serde(default)]
+    pub must_revalidate: bool,
 }
