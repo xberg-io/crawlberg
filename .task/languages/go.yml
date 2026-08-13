@@ -17,7 +17,7 @@ tasks:
     cmds:
       - cmd: bash scripts/go/install.sh {{.GOLANGCI_LINT_VERSION}}
         platforms: [linux, darwin]
-      - cmd: pwsh -Command "cd packages/go/v4; go mod download"
+      - cmd: pwsh -Command "cd packages/go; go mod download"
         platforms: [windows]
 
   setup:
@@ -27,7 +27,7 @@ tasks:
 
   build:
     desc: Build Go bindings (requires Rust FFI to be built first)
-    dir: packages/go/v4
+    dir: packages/go
     env:
       CGO_ENABLED: "1"
     cmds:
@@ -35,7 +35,7 @@ tasks:
 
   build:dev:
     desc: Build Go bindings in debug mode (requires Rust FFI to be built first)
-    dir: packages/go/v4
+    dir: packages/go
     env:
       CGO_ENABLED: "1"
     cmds:
@@ -43,7 +43,7 @@ tasks:
 
   build:release:
     desc: Build Go bindings in release mode (optimized, requires Rust FFI to be built first)
-    dir: packages/go/v4
+    dir: packages/go
     env:
       CGO_ENABLED: "1"
     cmds:
@@ -51,7 +51,7 @@ tasks:
 
   build:ci:
     desc: Build Go bindings in CI mode (requires Rust FFI to be built first)
-    dir: packages/go/v4
+    dir: packages/go
     env:
       CGO_ENABLED: "1"
     cmds:
@@ -72,12 +72,12 @@ tasks:
     cmds:
       - cmd: bash scripts/go/test.sh
         platforms: [linux, darwin]
-      - cmd: pwsh -Command "cd packages/go/v4; go test -timeout 10m -v ./..."
+      - cmd: pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."
         platforms: [windows]
 
   test:ci:
     desc: Run Go tests in CI mode
-    dir: packages/go/v4
+    dir: packages/go
     env:
       RUST_BACKTRACE: "full"
       RUST_LIB_BACKTRACE: "1"
@@ -90,7 +90,7 @@ tasks:
 
   test:verbose:
     desc: Run Go tests with verbose output
-    dir: packages/go/v4
+    dir: packages/go
     cmds:
       - go test -v ./...
 
@@ -99,7 +99,7 @@ tasks:
     cmds:
       - cmd: bash scripts/go/test-debug.sh
         platforms: [linux, darwin]
-      - cmd: pwsh -Command "cd packages/go/v4; go test -timeout 10m -v ./..."
+      - cmd: pwsh -Command "cd packages/go; go test -timeout 10m -v ./..."
         platforms: [windows]
 
   lint:
@@ -120,7 +120,7 @@ tasks:
 
   format:
     desc: Format Go code with modifications (gofmt)
-    dir: packages/go/v4
+    dir: packages/go
     cmds:
       - gofmt -w .
 
@@ -129,12 +129,12 @@ tasks:
     cmds:
       - cmd: bash scripts/go/format_check.sh
         platforms: [linux, darwin]
-      - cmd: pwsh -Command "cd packages/go/v4; $diff = gofmt -l .; if ($diff) { Write-Error 'Go formatting issues found'; exit 1 }"
+      - cmd: pwsh -Command "cd packages/go; $diff = gofmt -l .; if ($diff) { Write-Error 'Go formatting issues found'; exit 1 }"
         platforms: [windows]
 
   clean:
     desc: Clean Go build artifacts
-    dir: packages/go/v4
+    dir: packages/go
     cmds:
       - go clean
       - python -c "import shutil; shutil.rmtree('bin', ignore_errors=True)"
