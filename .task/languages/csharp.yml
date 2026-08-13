@@ -113,7 +113,7 @@ tasks:
     desc: Clean C# build artifacts
     dir: packages/csharp
     cmds:
-      - python -c "import shutil; [shutil.rmtree(d, ignore_errors=True) for d in ['bin', 'obj', '.vs']]"
+      - python3 -c "import shutil; [shutil.rmtree(d, ignore_errors=True) for d in ['bin', 'obj', '.vs']]"
       - dotnet clean Crawlberg.slnx
 
   update:

@@ -125,8 +125,8 @@ tasks:
     desc: Clean Ruby build artifacts
     dir: packages/ruby
     cmds:
-      - python -c "import shutil, glob, os; shutil.rmtree('tmp', ignore_errors=True); [os.remove(f) for f in glob.glob('ext/crawlberg/*.o') + glob.glob('ext/crawlberg/*.so')]"
-      - python -c "import shutil, os; [shutil.rmtree(os.path.join(r, d), ignore_errors=True) for r, dirs, _ in os.walk('.') for d in dirs if d == '.steep']"
+      - python3 -c "import shutil, glob, os; shutil.rmtree('tmp', ignore_errors=True); [os.remove(f) for f in glob.glob('ext/crawlberg/*.o') + glob.glob('ext/crawlberg/*.so')]"
+      - python3 -c "import shutil, os; [shutil.rmtree(os.path.join(r, d), ignore_errors=True) for r, dirs, _ in os.walk('.') for d in dirs if d == '.steep']"
 
   update:
     desc: Update Ruby dependencies to latest versions (including major versions)
