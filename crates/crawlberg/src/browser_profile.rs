@@ -58,13 +58,13 @@ impl BrowserProfile {
     /// Returns `CrawlError::Other` on I/O failure.
     pub fn create(&self) -> Result<(), CrawlError> {
         std::fs::create_dir_all(&self.user_data_dir)
-            .map_err(|e| CrawlError::Other(format!("failed to create profile directory: {e}")))?;
+            .map_err(|e| CrawlError::other(format!("failed to create profile directory: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o700);
             std::fs::set_permissions(&self.user_data_dir, perms)
-                .map_err(|e| CrawlError::Other(format!("failed to set profile permissions: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("failed to set profile permissions: {e}")))?;
         }
         Ok(())
     }
@@ -78,14 +78,12 @@ impl BrowserProfile {
     /// Returns `CrawlError::Other` if the path is a symlink or on I/O failure.
     pub fn delete(&self) -> Result<(), CrawlError> {
         let metadata = std::fs::symlink_metadata(&self.user_data_dir)
-            .map_err(|e| CrawlError::Other(format!("failed to read profile metadata: {e}")))?;
+            .map_err(|e| CrawlError::other(format!("failed to read profile metadata: {e}")))?;
         if metadata.is_symlink() {
-            return Err(CrawlError::Other(
-                "refusing to delete symlinked profile directory".into(),
-            ));
+            return Err(CrawlError::other("refusing to delete symlinked profile directory"));
         }
         std::fs::remove_dir_all(&self.user_data_dir)
-            .map_err(|e| CrawlError::Other(format!("failed to delete profile directory: {e}")))
+            .map_err(|e| CrawlError::other(format!("failed to delete profile directory: {e}")))
     }
 
     /// List every profile name found in the base profiles directory.
@@ -112,7 +110,7 @@ impl BrowserProfile {
 ///
 /// Returns `CrawlError::Other` if the system data directory cannot be determined.
 fn profiles_base_dir() -> Result<PathBuf, CrawlError> {
-    let base = dirs::data_dir().ok_or_else(|| CrawlError::Other("unable to determine data directory".into()))?;
+    let base = dirs::data_dir().ok_or_else(|| CrawlError::other("unable to determine data directory"))?;
     Ok(base.join("crawlberg").join("profiles"))
 }
 
@@ -129,11 +127,11 @@ pub fn list_profiles_in(base: &std::path::Path) -> Result<Vec<Box<str>>, CrawlEr
     }
 
     let entries =
-        std::fs::read_dir(base).map_err(|e| CrawlError::Other(format!("failed to read profiles directory: {e}")))?;
+        std::fs::read_dir(base).map_err(|e| CrawlError::other(format!("failed to read profiles directory: {e}")))?;
 
     let mut names: Vec<Box<str>> = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| CrawlError::Other(format!("failed to read profile entry: {e}")))?;
+        let entry = entry.map_err(|e| CrawlError::other(format!("failed to read profile entry: {e}")))?;
         if entry.path().is_dir()
             && let Some(name) = entry.file_name().to_str()
         {
@@ -153,19 +151,19 @@ pub fn list_profiles_in(base: &std::path::Path) -> Result<Vec<Box<str>>, CrawlEr
 /// - Must contain only ASCII alphanumeric characters, hyphens, underscores, and dots
 fn validate_profile_name(name: &str) -> Result<(), CrawlError> {
     if name.is_empty() {
-        return Err(CrawlError::InvalidConfig("profile name must not be empty".into()));
+        return Err(CrawlError::invalid_config("profile name must not be empty"));
     }
     if name.len() > 255 {
-        return Err(CrawlError::InvalidConfig(
-            "profile name must not exceed 255 characters".into(),
+        return Err(CrawlError::invalid_config(
+            "profile name must not exceed 255 characters",
         ));
     }
     if !name
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
     {
-        return Err(CrawlError::InvalidConfig(
-            "profile name must contain only ASCII alphanumeric characters, hyphens, underscores, and dots".into(),
+        return Err(CrawlError::invalid_config(
+            "profile name must contain only ASCII alphanumeric characters, hyphens, underscores, and dots",
         ));
     }
     Ok(())

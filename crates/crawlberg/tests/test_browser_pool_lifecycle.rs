@@ -95,7 +95,7 @@ async fn pool_page_survives_sequential_fetches_without_being_closed_mid_navigati
     for iteration in 0..6 {
         let url = format!("{}/iter-{iteration}", server.base_url);
         let result = scrape(&engine, &url).await;
-        if let Err(CrawlError::BrowserError(message)) = &result
+        if let Err(CrawlError::BrowserError { message, .. }) = &result
             && is_missing_chrome_message(message)
         {
             announce_chrome_skip(

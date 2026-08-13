@@ -135,7 +135,7 @@ async fn chromiumoxide_fetch_inner(
                 config.browser.proxy.as_ref().map(|p| p.url.as_str()),
             )?;
             let session_pool = config.browser_session_pool.as_deref().ok_or_else(|| {
-                CrawlError::BrowserError("session_affinity enabled but session pool is not configured".into())
+                CrawlError::browser_error("session_affinity enabled but session pool is not configured")
             })?;
 
             if let Some(reused) = session_pool.acquire(&session_key).await {
@@ -173,7 +173,7 @@ async fn chromiumoxide_fetch_inner(
         let page = browser
             .new_page("about:blank")
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to create page: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
 
         let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
 
@@ -199,7 +199,7 @@ async fn native_fetch(
     native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<HttpResponse, CrawlError> {
     let native_executor = native_executor.ok_or_else(|| {
-        CrawlError::BrowserError("native browser executor is not available for BrowserBackend::Native".into())
+        CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
     crate::native_browser::native_browser_fetch(url, config, prior_cookies, native_executor).await
 }
@@ -210,8 +210,8 @@ async fn native_fetch(
     _config: &CrawlConfig,
     _prior_cookies: Option<&[CookieInfo]>,
 ) -> Result<HttpResponse, CrawlError> {
-    Err(CrawlError::InvalidConfig(
-        "browser.backend = native requires the browser-native feature".into(),
+    Err(CrawlError::invalid_config(
+        "browser.backend = native requires the browser-native feature",
     ))
 }
 
@@ -265,11 +265,11 @@ async fn start_ssrf_interception(
     let mut events = page
         .event_listener::<EventRequestPaused>()
         .await
-        .map_err(|e| CrawlError::BrowserError(format!("failed to register intercept listener: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
 
     page.execute(FetchEnableParams::default())
         .await
-        .map_err(|e| CrawlError::BrowserError(format!("failed to enable request interception: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
 
     let blocked: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
     let listener_page = page.clone();
@@ -333,11 +333,11 @@ async fn page_fetch(
     if !resolved_ua.is_empty() {
         page.set_user_agent(&resolved_ua)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to set user agent: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
     if stealth && let Err(e) = set_viewport(page, 1920, 1080).await {
-        return Err(CrawlError::BrowserError(format!("failed to set viewport: {e}")));
+        return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
     }
 
     if let Some(cookies) = prior_cookies {
@@ -375,7 +375,7 @@ async fn page_fetch(
         let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
         page.execute(params)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to set headers: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
     }
 
     let timeout = config.browser.timeout;
@@ -385,11 +385,11 @@ async fn page_fetch(
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("navigation failed: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 
         wait_for_ready(page, config)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("wait failed: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
 
         Ok::<(), CrawlError>(())
     })
@@ -403,6 +403,7 @@ async fn page_fetch(
                 return Err(CrawlError::SsrfPolicyViolation {
                     url: blocked_url,
                     reason,
+                    source: None,
                 });
             }
             return Err(navigation_error);
@@ -412,9 +413,10 @@ async fn page_fetch(
                 return Err(CrawlError::SsrfPolicyViolation {
                     url: blocked_url,
                     reason,
+                    source: None,
                 });
             }
-            return Err(CrawlError::BrowserTimeout(format!(
+            return Err(CrawlError::browser_timeout(format!(
                 "browser timed out after {timeout:?}"
             )));
         }
@@ -427,7 +429,7 @@ async fn page_fetch(
     let html = page
         .content()
         .await
-        .map_err(|e| CrawlError::BrowserError(format!("failed to extract HTML: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
 
     let body_bytes = html.as_bytes().to_vec();
 
@@ -555,20 +557,20 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
 /// `src` are skipped rather than followed or copied as links.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), CrawlError> {
     std::fs::create_dir_all(dst)
-        .map_err(|e| CrawlError::Other(format!("failed to create profile scratch directory: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("failed to create profile scratch directory: {e}")))?;
     let entries =
-        std::fs::read_dir(src).map_err(|e| CrawlError::Other(format!("failed to read profile directory: {e}")))?;
+        std::fs::read_dir(src).map_err(|e| CrawlError::other(format!("failed to read profile directory: {e}")))?;
     for entry in entries {
-        let entry = entry.map_err(|e| CrawlError::Other(format!("failed to read profile entry: {e}")))?;
+        let entry = entry.map_err(|e| CrawlError::other(format!("failed to read profile entry: {e}")))?;
         let file_type = entry
             .file_type()
-            .map_err(|e| CrawlError::Other(format!("failed to stat profile entry: {e}")))?;
+            .map_err(|e| CrawlError::other(format!("failed to stat profile entry: {e}")))?;
         let dest_path = dst.join(entry.file_name());
         if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &dest_path)?;
         } else if file_type.is_file() {
             std::fs::copy(entry.path(), &dest_path)
-                .map_err(|e| CrawlError::Other(format!("failed to copy profile file: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("failed to copy profile file: {e}")))?;
         }
     }
     Ok(())
@@ -592,7 +594,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         }
         let (browser, handler) = Browser::connect(endpoint)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to connect to {endpoint}: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
         Ok((browser, handler, None))
     } else {
         let user_data = resolve_user_data_dir(config)?;
@@ -611,7 +613,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         }
         let browser_config = builder
             .build()
-            .map_err(|e| CrawlError::BrowserError(format!("invalid browser config: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
             Ok((browser, handler)) => Ok((browser, handler, user_data.cleanup_on_exit.then_some(user_data.path))),
@@ -619,7 +621,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
                 if user_data.cleanup_on_exit {
                     let _ = std::fs::remove_dir_all(&user_data.path);
                 }
-                Err(CrawlError::BrowserError(format!("failed to launch browser: {e}")))
+                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
             }
         }
     }

@@ -42,11 +42,11 @@ use rmcp::model::{CallToolResult, ContentBlock};
 /// can pattern-match on the prefix instead of parsing free text.
 pub(super) fn crawl_error_to_tool_result(error: CrawlError) -> Result<CallToolResult, McpError> {
     match error {
-        CrawlError::InvalidConfig(_)
-        | CrawlError::Unsupported(_)
+        CrawlError::InvalidConfig { .. }
+        | CrawlError::Unsupported { .. }
         | CrawlError::SsrfPolicyViolation { .. }
-        | CrawlError::NotFound(_)
-        | CrawlError::Gone(_) => Err(map_crawl_error(error)),
+        | CrawlError::NotFound { .. }
+        | CrawlError::Gone { .. } => Err(map_crawl_error(error)),
         other => Ok(CallToolResult::error(vec![ContentBlock::text(other.to_string())])),
     }
 }
@@ -63,47 +63,59 @@ pub(super) fn crawl_error_to_tool_result(error: CrawlError) -> Result<CallToolRe
 #[doc(hidden)]
 pub fn map_crawl_error(error: CrawlError) -> McpError {
     match error {
-        CrawlError::InvalidConfig(msg) => McpError::invalid_params(format!("Invalid configuration: {msg}"), None),
+        CrawlError::InvalidConfig { message: msg, .. } => {
+            McpError::invalid_params(format!("Invalid configuration: {msg}"), None)
+        }
 
-        CrawlError::NotFound(msg) => McpError::resource_not_found(format!("Not found: {msg}"), None),
+        CrawlError::NotFound { message: msg, .. } => McpError::resource_not_found(format!("Not found: {msg}"), None),
 
-        CrawlError::Unauthorized(msg) => McpError::internal_error(format!("Unauthorized: {msg}"), None),
+        CrawlError::Unauthorized { message: msg, .. } => McpError::internal_error(format!("Unauthorized: {msg}"), None),
 
-        CrawlError::Forbidden(msg) => McpError::internal_error(format!("Forbidden: {msg}"), None),
+        CrawlError::Forbidden { message: msg, .. } => McpError::internal_error(format!("Forbidden: {msg}"), None),
 
         CrawlError::WafBlocked { message, .. } => {
             McpError::internal_error(format!("Blocked by WAF/bot protection: {message}"), None)
         }
 
-        CrawlError::Timeout(msg) => McpError::internal_error(format!("Request timed out: {msg}"), None),
+        CrawlError::Timeout { message: msg, .. } => McpError::internal_error(format!("Request timed out: {msg}"), None),
 
-        CrawlError::RateLimited(msg) => McpError::internal_error(format!("Rate limited: {msg}"), None),
+        CrawlError::RateLimited { message: msg, .. } => McpError::internal_error(format!("Rate limited: {msg}"), None),
 
-        CrawlError::ServerError(msg) => McpError::internal_error(format!("Server error: {msg}"), None),
+        CrawlError::ServerError { message: msg, .. } => McpError::internal_error(format!("Server error: {msg}"), None),
 
-        CrawlError::BadGateway(msg) => McpError::internal_error(format!("Bad gateway: {msg}"), None),
+        CrawlError::BadGateway { message: msg, .. } => McpError::internal_error(format!("Bad gateway: {msg}"), None),
 
-        CrawlError::Gone(msg) => McpError::resource_not_found(format!("Resource gone: {msg}"), None),
+        CrawlError::Gone { message: msg, .. } => McpError::resource_not_found(format!("Resource gone: {msg}"), None),
 
-        CrawlError::Connection(msg) => McpError::internal_error(format!("Connection error: {msg}"), None),
+        CrawlError::Connection { message: msg, .. } => {
+            McpError::internal_error(format!("Connection error: {msg}"), None)
+        }
 
-        CrawlError::Dns(msg) => McpError::internal_error(format!("DNS resolution failed: {msg}"), None),
+        CrawlError::Dns { message: msg, .. } => McpError::internal_error(format!("DNS resolution failed: {msg}"), None),
 
-        CrawlError::Ssl(msg) => McpError::internal_error(format!("SSL/TLS error: {msg}"), None),
+        CrawlError::Ssl { message: msg, .. } => McpError::internal_error(format!("SSL/TLS error: {msg}"), None),
 
-        CrawlError::DataLoss(msg) => McpError::internal_error(format!("Data loss during transfer: {msg}"), None),
+        CrawlError::DataLoss { message: msg, .. } => {
+            McpError::internal_error(format!("Data loss during transfer: {msg}"), None)
+        }
 
-        CrawlError::BrowserError(msg) => McpError::internal_error(format!("Browser error: {msg}"), None),
+        CrawlError::BrowserError { message: msg, .. } => {
+            McpError::internal_error(format!("Browser error: {msg}"), None)
+        }
 
-        CrawlError::BrowserTimeout(msg) => McpError::internal_error(format!("Browser timeout: {msg}"), None),
+        CrawlError::BrowserTimeout { message: msg, .. } => {
+            McpError::internal_error(format!("Browser timeout: {msg}"), None)
+        }
 
-        CrawlError::Unsupported(msg) => McpError::invalid_params(format!("Unsupported operation: {msg}"), None),
+        CrawlError::Unsupported { message: msg, .. } => {
+            McpError::invalid_params(format!("Unsupported operation: {msg}"), None)
+        }
 
-        CrawlError::SsrfPolicyViolation { url, reason } => {
+        CrawlError::SsrfPolicyViolation { url, reason, .. } => {
             McpError::invalid_params(format!("SSRF policy violation for {url}: {reason}"), None)
         }
 
-        CrawlError::Other(msg) => McpError::internal_error(msg, None),
+        CrawlError::Other { message: msg, .. } => McpError::internal_error(msg, None),
     }
 }
 
@@ -113,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_map_invalid_config_to_invalid_params() {
-        let error = CrawlError::InvalidConfig("bad value".to_string());
+        let error = CrawlError::invalid_config("bad value".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(mcp_error.code.0, -32602);
@@ -123,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_map_not_found_to_resource_not_found() {
-        let error = CrawlError::NotFound("https://example.com/missing".to_string());
+        let error = CrawlError::not_found("https://example.com/missing".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(
@@ -136,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_map_gone_to_resource_not_found() {
-        let error = CrawlError::Gone("https://example.com/retired".to_string());
+        let error = CrawlError::gone("https://example.com/retired".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(
@@ -149,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_map_unauthorized_to_internal_error() {
-        let error = CrawlError::Unauthorized("no credentials".to_string());
+        let error = CrawlError::unauthorized("no credentials".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(
@@ -160,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_map_rate_limited_to_internal_error() {
-        let error = CrawlError::RateLimited("too many requests".to_string());
+        let error = CrawlError::rate_limited("too many requests".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(
@@ -171,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_map_unsupported_to_invalid_params() {
-        let error = CrawlError::Unsupported("feature X".to_string());
+        let error = CrawlError::unsupported("feature X".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(
@@ -185,6 +197,7 @@ mod tests {
         let error = CrawlError::SsrfPolicyViolation {
             url: "http://169.254.169.254/".to_string(),
             reason: "link-local address blocked".to_string(),
+            source: None,
         };
         let mcp_error = map_crawl_error(error);
 
@@ -197,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_map_timeout_to_internal_error() {
-        let error = CrawlError::Timeout("request exceeded 30s".to_string());
+        let error = CrawlError::timeout("request exceeded 30s".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(mcp_error.code.0, -32603);
@@ -206,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_map_dns_to_internal_error() {
-        let error = CrawlError::Dns("dns: could not resolve".to_string());
+        let error = CrawlError::dns("dns: could not resolve".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(mcp_error.code.0, -32603);
@@ -215,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_map_ssl_to_internal_error() {
-        let error = CrawlError::Ssl("ssl: certificate expired".to_string());
+        let error = CrawlError::ssl("ssl: certificate expired".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(mcp_error.code.0, -32603);
@@ -224,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_map_other_to_internal_error() {
-        let error = CrawlError::Other("unexpected failure".to_string());
+        let error = CrawlError::other("unexpected failure".to_string());
         let mcp_error = map_crawl_error(error);
 
         assert_eq!(mcp_error.code.0, -32603);
@@ -233,8 +246,8 @@ mod tests {
 
     #[test]
     fn test_error_type_differentiation() {
-        let config_err = CrawlError::InvalidConfig("test".to_string());
-        let network_err = CrawlError::Connection("test".to_string());
+        let config_err = CrawlError::invalid_config("test".to_string());
+        let network_err = CrawlError::connection("test".to_string());
 
         let config_mcp = map_crawl_error(config_err);
         let network_mcp = map_crawl_error(network_err);
@@ -247,27 +260,27 @@ mod tests {
     #[test]
     fn test_all_error_variants_have_mappings() {
         let errors = vec![
-            CrawlError::NotFound("test".to_string()),
-            CrawlError::Unauthorized("test".to_string()),
-            CrawlError::Forbidden("test".to_string()),
+            CrawlError::not_found("test".to_string()),
+            CrawlError::unauthorized("test".to_string()),
+            CrawlError::forbidden("test".to_string()),
             CrawlError::WafBlocked {
                 vendor: "unknown".to_string(),
                 message: "test".to_string(),
             },
-            CrawlError::Timeout("test".to_string()),
-            CrawlError::RateLimited("test".to_string()),
-            CrawlError::ServerError("test".to_string()),
-            CrawlError::BadGateway("test".to_string()),
-            CrawlError::Gone("test".to_string()),
-            CrawlError::Connection("test".to_string()),
-            CrawlError::Dns("test".to_string()),
-            CrawlError::Ssl("test".to_string()),
-            CrawlError::DataLoss("test".to_string()),
-            CrawlError::BrowserError("test".to_string()),
-            CrawlError::BrowserTimeout("test".to_string()),
-            CrawlError::InvalidConfig("test".to_string()),
-            CrawlError::Unsupported("test".to_string()),
-            CrawlError::Other("test".to_string()),
+            CrawlError::timeout("test".to_string()),
+            CrawlError::rate_limited("test".to_string()),
+            CrawlError::server_error("test".to_string()),
+            CrawlError::bad_gateway("test".to_string()),
+            CrawlError::gone("test".to_string()),
+            CrawlError::connection("test".to_string()),
+            CrawlError::dns("test".to_string()),
+            CrawlError::ssl("test".to_string()),
+            CrawlError::data_loss("test".to_string()),
+            CrawlError::browser_error("test".to_string()),
+            CrawlError::browser_timeout("test".to_string()),
+            CrawlError::invalid_config("test".to_string()),
+            CrawlError::unsupported("test".to_string()),
+            CrawlError::other("test".to_string()),
         ];
 
         for error in errors {
@@ -280,17 +293,18 @@ mod tests {
     #[test]
     fn protocol_level_variants_route_to_err_via_crawl_error_to_tool_result() {
         let cases: Vec<(CrawlError, i32)> = vec![
-            (CrawlError::InvalidConfig("bad value".to_string()), -32602),
-            (CrawlError::Unsupported("feature X".to_string()), -32602),
+            (CrawlError::invalid_config("bad value".to_string()), -32602),
+            (CrawlError::unsupported("feature X".to_string()), -32602),
             (
                 CrawlError::SsrfPolicyViolation {
                     url: "http://169.254.169.254/".to_string(),
                     reason: "link-local address blocked".to_string(),
+                    source: None,
                 },
                 -32602,
             ),
-            (CrawlError::NotFound("https://example.com/missing".to_string()), -32002),
-            (CrawlError::Gone("https://example.com/retired".to_string()), -32002),
+            (CrawlError::not_found("https://example.com/missing".to_string()), -32002),
+            (CrawlError::gone("https://example.com/retired".to_string()), -32002),
         ];
 
         for (error, expected_code) in cases {
@@ -307,23 +321,23 @@ mod tests {
     #[test]
     fn runtime_domain_variants_route_to_ok_tool_result_with_is_error_true() {
         let cases: Vec<CrawlError> = vec![
-            CrawlError::Unauthorized("no credentials".to_string()),
-            CrawlError::Forbidden("blocked".to_string()),
+            CrawlError::unauthorized("no credentials".to_string()),
+            CrawlError::forbidden("blocked".to_string()),
             CrawlError::WafBlocked {
                 vendor: "cloudflare".to_string(),
                 message: "challenge page".to_string(),
             },
-            CrawlError::Timeout("request exceeded 30s".to_string()),
-            CrawlError::RateLimited("too many requests".to_string()),
-            CrawlError::ServerError("upstream 500".to_string()),
-            CrawlError::BadGateway("upstream 502".to_string()),
-            CrawlError::Connection("refused".to_string()),
-            CrawlError::Dns("could not resolve".to_string()),
-            CrawlError::Ssl("certificate expired".to_string()),
-            CrawlError::DataLoss("truncated body".to_string()),
-            CrawlError::BrowserError("failed to launch".to_string()),
-            CrawlError::BrowserTimeout("page never loaded".to_string()),
-            CrawlError::Other("unexpected failure".to_string()),
+            CrawlError::timeout("request exceeded 30s".to_string()),
+            CrawlError::rate_limited("too many requests".to_string()),
+            CrawlError::server_error("upstream 500".to_string()),
+            CrawlError::bad_gateway("upstream 502".to_string()),
+            CrawlError::connection("refused".to_string()),
+            CrawlError::dns("could not resolve".to_string()),
+            CrawlError::ssl("certificate expired".to_string()),
+            CrawlError::data_loss("truncated body".to_string()),
+            CrawlError::browser_error("failed to launch".to_string()),
+            CrawlError::browser_timeout("page never loaded".to_string()),
+            CrawlError::other("unexpected failure".to_string()),
         ];
 
         for error in cases {
@@ -356,7 +370,7 @@ mod tests {
         // ~keep Named regression for the exact bug this fixes: RateLimited (an upstream
         // ~keep condition, not a malformed request) used to map to INTERNAL_ERROR (-32603), an
         // ~keep opaque protocol failure most MCP clients never surface to the caller.
-        let error = CrawlError::RateLimited("too many requests".to_string());
+        let error = CrawlError::rate_limited("too many requests".to_string());
         let result =
             crawl_error_to_tool_result(error).expect("RateLimited must be Ok(CallToolResult), not a protocol error");
         assert_eq!(

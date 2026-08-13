@@ -131,7 +131,7 @@ impl CrawlEngine {
                     let url = url_by_task.remove(&id).unwrap_or_default();
                     results.push((
                         url.clone(),
-                        Err(CrawlError::Other(format!(
+                        Err(CrawlError::other(format!(
                             "task panicked while processing {url}: {join_error}"
                         ))),
                     ));

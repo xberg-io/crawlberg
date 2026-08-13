@@ -42,14 +42,14 @@ async fn run_with_browser(
     let page = browser
         .new_page("about:blank")
         .await
-        .map_err(|e| CrawlError::BrowserError(format!("failed to create page: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
 
     let result = async {
         prepare_page(&page, config).await?;
         navigate_and_wait(&page, url, config).await?;
         if let Some(ref script) = config.browser.eval_script {
             evaluate_json(&page, script).await.map_err(|e| {
-                CrawlError::BrowserError(format!(
+                CrawlError::browser_error(format!(
                     "post-navigation eval_script failed before interaction actions: {e}"
                 ))
             })?;
@@ -64,7 +64,7 @@ async fn run_with_browser(
             let budget = action.timeout();
             let outcome = match tokio::time::timeout(budget, execute_action(&page, action)).await {
                 Ok(result) => result,
-                Err(_) => Err(CrawlError::BrowserTimeout(format!(
+                Err(_) => Err(CrawlError::browser_timeout(format!(
                     "action[{index}] ({}) timed out after {budget:?}",
                     action_type(action)
                 ))),
@@ -97,7 +97,7 @@ async fn run_with_browser(
         let final_html = page
             .content()
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to extract final HTML: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
         let final_url = evaluate_json(&page, "location.href")
             .await
             .ok()
@@ -128,7 +128,7 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
     if let Some(ref ua) = config.user_agent {
         page.set_user_agent(ua)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to set user agent: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
     let mut extra_headers = serde_json::Map::new();
@@ -152,7 +152,7 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
         let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
         page.execute(params)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to set headers: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
     }
 
     Ok(())
@@ -163,14 +163,14 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("navigation failed: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
         wait_for_ready(page, config)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("wait failed: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
         Ok::<(), CrawlError>(())
     })
     .await
-    .map_err(|_| CrawlError::BrowserTimeout(format!("browser timed out after {timeout:?}")))??;
+    .map_err(|_| CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")))??;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -223,25 +223,25 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
         PageAction::Click { selector } => {
             page.find_element(selector)
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to find click target {selector:?}: {e}")))?
+                .map_err(|e| CrawlError::browser_error(format!("failed to find click target {selector:?}: {e}")))?
                 .click()
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to click {selector:?}: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to click {selector:?}: {e}")))?;
             Ok(ActionData::empty())
         }
         PageAction::TypeText { selector, text } => {
             let element = page
                 .find_element(selector)
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to find type target {selector:?}: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to find type target {selector:?}: {e}")))?;
             element
                 .click()
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to focus {selector:?}: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to focus {selector:?}: {e}")))?;
             element
                 .type_str(text)
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to type into {selector:?}: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to type into {selector:?}: {e}")))?;
             Ok(ActionData::empty())
         }
         PageAction::Press { key } => {
@@ -260,7 +260,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             if let Some(selector) = selector {
                 page.find_element(selector)
                     .await
-                    .map_err(|e| CrawlError::BrowserError(format!("failed waiting for selector {selector:?}: {e}")))?;
+                    .map_err(|e| CrawlError::browser_error(format!("failed waiting for selector {selector:?}: {e}")))?;
             } else if let Some(ms) = milliseconds {
                 tokio::time::sleep(Duration::from_millis(*ms as u64)).await;
             }
@@ -274,7 +274,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             let bytes = page
                 .screenshot(params)
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to capture screenshot: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))?;
             let len = bytes.len();
             Ok(ActionData {
                 data: Some(json!({ "bytes": len, "format": "png" })),
@@ -289,7 +289,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             let html = page
                 .content()
                 .await
-                .map_err(|e| CrawlError::BrowserError(format!("failed to scrape current page: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))?;
             Ok(ActionData::data(json!({ "html": html })))
         }
     }
@@ -307,12 +307,12 @@ async fn evaluate_json(page: &chromiumoxide::Page, script: &str) -> Result<serde
     let result = page
         .evaluate(effective_script)
         .await
-        .map_err(|e| CrawlError::BrowserError(format!("failed to evaluate JavaScript: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to evaluate JavaScript: {e}")))?;
     Ok(result.value().cloned().unwrap_or(serde_json::Value::Null))
 }
 
 async fn dispatch_key_event(page: &chromiumoxide::Page, key: &str) -> Result<(), CrawlError> {
-    let key_json = serde_json::to_string(key).map_err(|e| CrawlError::Other(format!("failed to encode key: {e}")))?;
+    let key_json = serde_json::to_string(key).map_err(|e| CrawlError::other(format!("failed to encode key: {e}")))?;
     let script = format!(
         r#"
         (() => {{
@@ -341,7 +341,7 @@ async fn scroll(
         ScrollDirection::Down => amount.to_string(),
     };
     let selector_json =
-        serde_json::to_string(&selector).map_err(|e| CrawlError::Other(format!("failed to encode selector: {e}")))?;
+        serde_json::to_string(&selector).map_err(|e| CrawlError::other(format!("failed to encode selector: {e}")))?;
     let script = format!(
         r#"
         (() => {{
@@ -380,7 +380,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
     if let Some(ref endpoint) = config.browser.endpoint {
         let (browser, handler) = Browser::connect(endpoint)
             .await
-            .map_err(|e| CrawlError::BrowserError(format!("failed to connect to {endpoint}: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
         Ok((browser, handler, None))
     } else {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -404,13 +404,13 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         }
         let browser_config = builder
             .build()
-            .map_err(|e| CrawlError::BrowserError(format!("invalid browser config: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
             Ok((browser, handler)) => Ok((browser, handler, Some(user_data_dir))),
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&user_data_dir);
-                Err(CrawlError::BrowserError(format!("failed to launch browser: {e}")))
+                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
             }
         }
     }

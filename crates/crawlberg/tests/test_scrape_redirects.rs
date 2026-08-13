@@ -292,7 +292,7 @@ async fn scrape_propagates_network_error_through_redirect() {
         "error must contain [network:connection], got: '{msg}'"
     );
     assert!(
-        matches!(err, CrawlError::Connection(_)),
+        matches!(err, CrawlError::Connection { .. }),
         "error must be CrawlError::Connection, got: {err:?}"
     );
 }

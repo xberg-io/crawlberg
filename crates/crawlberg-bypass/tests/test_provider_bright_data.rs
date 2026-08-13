@@ -86,7 +86,7 @@ async fn fetch_maps_401_to_unauthorized() {
     let provider = SimpleHttpProvider::new(config).unwrap();
 
     let result = provider.fetch("https://example.com").await;
-    assert!(matches!(result, Err(CrawlError::Unauthorized(_))));
+    assert!(matches!(result, Err(CrawlError::Unauthorized { .. })));
 }
 
 #[tokio::test]
@@ -103,7 +103,7 @@ async fn fetch_maps_402_to_unauthorized() {
     let provider = SimpleHttpProvider::new(config).unwrap();
 
     let result = provider.fetch("https://example.com").await;
-    assert!(matches!(result, Err(CrawlError::Unauthorized(_))));
+    assert!(matches!(result, Err(CrawlError::Unauthorized { .. })));
 }
 
 #[tokio::test]
@@ -120,7 +120,7 @@ async fn fetch_maps_429_to_rate_limited() {
     let provider = SimpleHttpProvider::new(config).unwrap();
 
     let result = provider.fetch("https://example.com").await;
-    assert!(matches!(result, Err(CrawlError::RateLimited(_))));
+    assert!(matches!(result, Err(CrawlError::RateLimited { .. })));
 }
 
 #[tokio::test]
@@ -137,7 +137,7 @@ async fn fetch_maps_500_to_server_error() {
     let provider = SimpleHttpProvider::new(config).unwrap();
 
     let result = provider.fetch("https://example.com").await;
-    assert!(matches!(result, Err(CrawlError::ServerError(_))));
+    assert!(matches!(result, Err(CrawlError::ServerError { .. })));
 }
 
 #[tokio::test]

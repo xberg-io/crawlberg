@@ -30,7 +30,7 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// fully materialized before truncation. Peak memory is bounded to roughly the
 /// limit plus a single child sitemap.
 pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-    let parsed_url = Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
+    let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
 
@@ -160,7 +160,7 @@ impl MapFilter {
         let mut exclude_paths = Vec::with_capacity(config.exclude_paths.len());
         for pat in &config.exclude_paths {
             let re = Regex::new(pat)
-                .map_err(|e| CrawlError::Other(format!("invalid exclude_paths regex pattern '{pat}': {e}")))?;
+                .map_err(|e| CrawlError::other(format!("invalid exclude_paths regex pattern '{pat}': {e}")))?;
             exclude_paths.push(re);
         }
         let search = config.map_search.as_ref().map(|s| s.to_lowercase());

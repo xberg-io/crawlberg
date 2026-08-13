@@ -641,39 +641,39 @@ impl CrawlConfig {
         use crate::error::CrawlError;
 
         if let Some(0) = self.max_concurrent {
-            return Err(CrawlError::InvalidConfig("max_concurrent must be > 0".into()));
+            return Err(CrawlError::invalid_config("max_concurrent must be > 0"));
         }
         if self.browser.wait == BrowserWait::Selector && self.browser.wait_selector.is_none() {
-            return Err(CrawlError::InvalidConfig(
-                "browser.wait_selector required when browser.wait is Selector".into(),
+            return Err(CrawlError::invalid_config(
+                "browser.wait_selector required when browser.wait is Selector",
             ));
         }
         if let Some(max_depth) = self.max_depth
             && max_depth > 100
         {
-            return Err(CrawlError::InvalidConfig(format!(
+            return Err(CrawlError::invalid_config(format!(
                 "max_depth must be <= 100 (got {max_depth})"
             )));
         }
         if let Some(max_pages) = self.max_pages
             && max_pages == 0
         {
-            return Err(CrawlError::InvalidConfig("max_pages must be > 0".into()));
+            return Err(CrawlError::invalid_config("max_pages must be > 0"));
         }
         if self.max_redirects > 100 {
-            return Err(CrawlError::InvalidConfig("max_redirects must be <= 100".into()));
+            return Err(CrawlError::invalid_config("max_redirects must be <= 100"));
         }
         if let Some(max_body_size) = self.max_body_size
             && max_body_size == 0
         {
-            return Err(CrawlError::InvalidConfig("max_body_size must be > 0".into()));
+            return Err(CrawlError::invalid_config("max_body_size must be > 0"));
         }
         if let Some(ref proxy) = self.proxy {
             let parsed = url::Url::parse(&proxy.url)
-                .map_err(|e| CrawlError::InvalidConfig(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
+                .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
             let scheme = parsed.scheme();
             if !matches!(scheme, "http" | "https" | "socks5" | "socks5h") {
-                return Err(CrawlError::InvalidConfig(format!(
+                return Err(CrawlError::invalid_config(format!(
                     "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
                 )));
             }
@@ -681,16 +681,14 @@ impl CrawlConfig {
         if let Some(ref auth) = self.auth {
             match auth {
                 AuthConfig::Basic { username, .. } if username.is_empty() => {
-                    return Err(CrawlError::InvalidConfig(
-                        "auth.basic.username must not be empty".into(),
-                    ));
+                    return Err(CrawlError::invalid_config("auth.basic.username must not be empty"));
                 }
                 AuthConfig::Bearer { token } if token.is_empty() => {
-                    return Err(CrawlError::InvalidConfig("auth.bearer.token must not be empty".into()));
+                    return Err(CrawlError::invalid_config("auth.bearer.token must not be empty"));
                 }
                 AuthConfig::Header { name, value } if name.is_empty() || value.is_empty() => {
-                    return Err(CrawlError::InvalidConfig(
-                        "auth.header.name and auth.header.value must not be empty".into(),
+                    return Err(CrawlError::invalid_config(
+                        "auth.header.name and auth.header.value must not be empty",
                     ));
                 }
                 _ => {}
@@ -698,31 +696,31 @@ impl CrawlConfig {
         }
         for pattern in &self.include_paths {
             regex::Regex::new(pattern)
-                .map_err(|e| CrawlError::InvalidConfig(format!("invalid include_path regex '{pattern}': {e}")))?;
+                .map_err(|e| CrawlError::invalid_config(format!("invalid include_path regex '{pattern}': {e}")))?;
         }
         for pattern in &self.exclude_paths {
             regex::Regex::new(pattern)
-                .map_err(|e| CrawlError::InvalidConfig(format!("invalid exclude_path regex '{pattern}': {e}")))?;
+                .map_err(|e| CrawlError::invalid_config(format!("invalid exclude_path regex '{pattern}': {e}")))?;
         }
         for &code in &self.retry_codes {
             if !(100..=599).contains(&code) {
-                return Err(CrawlError::InvalidConfig(format!("invalid retry code: {code}")));
+                return Err(CrawlError::invalid_config(format!("invalid retry code: {code}")));
             }
         }
         if self.request_timeout.is_zero() {
-            return Err(CrawlError::InvalidConfig("request_timeout must be > 0".into()));
+            return Err(CrawlError::invalid_config("request_timeout must be > 0"));
         }
         if let Some(ref endpoint) = self.browser.endpoint
             && !endpoint.starts_with("ws://")
             && !endpoint.starts_with("wss://")
         {
-            return Err(CrawlError::InvalidConfig(format!(
+            return Err(CrawlError::invalid_config(format!(
                 "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
             )));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
-            return Err(CrawlError::InvalidConfig(
-                "browser.endpoint is only supported by the chromiumoxide backend".into(),
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint is only supported by the chromiumoxide backend",
             ));
         }
         Ok(())

@@ -111,7 +111,7 @@ where
                     }
                     Err(ref e) => {
                         let status_label = match e {
-                            CrawlError::Timeout(_) | CrawlError::BrowserTimeout(_) => "timeout",
+                            CrawlError::Timeout { .. } | CrawlError::BrowserTimeout { .. } => "timeout",
                             _ => "http_error",
                         };
                         registry().pages_total.add(1, &[KeyValue::new("status", status_label)]);

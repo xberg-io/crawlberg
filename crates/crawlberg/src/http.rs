@@ -290,7 +290,7 @@ pub(crate) async fn http_fetch(
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let resp = req.send().await.map_err(|e| classify_reqwest_error(&e))?;
+        let resp = req.send().await.map_err(classify_reqwest_error)?;
 
         let status = resp.status().as_u16();
         final_url_str = resp.url().to_string();
@@ -361,7 +361,7 @@ pub(crate) async fn http_fetch(
         let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
 
         match status {
-            401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
+            401 => return Err(CrawlError::unauthorized("unauthorized")),
             403 => {
                 let body = read_text_bounded(resp, effective_max_body_size(config)).await;
                 let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
@@ -373,21 +373,21 @@ pub(crate) async fn http_fetch(
                         message: format!("waf/blocked detected: {}", signal.vendor),
                     });
                 }
-                return Err(CrawlError::Forbidden("forbidden".into()));
+                return Err(CrawlError::forbidden("forbidden"));
             }
-            404 => return Err(CrawlError::NotFound(format!("not_found: {url}"))),
-            408 => return Err(CrawlError::Timeout("timeout: request timed out".into())),
-            410 => return Err(CrawlError::Gone("gone".into())),
-            429 => return Err(CrawlError::RateLimited("rate_limited".into())),
-            500 => return Err(CrawlError::ServerError("server_error".into())),
-            502 => return Err(CrawlError::BadGateway("bad_gateway".into())),
+            404 => return Err(CrawlError::not_found(format!("not_found: {url}"))),
+            408 => return Err(CrawlError::timeout("timeout: request timed out")),
+            410 => return Err(CrawlError::gone("gone")),
+            429 => return Err(CrawlError::rate_limited("rate_limited")),
+            500 => return Err(CrawlError::server_error("server_error")),
+            502 => return Err(CrawlError::bad_gateway("bad_gateway")),
             503 => {
-                return Err(CrawlError::ServerError(format!(
+                return Err(CrawlError::server_error(format!(
                     "server_error: {SERVICE_UNAVAILABLE_SUFFIX}"
                 )));
             }
             504 => {
-                return Err(CrawlError::ServerError(format!(
+                return Err(CrawlError::server_error(format!(
                     "server_error: {GATEWAY_TIMEOUT_SUFFIX}"
                 )));
             }
@@ -438,9 +438,10 @@ pub(crate) async fn http_fetch(
                     #[cfg(not(target_arch = "wasm32"))]
                     let is_body_error = is_body_error || e.is_body();
                     if is_body_error {
-                        CrawlError::DataLoss(format!("data_loss: {e}"))
+                        let message = format!("data_loss: {e}");
+                        CrawlError::data_loss_with_source(message, e)
                     } else {
-                        classify_reqwest_error(&e)
+                        classify_reqwest_error(e)
                     }
                 })?;
 
@@ -451,7 +452,7 @@ pub(crate) async fn http_fetch(
             && body_bytes_vec.len() < expected
             && expected - body_bytes_vec.len() > 100
         {
-            return Err(CrawlError::DataLoss(format!(
+            return Err(CrawlError::data_loss(format!(
                 "data_loss: expected {expected} bytes, got {}",
                 body_bytes_vec.len()
             )));
@@ -673,7 +674,7 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
         builder = builder.proxy(proxy);
     } else if let Some(ref proxy_config) = config.proxy {
         let mut proxy = reqwest::Proxy::all(&proxy_config.url)
-            .map_err(|e| CrawlError::InvalidConfig(format!("invalid proxy URL: {e}")))?;
+            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
         if let (Some(user), Some(pass)) = (&proxy_config.username, &proxy_config.password) {
             proxy = proxy.basic_auth(user, pass);
         }
@@ -700,7 +701,7 @@ pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, Craw
 
     let client = builder
         .build()
-        .map_err(|e| CrawlError::Other(format!("Failed to build HTTP client: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
 
     if let Ok(mut cache) = client_cache().lock() {
         if cache.len() >= MAX_CACHED_CLIENTS {
@@ -739,12 +740,16 @@ const GATEWAY_TIMEOUT_SUFFIX: &str = "gateway timeout";
 /// (including statuses not covered by `retry_codes`) never retries.
 fn should_retry_status(error: &CrawlError, retry_codes: &[u16]) -> bool {
     match error {
-        CrawlError::ServerError(msg) if msg.contains(GATEWAY_TIMEOUT_SUFFIX) => retry_codes.contains(&504),
-        CrawlError::ServerError(msg) if msg.contains(SERVICE_UNAVAILABLE_SUFFIX) => retry_codes.contains(&503),
-        CrawlError::ServerError(_) => retry_codes.contains(&500),
-        CrawlError::BadGateway(_) => retry_codes.contains(&502),
-        CrawlError::Timeout(_) => retry_codes.contains(&408),
-        CrawlError::RateLimited(_) => retry_codes.contains(&429),
+        CrawlError::ServerError { message: msg, .. } if msg.contains(GATEWAY_TIMEOUT_SUFFIX) => {
+            retry_codes.contains(&504)
+        }
+        CrawlError::ServerError { message: msg, .. } if msg.contains(SERVICE_UNAVAILABLE_SUFFIX) => {
+            retry_codes.contains(&503)
+        }
+        CrawlError::ServerError { .. } => retry_codes.contains(&500),
+        CrawlError::BadGateway { .. } => retry_codes.contains(&502),
+        CrawlError::Timeout { .. } => retry_codes.contains(&408),
+        CrawlError::RateLimited { .. } => retry_codes.contains(&429),
         _ => false,
     }
 }
@@ -793,7 +798,7 @@ pub(crate) async fn fetch_with_retry(
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| CrawlError::Other("retry exhausted".into())))
+    Err(last_err.unwrap_or_else(|| CrawlError::other("retry exhausted")))
 }
 
 /// Extract cookies from a `HashMap<String, Vec<String>>` of response headers.
@@ -1184,7 +1189,7 @@ mod tests {
     }
 
     fn server_error(suffix: &str) -> CrawlError {
-        CrawlError::ServerError(format!("server_error: {suffix}"))
+        CrawlError::server_error(format!("server_error: {suffix}"))
     }
 
     #[test]
@@ -1234,9 +1239,9 @@ mod tests {
         // ~keep Regression: [502, 504, 408] passed validate() but retried on nothing,
         // because the matcher never mapped those codes to a CrawlError variant at all.
         let cases: [(u16, CrawlError); 3] = [
-            (502, CrawlError::BadGateway("bad gateway".into())),
-            (408, CrawlError::Timeout("timeout".into())),
-            (429, CrawlError::RateLimited("slow down".into())),
+            (502, CrawlError::bad_gateway("bad gateway")),
+            (408, CrawlError::timeout("timeout")),
+            (429, CrawlError::rate_limited("slow down")),
         ];
 
         for (code, error) in &cases {
@@ -1262,7 +1267,7 @@ mod tests {
             "an empty retry_codes list must never retry"
         );
         assert!(
-            !should_retry_status(&CrawlError::NotFound("missing".into()), &[500, 502, 503, 504, 408, 429]),
+            !should_retry_status(&CrawlError::not_found("missing"), &[500, 502, 503, 504, 408, 429]),
             "a 404 must not retry even with every retryable code configured"
         );
     }

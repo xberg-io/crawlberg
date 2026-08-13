@@ -66,7 +66,7 @@ Content:
         ) -> Result<Self, CrawlError> {
             let config = liter_llm::ClientConfig::new(api_key);
             let client = liter_llm::DefaultClient::new(config, Some(model))
-                .map_err(|e| CrawlError::Other(format!("failed to create LLM client: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("failed to create LLM client: {e}")))?;
             Ok(Self {
                 client,
                 model: model.to_owned(),
@@ -89,7 +89,7 @@ Content:
             let mut env = minijinja::Environment::new();
             let template_str = self.prompt_template.as_deref().unwrap_or(DEFAULT_EXTRACTION_TEMPLATE);
             env.add_template("prompt", template_str)
-                .map_err(|e| CrawlError::Other(format!("template error: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("template error: {e}")))?;
             let tmpl = env.get_template("prompt").expect("template was just added above");
 
             let rendered = tmpl
@@ -100,7 +100,7 @@ Content:
                     url => &page.url,
                     title => page.metadata.title.as_deref(),
                 })
-                .map_err(|e| CrawlError::Other(format!("template render error: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("template render error: {e}")))?;
 
             let request = liter_llm::ChatCompletionRequest {
                 model: self.model.clone(),
@@ -129,7 +129,7 @@ Content:
                 .client
                 .chat(request)
                 .await
-                .map_err(|e| CrawlError::Other(format!("LLM extraction failed: {e}")))?;
+                .map_err(|e| CrawlError::other(format!("LLM extraction failed: {e}")))?;
 
             let cost = response.estimated_cost();
             let usage = response.usage.as_ref();

@@ -209,7 +209,7 @@ async fn none_strategy_propagates_http_errors() {
     let engine = build_engine(config_with(EscalationStrategy::None, None));
     let err = engine.scrape(&format!("{}/forbidden", mock.uri())).await.unwrap_err();
     assert!(
-        matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }),
+        matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }),
         "expected Forbidden or WafBlocked, got: {err:?}"
     );
 }
@@ -262,10 +262,10 @@ async fn bypass_only_without_provider_returns_error() {
     assert!(
         matches!(
             err,
-            CrawlError::Forbidden(_)
+            CrawlError::Forbidden { .. }
                 | CrawlError::WafBlocked { .. }
-                | CrawlError::InvalidConfig(_)
-                | CrawlError::Other(_)
+                | CrawlError::InvalidConfig { .. }
+                | CrawlError::Other { .. }
         ),
         "expected escalation-related error, got: {err:?}"
     );
@@ -310,7 +310,7 @@ async fn zero_budget_prevents_escalation() {
     let err = engine.scrape(&format!("{}/cf", mock.uri())).await.unwrap_err();
 
     assert!(
-        matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }),
+        matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }),
         "budget exhaustion must surface HTTP error; got: {err:?}"
     );
     assert_eq!(provider.calls(), 0, "bypass must not be called when budget exhausted");

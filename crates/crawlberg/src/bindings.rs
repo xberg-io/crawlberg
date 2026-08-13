@@ -221,7 +221,7 @@ pub async fn interact(
 /// Scrape multiple URLs concurrently.
 pub async fn batch_scrape(engine: &CrawlEngineHandle, urls: Vec<String>) -> Result<BatchScrapeResults, CrawlError> {
     if urls.is_empty() {
-        return Err(CrawlError::InvalidConfig("batch_urls must not be empty".into()));
+        return Err(CrawlError::invalid_config("batch_urls must not be empty"));
     }
     let url_refs: Vec<&str> = urls.iter().map(String::as_str).collect();
     let results = engine.inner.batch_scrape(&url_refs).await;
@@ -273,7 +273,7 @@ pub async fn batch_crawl_stream(
 /// Crawl multiple seed URLs concurrently, each following links to configured depth.
 pub async fn batch_crawl(engine: &CrawlEngineHandle, urls: Vec<String>) -> Result<BatchCrawlResults, CrawlError> {
     if urls.is_empty() {
-        return Err(CrawlError::InvalidConfig("batch_urls must not be empty".into()));
+        return Err(CrawlError::invalid_config("batch_urls must not be empty"));
     }
     let url_refs: Vec<&str> = urls.iter().map(String::as_str).collect();
     let results = engine.inner.batch_crawl(&url_refs).await;

@@ -55,7 +55,7 @@ impl DiskCache {
     pub fn new(cache_dir: impl AsRef<Path>, ttl_secs: u64, max_entries: usize) -> Result<Self, CrawlError> {
         let cache_dir = cache_dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&cache_dir)
-            .map_err(|e| CrawlError::Other(format!("failed to create cache directory: {e}")))?;
+            .map_err(|e| CrawlError::other(format!("failed to create cache directory: {e}")))?;
         Ok(Self {
             cache_dir,
             ttl_secs,
@@ -122,14 +122,14 @@ fn write_cache_entry_to(tmp_path: &Path, final_path: &Path, data: &str) -> Resul
 
     let mut file = open_options
         .open(tmp_path)
-        .map_err(|e| CrawlError::Other(format!("cache temp file create error: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("cache temp file create error: {e}")))?;
     file.write_all(data.as_bytes())
-        .map_err(|e| CrawlError::Other(format!("cache write error: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("cache write error: {e}")))?;
     drop(file);
 
     std::fs::rename(tmp_path, final_path).map_err(|e| {
         let _ = std::fs::remove_file(tmp_path);
-        CrawlError::Other(format!("cache rename error: {e}"))
+        CrawlError::other(format!("cache rename error: {e}"))
     })
 }
 
@@ -161,7 +161,7 @@ impl CrawlCache for DiskCache {
             let data = match std::fs::read_to_string(&path) {
                 Ok(data) => data,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(CrawlError::Other(format!("cache read error: {e}"))),
+                Err(e) => return Err(CrawlError::other(format!("cache read error: {e}"))),
             };
             let page: CachedPage = match serde_json::from_str(&data) {
                 Ok(p) => p,
@@ -208,7 +208,7 @@ impl CrawlCache for DiskCache {
             let data = match std::fs::read_to_string(&path) {
                 Ok(data) => data,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(CrawlError::Other(format!("cache read error: {e}"))),
+                Err(e) => return Err(CrawlError::other(format!("cache read error: {e}"))),
             };
             match serde_json::from_str(&data) {
                 Ok(page) => Ok(Some(page)),
@@ -232,7 +232,7 @@ impl CrawlCache for DiskCache {
 
     async fn set(&self, key: &str, page: &CachedPage) -> Result<(), CrawlError> {
         let path = self.cache_path(key);
-        let data = serde_json::to_string(page).map_err(|e| CrawlError::Other(format!("cache serialize error: {e}")))?;
+        let data = serde_json::to_string(page).map_err(|e| CrawlError::other(format!("cache serialize error: {e}")))?;
 
         if data.len() > MAX_ENTRY_SIZE_BYTES {
             tracing::warn!(
@@ -287,7 +287,7 @@ impl CrawlCache for DiskCache {
             write_cache_entry(&path, &data)
         })
         .await
-        .unwrap_or_else(|error| Err(CrawlError::Other(format!("cache write task failed: {error}"))))
+        .unwrap_or_else(|error| Err(CrawlError::other(format!("cache write task failed: {error}"))))
     }
 
     async fn has(&self, key: &str) -> Result<bool, CrawlError> {

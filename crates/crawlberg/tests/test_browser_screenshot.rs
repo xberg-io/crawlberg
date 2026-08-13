@@ -98,7 +98,7 @@ async fn scrape_captures_a_real_png_screenshot_when_requested() {
     let result = scrape(&engine, &base_url).await;
     let result = match result {
         Ok(result) => result,
-        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip("scrape_captures_a_real_png_screenshot_when_requested", &message);
             return;
         }
@@ -151,7 +151,7 @@ async fn scrape_does_not_capture_a_screenshot_when_not_requested() {
     let result = scrape(&engine, &base_url).await;
     let result = match result {
         Ok(result) => result,
-        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip("scrape_does_not_capture_a_screenshot_when_not_requested", &message);
             return;
         }

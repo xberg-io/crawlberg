@@ -190,7 +190,7 @@ impl BrowserPool {
     /// without calling `close`, a best-effort async cleanup is spawned.
     pub async fn acquire_page(&self) -> Result<PooledPage, CrawlError> {
         if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::BrowserError("pool is shut down".into()));
+            return Err(CrawlError::browser_error("pool is shut down"));
         }
 
         let permit = self
@@ -198,10 +198,10 @@ impl BrowserPool {
             .clone()
             .acquire_owned()
             .await
-            .map_err(|_| CrawlError::BrowserError("page semaphore closed".into()))?;
+            .map_err(|_| CrawlError::browser_error("page semaphore closed"))?;
 
         if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::BrowserError("pool is shut down".into()));
+            return Err(CrawlError::browser_error("pool is shut down"));
         }
 
         match self.try_new_page().await {
@@ -212,7 +212,7 @@ impl BrowserPool {
             Err(first_err) => {
                 self.relaunch_browser().await?;
                 let page = self.try_new_page().await.map_err(|e| {
-                    CrawlError::BrowserError(format!(
+                    CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
                 })?;
@@ -273,8 +273,8 @@ impl BrowserPool {
         let bs = guard.as_ref().expect("browser state was just set above");
         tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
             .await
-            .map_err(|_| CrawlError::BrowserError("timeout opening page".into()))?
-            .map_err(|e| CrawlError::BrowserError(format!("failed to open page: {e}")))
+            .map_err(|_| CrawlError::browser_error("timeout opening page"))?
+            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))
     }
 
     /// Force-relaunch Chrome (used after a page-open failure).
@@ -282,7 +282,7 @@ impl BrowserPool {
         let mut guard = self.state.lock().await;
 
         if self.shutdown.load(Ordering::SeqCst) {
-            return Err(CrawlError::BrowserError("pool is shut down".into()));
+            return Err(CrawlError::browser_error("pool is shut down"));
         }
 
         if guard.as_ref().is_some_and(|bs| !bs.handler_handle.is_finished()) {
@@ -312,8 +312,8 @@ impl BrowserPool {
         let (browser, mut handler, data_dir) = if let Some(ref endpoint) = self.config.browser_endpoint {
             let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::connect(endpoint))
                 .await
-                .map_err(|_| CrawlError::BrowserError("timeout connecting to browser endpoint".into()))?
-                .map_err(|e| CrawlError::BrowserError(format!("failed to connect to browser: {e}")))?;
+                .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))?
+                .map_err(|e| CrawlError::browser_error(format!("failed to connect to browser: {e}")))?;
             (browser, handler, None)
         } else {
             use std::sync::atomic::AtomicU64;
@@ -341,12 +341,12 @@ impl BrowserPool {
             }
             let browser_config = builder
                 .build()
-                .map_err(|e| CrawlError::BrowserError(format!("invalid browser config: {e}")))?;
+                .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
             let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::launch(browser_config))
                 .await
-                .map_err(|_| CrawlError::BrowserError("timeout launching Chrome".into()))?
-                .map_err(|e| CrawlError::BrowserError(format!("failed to launch Chrome: {e}")))?;
+                .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
+                .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
             (browser, handler, Some(user_data_dir))
         };
 

@@ -1,6 +1,82 @@
 //! Error types for the crawlberg crate.
 
+use std::sync::Arc;
+
 use thiserror::Error;
+
+/// A clonable, downcastable wrapper around the error a [`CrawlError`] was built from.
+///
+/// ~keep `Arc<dyn Error>`, not `Box<dyn Error>`, because [`CrawlError`] derives `Clone` and
+/// that derive is load-bearing — `engine/mod.rs` clones an error into `AttemptOutcome` on
+/// every tier-escalation retry. `Box<dyn Error>` cannot derive `Clone`, and neither
+/// `reqwest::Error` nor `SsrfError` is `Clone`, so an owned concrete source would break
+/// both. `Arc<T: ?Sized>` is `Clone` regardless of `T`.
+///
+/// ~keep A single trait object rather than a concrete type per variant: `Other`,
+/// `BrowserError`, and `InvalidConfig` each wrap several unrelated error types
+/// (`io::Error`, `regex::Error`, `url::ParseError`, `serde_json::Error`, chromiumoxide's).
+#[derive(Debug, Clone)]
+pub struct ErrorSource(Arc<dyn std::error::Error + Send + Sync>);
+
+impl std::fmt::Display for ErrorSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for ErrorSource {
+    /// Returns the wrapped error itself, not its source.
+    ///
+    /// ~keep This is what makes the original recoverable: `err.source()` yields this
+    /// wrapper, and one more `.source()` yields the concrete error, so
+    /// `downcast_ref::<reqwest::Error>()` works and `is_timeout()`/`is_connect()`/`url()`
+    /// come back. thiserror cannot put the concrete error directly in `#[source]` here,
+    /// because the field must stay `Clone` (see the type docs) and `Arc<dyn Error>` does
+    /// not itself implement `Error`. The cost is one extra link whose `Display` repeats
+    /// the wrapped error's message.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+impl ErrorSource {
+    /// Wrap a concrete error so it can be carried in a [`CrawlError`].
+    pub fn new<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
+        Self(Arc::new(error))
+    }
+}
+
+/// Wrap a concrete error as an optional [`ErrorSource`].
+fn source_of<E: std::error::Error + Send + Sync + 'static>(error: E) -> Option<ErrorSource> {
+    Some(ErrorSource::new(error))
+}
+
+/// Generate the paired constructors for a variant carrying `message` + `source`.
+///
+/// ~keep Every variant needs both a sourceless and a sourced constructor, and writing 34
+/// near-identical functions by hand invites one of them to drift. The enum itself is
+/// deliberately *not* macro-generated: its `#[error(...)]` strings are a stable public
+/// contract that must stay greppable in the source.
+macro_rules! message_constructors {
+    ($( $variant:ident => ($plain:ident, $with_source:ident) ),* $(,)?) => {
+        impl CrawlError {
+            $(
+                #[doc = concat!("Build a [`CrawlError::", stringify!($variant), "`] with no underlying error.")]
+                pub fn $plain(message: impl Into<String>) -> Self {
+                    Self::$variant { message: message.into(), source: None }
+                }
+
+                #[doc = concat!("Build a [`CrawlError::", stringify!($variant), "`] preserving `source` in the error chain.")]
+                pub fn $with_source(
+                    message: impl Into<String>,
+                    source: impl std::error::Error + Send + Sync + 'static,
+                ) -> Self {
+                    Self::$variant { message: message.into(), source: source_of(source) }
+                }
+            )*
+        }
+    };
+}
 
 /// Stable, language-agnostic classification for network-level errors.
 ///
@@ -48,14 +124,32 @@ impl NetworkErrorKind {
 #[non_exhaustive]
 pub enum CrawlError {
     /// The requested page was not found (HTTP 404).
-    #[error("not_found: {0}")]
-    NotFound(String),
+    #[error("not_found: {message}")]
+    NotFound {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The request was unauthorized (HTTP 401).
-    #[error("unauthorized: {0}")]
-    Unauthorized(String),
+    #[error("unauthorized: {message}")]
+    Unauthorized {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The request was forbidden (HTTP 403).
-    #[error("forbidden: {0}")]
-    Forbidden(String),
+    #[error("forbidden: {message}")]
+    Forbidden {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The request was blocked by a WAF or bot protection (HTTP 403 with WAF indicators).
     ///
     /// `vendor` is the lowercase identifier of the detected WAF (e.g. "cloudflare",
@@ -73,44 +167,122 @@ pub enum CrawlError {
         message: String,
     },
     /// The request timed out.
-    #[error("timeout: {0}")]
-    Timeout(String),
+    #[error("timeout: {message}")]
+    Timeout {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The request was rate-limited (HTTP 429).
-    #[error("rate_limited: {0}")]
-    RateLimited(String),
+    #[error("rate_limited: {message}")]
+    RateLimited {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A server error occurred (HTTP 5xx).
-    #[error("server_error: {0}")]
-    ServerError(String),
+    #[error("server_error: {message}")]
+    ServerError {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A bad gateway error occurred (HTTP 502).
-    #[error("bad_gateway: {0}")]
-    BadGateway(String),
+    #[error("bad_gateway: {message}")]
+    BadGateway {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The resource is permanently gone (HTTP 410).
-    #[error("gone: {0}")]
-    Gone(String),
+    #[error("gone: {message}")]
+    Gone {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A connection error occurred.
-    #[error("connection: {0}")]
-    Connection(String),
+    #[error("connection: {message}")]
+    Connection {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A DNS resolution error occurred.
-    #[error("dns: {0}")]
-    Dns(String),
+    #[error("dns: {message}")]
+    Dns {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// An SSL/TLS error occurred.
-    #[error("ssl: {0}")]
-    Ssl(String),
+    #[error("ssl: {message}")]
+    Ssl {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// Data was lost or truncated during transfer.
-    #[error("data_loss: {0}")]
-    DataLoss(String),
+    #[error("data_loss: {message}")]
+    DataLoss {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The browser failed to launch, connect, or navigate.
-    #[error("browser: {0}")]
-    BrowserError(String),
+    #[error("browser: {message}")]
+    BrowserError {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The browser page load or rendering timed out.
-    #[error("browser_timeout: {0}")]
-    BrowserTimeout(String),
+    #[error("browser_timeout: {message}")]
+    BrowserTimeout {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The provided configuration is invalid.
-    #[error("invalid_config: {0}")]
-    InvalidConfig(String),
+    #[error("invalid_config: {message}")]
+    InvalidConfig {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// The requested capability is not supported by the active backend or build.
-    #[error("unsupported: {0}")]
-    Unsupported(String),
+    #[error("unsupported: {message}")]
+    Unsupported {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
     /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
     #[error("ssrf_policy_violation: {url} - {reason}")]
     SsrfPolicyViolation {
@@ -118,10 +290,39 @@ pub enum CrawlError {
         url: String,
         /// Reason for rejection (e.g., "loopback", "private_network", "disallowed_scheme: ftp").
         reason: String,
+        /// The policy error this was built from, when one was available.
+        #[source]
+        source: Option<Arc<crate::net::ssrf::SsrfError>>,
     },
     /// An unclassified error occurred.
-    #[error("other: {0}")]
-    Other(String),
+    #[error("other: {message}")]
+    Other {
+        /// Human-readable description of the failure.
+        message: String,
+        /// The error this was built from, when one was available.
+        #[source]
+        source: Option<ErrorSource>,
+    },
+}
+
+message_constructors! {
+    NotFound => (not_found, not_found_with_source),
+    Unauthorized => (unauthorized, unauthorized_with_source),
+    Forbidden => (forbidden, forbidden_with_source),
+    Timeout => (timeout, timeout_with_source),
+    RateLimited => (rate_limited, rate_limited_with_source),
+    ServerError => (server_error, server_error_with_source),
+    BadGateway => (bad_gateway, bad_gateway_with_source),
+    Gone => (gone, gone_with_source),
+    Connection => (connection, connection_with_source),
+    Dns => (dns, dns_with_source),
+    Ssl => (ssl, ssl_with_source),
+    DataLoss => (data_loss, data_loss_with_source),
+    BrowserError => (browser_error, browser_error_with_source),
+    BrowserTimeout => (browser_timeout, browser_timeout_with_source),
+    InvalidConfig => (invalid_config, invalid_config_with_source),
+    Unsupported => (unsupported, unsupported_with_source),
+    Other => (other, other_with_source),
 }
 
 /// Pairs an [`crate::net::ssrf::SsrfError`] with the URL that was being validated when it
@@ -162,6 +363,7 @@ impl CrawlError {
         Self::SsrfPolicyViolation {
             url: crate::net::redact_url_credentials(url.as_ref()),
             reason: reason.into(),
+            source: None,
         }
     }
 }
@@ -185,6 +387,7 @@ impl From<UrlSsrfError> for CrawlError {
         CrawlError::SsrfPolicyViolation {
             url: err.url,
             reason: err.source.to_string(),
+            source: Some(Arc::new(err.source)),
         }
     }
 }
@@ -200,6 +403,7 @@ impl From<crate::net::ssrf::SsrfError> for CrawlError {
         CrawlError::SsrfPolicyViolation {
             url: "unknown".to_string(),
             reason: err.to_string(),
+            source: Some(Arc::new(err)),
         }
     }
 }
@@ -277,16 +481,16 @@ pub(crate) fn network_error_kind(e: &reqwest::Error) -> NetworkErrorKind {
 /// e2e fixtures can assert on stable substrings regardless of the native error
 /// message format each binding produces.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn classify_reqwest_error(e: &reqwest::Error) -> CrawlError {
-    let chain = error_chain_string(e);
-    let kind = network_error_kind(e);
+pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
+    let chain = error_chain_string(&e);
+    let kind = network_error_kind(&e);
     let tag = kind.tag();
     match kind {
-        NetworkErrorKind::Timeout => CrawlError::Timeout(format!("[network:{tag}] {e}")),
-        NetworkErrorKind::Dns => CrawlError::Dns(format!("[network:{tag}] {e}")),
-        NetworkErrorKind::Ssl => CrawlError::Ssl(format!("[network:{tag}] {e}")),
+        NetworkErrorKind::Timeout => CrawlError::timeout_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Dns => CrawlError::dns_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Proxy | NetworkErrorKind::Connection => {
-            CrawlError::Connection(format!("[network:{tag}] {e}"))
+            CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e)
         }
         NetworkErrorKind::Other => {
             if e.is_body()
@@ -296,9 +500,9 @@ pub(crate) fn classify_reqwest_error(e: &reqwest::Error) -> CrawlError {
                 || chain.contains("decoding response body")
                 || chain.contains("error decoding")
             {
-                CrawlError::DataLoss(format!("data_loss: {e}"))
+                CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
             } else {
-                CrawlError::Other(format!("other: {e}"))
+                CrawlError::other_with_source(format!("other: {e}"), e)
             }
         }
     }
@@ -310,22 +514,22 @@ pub(crate) fn classify_reqwest_error(e: &reqwest::Error) -> CrawlError {
 /// e2e fixtures can assert on stable substrings regardless of the native error
 /// message format each binding produces.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn classify_reqwest_error(e: &reqwest::Error) -> CrawlError {
-    let chain = error_chain_string(e);
-    let kind = network_error_kind(e);
+pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
+    let chain = error_chain_string(&e);
+    let kind = network_error_kind(&e);
     let tag = kind.tag();
     match kind {
-        NetworkErrorKind::Timeout => CrawlError::Timeout(format!("[network:{tag}] {e}")),
-        NetworkErrorKind::Dns => CrawlError::Dns(format!("[network:{tag}] {e}")),
-        NetworkErrorKind::Ssl => CrawlError::Ssl(format!("[network:{tag}] {e}")),
+        NetworkErrorKind::Timeout => CrawlError::timeout_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Dns => CrawlError::dns_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Proxy | NetworkErrorKind::Connection => {
-            CrawlError::Connection(format!("[network:{tag}] {e}"))
+            CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e)
         }
         NetworkErrorKind::Other => {
             if chain.contains("content-length") || chain.contains("truncate") || chain.contains("incomplete") {
-                CrawlError::DataLoss(format!("data_loss: {e}"))
+                CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
             } else {
-                CrawlError::Other(format!("other: {e}"))
+                CrawlError::other_with_source(format!("other: {e}"), e)
             }
         }
     }
@@ -372,7 +576,7 @@ mod tests {
         let err = crate::net::ssrf::SsrfError::DeniedByPolicy { reason: "loopback" };
         let crawl_err: CrawlError = err.into();
         match crawl_err {
-            CrawlError::SsrfPolicyViolation { url, reason } => {
+            CrawlError::SsrfPolicyViolation { url, reason, .. } => {
                 assert_eq!(url, "unknown", "bare `?` conversion has no URL to report, got '{url}'");
                 assert_eq!(
                     reason, "denied by SSRF policy: loopback",
@@ -389,7 +593,9 @@ mod tests {
         let err = crate::net::ssrf::SsrfError::DeniedByPolicy { reason: "link_local" };
         let crawl_err: CrawlError = err.with_url(&url).into();
         match crawl_err {
-            CrawlError::SsrfPolicyViolation { url: reported, reason } => {
+            CrawlError::SsrfPolicyViolation {
+                url: reported, reason, ..
+            } => {
                 assert_eq!(
                     reported, "http://169.254.169.254/latest/meta-data/",
                     "the refused URL must be preserved, not 'unknown'"
@@ -441,7 +647,39 @@ mod tests {
                 .danger_accept_invalid_certs(true)
                 .build()
                 .expect("client build must not fail");
-            classify_reqwest_error(&client.get(url).send().await.expect_err("expected network error"))
+            classify_reqwest_error(client.get(url).send().await.expect_err("expected network error"))
+        }
+
+        /// The whole point of the `#[source]` wiring: the original `reqwest::Error` must
+        /// come back out, not just its rendered message.
+        ///
+        /// ~keep This is the test that distinguishes the real change from a shape-only
+        /// refactor. Converting the variants to carry a `source` field compiles, passes
+        /// every pre-existing test, and still returns `None` from `source()` if no
+        /// construction site actually attaches anything — which is exactly the state the
+        /// migration passed through on its way here.
+        #[tokio::test]
+        async fn a_network_error_keeps_the_reqwest_error_recoverable() {
+            use std::error::Error as _;
+
+            let err = scrape_url("http://127.0.0.1:1/").await;
+
+            let source = err.source().expect("a classified network error must expose its source");
+            let original = source
+                .source()
+                .expect("the wrapper must expose the concrete error beneath it");
+            let reqwest_error = original
+                .downcast_ref::<reqwest::Error>()
+                .expect("the concrete source must downcast back to reqwest::Error");
+
+            assert!(
+                reqwest_error.is_connect(),
+                "recovering is_connect() is the capability this wiring exists to restore, got {reqwest_error:?}"
+            );
+            assert!(
+                reqwest_error.url().is_some(),
+                "the failing URL must be recoverable from the original error"
+            );
         }
 
         #[tokio::test]
@@ -494,7 +732,7 @@ mod tests {
                 .send()
                 .await
                 .expect_err("expected proxy error");
-            let err = classify_reqwest_error(&raw_err);
+            let err = classify_reqwest_error(raw_err);
             let msg = err.to_string();
             assert!(
                 msg.contains("[network:connection]") || msg.contains("[network:proxy]"),

@@ -24,7 +24,7 @@ pub(crate) async fn scrape_from_crawl_response(
     resp: &crate::tower::CrawlResponse,
     config: &CrawlConfig,
 ) -> Result<ScrapeResult, CrawlError> {
-    let parsed_url = Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
+    let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
     let auth_header_sent = config.auth.is_some();
 
@@ -92,7 +92,7 @@ pub(crate) async fn scrape_from_crawl_response(
 
     let (extraction, asset_refs) = {
         let doc = tl::parse(&body, ParserOptions::default())
-            .map_err(|e| CrawlError::Other(format!("HTML parse error: {e:?}")))?;
+            .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
 
         if !noindex_detected {
             noindex_detected = detect_noindex(&doc);

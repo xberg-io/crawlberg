@@ -37,7 +37,7 @@ impl WarcWriter {
     /// The file is created (or truncated) immediately but no records are written
     /// until explicit method calls.
     pub fn new(path: &Path) -> Result<Self, CrawlError> {
-        let file = File::create(path).map_err(|e| CrawlError::Other(format!("create WARC file: {e}")))?;
+        let file = File::create(path).map_err(|e| CrawlError::other(format!("create WARC file: {e}")))?;
         Ok(Self {
             writer: BufWriter::new(file),
             warcinfo_id: String::new().into_boxed_str(),
@@ -110,7 +110,7 @@ impl WarcWriter {
     pub fn finish(mut self) -> Result<(), CrawlError> {
         self.writer
             .flush()
-            .map_err(|e| CrawlError::Other(format!("flush WARC file: {e}")))
+            .map_err(|e| CrawlError::other(format!("flush WARC file: {e}")))
     }
 }
 
@@ -180,12 +180,12 @@ fn format_warc_date(dt: DateTime<Utc>) -> String {
 /// Validate that a header name or value does not contain CR or LF characters.
 fn validate_header_value(name: &str, value: &str) -> Result<(), CrawlError> {
     if name.contains('\r') || name.contains('\n') {
-        return Err(CrawlError::InvalidConfig(format!(
+        return Err(CrawlError::invalid_config(format!(
             "header name contains invalid CR/LF characters: {name:?}"
         )));
     }
     if value.contains('\r') || value.contains('\n') {
-        return Err(CrawlError::InvalidConfig(format!(
+        return Err(CrawlError::invalid_config(format!(
             "header value contains invalid CR/LF characters for header {name:?}"
         )));
     }
@@ -215,7 +215,7 @@ fn build_http_block(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Resul
 
 /// Write a single WARC record (version line + headers + payload + double-CRLF terminator).
 fn write_record(w: &mut BufWriter<File>, headers: &[(&str, Cow<'_, str>)], payload: &[u8]) -> Result<(), CrawlError> {
-    let map_io = |e: std::io::Error| CrawlError::Other(format!("write WARC record: {e}"));
+    let map_io = |e: std::io::Error| CrawlError::other(format!("write WARC record: {e}"));
 
     w.write_all(WARC_VERSION.as_bytes()).map_err(&map_io)?;
     w.write_all(b"\r\n").map_err(&map_io)?;

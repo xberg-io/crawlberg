@@ -222,8 +222,9 @@ impl CrawlEngine {
                 );
                 return match last_ok {
                     Some((resp, browser_used)) => Ok((resp, browser_used)),
-                    None => Err(last_err
-                        .unwrap_or_else(|| CrawlError::Other("max_total_attempts exceeded with no result".into()))),
+                    None => {
+                        Err(last_err.unwrap_or_else(|| CrawlError::other("max_total_attempts exceeded with no result")))
+                    }
                 };
             }
             tiers_attempted.push(Self::tier_name(current_tier));
@@ -241,7 +242,7 @@ impl CrawlEngine {
                     attempt,
                     url: std::sync::Arc::from(url),
                     status: None,
-                    error: Some(CrawlError::Other(e.to_string())),
+                    error: Some(CrawlError::other(e.to_string())),
                     waf_signal: None,
                     body_size: 0,
                     content_density: 0.0,
@@ -250,7 +251,7 @@ impl CrawlEngine {
                 };
                 match retry_policy.decide(&outcome).await {
                     crate::types::RetryDirective::Stop => {
-                        return Err(CrawlError::Other(format!("antibot pre_request failed: {e}")));
+                        return Err(CrawlError::other(format!("antibot pre_request failed: {e}")));
                     }
                     crate::types::RetryDirective::Retry { backoff_ms } => {
                         tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
@@ -266,7 +267,7 @@ impl CrawlEngine {
                             attempt = 0;
                             continue;
                         }
-                        return Err(CrawlError::Other(format!("antibot pre_request failed: {e}")));
+                        return Err(CrawlError::other(format!("antibot pre_request failed: {e}")));
                     }
                 }
             }
@@ -425,10 +426,10 @@ impl CrawlEngine {
                 }
                 Err(err) => {
                     if self.config.soft_http_errors {
-                        if matches!(err, CrawlError::NotFound(_)) {
+                        if matches!(err, CrawlError::NotFound { .. }) {
                             return Ok((Self::synthesise_status(404), false));
                         }
-                        if matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }) {
+                        if matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }) {
                             return Ok((Self::synthesise_status(403), false));
                         }
                     }
@@ -534,7 +535,7 @@ impl CrawlEngine {
                     .as_ref()
                     .and_then(|d| d.bypass.as_ref())
                     .ok_or_else(|| {
-                        CrawlError::InvalidConfig("escalation to Bypass tier but no bypass provider configured".into())
+                        CrawlError::invalid_config("escalation to Bypass tier but no bypass provider configured")
                     })?;
                 let bypass_resp = provider.fetch(url).await?;
                 Ok((
@@ -568,9 +569,7 @@ impl CrawlEngine {
                     Ok((crawl_resp, true))
                 }
                 #[cfg(not(feature = "browser"))]
-                Err(CrawlError::Unsupported(
-                    "Browser tier requires the 'browser' feature".into(),
-                ))
+                Err(CrawlError::unsupported("Browser tier requires the 'browser' feature"))
             }
         }
     }
@@ -637,12 +636,12 @@ impl CrawlEngine {
                 vendor: vendor.clone(),
                 message: format!("waf/blocked: {vendor} detected at {url}"),
             },
-            EscalationReason::SoftBlock => CrawlError::Forbidden(format!("soft_block: {url}")),
+            EscalationReason::SoftBlock => CrawlError::forbidden(format!("soft_block: {url}")),
             EscalationReason::RenderNeeded => {
-                CrawlError::Unsupported(format!("js_render_needed but no browser tier available: {url}"))
+                CrawlError::unsupported(format!("js_render_needed but no browser tier available: {url}"))
             }
             EscalationReason::OriginUnreliable => {
-                CrawlError::ServerError(format!("origin_unreliable and no escalation target: {url}"))
+                CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
             EscalationReason::AntibotEscalate => CrawlError::WafBlocked {
                 vendor: "antibot".to_string(),
@@ -795,7 +794,7 @@ impl CrawlEngine {
             && self.config.browser.backend == crate::types::BrowserBackend::Native
         {
             let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
-                CrawlError::BrowserError("native browser executor is not available for BrowserBackend::Native".into())
+                CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
             })?;
             let mut http_resp =
                 crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
@@ -1044,7 +1043,7 @@ impl CrawlEngine {
         patterns
             .iter()
             .map(|pat| {
-                regex::Regex::new(pat).map_err(|e| CrawlError::Other(format!("invalid regex pattern \"{pat}\": {e}")))
+                regex::Regex::new(pat).map_err(|e| CrawlError::other(format!("invalid regex pattern \"{pat}\": {e}")))
             })
             .collect()
     }
@@ -1064,7 +1063,7 @@ impl CrawlEngine {
         tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
 
-        let parsed_seed = url::Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
+        let parsed_seed = url::Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
         let base_host = parsed_seed.host_str().unwrap_or("").to_owned();
         let base_host_suffix = format!(".{base_host}");
 
@@ -1428,14 +1427,14 @@ mod tests {
             .await
             .expect_err("expected connection error");
 
-        let err = classify_reqwest_error(&raw_err);
+        let err = classify_reqwest_error(raw_err);
         let msg = err.to_string();
         assert!(
             msg.contains("[network:connection]"),
             "expected [network:connection] in '{msg}'"
         );
         assert!(
-            matches!(err, CrawlError::Connection(_)),
+            matches!(err, CrawlError::Connection { .. }),
             "expected CrawlError::Connection, got {err:?}"
         );
     }
@@ -1457,11 +1456,11 @@ mod tests {
             .await
             .expect_err("expected dns error");
 
-        let err = classify_reqwest_error(&raw_err);
+        let err = classify_reqwest_error(raw_err);
         let msg = err.to_string();
         assert!(msg.contains("[network:dns]"), "expected [network:dns] in '{msg}'");
         assert!(
-            matches!(err, CrawlError::Dns(_)),
+            matches!(err, CrawlError::Dns { .. }),
             "expected CrawlError::Dns, got {err:?}"
         );
     }

@@ -291,26 +291,26 @@ fn classify_outcome(outcome: &AttemptOutcome) -> ObservedOutcome {
             ObservedOutcome::WafBlocked { vendor: vendor.clone() }
         }
         Some(
-            crate::error::CrawlError::Dns(_)
-            | crate::error::CrawlError::Ssl(_)
-            | crate::error::CrawlError::Connection(_)
-            | crate::error::CrawlError::InvalidConfig(_)
-            | crate::error::CrawlError::Unsupported(_)
-            | crate::error::CrawlError::NotFound(_)
-            | crate::error::CrawlError::Unauthorized(_)
-            | crate::error::CrawlError::Gone(_)
-            | crate::error::CrawlError::DataLoss(_)
-            | crate::error::CrawlError::BrowserError(_)
-            | crate::error::CrawlError::BrowserTimeout(_)
+            crate::error::CrawlError::Dns { .. }
+            | crate::error::CrawlError::Ssl { .. }
+            | crate::error::CrawlError::Connection { .. }
+            | crate::error::CrawlError::InvalidConfig { .. }
+            | crate::error::CrawlError::Unsupported { .. }
+            | crate::error::CrawlError::NotFound { .. }
+            | crate::error::CrawlError::Unauthorized { .. }
+            | crate::error::CrawlError::Gone { .. }
+            | crate::error::CrawlError::DataLoss { .. }
+            | crate::error::CrawlError::BrowserError { .. }
+            | crate::error::CrawlError::BrowserTimeout { .. }
             | crate::error::CrawlError::SsrfPolicyViolation { .. },
         ) => ObservedOutcome::Permanent,
         Some(
-            crate::error::CrawlError::Forbidden(_)
-            | crate::error::CrawlError::RateLimited(_)
-            | crate::error::CrawlError::ServerError(_)
-            | crate::error::CrawlError::BadGateway(_)
-            | crate::error::CrawlError::Timeout(_)
-            | crate::error::CrawlError::Other(_),
+            crate::error::CrawlError::Forbidden { .. }
+            | crate::error::CrawlError::RateLimited { .. }
+            | crate::error::CrawlError::ServerError { .. }
+            | crate::error::CrawlError::BadGateway { .. }
+            | crate::error::CrawlError::Timeout { .. }
+            | crate::error::CrawlError::Other { .. },
         ) => ObservedOutcome::Transient,
         None => ObservedOutcome::Success,
     }
@@ -463,7 +463,7 @@ mod tests {
             attempt: 0,
             url: Arc::from("https://dead.example/"),
             status: None,
-            error: Some(crate::error::CrawlError::Dns("nxdomain".into())),
+            error: Some(crate::error::CrawlError::dns("nxdomain")),
             waf_signal: None,
             body_size: 0,
             content_density: 0.0,

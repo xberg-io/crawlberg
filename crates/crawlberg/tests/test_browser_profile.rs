@@ -133,7 +133,7 @@ async fn missing_profile_is_created_and_populated_when_saved() {
     let server = TestServer::start().await;
     let engine = create_engine(Some(config_with_profile(&name, true))).expect("engine must build");
     let result = scrape(&engine, &format!("{}/", server.base_url)).await;
-    if let Err(CrawlError::BrowserError(message)) = &result
+    if let Err(CrawlError::BrowserError { message, .. }) = &result
         && is_missing_chrome_message(message)
     {
         announce_chrome_skip("missing_profile_is_created_and_populated_when_saved", message);
@@ -179,7 +179,7 @@ async fn unsaved_profile_changes_are_not_written_back() {
     let server = TestServer::start().await;
     let engine = create_engine(Some(config_with_profile(&name, false))).expect("engine must build");
     let result = scrape(&engine, &format!("{}/", server.base_url)).await;
-    if let Err(CrawlError::BrowserError(message)) = &result
+    if let Err(CrawlError::BrowserError { message, .. }) = &result
         && is_missing_chrome_message(message)
     {
         announce_chrome_skip("unsaved_profile_changes_are_not_written_back", message);

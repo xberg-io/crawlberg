@@ -114,7 +114,7 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
 
     let result = match result {
         Ok(result) => result,
-        Err(CrawlError::BrowserError(message)) if is_missing_chrome_message(&message) => {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip("chromiumoxide_interact_click_wait_screenshot_and_scrape", &message);
             return;
         }
@@ -695,14 +695,14 @@ fn validation_rejects_empty_wait_and_scroll_selectors() {
         milliseconds: None,
         selector: Some(String::new()),
     }]);
-    assert!(matches!(wait, Err(CrawlError::InvalidConfig(message)) if message.contains("wait selector")));
+    assert!(matches!(wait, Err(CrawlError::InvalidConfig { message, .. }) if message.contains("wait selector")));
 
     let scroll = validate_actions(&[PageAction::Scroll {
         direction: ScrollDirection::Down,
         selector: Some(String::new()),
         amount: None,
     }]);
-    assert!(matches!(scroll, Err(CrawlError::InvalidConfig(message)) if message.contains("scroll selector")));
+    assert!(matches!(scroll, Err(CrawlError::InvalidConfig { message, .. }) if message.contains("scroll selector")));
 }
 
 #[test]
@@ -713,7 +713,7 @@ fn validation_rejects_i64_min_scroll_amount() {
         amount: Some(i64::MIN),
     }]);
 
-    assert!(matches!(result, Err(CrawlError::InvalidConfig(message)) if message.contains("scroll amount")));
+    assert!(matches!(result, Err(CrawlError::InvalidConfig { message, .. }) if message.contains("scroll amount")));
 }
 
 #[cfg(not(feature = "browser-chromiumoxide"))]
@@ -724,7 +724,7 @@ async fn no_chromiumoxide_backend_interact_returns_unsupported() {
     let result = interact(&engine, "https://example.com", vec![PageAction::Scrape]).await;
 
     match result {
-        Err(CrawlError::Unsupported(message)) => {
+        Err(CrawlError::unsupported(message)) => {
             assert!(message.contains("browser-chromiumoxide"));
         }
         other => panic!("expected Unsupported, got {other:?}"),

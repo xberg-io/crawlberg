@@ -31,10 +31,10 @@ impl SessionKey {
     /// Extracts the domain from the URL (no path, no query).
     pub fn from_url(url: &str, proxy: Option<&str>) -> Result<Self, CrawlError> {
         let parsed = url::Url::parse(url)
-            .map_err(|e| CrawlError::BrowserError(format!("failed to parse URL for session key: {e}")))?;
+            .map_err(|e| CrawlError::browser_error(format!("failed to parse URL for session key: {e}")))?;
         let domain = parsed
             .host_str()
-            .ok_or_else(|| CrawlError::BrowserError("URL has no host".into()))?
+            .ok_or_else(|| CrawlError::browser_error("URL has no host"))?
             .to_string();
         Ok(SessionKey {
             domain,

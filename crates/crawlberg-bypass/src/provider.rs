@@ -34,7 +34,7 @@ impl SimpleHttpProvider {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
-            .map_err(|e| CrawlError::Other(ProviderError::ClientBuild(e.to_string()).to_string()))?;
+            .map_err(|e| CrawlError::other(ProviderError::ClientBuild(e.to_string()).to_string()))?;
         Ok(Self {
             config,
             client,
@@ -76,7 +76,7 @@ impl BypassProvider for SimpleHttpProvider {
         async move {
             let req = self.build_request(url)?;
             let resp = req.send().await.map_err(|e| {
-                CrawlError::Other(
+                CrawlError::other(
                     ProviderError::Send {
                         vendor: vendor.clone(),
                         message: e.to_string(),
@@ -96,23 +96,23 @@ impl BypassProvider for SimpleHttpProvider {
             match status_u16 {
                 200..=299 => {}
                 401..=403 => {
-                    return Err(CrawlError::Unauthorized(format!(
+                    return Err(CrawlError::unauthorized(format!(
                         "{vendor} auth/quota failure: {status_u16}"
                     )));
                 }
                 429 => {
-                    return Err(CrawlError::RateLimited(format!("{vendor} rate limited")));
+                    return Err(CrawlError::rate_limited(format!("{vendor} rate limited")));
                 }
                 500..=599 => {
-                    return Err(CrawlError::ServerError(format!("{vendor} upstream {status_u16}")));
+                    return Err(CrawlError::server_error(format!("{vendor} upstream {status_u16}")));
                 }
                 other => {
-                    return Err(CrawlError::Other(format!("{vendor} unexpected status {other}")));
+                    return Err(CrawlError::other(format!("{vendor} unexpected status {other}")));
                 }
             }
 
             let body_bytes = resp.bytes().await.map_err(|e| {
-                CrawlError::Other(
+                CrawlError::other(
                     ProviderError::BodyRead {
                         vendor: vendor.clone(),
                         message: e.to_string(),
@@ -221,10 +221,10 @@ impl SimpleHttpProvider {
                     .clone()
                     .unwrap_or_else(|| format!("{vendor} status {status}"));
                 return Some(match override_.error {
-                    CrawlErrorKind::Unauthorized => CrawlError::Unauthorized(msg),
-                    CrawlErrorKind::RateLimited => CrawlError::RateLimited(msg),
-                    CrawlErrorKind::ServerError => CrawlError::ServerError(msg),
-                    CrawlErrorKind::BadRequest => CrawlError::Other(msg),
+                    CrawlErrorKind::Unauthorized => CrawlError::unauthorized(msg),
+                    CrawlErrorKind::RateLimited => CrawlError::rate_limited(msg),
+                    CrawlErrorKind::ServerError => CrawlError::server_error(msg),
+                    CrawlErrorKind::BadRequest => CrawlError::other(msg),
                 });
             }
         }
@@ -236,7 +236,7 @@ impl SimpleHttpProvider {
             ResponseKind::RawBody => Ok((raw_body.to_owned(), raw_bytes)),
             ResponseKind::JsonField { html_field } => {
                 let v: serde_json::Value = serde_json::from_str(raw_body).map_err(|e| {
-                    CrawlError::Other(
+                    CrawlError::other(
                         ProviderError::ResponseParse {
                             vendor: vendor.to_owned(),
                             message: e.to_string(),
@@ -248,7 +248,7 @@ impl SimpleHttpProvider {
                     .get(html_field.as_str())
                     .and_then(|f| f.as_str())
                     .ok_or_else(|| {
-                        CrawlError::Other(
+                        CrawlError::other(
                             ProviderError::ResponseParse {
                                 vendor: vendor.to_owned(),
                                 message: format!("missing or non-string field '{html_field}'"),

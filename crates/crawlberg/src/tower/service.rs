@@ -34,7 +34,7 @@ impl HttpFetchService {
 fn is_retryable(e: &CrawlError) -> bool {
     matches!(
         e,
-        CrawlError::ServerError(_) | CrawlError::RateLimited(_) | CrawlError::BadGateway(_)
+        CrawlError::ServerError { .. } | CrawlError::RateLimited { .. } | CrawlError::BadGateway { .. }
     )
 }
 
@@ -116,7 +116,7 @@ async fn do_fetch(
     let http_req = apply_headers(client.get(url.to_string()), config, req);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
-    let resp = http_req.send().await.map_err(|e| classify_reqwest_error(&e))?;
+    let resp = http_req.send().await.map_err(classify_reqwest_error)?;
 
     let status = resp.status().as_u16();
     let content_type = resp
@@ -154,7 +154,7 @@ async fn do_fetch(
     }
 
     match status {
-        401 => return Err(CrawlError::Unauthorized("unauthorized".into())),
+        401 => return Err(CrawlError::unauthorized("unauthorized")),
         403 => {
             let server = headers
                 .get("server")
@@ -169,16 +169,16 @@ async fn do_fetch(
                     vendor,
                 });
             }
-            return Err(CrawlError::Forbidden("forbidden".into()));
+            return Err(CrawlError::forbidden("forbidden"));
         }
-        404 => return Err(CrawlError::NotFound(format!("not_found: {}", req.url))),
-        408 => return Err(CrawlError::Timeout("timeout".into())),
-        410 => return Err(CrawlError::Gone("gone".into())),
-        429 => return Err(CrawlError::RateLimited("rate_limited".into())),
-        500 => return Err(CrawlError::ServerError("server_error".into())),
-        502 => return Err(CrawlError::BadGateway("bad_gateway".into())),
+        404 => return Err(CrawlError::not_found(format!("not_found: {}", req.url))),
+        408 => return Err(CrawlError::timeout("timeout")),
+        410 => return Err(CrawlError::gone("gone")),
+        429 => return Err(CrawlError::rate_limited("rate_limited")),
+        500 => return Err(CrawlError::server_error("server_error")),
+        502 => return Err(CrawlError::bad_gateway("bad_gateway")),
         503 => {
-            return Err(CrawlError::ServerError("service unavailable".into()));
+            return Err(CrawlError::server_error("service unavailable"));
         }
         _ => {}
     }
@@ -198,9 +198,10 @@ async fn do_fetch(
             #[cfg(not(target_arch = "wasm32"))]
             let is_body_error = is_body_error || e.is_body();
             if is_body_error {
-                CrawlError::DataLoss(format!("data_loss: {e}"))
+                let message = format!("data_loss: {e}");
+                CrawlError::data_loss_with_source(message, e)
             } else {
-                classify_reqwest_error(&e)
+                classify_reqwest_error(e)
             }
         })?;
 
@@ -214,7 +215,7 @@ async fn do_fetch(
         && body_vec.len() < expected
         && expected - body_vec.len() > 100
     {
-        return Err(CrawlError::DataLoss(format!(
+        return Err(CrawlError::data_loss(format!(
             "data_loss: expected {} bytes, got {}",
             expected,
             body_vec.len()
@@ -283,7 +284,7 @@ impl Service<CrawlRequest> for HttpFetchService {
                 }
             }
 
-            Err(CrawlError::Other("retry exhausted".into()))
+            Err(CrawlError::other("retry exhausted"))
         })
     }
 }

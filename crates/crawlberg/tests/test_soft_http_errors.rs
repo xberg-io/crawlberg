@@ -53,7 +53,7 @@ async fn direct_404_raises_when_soft_errors_disabled() {
 
     assert!(result.is_err(), "expected Err, got Ok: {result:?}");
     assert!(
-        matches!(result.unwrap_err(), CrawlError::NotFound(_)),
+        matches!(result.unwrap_err(), CrawlError::NotFound { .. }),
         "expected CrawlError::NotFound"
     );
 }
@@ -137,7 +137,7 @@ async fn direct_403_raises_when_soft_errors_disabled() {
 
     assert!(result.is_err(), "expected Err, got Ok: {result:?}");
     assert!(
-        matches!(result.unwrap_err(), CrawlError::Forbidden(_)),
+        matches!(result.unwrap_err(), CrawlError::Forbidden { .. }),
         "expected CrawlError::Forbidden"
     );
 }

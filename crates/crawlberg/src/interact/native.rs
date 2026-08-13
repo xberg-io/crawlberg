@@ -16,8 +16,8 @@ pub(super) async fn run(
     native_executor: &NativeBrowserExecutor,
 ) -> Result<InteractionResult, CrawlError> {
     if config.browser.endpoint.is_some() {
-        return Err(CrawlError::InvalidConfig(
-            "browser.endpoint is only supported by the chromiumoxide backend".into(),
+        return Err(CrawlError::invalid_config(
+            "browser.endpoint is only supported by the chromiumoxide backend",
         ));
     }
 
@@ -43,7 +43,7 @@ pub(super) async fn run(
     )
     .await
     .map_err(|_| {
-        CrawlError::BrowserTimeout(format!(
+        CrawlError::browser_timeout(format!(
             "browser timed out after {overall_timeout:?} ({} actions)",
             actions.len()
         ))
@@ -51,9 +51,9 @@ pub(super) async fn run(
     .map_err(|e| {
         let message = e.to_string();
         if message.contains("timed out") {
-            CrawlError::BrowserTimeout(format!("browser timed out after {timeout:?}"))
+            CrawlError::browser_timeout(format!("browser timed out after {timeout:?}"))
         } else {
-            CrawlError::BrowserError(format!("native browser interact failed: {message}"))
+            CrawlError::browser_error(format!("native browser interact failed: {message}"))
         }
     })?;
 
@@ -121,18 +121,18 @@ fn apply_proxy_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
     }
 
     let mut parsed =
-        url::Url::parse(&proxy.url).map_err(|e| CrawlError::InvalidConfig(format!("invalid proxy URL: {e}")))?;
+        url::Url::parse(&proxy.url).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
 
     parsed
         .set_username(proxy.username.as_deref().unwrap_or(""))
         .map_err(|()| {
-            CrawlError::InvalidConfig(format!(
+            CrawlError::invalid_config(format!(
                 "proxy scheme {:?} does not support embedded credentials",
                 parsed.scheme()
             ))
         })?;
     parsed.set_password(proxy.password.as_deref()).map_err(|()| {
-        CrawlError::InvalidConfig(format!(
+        CrawlError::invalid_config(format!(
             "proxy scheme {:?} does not support embedded credentials",
             parsed.scheme()
         ))
@@ -294,7 +294,7 @@ mod proxy_credential_tests {
     fn invalid_proxy_url_returns_invalid_config_error() {
         let result = apply_proxy_credentials(&proxy("not a url", Some("alice"), Some("s3cr3t")));
         assert!(
-            matches!(result, Err(crate::error::CrawlError::InvalidConfig(_))),
+            matches!(result, Err(crate::error::CrawlError::InvalidConfig { .. })),
             "malformed proxy URL with credentials must return InvalidConfig, got {result:?}"
         );
     }

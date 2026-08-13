@@ -63,7 +63,7 @@ async fn browser_only_strategy_browser_never_returns_forbidden_error() {
     assert!(result.is_err(), "expected Err, got Ok: {result:?}");
     let err = result.unwrap_err();
     assert!(
-        matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }),
+        matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }),
         "expected Forbidden or WafBlocked, got: {err:?}"
     );
 }
@@ -101,7 +101,7 @@ async fn browser_only_strategy_browser_never_returns_waf_blocked_error() {
     assert!(result.is_err(), "expected Err, got Ok: {result:?}");
     let err = result.unwrap_err();
     assert!(
-        matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }),
+        matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }),
         "expected Forbidden or WafBlocked, got: {err:?}"
     );
 }
@@ -135,7 +135,7 @@ async fn none_strategy_browser_auto_returns_forbidden_error() {
     assert!(
         matches!(
             result.unwrap_err(),
-            CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }
+            CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }
         ),
         "expected Forbidden or WafBlocked"
     );
@@ -173,7 +173,7 @@ async fn none_strategy_returns_waf_blocked_not_ok() {
     assert!(result.is_err(), "expected Err, got Ok: {result:?}");
     let err = result.unwrap_err();
     assert!(
-        matches!(err, CrawlError::Forbidden(_) | CrawlError::WafBlocked { .. }),
+        matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }),
         "expected Forbidden or WafBlocked, got: {err:?}"
     );
 }

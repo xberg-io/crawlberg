@@ -53,8 +53,8 @@ async fn native_browser_fetch_inner(
     native_executor: &NativeBrowserExecutor,
 ) -> Result<HttpResponse, CrawlError> {
     if config.browser.endpoint.is_some() {
-        return Err(CrawlError::InvalidConfig(
-            "browser.endpoint is only supported by the chromiumoxide backend".into(),
+        return Err(CrawlError::invalid_config(
+            "browser.endpoint is only supported by the chromiumoxide backend",
         ));
     }
 
@@ -136,9 +136,9 @@ async fn native_browser_fetch_inner(
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
         let message = e.to_string();
         if message.contains("timed out") {
-            CrawlError::BrowserTimeout(format!("browser timed out after {timeout:?}"))
+            CrawlError::browser_timeout(format!("browser timed out after {timeout:?}"))
         } else {
-            CrawlError::BrowserError(format!("native browser render failed: {message}"))
+            CrawlError::browser_error(format!("native browser render failed: {message}"))
         }
     })?;
 

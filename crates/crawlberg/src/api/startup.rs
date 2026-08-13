@@ -26,7 +26,7 @@ use super::state::{ALLOW_INSECURE_BIND_ENV, ApiSecurityConfig};
 pub async fn serve(host: &str, port: u16, engine: Arc<CrawlEngine>) -> Result<(), CrawlError> {
     let ip: IpAddr = host
         .parse()
-        .map_err(|e| CrawlError::InvalidConfig(format!("invalid host address: {e}")))?;
+        .map_err(|e| CrawlError::invalid_config(format!("invalid host address: {e}")))?;
 
     let security = ApiSecurityConfig::from_env();
     ensure_bind_is_safe(&ip, &security)?;
@@ -36,11 +36,11 @@ pub async fn serve(host: &str, port: u16, engine: Arc<CrawlEngine>) -> Result<()
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(|e| CrawlError::Other(format!("failed to bind {addr}: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("failed to bind {addr}: {e}")))?;
 
     axum::serve(listener, app)
         .await
-        .map_err(|e| CrawlError::Other(format!("server error: {e}")))?;
+        .map_err(|e| CrawlError::other(format!("server error: {e}")))?;
 
     Ok(())
 }
@@ -59,7 +59,7 @@ fn ensure_bind_is_safe(ip: &IpAddr, security: &ApiSecurityConfig) -> Result<(), 
         return Ok(());
     }
 
-    Err(CrawlError::InvalidConfig(format!(
+    Err(CrawlError::invalid_config(format!(
         "refusing to bind {ip} without authentication: set {token_env}, bind to a loopback address \
          (127.0.0.1/::1), or set {allow_env}=1 to explicitly opt out",
         token_env = super::state::AUTH_TOKEN_ENV,

@@ -30,7 +30,7 @@ pub(crate) fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Optio
 pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlError> {
     patterns
         .iter()
-        .map(|pat| Regex::new(pat).map_err(|e| CrawlError::Other(format!("invalid regex pattern \"{pat}\": {e}"))))
+        .map(|pat| Regex::new(pat).map_err(|e| CrawlError::other(format!("invalid regex pattern \"{pat}\": {e}"))))
         .collect()
 }
 

@@ -72,15 +72,15 @@ impl RetryPolicy for SimpleRetryPolicy {
             CrawlError::WafBlocked { vendor, .. } => RetryDirective::Escalate {
                 reason: EscalationReason::WafBlocked { vendor: vendor.clone() },
             },
-            CrawlError::Forbidden(_) => RetryDirective::Escalate {
+            CrawlError::Forbidden { .. } => RetryDirective::Escalate {
                 reason: EscalationReason::WafBlocked {
                     vendor: "unknown".to_string(),
                 },
             },
-            CrawlError::RateLimited(_)
-            | CrawlError::ServerError(_)
-            | CrawlError::BadGateway(_)
-            | CrawlError::Timeout(_) => {
+            CrawlError::RateLimited { .. }
+            | CrawlError::ServerError { .. }
+            | CrawlError::BadGateway { .. }
+            | CrawlError::Timeout { .. } => {
                 if outcome.attempt >= self.max_retries {
                     RetryDirective::Stop
                 } else {
@@ -88,19 +88,19 @@ impl RetryPolicy for SimpleRetryPolicy {
                     RetryDirective::Retry { backoff_ms: backoff }
                 }
             }
-            CrawlError::Dns(_)
-            | CrawlError::Ssl(_)
-            | CrawlError::Connection(_)
-            | CrawlError::InvalidConfig(_)
-            | CrawlError::Unsupported(_)
-            | CrawlError::NotFound(_)
-            | CrawlError::Unauthorized(_)
-            | CrawlError::Gone(_)
-            | CrawlError::DataLoss(_)
-            | CrawlError::BrowserError(_)
-            | CrawlError::BrowserTimeout(_)
+            CrawlError::Dns { .. }
+            | CrawlError::Ssl { .. }
+            | CrawlError::Connection { .. }
+            | CrawlError::InvalidConfig { .. }
+            | CrawlError::Unsupported { .. }
+            | CrawlError::NotFound { .. }
+            | CrawlError::Unauthorized { .. }
+            | CrawlError::Gone { .. }
+            | CrawlError::DataLoss { .. }
+            | CrawlError::BrowserError { .. }
+            | CrawlError::BrowserTimeout { .. }
             | CrawlError::SsrfPolicyViolation { .. }
-            | CrawlError::Other(_) => RetryDirective::Stop,
+            | CrawlError::Other { .. } => RetryDirective::Stop,
         }
     }
 
@@ -241,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn forbidden_escalates() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::Forbidden("403".into());
+        let err = CrawlError::forbidden("403");
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         assert!(matches!(directive, RetryDirective::Escalate { .. }));
     }
@@ -249,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn rate_limited_retries_with_backoff() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::RateLimited("429".into());
+        let err = CrawlError::rate_limited("429");
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         match directive {
             RetryDirective::Retry { backoff_ms } => assert_eq!(
@@ -263,7 +263,7 @@ mod tests {
     #[tokio::test]
     async fn rate_limited_stops_after_max_retries() {
         let policy = SimpleRetryPolicy::new().with_max_retries(2);
-        let err = CrawlError::RateLimited("429".into());
+        let err = CrawlError::rate_limited("429");
         let directive = policy.decide(&outcome_with_error(err, 2)).await;
         assert_eq!(directive, RetryDirective::Stop);
     }
@@ -271,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn max_retries_3_allows_three_retries_then_stops() {
         let policy = SimpleRetryPolicy::new().with_max_retries(3);
-        let err = CrawlError::RateLimited("429".into());
+        let err = CrawlError::rate_limited("429");
 
         for attempt in 0..3 {
             let directive = policy.decide(&outcome_with_error(err.clone(), attempt)).await;
@@ -292,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn dns_short_circuits() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::Dns("nxdomain".into());
+        let err = CrawlError::dns("nxdomain");
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         assert_eq!(directive, RetryDirective::Stop);
     }
@@ -300,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn ssl_short_circuits() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::Ssl("handshake".into());
+        let err = CrawlError::ssl("handshake");
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         assert_eq!(directive, RetryDirective::Stop);
     }
@@ -326,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn backoff_grows_then_caps() {
         let policy = SimpleRetryPolicy::new().with_max_backoff_ms(1000);
-        let err = CrawlError::Timeout("slow".into());
+        let err = CrawlError::timeout("slow");
         let expected_backoff_ms = [100u64, 200u64];
         for attempt in 0..2 {
             match policy.decide(&outcome_with_error(err.clone(), attempt)).await {

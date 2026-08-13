@@ -128,7 +128,7 @@ pub(crate) async fn follow_redirects(
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
-            Err(CrawlError::NotFound(_)) if redirect_count > 0 => {
+            Err(CrawlError::NotFound { .. }) if redirect_count > 0 => {
                 let synthetic = crate::tower::CrawlResponse {
                     status: 404,
                     content_type: String::new(),
@@ -363,7 +363,7 @@ impl CrawlEngine {
         url: &str,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
-        let parsed_url = Url::parse(url).map_err(|e| CrawlError::Other(format!("invalid URL: {e}")))?;
+        let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
         let client = build_client(&self.config)?;
         let base_host = parsed_url.host_str().unwrap_or("").to_owned();
         let base_host_suffix = format!(".{base_host}");
@@ -631,7 +631,7 @@ impl CrawlEngine {
                     .clone()
                     .acquire_owned()
                     .await
-                    .map_err(|_| CrawlError::Other("semaphore closed".into()))?;
+                    .map_err(|_| CrawlError::other("semaphore closed"))?;
 
                 // ~keep `http.rs::read_body_bounded` is the only place that bounds the network
                 // read, and it is driven by `http::effective_max_body_size`, which falls back
@@ -677,7 +677,7 @@ impl CrawlEngine {
                         blocking_extract_page(&url_for_extract, &content_type_clone, body, body_bytes)
                     })
                     .await
-                    .map_err(|e| (entry.clone(), CrawlError::Other(format!("extraction task failed: {e}"))))?;
+                    .map_err(|e| (entry.clone(), CrawlError::other(format!("extraction task failed: {e}"))))?;
 
                     Ok(FetchResult {
                         entry,
@@ -844,7 +844,7 @@ impl CrawlEngine {
                 .await;
             let _ = self
                 .store
-                .store_error(&page_url, &CrawlError::ServerError(error_msg.clone()))
+                .store_error(&page_url, &CrawlError::server_error(error_msg.clone()))
                 .await;
             let error_event = CrawlEvent::Error {
                 url: page_url,

@@ -331,7 +331,7 @@ fn build_native_browser_executor(
         _ => crawlberg_browser::adapter::NativeBrowserExecutorConfig::default(),
     };
     let executor = crawlberg_browser::adapter::NativeBrowserExecutor::new(executor_config)
-        .map_err(|e| CrawlError::BrowserError(format!("failed to start native browser executor: {e}")))?;
+        .map_err(|e| CrawlError::browser_error(format!("failed to start native browser executor: {e}")))?;
     Ok(Some(Arc::new(executor)))
 }
 

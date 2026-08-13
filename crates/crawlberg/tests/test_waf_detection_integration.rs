@@ -297,7 +297,7 @@ async fn test_plain_403_is_not_waf() {
         .expect("create_engine with no-browser config should succeed in integration test");
     let result = scrape(&handle, &mock.uri()).await;
     assert!(
-        matches!(result, Err(CrawlError::Forbidden(_))),
+        matches!(result, Err(CrawlError::Forbidden { .. })),
         "plain 403 should be Forbidden, not WafBlocked: {:?}",
         result
     );
