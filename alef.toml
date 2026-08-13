@@ -1,10 +1,11 @@
 [workspace]
-# ~keep Pinned to 0.60.0, not 0.60.1: alef a9a2bcece collapsed the JNI lib_header
-# ~keep template onto one line, so 0.60.1 emits a crawlberg-jni/src/lib.rs that does not
-# ~keep parse — and `alef verify --exit-code` still exits 0, because it hashes whatever
-# ~keep was written. 0.60.1 is also unreleased and untagged, so `install-alef` 404s in CI.
-# ~keep Move forward once a fixed release lands; 0.60.1 carries the pyo3 and Elixir fixes.
-alef_version = "0.60.0"
+# ~keep Verify a new pin by inspecting the binary, not `alef --version`. The 0.60.0 pin
+# ~keep existed because a9a2bcece reflowed the JNI lib_header template, so alef emitted a
+# ~keep crawlberg-jni/src/lib.rs that did not parse — while `alef verify --exit-code` still
+# ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
+# ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
+# ~keep means a pre-fix build, regardless of what the version string says.
+alef_version = "0.60.2"
 languages = [
   "python",
   "node",
@@ -378,7 +379,12 @@ kotlin_android = "packages/kotlin-android/src/main/kotlin/io/xberg/crawlberg/and
 swift = "packages/swift/Sources/Crawlberg/"
 zig = "packages/zig/src/"
 
-# Crate-internal items are hidden from alef via `#[cfg_attr(alef, alef(skip))]`
+# ~keep Crate-internal items are hidden from alef by omission from `sources` above, not by
+# ~keep `#[cfg_attr(alef, alef(skip))]` — extraction only ever walks the listed source files
+# ~keep (verified against alef's extractor, which iterates only `config.sources`).
+# ~keep `alef(skip)` matters only inside files that *are* in `sources`. The previous wording
+# ~keep here claimed the opposite and caused an audit to misread the skip surface as ~25
+# ~keep deliberate exclusions when 27 of the 38 were simply inert.
 
 [crates.include]
 types = [
@@ -450,6 +456,9 @@ owner_type = "CrawlEngineHandle"
 item_type = "CrawlEvent"
 error_type = "CrawlError"
 request_type = "crawlberg::CrawlStreamRequest"
+# ~keep wasm only: crawlberg-core's tokio-runtime engine does not compile for
+# ~keep wasm32-unknown-unknown, so the streaming adapters have no wasm surface to bind.
+# ~keep Confirmed: crates/crawlberg-wasm/src/lib.rs exports no crawl_stream symbol.
 skip_languages = ["wasm"]
 
 [[crates.adapters.params]]
@@ -464,6 +473,9 @@ owner_type = "CrawlEngineHandle"
 item_type = "CrawlEvent"
 error_type = "CrawlError"
 request_type = "crawlberg::BatchCrawlStreamRequest"
+# ~keep wasm only: crawlberg-core's tokio-runtime engine does not compile for
+# ~keep wasm32-unknown-unknown, so the streaming adapters have no wasm surface to bind.
+# ~keep Confirmed: crates/crawlberg-wasm/src/lib.rs exports no crawl_stream symbol.
 skip_languages = ["wasm"]
 
 [[crates.adapters.params]]
@@ -900,6 +912,10 @@ async = true
 returns_result = true
 options_type = "CrawlConfig"
 select_when = { category = "batch", input_has = "batch_urls" }
+# ~keep e2e-harness skip, NOT an API gap: elixir, zig and swift all EXPOSE this
+# ~keep operation — only the generated e2e suite is skipped, so these three have zero
+# ~keep e2e coverage for it. Original rationale was never recorded; re-derive before
+# ~keep relying on this. See crawlberg #109.
 skip_languages = ["elixir", "zig", "swift"]
 result_fields = ["results", "total_count", "completed_count", "failed_count", "url", "result", "error"]
 
@@ -1211,6 +1227,10 @@ async = true
 returns_result = true
 options_type = "CrawlConfig"
 select_when = { category = "batch", id_prefix = "batch_crawl" }
+# ~keep e2e-harness skip, NOT an API gap: elixir, zig and swift all EXPOSE this
+# ~keep operation — only the generated e2e suite is skipped, so these three have zero
+# ~keep e2e coverage for it. Original rationale was never recorded; re-derive before
+# ~keep relying on this. See crawlberg #109.
 skip_languages = ["elixir", "zig", "swift"]
 result_fields = ["results", "total_count", "completed_count", "failed_count", "url", "result", "error"]
 
@@ -1283,6 +1303,9 @@ returns_result = true
 streaming = true
 options_type = "CrawlConfig"
 select_when = { category = "stream" }
+# ~keep wasm: no streaming surface (see the adapter skips above). c: unrecorded —
+# ~keep the C FFI DOES export cberg_crawl_engine_handle_crawl_stream, so this is an
+# ~keep e2e-harness skip with no captured reason. See crawlberg #109.
 skip_languages = ["wasm", "c"]
 result_fields = ["url", "event_type", "page", "error", "final_url", "result", "pages_crawled"]
 
@@ -1358,6 +1381,10 @@ returns_result = true
 streaming = true
 options_type = "CrawlConfig"
 select_when = { category = "stream", id_prefix = "batch_crawl_stream" }
+# ~keep Widest skip in the file and the least explained. wasm is justified (no
+# ~keep streaming surface); elixir/zig/swift/c mirror the skips above; brew is skipped
+# ~keep here but NOT for crawl_stream, which is asymmetric and unexplained.
+# ~keep None of it is recorded — treat as unverified. See crawlberg #109.
 skip_languages = ["wasm", "elixir", "zig", "swift", "brew", "c"]
 result_fields = ["url", "event_type", "page", "error", "final_url", "result", "pages_crawled"]
 
