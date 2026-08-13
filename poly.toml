@@ -59,6 +59,15 @@ exclude = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
+  "docs-site/src/content/docs/reference/api-*.md",
+  "docs-site/src/content/docs/reference/cli.md",
+  "docs-site/src/content/docs/reference/configuration.md",
+  "docs-site/src/content/docs/reference/errors.md",
+  "docs-site/src/content/docs/reference/mcp.md",
+  "docs-site/src/content/docs/reference/types.md",
+  "packages/swift/Sources/Crawlberg/Crawlberg.swift",
+  "packages/swift/Sources/RustBridge/ZSwiftPluginHelpers.swift",
+  "test_apps/swift_e2e/Tests/CrawlbergE2ETests/**",
 ]
 
 [lint.markdown.rumdl]
@@ -460,6 +469,15 @@ lint = { exclude = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
+  "docs-site/src/content/docs/reference/api-*.md",
+  "docs-site/src/content/docs/reference/cli.md",
+  "docs-site/src/content/docs/reference/configuration.md",
+  "docs-site/src/content/docs/reference/errors.md",
+  "docs-site/src/content/docs/reference/mcp.md",
+  "docs-site/src/content/docs/reference/types.md",
+  "packages/swift/Sources/Crawlberg/Crawlberg.swift",
+  "packages/swift/Sources/RustBridge/ZSwiftPluginHelpers.swift",
+  "test_apps/swift_e2e/Tests/CrawlbergE2ETests/**",
 ] }
 fmt = { exclude = [
   "**/*.freezed.dart",
@@ -516,6 +534,15 @@ fmt = { exclude = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
+  "docs-site/src/content/docs/reference/api-*.md",
+  "docs-site/src/content/docs/reference/cli.md",
+  "docs-site/src/content/docs/reference/configuration.md",
+  "docs-site/src/content/docs/reference/errors.md",
+  "docs-site/src/content/docs/reference/mcp.md",
+  "docs-site/src/content/docs/reference/types.md",
+  "packages/swift/Sources/Crawlberg/Crawlberg.swift",
+  "packages/swift/Sources/RustBridge/ZSwiftPluginHelpers.swift",
+  "test_apps/swift_e2e/Tests/CrawlbergE2ETests/**",
 ] }
 file_safety = { exclude = [
   "**/*.freezed.dart",
@@ -572,6 +599,15 @@ file_safety = { exclude = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
+  "docs-site/src/content/docs/reference/api-*.md",
+  "docs-site/src/content/docs/reference/cli.md",
+  "docs-site/src/content/docs/reference/configuration.md",
+  "docs-site/src/content/docs/reference/errors.md",
+  "docs-site/src/content/docs/reference/mcp.md",
+  "docs-site/src/content/docs/reference/types.md",
+  "packages/swift/Sources/Crawlberg/Crawlberg.swift",
+  "packages/swift/Sources/RustBridge/ZSwiftPluginHelpers.swift",
+  "test_apps/swift_e2e/Tests/CrawlbergE2ETests/**",
 ] }
 cargo = true
 commit = { stages = ["commit-msg"] }
