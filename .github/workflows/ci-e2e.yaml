@@ -185,7 +185,7 @@ jobs:
         run: |
           mkdir -p target/release e2e/rust/target/release
           mkdir -p e2e/c/ffi/include e2e/c/ffi/lib
-          mkdir -p crates/crawlberg-ffi/include packages/go/include packages/go/internal/ffi
+          mkdir -p crates/crawlberg-ffi/include packages/go/include
           # actions/upload-artifact@v7 preserves directory structure for multi-path
           # uploads, so files land under ffi-artifacts/target/release/ etc.
           # Fall back to flat layout for safety.
@@ -200,15 +200,15 @@ jobs:
           for src in ffi-artifacts/crates/crawlberg-ffi/include/crawlberg.h ffi-artifacts/crawlberg.h; do
             [ -e "$src" ] && cp "$src" crates/crawlberg-ffi/include/ || true
             [ -e "$src" ] && cp "$src" e2e/c/ffi/include/ || true
-            # packages/go/binding.go (alef-generated) declares
-            # `#cgo CFLAGS: -I${SRCDIR}/include` so cgo needs the header at
-            # packages/go/include/crawlberg.h. packages/go/ffi.go (hand-written
-            # platform split) additionally declares
-            # `#cgo CFLAGS: -I${SRCDIR}/internal/ffi` and
-            # `#include "internal/ffi/crawlberg.h"`, so the header is also needed
-            # at packages/go/internal/ffi/crawlberg.h. Stage to both paths.
+            # Every cgo file in packages/go now resolves the header through
+            # `-I${SRCDIR}/include`, so one staged copy serves all of them.
+            # This used to stage a second copy to packages/go/internal/ffi/
+            # because ffi.go included it from there; that vendored header had
+            # frozen at v1.0.9 while this one tracked regens, and cgo unions
+            # CFLAGS across a package, so the ambiguous basename could resolve
+            # to the stale copy. ffi.go now points at include/ and the vendored
+            # copy is gone.
             [ -e "$src" ] && cp "$src" packages/go/include/ || true
-            [ -e "$src" ] && cp "$src" packages/go/internal/ffi/ || true
           done
           # The Makefile's `$(FFI_DIR)/include/crawlberg.h: download_ffi.sh` rule
           # re-downloads if the header is older than the script. Touch the staged

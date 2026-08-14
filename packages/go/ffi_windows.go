@@ -15,11 +15,11 @@ package crawlberg
 //   - Production: Run go generate to download FFI and generate cgo_flags.go
 //
 // IMPORTANT: On Windows, you must set CGO_CFLAGS environment variable to include
-// the path to internal/ffi directory, e.g.:
-//   set CGO_CFLAGS=-I/c/path/to/packages/go/internal/ffi
+// the path to the include directory, e.g.:
+//   set CGO_CFLAGS=-I/c/path/to/packages/go/include
 // The path should use forward slashes and MSYS2-style drive letters (/c/ instead of C:/)
 
-#include "internal/ffi/crawlberg.h"
+#include "crawlberg.h"
 #include <stdlib.h>
 #include <stdint.h>
 */
