@@ -21,3 +21,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 [lints.rust]
 # flutter_rust_bridge uses #[cfg(frb_expand)] internally during macro expansion.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# ~keep Repeats [workspace.lints.clippy] rather than inheriting it. `[lints] workspace = true`
+# would be the normal way, but Cargo rejects a manifest that both inherits the workspace lints
+# and defines its own `[lints.rust]`, and the `frb_expand` check-cfg above is specific to this
+# crate. Without these three the repo's diagnostics rule is inert here, since the deny only
+# applies to members that opt in.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
