@@ -540,10 +540,16 @@ before = "cd packages/ruby && bundle install"
 format = "cd packages/ruby && bundle exec rubocop -a ."
 
 [crates.lint.php]
+# ~keep There is ONE PHP package and its manifest is the repo-root composer.json — that is what
+# ~keep Packagist reads and what `[crates.output] php` autoloads (Crawlberg\ -> crates/crawlberg-php/src).
+# ~keep These hooks used to `cd packages/php`, which has had no composer.json since f76aa7c31, so every
+# ~keep one of them was broken: composer cannot run without a manifest, and packages/php/vendor exists
+# ~keep only on machines that installed it before the migration. The phpstan `check` line is dropped
+# ~keep rather than repointed — it referenced phpstan.neon, which exists nowhere in the repo, so it has
+# ~keep not run since the migration either. Restore it alongside a real config, not before.
 precondition = "command -v php >/dev/null 2>&1"
-before = "cd packages/php && composer install"
-format = "cd packages/php && vendor/bin/php-cs-fixer fix ."
-check = "cd packages/php && vendor/bin/phpstan --configuration=phpstan.neon --memory-limit=512M"
+before = "composer install"
+format = "vendor/bin/php-cs-fixer fix crates/crawlberg-php/src"
 
 [crates.lint.go]
 precondition = "command -v golangci-lint >/dev/null 2>&1"
@@ -605,9 +611,12 @@ update = "cd packages/elixir && mix deps.update --all"
 upgrade = "cd packages/elixir && mix deps.update --all"
 
 [crates.update.php]
+# ~keep Same repo-root-manifest fact as [crates.lint.php]: there is ONE PHP package, its
+# ~keep manifest is composer.json at the repo root, and `cd packages/php` here was broken the same
+# ~keep way since f76aa7c31 — no manifest to update against.
 precondition = "command -v composer >/dev/null 2>&1"
-update = "cd packages/php && composer update --no-interaction"
-upgrade = "cd packages/php && composer update --with-all-dependencies --no-interaction"
+update = "composer update --no-interaction"
+upgrade = "composer update --with-all-dependencies --no-interaction"
 
 [crates.update.kotlin_android]
 precondition = "false"
@@ -868,7 +877,13 @@ rust = "(cd {dir} && cargo fmt --all)"
 python = "ruff check --fix {dir} && ruff format {dir}"
 go = "gofmt -w {dir}"
 ruby = "(cd {dir} && bundle exec rubocop --config .rubocop.yaml --autocorrect-all .)"
-php = "(cd {dir} && ../../packages/php/vendor/bin/php-cs-fixer fix --rules='@PSR12,@PHP82Migration' --path-mode=override .)"
+# ~keep {dir} is e2e/php, so ../.. is the repo root. This used to point into
+# ~keep packages/php/vendor/bin, which has had no composer.json (and so no reproducible vendor/)
+# ~keep since f76aa7c31. php-cs-fixer is installed at repo-root vendor/bin instead (present there
+# ~keep today; note the root composer.json require-dev block does not currently list
+# ~keep friendsofphp/php-cs-fixer even though composer.lock and vendor/bin do — a pre-existing
+# ~keep drift this hook does not attempt to fix).
+php = "(cd {dir} && ../../vendor/bin/php-cs-fixer fix --rules='@PSR12,@PHP82Migration' --path-mode=override .)"
 dart = "cd {dir} && dart format ."
 zig = "zig fmt {dir}"
 
