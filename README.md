@@ -166,7 +166,7 @@ Available on Maven Central as `io.xberg.crawlberg:crawlberg`. See [Java README](
 <summary><strong>C#</strong></summary>
 
 ```sh
-dotnet add package Crawlberg
+dotnet add package XbergIo.Crawlberg
 ```
 
 See [C# README](https://github.com/xberg-io/crawlberg/tree/main/packages/csharp) for full documentation.
