@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.60.2"
+alef_version = "0.61.0"
 languages = [
   "python",
   "node",
@@ -29,6 +29,15 @@ python_package_manager = "uv"
 node_package_manager = "pnpm"
 
 [workspace.dto]
+# ~keep `dart = "dataclass"` and `kotlin_android = "data-class"` used to sit here. alef's DtoConfig
+# ~keep has never had a field for either, and no DartDtoStyle/KotlinAndroidDtoStyle enum exists, so
+# ~keep both keys were silently discarded on every run since they were written — they configured
+# ~keep nothing. alef 0.61.0 added deny_unknown_fields to DtoConfig, which turned that silent
+# ~keep discard into a hard config-load failure, breaking every alef command before it did any work.
+# ~keep Removing them is provably behaviour-neutral (they were already inert) and unblocks the
+# ~keep toolchain. Restore them ONLY once alef ships real fields for these two languages, and expect
+# ~keep the dart/kotlin_android generated output to shift on that regen — the style would be taking
+# ~keep effect for the first time, which will look like a codegen regression and will not be one.
 python = "dataclass"
 python_output = "typed-dict"
 node = "interface"
@@ -38,8 +47,6 @@ elixir = "struct"
 go = "struct"
 java = "record"
 csharp = "record"
-dart = "dataclass"
-kotlin_android = "data-class"
 
 [workspace.docs]
 reference_output = "docs-site/src/content/docs/reference"
