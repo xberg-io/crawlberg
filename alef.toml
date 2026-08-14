@@ -66,7 +66,7 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 dirs = ["docs-site/src/snippets"]
 validation_level = "compile"
 timeout_secs = 300
-# ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 9 of 14 languages are
+# ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 7 of 14 languages are
 # ~keep downgraded until they have a session below. Turn it on with the last session, not before.
 
 # ~keep A snippet annotation can only LOWER the level (runner.rs `requested.min(level)`), so the
@@ -78,6 +78,21 @@ cwd = "crates/crawlberg"
 [workspace.docs.snippets.sessions.rust.rust_dependencies.tokio]
 version = "1"
 features = ["macros", "rt-multi-thread"]
+
+# ~keep zig needs no build: crawlberg.h is a checked-in generated header, and alef's
+# ~keep zig validator runs `build-exe -fno-emit-bin`, which type-checks the `@cImport`
+# ~keep declarations without linking, so the compiled `libcrawlberg_ffi` need not exist.
+[workspace.docs.snippets.sessions.zig]
+cwd = "packages/zig"
+manifest = "packages/zig/build.zig"
+include_paths = ["crates/crawlberg-ffi/include"]
+
+# ~keep csharp P/Invoke (`[DllImport]`) resolves the native library at call time, not
+# ~keep build time, so `dotnet build` on the ProjectReference compiles from source alone
+# ~keep and needs no prebuilt assembly, despite the annotation reason this replaces.
+[workspace.docs.snippets.sessions.csharp]
+cwd = "packages/csharp"
+manifest = "packages/csharp/Crawlberg/Crawlberg.csproj"
 
 [workspace.sync]
 extra_paths = ["package.json", "crates/crawlberg-node/package.json", "crates/crawlberg-py/src/pyproject.toml"]

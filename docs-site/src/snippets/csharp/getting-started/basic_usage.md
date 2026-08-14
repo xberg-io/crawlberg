@@ -1,4 +1,3 @@
-<!-- snippet:syntax-only reason="no session yet: needs a built Crawlberg .NET assembly to reference" -->
 ```csharp title="C#"
 using System;
 using System.Threading.Tasks;

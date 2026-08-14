@@ -1,4 +1,3 @@
-<!-- snippet:syntax-only reason="no session yet: needs one mapping the crawlberg zig module (@import resolves to nothing without it)" -->
 ```zig title="Zig"
 const std = @import("std");
 const crawlberg = @import("crawlberg");
