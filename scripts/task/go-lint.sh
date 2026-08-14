@@ -16,7 +16,7 @@ if [ ! -f "$root/target/release/libcrawlberg_ffi.dylib" ] && [ ! -f "$root/targe
 fi
 
 workspace_dirs=(
-  packages/go/v4
+  packages/go
   e2e/go
   tools/benchmark-harness/scripts
 )

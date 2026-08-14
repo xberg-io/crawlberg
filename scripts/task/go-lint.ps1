@@ -14,7 +14,7 @@ $repoRoot = if ($env:REPO_ROOT) { $env:REPO_ROOT } else {
     if ($LASTEXITCODE -eq 0) { $gitRoot } else { Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 }
 
-$goDir = Join-Path $repoRoot "packages/go/v4"
+$goDir = Join-Path $repoRoot "packages/go"
 
 $env:PKG_CONFIG_PATH = "$repoRoot/crates/crawlberg-ffi;$($env:PKG_CONFIG_PATH)"
 if ($PSVersionTable.Platform -eq 'Win32NT' -or $PSVersionTable.PSVersion.Major -lt 6) {

@@ -12,7 +12,7 @@ validate_repo_root "$REPO_ROOT" || exit 1
 
 setup_go_paths "$REPO_ROOT"
 
-cd "${REPO_ROOT}/packages/go/v4"
+cd "${REPO_ROOT}/packages/go"
 
 verbose_mode="${VERBOSE_MODE:-${CI:-false}}"
 is_ci="${CI:-}"
