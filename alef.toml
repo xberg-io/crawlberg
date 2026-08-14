@@ -801,6 +801,14 @@ fields_array = [
   "browser.cookies",
 ]
 fields_enum = ["links[].link_type", "assets[].category"]
+# ~keep `action_results[].data` is JSON-backed, and it is the only field in `fields_optional`
+# above that is. Being merely optional makes the Kotlin emitter render it as
+# `.data.orEmpty()`, which does not compile against the `Any?` the binding actually exposes
+# (e2e/kotlin_android/.../InteractionTest.kt:81 is the single site). Alef's fix for that is
+# opt-in per field via this key rather than applied to every optional field, because
+# `.orEmpty()` is correct for a genuine `String?`. So this does NOT self-heal on regen —
+# without this line the regenerated Kotlin e2e stays broken.
+fields_json_scalar = ["action_results[].data"]
 result_fields = [
   "status_code",
   "content_type",
