@@ -1,4 +1,4 @@
-<!-- snippet:syntax-only reason="alef runs zig without HOME, so the compiler fails with AppDataDirUnavailable before it reads the code" -->
+<!-- snippet:syntax-only reason="no session yet: needs one mapping the crawlberg zig module (@import resolves to nothing without it)" -->
 ```zig title="Zig"
 const std = @import("std");
 const crawlberg = @import("crawlberg");
