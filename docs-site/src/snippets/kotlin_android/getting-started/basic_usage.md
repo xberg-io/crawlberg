@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs the Android artifact plus jackson-databind and kotlinx-coroutines" -->
 ```kotlin title="Kotlin (Android)"
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.PropertyNamingStrategies

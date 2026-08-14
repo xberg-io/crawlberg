@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs the packages/java classpath" -->
 ```java title="Java"
 import io.xberg.crawlberg.CrawlConfig;
 import io.xberg.crawlberg.CrawlEngineHandle;

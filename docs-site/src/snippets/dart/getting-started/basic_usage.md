@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs packages/dart resolved through pub" -->
 ```dart title="Dart"
 import 'package:crawlberg/crawlberg.dart';
 import 'package:crawlberg/src/crawlberg_bridge_generated/frb_generated.dart'

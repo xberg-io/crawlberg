@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs @xberg-io/crawlberg-wasm built from crates/crawlberg-wasm" -->
 ```javascript title="WASM"
 import { WasmCrawlConfig, crawl, createEngine, scrape } from "@xberg-io/crawlberg-wasm";
 

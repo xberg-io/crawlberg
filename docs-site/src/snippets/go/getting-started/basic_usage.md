@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs the packages/go module and its vendored cgo header" -->
 ```go title="Go"
 package main
 

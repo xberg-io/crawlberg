@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs the built Crawlberg Swift module" -->
 ```swift title="Swift"
 import Foundation
 import Crawlberg

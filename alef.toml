@@ -57,6 +57,20 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 
 [workspace.docs.snippets]
 dirs = ["docs-site/src/snippets"]
+validation_level = "compile"
+timeout_secs = 300
+# ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 9 of 14 languages are
+# ~keep downgraded until they have a session below. Turn it on with the last session, not before.
+
+# ~keep A snippet annotation can only LOWER the level (runner.rs `requested.min(level)`), so the
+# ~keep workspace level must be the highest any language reaches and the laggards are annotated
+# ~keep `snippet:syntax-only` in their own file until a session can resolve their package.
+[workspace.docs.snippets.sessions.rust]
+cwd = "crates/crawlberg"
+
+[workspace.docs.snippets.sessions.rust.rust_dependencies.tokio]
+version = "1"
+features = ["macros", "rt-multi-thread"]
 
 [workspace.sync]
 extra_paths = ["package.json", "crates/crawlberg-node/package.json", "crates/crawlberg-py/src/pyproject.toml"]

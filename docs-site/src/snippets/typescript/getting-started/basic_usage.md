@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="no session yet: needs @xberg-io/crawlberg built from crates/crawlberg-node" -->
 ```typescript title="TypeScript"
 import { crawl, createEngine, scrape } from "@xberg-io/crawlberg";
 

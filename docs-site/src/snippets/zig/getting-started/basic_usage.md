@@ -1,3 +1,4 @@
+<!-- snippet:syntax-only reason="alef runs zig without HOME, so the compiler fails with AppDataDirUnavailable before it reads the code" -->
 ```zig title="Zig"
 const std = @import("std");
 const crawlberg = @import("crawlberg");
