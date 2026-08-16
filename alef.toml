@@ -159,27 +159,22 @@ exclude = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
   ".ai-rulez-generated.json",
-  # alef-generated pages that poly's hash-stamp detector does not recognise, so
-  # they land in the fmt gate and poly and alef would fight over their bytes.
-  # Starlight YAML frontmatter pushes the `alef:hash:` marker to line 6, and
-  # poly reads only the first 5 (GENERATED_HEADER_LINES), so the marker is never
-  # seen. Reported upstream; drop these once poly widens that window.
+  # ~keep The six docs-site/reference entries that used to sit here are gone, and
+  # should NOT be re-added. They existed because Starlight YAML frontmatter pushes
+  # the `alef:hash:` marker to line 6 while poly read only the first 5
+  # (GENERATED_HEADER_LINES), so the detector never saw it. poly has since widened
+  # that window, and the marker is now recognised.
   #
-  # Listed file-by-file ON PURPOSE — a directory glob would also swallow
-  # hand-written neighbours, since reference/ holds mcp-tools.md, parsers.md and
-  # rest-api.md.
+  # The green that justifies this is NOT a scoped `poly fmt --check` — the old note
+  # here rightly warned that those files pass on style coincidence, so a green run
+  # proves nothing. The discriminating test is whether the detector RECOGNISES them:
+  #   poly fmt --check --include-excluded docs-site/src/content/docs/reference/api-*.md
+  #     -> "0 file(s) checked, 15 skipped (hash-stamped generated file)"
+  # and, as the control that it is not just blanket-skipping the directory, the
+  # hand-written neighbours mcp-tools.md, parsers.md and rest-api.md come back
+  # "All formatted. (3 file(s) checked)" — checked, not skipped.
   #
-  # ~keep These pass `poly fmt --check` TODAY without being protected by any
-  # detector — their bytes simply already match poly's markdown style. That is
-  # luck, not a mechanism, so the entries stay: the fight resumes the first time
-  # alef emits something poly would restyle. Do not "clean up" this list on the
-  # strength of a green scoped run.
-  "docs-site/src/content/docs/reference/api-*.md",
-  "docs-site/src/content/docs/reference/cli.md",
-  "docs-site/src/content/docs/reference/configuration.md",
-  "docs-site/src/content/docs/reference/errors.md",
-  "docs-site/src/content/docs/reference/mcp.md",
-  "docs-site/src/content/docs/reference/types.md",
+  # Re-add an entry only if that first command starts reporting files as *checked*.
 ]
 
 # Opt-in comment-removal sweep. Preserve doc comments (rustdoc is required on
