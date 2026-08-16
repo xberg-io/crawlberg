@@ -74,7 +74,7 @@ html5ever = "0.39"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
-liter-llm = { version = "1.16", features = ["native-http"] }
+liter-llm = { version = "1.17", features = ["native-http"] }
 markup5ever = "0.39"
 memchr = "2"
 minijinja = "2"
