@@ -7,9 +7,13 @@ use std::time::Duration;
 use crate::error::CrawlError;
 use crate::types::{CachedPage, CrawlPageResult, ScrapeResult};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 /// An entry in the URL frontier queue.
-#[derive(Debug, Clone)]
+///
+/// A [`Frontier`] backed by a database, a file or a message queue stores and reloads this
+/// type, so its serialized shape is part of the public API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrontierEntry {
     /// URL waiting to be crawled.
     pub url: String,
@@ -225,5 +229,61 @@ pub trait CrawlCache: Send + Sync {
     async fn get_stale(&self, key: &str) -> Result<Option<CachedPage>, CrawlError> {
         let _ = key;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FrontierEntry;
+
+    fn sample() -> FrontierEntry {
+        FrontierEntry {
+            url: "https://example.com/page".to_owned(),
+            depth: 3,
+            doc_depth: 1,
+            priority: 0.25,
+        }
+    }
+
+    #[test]
+    fn should_serialize_frontier_entry_with_exact_field_names() {
+        let json = serde_json::to_value(sample()).expect("FrontierEntry must serialize");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "url": "https://example.com/page",
+                "depth": 3,
+                "doc_depth": 1,
+                "priority": 0.25
+            })
+        );
+    }
+
+    #[test]
+    fn should_round_trip_frontier_entry_through_json() {
+        let original = sample();
+        let encoded = serde_json::to_string(&original).expect("FrontierEntry must serialize");
+        let decoded: FrontierEntry = serde_json::from_str(&encoded).expect("FrontierEntry must deserialize");
+
+        assert_eq!(decoded.url, original.url);
+        assert_eq!(decoded.depth, original.depth);
+        assert_eq!(decoded.doc_depth, original.doc_depth);
+        assert_eq!(decoded.priority, original.priority);
+    }
+
+    #[test]
+    fn should_round_trip_seed_entry_at_depth_zero() {
+        let seed = FrontierEntry {
+            url: "https://example.com/".to_owned(),
+            depth: 0,
+            doc_depth: 0,
+            priority: 1.0,
+        };
+        let encoded = serde_json::to_string(&seed).expect("FrontierEntry must serialize");
+        let decoded: FrontierEntry = serde_json::from_str(&encoded).expect("FrontierEntry must deserialize");
+
+        assert_eq!(decoded.depth, 0);
+        assert_eq!(decoded.doc_depth, 0);
+        assert_eq!(decoded.priority, 1.0);
     }
 }
