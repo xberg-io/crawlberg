@@ -38,11 +38,19 @@
 		},
 		"mock_response": {
 			"type": "object",
+			"required": ["status"],
 			"additionalProperties": false,
 			"properties": {
-				"status": { "type": "integer" },
+				"status": { "type": "integer", "minimum": 100, "maximum": 599 },
 				"headers": { "type": "object", "additionalProperties": { "type": "string" } },
-				"body": { "type": "string" }
+				"body": {
+					"description": "Any JSON value. alef deserialises it as Option<serde_json::Value>, so a non-string body is valid."
+				},
+				"stream_chunks": {
+					"type": "array",
+					"items": {},
+					"description": "SSE chunks, each sent as `data: <chunk>`. A non-empty array is what makes the fixture a streaming mock."
+				}
 			},
 			"description": "Single-response shorthand, used instead of input.mock_responses."
 		},
