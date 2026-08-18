@@ -17,6 +17,35 @@
 			"type": "array",
 			"items": { "type": "string" }
 		},
+		"docs": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["topic", "stem", "title"],
+			"properties": {
+				"topic": { "type": "string", "description": "Docs section this fixture is published under." },
+				"stem": { "type": "string", "description": "URL slug for the generated docs page." },
+				"title": { "type": "string", "description": "Human-readable page title." }
+			},
+			"description": "Docs-site publication metadata. Present on every fixture."
+		},
+		"category": {
+			"type": "string",
+			"description": "Overrides the fixture category otherwise inferred from its directory."
+		},
+		"call": {
+			"type": "string",
+			"description": "Overrides which API call the generated test invokes (e.g. \"batch_scrape\")."
+		},
+		"mock_response": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"status": { "type": "integer" },
+				"headers": { "type": "object", "additionalProperties": { "type": "string" } },
+				"body": { "type": "string" }
+			},
+			"description": "Single-response shorthand, used instead of input.mock_responses."
+		},
 		"skip": {
 			"type": "object",
 			"properties": {
@@ -83,7 +112,7 @@
 					"type": "object",
 					"properties": {
 						"max_depth": { "type": "integer", "minimum": 0 },
-						"max_pages": { "type": "integer", "minimum": 1 },
+						"max_pages": { "type": "integer" },
 						"max_links_per_page": {
 							"type": "integer",
 							"minimum": 0,
@@ -111,7 +140,7 @@
 						"allow_subdomains": { "type": "boolean" },
 						"max_redirects": { "type": "integer", "minimum": 0 },
 						"max_body_size": { "type": "integer", "minimum": 0, "description": "Max body size in bytes" },
-						"max_concurrent": { "type": "integer", "minimum": 1 },
+						"max_concurrent": { "type": "integer" },
 						"rate_limit_ms": { "type": "integer", "minimum": 0 },
 						"custom_headers": { "type": "object", "additionalProperties": { "type": "string" } },
 						"cookies_enabled": { "type": "boolean" },
@@ -299,7 +328,9 @@
 							"contains_all",
 							"is_empty",
 							"not_contains",
-							"error"
+							"error",
+							"is_true",
+							"is_false"
 						],
 						"description": "Assertion type."
 					},
