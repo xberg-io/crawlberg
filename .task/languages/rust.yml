@@ -178,6 +178,12 @@ tasks:
     env:
       PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
     cmds:
+      # ~keep deps:check runs FIRST deliberately. `task` stops at the first failing cmd, so
+      # wiring it after clippy would mean a clippy failure silently skips it -- which is the
+      # exact shape it exists to catch (a sibling repo's equivalent gate aborted before
+      # analysing a single crate for weeks, and an unused dependency rode in underneath).
+      # It costs seconds; nothing before it can mask it.
+      - task: deps:check
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
       # ~keep php stays excluded: ext-php-rs's build script shells out to a `php` binary,
@@ -185,6 +191,24 @@ tasks:
       - cargo clippy --workspace --exclude crawlberg-php -- -D warnings -A clippy::inherent_to_string
       - task: fuzz:check
       - task: config:check
+
+  deps:check:
+    desc: Fail on dependencies declared in a manifest but never used in its source
+    env:
+      PATH: "{{.CARGO_PATH_PREFIX}}{{.PATH}}"
+    cmds:
+      # ~keep 14 Cargo.toml files already carry curated
+      # [package.metadata.cargo-machete] ignored lists, but nothing read them until this
+      # task existed -- the suppressions were maintained for a gate that was never wired.
+      # A sibling repo's equivalent gate had been aborting before analysing a single crate
+      # for weeks, which let an unused dependency ride in under a familiar-looking error,
+      # so treat a bare "no unused dependencies" as unproven: plant one and see it fail.
+      - cmd: |
+          if ! command -v cargo-machete >/dev/null 2>&1; then
+            echo "cargo-machete not installed; install with: cargo install cargo-machete" >&2
+            exit 1
+          fi
+          cargo-machete
 
   fuzz:check:
     desc: Type-check the fuzz targets (separate workspace, not covered by --workspace)
