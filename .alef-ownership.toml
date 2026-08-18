@@ -1,0 +1,17 @@
+# alef ownership record -- COMMIT THIS FILE, do not add it to .gitignore.
+#
+# Lists the alef-generated paths whose format cannot carry an `alef:hash:`
+# provenance marker (`package.json`, `*.jar`, ...). Every other format proves
+# alef's ownership from the marker in the file itself and never appears here.
+# Without this list committed, a fresh clone cannot tell an alef-generated
+# `package.json` from a hand-written one and refuses to regenerate it.
+#
+# Ownership is a fact about history, not about content: a path lands here only
+# because alef created the file, or because a human ran `alef adopt` on it.
+# Nothing here is inferred by comparing bytes against generated output -- a
+# hand-written file that happens to match must never be claimed. Do not hand-add
+# entries; run `alef adopt <path>`, read the diff it prints, and let it write.
+
+owned_paths = [
+  "e2e/c/Makefile",
+]
