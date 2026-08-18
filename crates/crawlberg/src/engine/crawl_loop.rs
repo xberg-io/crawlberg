@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use regex::Regex;
 use tl::ParserOptions;
 use tokio::sync::Semaphore;
@@ -578,10 +579,9 @@ impl CrawlEngine {
                     break;
                 }
 
-                let Some(idx) = self.strategy.select_next(working_set) else {
+                let Some(entry) = super::take_selected(self.strategy.as_ref(), working_set) else {
                     break;
                 };
-                let entry = working_set.swap_remove(idx);
 
                 // ~keep EnteredSpan is !Send, so dequeue spans must be entered and dropped before any `.await`.
                 {
@@ -1075,31 +1075,34 @@ impl CrawlEngine {
         }
 
         const SSRF_VALIDATION_CONCURRENCY: usize = 16;
-        let semaphore = Arc::new(Semaphore::new(SSRF_VALIDATION_CONCURRENCY));
-        let mut join_set = JoinSet::new();
 
-        for (link_url, is_doc_link, child_depth) in candidates {
-            let dedup_key = normalize_url_for_dedup(&link_url);
-            let permit = Arc::clone(&semaphore);
-            let ssrf_policy = self.config.ssrf.clone();
+        // ~keep `buffered` yields results in *input* order while keeping
+        // SSRF_VALIDATION_CONCURRENCY validations in flight. A `JoinSet` drained with
+        // `join_next()` yields them in completion order, which made sibling enqueue order
+        // nondeterministic and the documented breadth-first traversal unreproducible.
+        // Validation is not spawned: `validate_url` awaits `tokio::net::lookup_host`, which
+        // offloads the resolver itself, so the loop thread is never blocked.
+        let validated: Vec<Result<(String, bool, usize), (String, String)>> =
+            futures::stream::iter(candidates.into_iter().map(|(link_url, is_doc_link, child_depth)| {
+                let ssrf_policy = self.config.ssrf.clone();
+                async move {
+                    let Ok(url_obj) = url::Url::parse(&link_url) else {
+                        return Err((link_url, "invalid URL format".to_owned()));
+                    };
 
-            join_set.spawn(async move {
-                let _permit = permit.acquire().await.ok();
-                let url_obj = match url::Url::parse(&link_url) {
-                    Ok(u) => u,
-                    Err(_) => return Err((link_url.clone(), "invalid URL format".to_string())),
-                };
-
-                match validate_url(&url_obj, &ssrf_policy).await {
-                    Ok(_) => Ok((link_url, dedup_key, is_doc_link, child_depth)),
-                    Err(e) => Err((link_url, e.to_string())),
+                    match validate_url(&url_obj, &ssrf_policy).await {
+                        Ok(_) => Ok((link_url, is_doc_link, child_depth)),
+                        Err(e) => Err((link_url, e.to_string())),
+                    }
                 }
-            });
-        }
+            }))
+            .buffered(SSRF_VALIDATION_CONCURRENCY)
+            .collect()
+            .await;
 
-        while let Some(result) = join_set.join_next().await {
+        for result in validated {
             match result {
-                Ok(Ok((link_url, _dedup_key, is_doc_link, child_depth))) => {
+                Ok((link_url, is_doc_link, child_depth)) => {
                     let child_doc_depth: u32 = if is_doc_link { parent_doc_depth + 1 } else { 0 };
                     let priority = self.strategy.score_url(&link_url, child_depth);
 
@@ -1133,17 +1136,12 @@ impl CrawlEngine {
                     *urls_discovered += 1;
                     self.event_emitter.on_discovered(&link_url, child_depth).await;
                 }
-                Ok(Err((link_url, reason))) => {
+                Err((link_url, reason)) => {
                     tracing::warn!(
                         url = %link_url,
                         reason = %reason,
                         "link rejected by SSRF policy at enqueue time"
                     );
-                }
-                Err(e) => {
-                    // ~keep WARN and structured, matching the sibling arm: one link failed to
-                    // validate and is skipped; the crawl continues.
-                    tracing::warn!(error = %e, "link validation task failed during enqueue");
                 }
             }
         }

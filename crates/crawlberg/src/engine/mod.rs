@@ -19,6 +19,25 @@ use crate::telemetry::attributes::URL_FULL;
 /// the wasm loop needs the same value; it previously carried its own copy.
 pub(crate) const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
 
+/// Ask `strategy` for the next entry and remove it from `working_set`, preserving the
+/// order of the entries left behind.
+///
+/// ~keep Order preservation is the whole contract. `Vec::swap_remove` moves the last
+/// element into the vacated slot, so a strategy that selects by position — `BfsStrategy`
+/// always picks index 0 — would see the newest entry there on the next call and drain the
+/// set as first, last, second-to-last, ... instead of FIFO. Shared by the native and wasm
+/// loops so the two cannot drift, as `DEFAULT_MAX_LINKS_PER_PAGE` above is.
+pub(crate) fn take_selected(
+    strategy: &dyn crate::traits::CrawlStrategy,
+    working_set: &mut Vec<crate::traits::FrontierEntry>,
+) -> Option<crate::traits::FrontierEntry> {
+    let index = strategy.select_next(working_set)?;
+    if index >= working_set.len() {
+        return None;
+    }
+    Some(working_set.remove(index))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn escalation_reason_label(reason: &crate::types::EscalationReason) -> &'static str {
     use crate::types::EscalationReason;
@@ -1110,10 +1129,9 @@ impl CrawlEngine {
                 break;
             }
 
-            let Some(idx) = self.strategy.select_next(&working_set) else {
+            let Some(entry) = take_selected(self.strategy.as_ref(), &mut working_set) else {
                 break;
             };
-            let entry = working_set.swap_remove(idx);
 
             if let Ok(parsed) = url::Url::parse(&entry.url) {
                 let path = parsed.path();
@@ -1463,5 +1481,64 @@ mod tests {
             matches!(err, CrawlError::Dns { .. }),
             "expected CrawlError::Dns, got {err:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod take_selected_tests {
+    use super::take_selected;
+    use crate::defaults::{BfsStrategy, DfsStrategy};
+    use crate::traits::FrontierEntry;
+
+    fn entry(url: &str) -> FrontierEntry {
+        FrontierEntry {
+            url: url.to_owned(),
+            depth: 0,
+            doc_depth: 0,
+            priority: 1.0,
+        }
+    }
+
+    fn working_set(urls: &[&str]) -> Vec<FrontierEntry> {
+        urls.iter().map(|url| entry(url)).collect()
+    }
+
+    fn drain(strategy: &dyn crate::traits::CrawlStrategy, set: &mut Vec<FrontierEntry>) -> Vec<String> {
+        let mut order = Vec::new();
+        while let Some(taken) = take_selected(strategy, set) {
+            order.push(taken.url);
+        }
+        order
+    }
+
+    #[test]
+    fn should_drain_working_set_in_fifo_order_when_strategy_is_bfs() {
+        let mut set = working_set(&["a", "b", "c", "d"]);
+        assert_eq!(drain(&BfsStrategy, &mut set), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn should_drain_working_set_in_lifo_order_when_strategy_is_dfs() {
+        let mut set = working_set(&["a", "b", "c", "d"]);
+        assert_eq!(drain(&DfsStrategy, &mut set), vec!["d", "c", "b", "a"]);
+    }
+
+    #[test]
+    fn should_return_the_entry_the_strategy_selected() {
+        let mut set = working_set(&["a", "b", "c"]);
+        let taken = take_selected(&BfsStrategy, &mut set).expect("non-empty set must yield an entry");
+
+        assert_eq!(taken.url, "a");
+        assert_eq!(
+            set.iter().map(|e| e.url.as_str()).collect::<Vec<_>>(),
+            vec!["b", "c"],
+            "removal must preserve the relative order of the remaining entries"
+        );
+    }
+
+    #[test]
+    fn should_return_none_when_working_set_is_empty() {
+        let mut set: Vec<FrontierEntry> = Vec::new();
+        assert!(take_selected(&BfsStrategy, &mut set).is_none());
     }
 }
