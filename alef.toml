@@ -416,6 +416,15 @@ module_name = "crawlberg"
 [crates.wasm]
 features = []
 
+# ~keep Only `all` is declared here. alef's BUILTIN_CLIPPY_DEFAULTS already emits
+# print_stdout/print_stderr/dbg_macro = "deny" into every generated binding crate whether or not
+# this table exists, so repeating them would be noise. `all = warn` is not a builtin, and without
+# it here the hand-added block in packages/dart/rust/Cargo.toml would be dropped the first time
+# alef regenerates that manifest -- which is exactly the failure alef's own cargo_lints module was
+# written to prevent.
+[crates.cargo_lints.clippy]
+all = { level = "warn", priority = -1 }
+
 [crates.output]
 python = "crates/crawlberg-py/src/"
 node = "crates/crawlberg-node/src/"
