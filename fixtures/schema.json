@@ -309,6 +309,32 @@
 					},
 					"value": {
 						"description": "Expected value. For 'error' type without value, indicates any error. For 'error' with value, indicates specific error type."
+					},
+					"skip": {
+						"description": "Declare that this one assertion cannot be generated somewhere. Without it, a field the availability oracle cannot resolve is a fatal codegen error, because a silently dropped assertion produces a test that passes while asserting nothing. The skip is still counted and bucketed by owner in the end-of-run summary.",
+						"oneOf": [
+							{ "type": "boolean", "description": "true skips every language and is attributed to alef (not_representable)." },
+							{
+								"type": "object",
+								"additionalProperties": false,
+								"properties": {
+									"languages": {
+										"type": "array",
+										"items": { "type": "string" },
+										"description": "Languages this assertion is skipped for. Empty or absent means all."
+									},
+									"kind": {
+										"type": "string",
+										"enum": ["not_representable", "language_limitation"],
+										"description": "Which backlog owns the debt. not_representable = alef cannot express this shape yet. language_limitation = the binding or ABI genuinely cannot reach the field, usually permanent. Defaults to not_representable."
+									},
+									"reason": {
+										"type": "string",
+										"description": "Why this assertion cannot be generated."
+									}
+								}
+							}
+						]
 					}
 				}
 			},

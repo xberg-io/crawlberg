@@ -28,7 +28,12 @@
 		{
 			"type": "equals",
 			"field": "favicons.length",
-			"value": 5
+			"value": 5,
+			"skip": {
+				"languages": ["swift"],
+				"kind": "language_limitation",
+				"reason": "swift-bridge JSON-bridges Option<Vec<T>> getters to a single RustString, which has no .count, so a trailing .length segment cannot compile in Swift"
+			}
 		},
 		{
 			"type": "contains",
