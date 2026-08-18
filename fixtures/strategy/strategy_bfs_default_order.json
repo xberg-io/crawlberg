@@ -6,7 +6,11 @@
 		"stem": "strategy-bfs-default-order",
 		"title": "BFS strategy visits pages in breadth-first order"
 	},
-	"tags": ["strategy", "bfs", "crawl"],
+	"tags": [
+		"strategy",
+		"bfs",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -14,41 +18,41 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><a href=\"/a\">A</a><a href=\"/b\">B</a></body></html>"
+				"body_inline": "<html><body><a href=\"/alpha\">A</a><a href=\"/beta\">B</a></body></html>"
 			},
 			{
-				"path": "/a",
+				"path": "/alpha",
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><a href=\"/a/1\">A1</a></body></html>"
+				"body_inline": "<html><body><a href=\"/one\">One</a></body></html>"
 			},
 			{
-				"path": "/b",
+				"path": "/beta",
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><a href=\"/b/1\">B1</a></body></html>"
+				"body_inline": "<html><body><a href=\"/two\">Two</a></body></html>"
 			},
 			{
-				"path": "/a/1",
+				"path": "/one",
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>A1</h1></body></html>"
+				"body_inline": "<html><body><h1>One</h1></body></html>"
 			},
 			{
-				"path": "/b/1",
+				"path": "/two",
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>B1</h1></body></html>"
+				"body_inline": "<html><body><h1>Two</h1></body></html>"
 			}
 		],
-		"crawl_strategy": "bfs",
 		"config": {
 			"max_depth": 2,
-			"max_concurrent": 1
+			"max_concurrent": 1,
+			"crawl_strategy": "bfs"
 		}
 	},
 	"assertions": [
@@ -58,9 +62,24 @@
 			"value": 5
 		},
 		{
-			"type": "equals",
-			"field": "strategy.crawl_order",
-			"value": ["/", "/a", "/b", "/a/1", "/b/1"]
+			"type": "contains",
+			"field": "strategy.page_1_url",
+			"value": "alpha"
+		},
+		{
+			"type": "contains",
+			"field": "strategy.page_2_url",
+			"value": "beta"
+		},
+		{
+			"type": "contains",
+			"field": "strategy.page_3_url",
+			"value": "one"
+		},
+		{
+			"type": "contains",
+			"field": "strategy.page_4_url",
+			"value": "two"
 		}
 	]
 }

@@ -6,7 +6,11 @@
 		"stem": "filter-bm25-empty-query",
 		"title": "BM25 filter with empty query passes all pages through"
 	},
-	"tags": ["filter", "bm25", "crawl"],
+	"tags": [
+		"filter",
+		"bm25",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -24,11 +28,11 @@
 				"body_inline": "<html><body><p>Any content here</p></body></html>"
 			}
 		],
-		"content_filter": "bm25",
-		"bm25_query": "",
-		"bm25_threshold": 0.1,
 		"config": {
-			"max_depth": 1
+			"max_depth": 1,
+			"content_filter": "bm25",
+			"bm25_query": "",
+			"bm25_threshold": 0.1
 		}
 	},
 	"assertions": [

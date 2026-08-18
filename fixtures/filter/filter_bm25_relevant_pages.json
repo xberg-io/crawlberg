@@ -6,7 +6,11 @@
 		"stem": "filter-bm25-relevant-pages",
 		"title": "BM25 filter keeps only pages relevant to the query"
 	},
-	"tags": ["filter", "bm25"],
+	"tags": [
+		"filter",
+		"bm25",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -31,11 +35,11 @@
 				"body_inline": "<html><body><p>Today we will make pasta with tomato sauce. Add garlic and onion to the pan. Season with salt and pepper.</p></body></html>"
 			}
 		],
-		"content_filter": "bm25",
-		"bm25_query": "rust programming language",
-		"bm25_threshold": 0.1,
 		"config": {
-			"max_depth": 1
+			"max_depth": 1,
+			"content_filter": "bm25",
+			"bm25_query": "rust programming language",
+			"bm25_threshold": 0.1
 		}
 	},
 	"assertions": [

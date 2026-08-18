@@ -6,7 +6,12 @@
 		"stem": "strategy-adaptive-saturation",
 		"title": "Adaptive strategy stops early when encountering saturation (duplicate content)"
 	},
-	"tags": ["strategy", "adaptive", "saturation", "crawl"],
+	"tags": [
+		"strategy",
+		"adaptive",
+		"saturation",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -50,11 +55,11 @@
 				"body_inline": "<html><body><h1>Duplicate Content</h1><p>This is the same content repeated</p></body></html>"
 			}
 		],
-		"crawl_strategy": "best_first",
 		"config": {
 			"max_depth": 2,
 			"max_concurrent": 1,
-			"respect_robots_txt": false
+			"respect_robots_txt": false,
+			"crawl_strategy": "best_first"
 		}
 	},
 	"assertions": [

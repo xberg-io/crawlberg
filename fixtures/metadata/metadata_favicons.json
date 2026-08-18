@@ -31,8 +31,9 @@
 			"value": 5
 		},
 		{
-			"type": "not_empty",
-			"field": "favicons[].apple_touch"
+			"type": "contains",
+			"field": "favicons[].rel",
+			"value": "apple-touch-icon"
 		}
 	]
 }

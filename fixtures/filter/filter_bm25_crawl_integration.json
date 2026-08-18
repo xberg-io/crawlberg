@@ -6,7 +6,11 @@
 		"stem": "filter-bm25-crawl-integration",
 		"title": "BM25 filter works during multi-page crawl, keeping relevant pages"
 	},
-	"tags": ["filter", "crawl", "bm25"],
+	"tags": [
+		"filter",
+		"crawl",
+		"bm25"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -31,12 +35,12 @@
 				"body_inline": "<html><body><p>Today we make pasta with tomato sauce and garlic.</p></body></html>"
 			}
 		],
-		"content_filter": "bm25",
-		"bm25_query": "rust programming",
-		"bm25_threshold": 0.1,
 		"config": {
 			"max_depth": 1,
-			"max_concurrent": 1
+			"max_concurrent": 1,
+			"content_filter": "bm25",
+			"bm25_query": "rust programming",
+			"bm25_threshold": 0.1
 		}
 	},
 	"assertions": [

@@ -23,6 +23,15 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
+- `CrawlConfig::crawl_strategy` (`bfs`, `dfs`, `best_first`, `adaptive`). The strategy
+  implementations have always existed but no binding could select one, so every crawl ran the
+  breadth-first default. Selecting `dfs` pairs `DfsStrategy` with a LIFO frontier, because
+  traversal order is a property of the queue and `DfsStrategy` over a FIFO frontier is not
+  depth-first.
+- `CrawlConfig::content_filter` (`bm25`) with `bm25_query` and `bm25_threshold`, and a
+  `Bm25Filter` export. The filter existed but was not re-exported and no config could reach it,
+  so every crawl ran unfiltered. A `bm25` filter without a query is now a config error rather
+  than a filter that silently keeps every page.
 - `LifoFrontier`, an in-memory frontier that pops the most recently pushed entry, for depth-first crawls.
 - `Serialize`/`Deserialize` on `FrontierEntry`, so a frontier backed by a database, a file, or a message queue can
   encode the entry `push` receives instead of maintaining a mirror struct that silently drops newly added fields
@@ -40,6 +49,17 @@ All notable changes to crawlberg are documented here.
   silently dropped.
 - The wasm crawl loop deduplicates through the frontier rather than a loop-local `HashSet`, so a persistent frontier
   no longer re-enqueues URLs it had already crawled. It also no longer discards `mark_seen` failures.
+- URLs still being fetched when a crawl stops early are returned to the frontier. They are marked seen at discovery,
+  so a persistent frontier that never got them back would blacklist them permanently — never crawled, with no error
+  raised and no failure counted.
+- A crawl no longer ends on a single short `pop_batch` when the frontier still reports work. Queue-backed frontiers
+  legitimately under-deliver (SQS short polling returns 0-N messages from a non-empty queue); the loop now confirms
+  with `Frontier::is_empty` before finishing, at most once per completed fetch.
+- The `strategy` and `filter` e2e fixtures assert something again. Their `crawl_strategy`/`content_filter` inputs
+  named no real config field, so both bfs and dfs fixtures ran the same default strategy and every bm25 fixture ran
+  unfiltered; the ordering assertions on top of that were emitted as skipped comments in all 16 languages. The
+  `metadata` suite additionally failed to compile once its `article.*`/`response_headers.*` mappings went live,
+  because those fields are `Option` and were not declared as such.
 
 ## [1.3.0] - 2026-08-13
 

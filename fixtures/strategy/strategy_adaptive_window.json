@@ -6,7 +6,12 @@
 		"stem": "strategy-adaptive-window",
 		"title": "Adaptive strategy crawls more pages when content is diverse"
 	},
-	"tags": ["strategy", "adaptive", "diverse", "crawl"],
+	"tags": [
+		"strategy",
+		"adaptive",
+		"diverse",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -42,11 +47,11 @@
 				"body_inline": "<html><body><h1>API Reference</h1><section>REST endpoints and their parameters</section><p>Request/response examples for all API operations</p></body></html>"
 			}
 		],
-		"crawl_strategy": "best_first",
 		"config": {
 			"max_depth": 1,
 			"max_concurrent": 1,
-			"respect_robots_txt": false
+			"respect_robots_txt": false,
+			"crawl_strategy": "best_first"
 		}
 	},
 	"assertions": [

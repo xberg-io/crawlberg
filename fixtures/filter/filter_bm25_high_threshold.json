@@ -6,7 +6,11 @@
 		"stem": "filter-bm25-high-threshold",
 		"title": "BM25 filter with very high threshold filters out all pages"
 	},
-	"tags": ["filter", "bm25"],
+	"tags": [
+		"filter",
+		"bm25",
+		"crawl"
+	],
 	"input": {
 		"mock_responses": [
 			{
@@ -24,11 +28,11 @@
 				"body_inline": "<html><body><p>More content about programming</p></body></html>"
 			}
 		],
-		"content_filter": "bm25",
-		"bm25_query": "quantum physics",
-		"bm25_threshold": 100.0,
 		"config": {
-			"max_depth": 1
+			"max_depth": 1,
+			"content_filter": "bm25",
+			"bm25_query": "quantum physics",
+			"bm25_threshold": 100.0
 		}
 	},
 	"assertions": [

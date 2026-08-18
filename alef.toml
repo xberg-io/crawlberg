@@ -808,6 +808,19 @@ fields_optional = [
   "action_results.data",
   "action_results[].error",
   "action_results.error",
+  # ~keep Every field of `ArticleMetadata` and `ResponseMeta` is an `Option<String>`. Without
+  # ~keep these entries the generator dereferences them directly — `.published_time.to_string()`,
+  # ~keep `.etag.is_empty()` — which does not compile, so the whole metadata suite fails to build
+  # ~keep rather than degrading to a skip. Declared alongside the `article.*`/`response_headers.*`
+  # ~keep aliases in `[crates.e2e.fields]`, which are what route fixtures onto these paths.
+  "metadata.article.author",
+  "metadata.article.section",
+  "metadata.article.published_time",
+  "metadata.article.modified_time",
+  "response_meta.etag",
+  "response_meta.last_modified",
+  "response_meta.server",
+  "response_meta.content_language",
 ]
 fields_array = [
   "cookies",
@@ -820,6 +833,11 @@ fields_array = [
   "metadata.headings",
   "metadata.hreflangs",
   "metadata.favicons",
+  "metadata.og_locale_alternates",
+  # ~keep `ArticleMetadata::tags` is a plain `Vec<String>`, not an `Option`, so it belongs here
+  # ~keep and NOT in `fields_optional` — declaring it optional makes the generator emit
+  # ~keep `.as_ref().unwrap()` against a `Vec`, which does not type-check.
+  "metadata.article.tags",
   "pages",
   "urls",
   "results",
@@ -838,6 +856,18 @@ fields_enum = ["links[].link_type", "assets[].category"]
 # `.orEmpty()` is correct for a genuine `String?`. So this does NOT self-heal on regen —
 # without this line the regenerated Kotlin e2e stays broken.
 fields_json_scalar = ["action_results[].data"]
+# ~keep This list is the DEFAULT call's (`scrape`) allowlist only — every named call in
+# ~keep `[crates.e2e.calls.*]` declares its own `result_fields`, so nothing inherits from here.
+# ~keep It had accumulated nine names that are not fields of `ScrapeResult`. Five of them
+# ~keep (`main_content_only`, `redirect_chain`, `has_lastmod`, `is_error`, `pages_crawled`) are
+# ~keep not fields of ANY crawlberg type — grep `crates/crawlberg/src` returns nothing outside
+# ~keep `CrawlEvent::Complete { pages_crawled }`, which is a streaming enum payload, not a
+# ~keep result struct. The other four (`cookies`, `urls`, `redirect_count`, `stayed_on_domain`)
+# ~keep live on `CrawlResult`/`MapResult` and are already declared by those calls. `result_fields`
+# ~keep SELECTS from what the IR says exists; it does not DECLARE existence, and a name the IR
+# ~keep has never heard of is accepted verbatim — so a phantom entry here silently authorises an
+# ~keep accessor for an attribute that does not exist at runtime. No fixture routed to `scrape`
+# ~keep asserts any of the nine, so removing them changes no generated output today.
 result_fields = [
   "status_code",
   "content_type",
@@ -856,7 +886,6 @@ result_fields = [
   "is_pdf",
   "was_skipped",
   "detected_charset",
-  "main_content_only",
   "auth_header_sent",
   "response_meta",
   "assets",
@@ -868,15 +897,7 @@ result_fields = [
   "screenshot",
   "downloaded_document",
   "browser",
-  "cookies",
-  "urls",
   "final_url",
-  "redirect_count",
-  "redirect_chain",
-  "has_lastmod",
-  "is_error",
-  "stayed_on_domain",
-  "pages_crawled",
 ]
 
 [crates.e2e.env]
@@ -1053,7 +1074,20 @@ async = true
 returns_result = true
 options_type = "CrawlConfig"
 select_when = { tag = "crawl" }
-result_fields = ["pages", "final_url", "redirect_count", "was_skipped", "error", "cookies", "stayed_on_domain"]
+# ~keep `browser_used` is a real field on `CrawlResult` (types/results.rs, derived from
+# ~keep `pages.iter().any(|p| p.browser_used)`), it was simply absent here. Its absence
+# ~keep downgraded every assertion on it for crawl-routed fixtures to a skip comment —
+# ~keep the "genuinely exposed but missing from result_fields" drift direction.
+result_fields = [
+  "pages",
+  "final_url",
+  "redirect_count",
+  "was_skipped",
+  "error",
+  "cookies",
+  "stayed_on_domain",
+  "browser_used",
+]
 
 [[crates.e2e.calls.crawl.args]]
 name = "engine"
@@ -1556,6 +1590,60 @@ description = "metadata.description"
 "json_ld.type" = "json_ld[].schema_type"
 "json_ld.name" = "json_ld[].name"
 "assets[].category" = "assets[].asset_category"
+# `article` is a field on `PageMetadata`, not on `ScrapeResult`, and the HTTP
+# response header fields live on `response_meta` — the fixtures spell that
+# prefix `response_headers`. Both need aliasing, not `result_fields` entries. ~keep
+"article.author" = "metadata.article.author"
+"article.section" = "metadata.article.section"
+"article.published_time" = "metadata.article.published_time"
+"article.modified_time" = "metadata.article.modified_time"
+"article.tags" = "metadata.article.tags"
+"article.tags.length" = "metadata.article.tags.length"
+"response_headers.etag" = "response_meta.etag"
+"response_headers.last_modified" = "response_meta.last_modified"
+"response_headers.server" = "response_meta.server"
+"response_headers.content_language" = "response_meta.content_language"
+# ~keep `CrawlResult` has no `pages_crawled` — that name only exists as the
+# ~keep `CrawlEvent::Complete` streaming payload. The crawl-result equivalent is the length of
+# ~keep `pages`, which 49 other fixtures already assert as `pages.length`. `crawl.min_pages` is
+# ~keep the same quantity under a `greater_than_or_equal` assertion; aliasing both to the same
+# ~keep path is safe because identical resolved paths are deduplicated into one accessor (see
+# ~keep map_search_filter, which asserts `urls.length` twice and emits `urls_length` once).
+"crawl.pages_crawled" = "pages.length"
+"crawl.min_pages" = "pages.length"
+"map.min_urls" = "urls.length"
+# ~keep The `filter.*` and `strategy.*` prefixes are fixture vocabulary for BM25/traversal
+# ~keep scenarios; the observable result is still the ordinary `CrawlResult`. Content filtering
+# ~keep is applied before the pages land in `pages`, so "pages after filter" IS `pages.length`
+# ~keep and "remaining pages contain the keyword" IS a `contains` over `pages[].html` (these
+# ~keep fixtures configure no markdown conversion, so `pages[].markdown` is None and unusable).
+"filter.pages_after_filter" = "pages.length"
+"filter.remaining_contain_keyword" = "pages[].html"
+"strategy.first_page_url_contains" = "pages[0].url"
+# ~keep Visit order is asserted position by position rather than as one ordered list, because
+# ~keep the generator has no array-literal form for an `equals` value in any target language.
+# ~keep A per-index `contains` is also the only shape that can work here at all: `pages[N].url`
+# ~keep is an absolute URL against a mock server bound to a random port, so a fixture can only
+# ~keep ever match the path segment, never the whole string. The bfs/dfs fixtures use path
+# ~keep segments that are not prefixes of one another (`alpha`, `beta`, `one`, `two`) so each
+# ~keep `contains` identifies exactly one page. Index 0 is the seed and needs no assertion.
+"strategy.page_1_url" = "pages[1].url"
+"strategy.page_2_url" = "pages[2].url"
+"strategy.page_3_url" = "pages[3].url"
+"strategy.page_4_url" = "pages[4].url"
+# ~keep `headings`, `hreflang`, `favicons` and the og locale alternates are fields of
+# ~keep `PageMetadata`, not of `ScrapeResult`, and two of them are spelled differently there
+# ~keep (`hreflang` -> `hreflangs`, `og.locale_alternate` -> `og_locale_alternates`). The
+# ~keep `metadata.headings.length` target is proven — engine_scrape_basic already generates it
+# ~keep in 15 of 16 languages (swift alone skips it, a swift-first-class-map limitation).
+"headings.length" = "metadata.headings.length"
+"headings[0].text" = "metadata.headings[0].text"
+"headings[0].level" = "metadata.headings[0].level"
+"hreflang.length" = "metadata.hreflangs.length"
+"hreflang[].lang" = "metadata.hreflangs[].lang"
+"favicons.length" = "metadata.favicons.length"
+"favicons[].rel" = "metadata.favicons[].rel"
+"og.locale_alternate.length" = "metadata.og_locale_alternates.length"
 
 [crates.e2e.fields_c_types]
 "scrape_result.status_code" = "uint16_t"
@@ -1601,9 +1689,12 @@ description = "metadata.description"
 "interaction_result.action_results" = "char*"
 "markdown_result.citations" = "int32_t"
 "page_metadata.word_count" = "uintptr_t"
+"page_metadata.article" = "ArticleMetadata"
+"article_metadata.tags" = "char*"
 "page_metadata.headings" = "char*"
 "page_metadata.hreflangs" = "char*"
 "page_metadata.favicons" = "char*"
+"page_metadata.og_locale_alternates" = "char*"
 
 [crates.e2e.packages.rust]
 path = "../../crates/crawlberg"

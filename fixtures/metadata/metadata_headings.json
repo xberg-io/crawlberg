@@ -27,12 +27,12 @@
 		},
 		{
 			"type": "equals",
-			"field": "headings.h1.length",
+			"field": "headings[0].level",
 			"value": 1
 		},
 		{
 			"type": "equals",
-			"field": "headings.h1[0].text",
+			"field": "headings[0].text",
 			"value": "Primary Heading"
 		},
 		{

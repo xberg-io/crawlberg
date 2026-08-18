@@ -65,7 +65,7 @@
 				"crawl_strategy": {
 					"type": "string",
 					"enum": ["bfs", "dfs", "best_first", "adaptive"],
-					"description": "Crawl traversal strategy (not part of CrawlConfig)"
+					"description": "Deprecated at this level: `crawl_strategy` is a real CrawlConfig field, so put it in `input.config` where it is actually applied. Setting it here has no effect."
 				},
 				"content_filter": {
 					"type": "string",

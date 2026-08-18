@@ -6,7 +6,9 @@
 		"stem": "metadata-response-headers",
 		"title": "Extracts response metadata from HTTP headers (etag, server, content-language)"
 	},
-	"tags": ["metadata"],
+	"tags": [
+		"metadata"
+	],
 	"input": {
 		"config": {},
 		"mock_responses": [
@@ -31,12 +33,14 @@
 			"value": 200
 		},
 		{
-			"type": "not_empty",
-			"field": "response_headers.etag"
+			"type": "contains",
+			"field": "response_headers.etag",
+			"value": "abc123"
 		},
 		{
-			"type": "not_empty",
-			"field": "response_headers.last_modified"
+			"type": "contains",
+			"field": "response_headers.last_modified",
+			"value": "01 Jan 2025"
 		},
 		{
 			"type": "contains",
