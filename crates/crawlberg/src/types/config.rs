@@ -282,7 +282,6 @@ pub struct ContentConfig {
     /// removes the wrapper and still renders the children. ~keep
     ///
     /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
-    #[serde(default)]
     pub exclude_selectors: Vec<String>,
     /// Skip image elements in output. Default: `false`.
     pub skip_images: bool,
@@ -362,7 +361,6 @@ pub struct BrowserConfig {
     /// Enable session affinity: reuse chromiumoxide Pages for same-domain
     /// requests so cookies + fingerprint + solved challenges persist.
     /// Default: true. When false, each request gets a fresh Page.
-    #[serde(default)]
     pub session_affinity: bool,
 }
 
@@ -783,6 +781,49 @@ impl CrawlConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ~keep A field-level `#[serde(default)]` OVERRIDES the container-level one, substituting
+    /// `FieldType::default()` for the value the struct's `Default` impl declares. On a struct that
+    /// already carries `#[serde(default)]` the field attribute is therefore not redundant — it
+    /// silently cancels the documented default. Deserialising is how every binding builds a config,
+    /// so a disagreement here ships a different default to every non-Rust caller.
+    fn assert_default_matches_empty_object<T>(name: &str)
+    where
+        T: Default + Serialize + serde::de::DeserializeOwned,
+    {
+        let from_impl = serde_json::to_value(T::default()).expect("serialize Default");
+        let parsed: T = serde_json::from_str("{}").expect("deserialize empty object");
+        let from_json = serde_json::to_value(parsed).expect("serialize deserialized");
+        assert_eq!(
+            from_impl, from_json,
+            "{name}::default() and from_str(\"{{}}\") disagree; a field-level #[serde(default)] is \
+             overriding the struct's Default impl"
+        );
+    }
+
+    #[test]
+    fn should_deserialize_empty_object_to_the_declared_default() {
+        assert_default_matches_empty_object::<CrawlConfig>("CrawlConfig");
+        assert_default_matches_empty_object::<ContentConfig>("ContentConfig");
+        assert_default_matches_empty_object::<BrowserConfig>("BrowserConfig");
+    }
+
+    #[test]
+    fn should_keep_nested_defaults_when_one_unrelated_field_is_set() {
+        let config: CrawlConfig = serde_json::from_str(r#"{"content":{"remove_forms":true}}"#).expect("parse");
+        assert_eq!(
+            config.content.exclude_selectors,
+            vec!["noscript".to_owned()],
+            "setting one content field must not drop the other content defaults"
+        );
+
+        let config: CrawlConfig =
+            serde_json::from_str(r#"{"browser":{"capture_network_events":true}}"#).expect("parse");
+        assert!(
+            config.browser.session_affinity,
+            "setting one browser field must not turn off session_affinity, documented as default true"
+        );
+    }
 
     #[test]
     fn validate_rejects_http_browser_endpoint() {
