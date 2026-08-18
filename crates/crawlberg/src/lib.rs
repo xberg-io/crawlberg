@@ -74,8 +74,8 @@ pub use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeBrowserExecuto
 #[doc(hidden)]
 pub use defaults::compute_backoff_ms;
 pub use defaults::{
-    AdaptiveStrategy, BestFirstStrategy, BfsStrategy, DfsStrategy, EwmaDomainState, EwmaTracker, FixedBudget,
-    InMemoryFrontier, LearningRetryPolicy, LifoFrontier, NoopCache, NoopEmitter, NoopFilter, NoopStore,
+    AdaptiveStrategy, BestFirstStrategy, BfsStrategy, Bm25Filter, DfsStrategy, EwmaDomainState, EwmaTracker,
+    FixedBudget, InMemoryFrontier, LearningRetryPolicy, LifoFrontier, NoopCache, NoopEmitter, NoopFilter, NoopStore,
     PerDomainThrottle, SimpleRetryPolicy, UnlimitedBudget, default_retry_policy, in_memory_domain_state,
     unlimited_budget,
 };
@@ -98,13 +98,14 @@ pub use types::antibot::{AntibotError, AntibotStrategy, Decision, DefaultAntibot
 pub use types::{
     ActionResult, ArticleMetadata, AssetCategory, AttemptOutcome, AuthConfig, BrowserBackend, BrowserConfig,
     BrowserExtras, BrowserMode, BrowserWait, BudgetExhausted, BypassProvider, BypassResponse, CachedPage,
-    ContentConfig, CookieInfo, CrawlConfig, CrawlConfigBuilder, CrawlPageResult, CrawlResult, DispatchProfile,
-    DispatchProfileBuilder, DocumentContentEncoding, DomainObservation, DomainRecommendation, DomainStatePort,
-    DownloadedAsset, DownloadedDocument, DynBypassProvider, DynDomainStatePort, DynEscalationBudget, DynRetryPolicy,
-    DynWafClassifier, EscalationBudget, EscalationReason, EscalationStrategy, ExtractionMeta, FaviconInfo, FeedInfo,
-    FeedType, HeadingInfo, HreflangEntry, ImageInfo, ImageSource, InteractionResult, JsonLdEntry, LinkInfo, LinkType,
-    MapResult, MarkdownResult, ObservedOutcome, PageMetadata, ProxyConfig, ResponseMeta, RetryDirective, RetryPolicy,
-    ScrapeResult, SitemapUrl, Tier, WafClassifier, WafClassifyError, WafSignal,
+    ContentConfig, ContentFilterKind, CookieInfo, CrawlConfig, CrawlConfigBuilder, CrawlPageResult, CrawlResult,
+    CrawlStrategyKind, DispatchProfile, DispatchProfileBuilder, DocumentContentEncoding, DomainObservation,
+    DomainRecommendation, DomainStatePort, DownloadedAsset, DownloadedDocument, DynBypassProvider, DynDomainStatePort,
+    DynEscalationBudget, DynRetryPolicy, DynWafClassifier, EscalationBudget, EscalationReason, EscalationStrategy,
+    ExtractionMeta, FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry, ImageInfo, ImageSource,
+    InteractionResult, JsonLdEntry, LinkInfo, LinkType, MapResult, MarkdownResult, ObservedOutcome, PageMetadata,
+    ProxyConfig, ResponseMeta, RetryDirective, RetryPolicy, ScrapeResult, SitemapUrl, Tier, WafClassifier,
+    WafClassifyError, WafSignal,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{BatchCrawlStreamRequest, CrawlEvent, CrawlStreamRequest};

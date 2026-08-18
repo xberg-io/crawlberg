@@ -2,7 +2,7 @@
 //! breadth-first once the engine removes the selected entry order-preservingly and
 //! enqueues discovered links in document order.
 
-use crawlberg::{CrawlConfig, CrawlEngine, CrawlResult, LifoFrontier};
+use crawlberg::{CrawlConfig, CrawlEngine, CrawlResult, CrawlStrategyKind, LifoFrontier, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -155,5 +155,54 @@ async fn should_visit_deepest_branch_first_when_frontier_is_lifo() {
         vec!["/".to_owned(), "/c".to_owned(), "/c1".to_owned()],
         "a LIFO frontier must descend into the newest entry's child before returning to its \
          siblings"
+    );
+}
+
+/// `CrawlConfig::crawl_strategy` must select the traversal on its own, through the same public
+/// entry point the language bindings use. It selects the frontier as well as the strategy,
+/// because a `DfsStrategy` over a FIFO queue is not depth-first.
+#[tokio::test]
+async fn should_crawl_depth_first_when_config_selects_the_dfs_strategy() {
+    let mock = setup_branching_mock().await;
+    let base = mock.uri();
+
+    let config = CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(3),
+        max_concurrent: Some(1),
+        crawl_strategy: CrawlStrategyKind::Dfs,
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let result = crawlberg::crawl(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited_paths(&result, &base),
+        vec!["/".to_owned(), "/c".to_owned(), "/c1".to_owned()],
+        "crawl_strategy = dfs must pair DfsStrategy with a LIFO frontier"
+    );
+}
+
+/// The default must stay breadth-first when nothing is configured.
+#[tokio::test]
+async fn should_crawl_breadth_first_when_config_selects_no_strategy() {
+    let mock = setup_branching_mock().await;
+    let base = mock.uri();
+
+    let config = CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(3),
+        max_concurrent: Some(1),
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    assert_eq!(config.crawl_strategy, CrawlStrategyKind::Bfs, "bfs must be the default");
+
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = crawlberg::crawl(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited_paths(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned(), "/b".to_owned()]
     );
 }

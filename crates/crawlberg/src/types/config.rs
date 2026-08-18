@@ -89,6 +89,35 @@ pub enum DocumentContentEncoding {
     Base64,
 }
 
+/// Traversal order for a crawl.
+///
+/// Selects both the queue discipline and the selection strategy, because global order is a
+/// property of the frontier: the engine hands its bounded selection window to the strategy, so
+/// a strategy alone can only reorder URLs that have already been dequeued.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum CrawlStrategyKind {
+    /// Breadth-first: a FIFO frontier visits every URL at one depth before the next.
+    #[default]
+    Bfs,
+    /// Depth-first: a LIFO frontier descends into a page's children before its siblings.
+    Dfs,
+    /// Highest-priority-first within the selection window, scored by `CrawlStrategy::score_url`.
+    BestFirst,
+    /// Like `BestFirst`, but stops once newly crawled pages stop contributing new terms.
+    Adaptive,
+}
+
+/// Content filter applied to each crawled page before it reaches the result.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFilterKind {
+    /// Keep only pages scoring at or above `bm25_threshold` for `bm25_query`.
+    Bm25,
+}
+
 pub(crate) mod duration_ms {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::Duration;
@@ -372,6 +401,19 @@ pub struct CrawlConfig {
     pub max_links_per_page: Option<usize>,
     /// Maximum number of concurrent requests.
     pub max_concurrent: Option<usize>,
+    /// Traversal order. Defaults to breadth-first.
+    ///
+    /// A frontier or strategy set explicitly on `CrawlEngineBuilder` takes precedence over
+    /// this field.
+    pub crawl_strategy: CrawlStrategyKind,
+    /// Content filter applied to each page. `None` keeps every page.
+    ///
+    /// A content filter set explicitly on `CrawlEngineBuilder` takes precedence.
+    pub content_filter: Option<ContentFilterKind>,
+    /// Query the BM25 content filter scores pages against. Required by `ContentFilterKind::Bm25`.
+    pub bm25_query: Option<String>,
+    /// Minimum BM25 score a page must reach to be kept. Defaults to `0.0`.
+    pub bm25_threshold: Option<f64>,
     /// Whether to respect robots.txt directives.
     pub respect_robots_txt: bool,
     /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
@@ -580,6 +622,10 @@ impl Default for CrawlConfig {
             max_pages: None,
             max_links_per_page: None,
             max_concurrent: None,
+            crawl_strategy: CrawlStrategyKind::Bfs,
+            content_filter: None,
+            bm25_query: None,
+            bm25_threshold: None,
             respect_robots_txt: false,
             soft_http_errors: false,
             user_agent: None,
@@ -642,6 +688,13 @@ impl CrawlConfig {
 
         if let Some(0) = self.max_concurrent {
             return Err(CrawlError::invalid_config("max_concurrent must be > 0"));
+        }
+        // ~keep Reject rather than fall back to keeping every page: a filter that silently
+        // does nothing looks identical to one that matched everything.
+        if self.content_filter == Some(ContentFilterKind::Bm25) && self.bm25_query.is_none() {
+            return Err(CrawlError::invalid_config(
+                "bm25_query is required when content_filter is bm25",
+            ));
         }
         if self.browser.wait == BrowserWait::Selector && self.browser.wait_selector.is_none() {
             return Err(CrawlError::invalid_config(

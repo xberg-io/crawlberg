@@ -255,11 +255,26 @@ impl CrawlEngineBuilder {
         #[cfg(not(target_arch = "wasm32"))]
         let event_sink = attach_warc_sink(&config, self.event_sink)?;
 
+        // ~keep Traversal order is a property of the frontier, not the strategy: the engine
+        // hands the strategy a bounded selection window, so `DfsStrategy` over a FIFO queue
+        // reorders only what has already been dequeued and does not crawl depth-first.
+        // `crawl_strategy` therefore picks both halves, and an explicitly supplied frontier or
+        // strategy still wins.
+        let crawl_strategy = config.crawl_strategy;
+        let content_filter = match config.content_filter {
+            Some(ContentFilterKind::Bm25) => config
+                .bm25_query
+                .clone()
+                .map(|query| (query, config.bm25_threshold.unwrap_or(0.0))),
+            None => None,
+        };
+
         Ok(CrawlEngine {
             config,
-            frontier: self
-                .frontier
-                .unwrap_or_else(|| Arc::new(defaults::InMemoryFrontier::new())),
+            frontier: self.frontier.unwrap_or_else(|| match crawl_strategy {
+                CrawlStrategyKind::Dfs => Arc::new(defaults::LifoFrontier::new()),
+                _ => Arc::new(defaults::InMemoryFrontier::new()),
+            }),
             rate_limiter: self.rate_limiter.unwrap_or_else(|| {
                 Arc::new(defaults::PerDomainThrottle::new(std::time::Duration::from_millis(
                     rate_limit_ms,
@@ -267,8 +282,16 @@ impl CrawlEngineBuilder {
             }),
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
             event_emitter: self.event_emitter.unwrap_or_else(|| Arc::new(defaults::NoopEmitter)),
-            strategy: self.strategy.unwrap_or_else(|| Arc::new(defaults::BfsStrategy)),
-            content_filter: self.content_filter.unwrap_or_else(|| Arc::new(defaults::NoopFilter)),
+            strategy: self.strategy.unwrap_or_else(|| match crawl_strategy {
+                CrawlStrategyKind::Bfs => Arc::new(defaults::BfsStrategy),
+                CrawlStrategyKind::Dfs => Arc::new(defaults::DfsStrategy),
+                CrawlStrategyKind::BestFirst => Arc::new(defaults::BestFirstStrategy),
+                CrawlStrategyKind::Adaptive => Arc::new(defaults::AdaptiveStrategy::default()),
+            }),
+            content_filter: self.content_filter.unwrap_or_else(|| match content_filter {
+                Some((query, threshold)) => Arc::new(defaults::Bm25Filter::new(&query, threshold)),
+                None => Arc::new(defaults::NoopFilter),
+            }),
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
             event_sink,
