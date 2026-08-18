@@ -63,6 +63,10 @@ fn escalation_strategy_label(strategy: EscalationStrategy) -> &'static str {
 /// Default concurrency limit when `max_concurrent` is not set.
 const DEFAULT_MAX_CONCURRENT: usize = 10;
 
+/// Outcome of validating one discovered link: `(url, is_document_link, depth)` when it may be
+/// enqueued, or `(url, reason)` when it was rejected.
+type ValidatedLink = Result<(String, bool, usize), (String, String)>;
+
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
     /// The final URL after all redirects have been followed.
@@ -271,6 +275,12 @@ struct CrawlState {
     urls_filtered: usize,
     pages_count: usize,
     is_streaming: bool,
+    /// URLs pushed to the frontier and not yet popped back into the selection window.
+    ///
+    /// ~keep Tracked locally so the `crawl.frontier_size` span field keeps its published
+    /// meaning without calling `Frontier::len()` per dequeue, which would be a round trip
+    /// per URL against a remote frontier.
+    frontier_pending: usize,
 }
 
 impl CrawlState {
@@ -286,6 +296,7 @@ impl CrawlState {
             urls_filtered: 0,
             pages_count: 0,
             is_streaming,
+            frontier_pending: 0,
         }
     }
 
@@ -433,21 +444,21 @@ impl CrawlEngine {
                 .await?;
         }
 
-        // ~keep `working_set` stays local: strategies need slices, frontier is shared, and the hot path avoids locks.
-        let mut working_set: Vec<FrontierEntry> = Vec::new();
-
         let dedup_key = normalize_url_for_dedup(&final_url);
         self.frontier.mark_seen(&dedup_key).await?;
-        working_set.push(FrontierEntry {
-            url: final_url.clone(),
-            depth: 0,
-            doc_depth: 0,
-            priority: 1.0,
-        });
+        self.push_to_frontier(
+            FrontierEntry {
+                url: final_url.clone(),
+                depth: 0,
+                doc_depth: 0,
+                priority: 1.0,
+            },
+            &mut state,
+        )
+        .await?;
 
         self.run_crawl_loop(
             &mut state,
-            &mut working_set,
             &exclude_regexes,
             &include_regexes,
             &robots_rules,
@@ -536,12 +547,112 @@ impl CrawlEngine {
         }
     }
 
-    /// Main crawl loop: spawn fetch tasks, process results, discover links.
+    /// Push one entry onto the frontier, wrapping any backend failure with the URL.
+    async fn push_to_frontier(&self, entry: FrontierEntry, state: &mut CrawlState) -> Result<(), CrawlError> {
+        let url = entry.url.clone();
+        self.frontier
+            .push(entry)
+            .await
+            .map_err(|e| CrawlError::other_with_source(format!("pushing {url} onto the crawl frontier failed"), e))?;
+        state.frontier_pending += 1;
+        Ok(())
+    }
+
+    /// Top up `window` from the frontier.
+    ///
+    /// Returns `false` when the frontier yielded fewer entries than asked for, i.e. it is
+    /// empty until discovery pushes again. A short batch is the emptiness signal, so the
+    /// loop never has to call the async `Frontier::len`/`is_empty` on the hot path.
+    async fn refill_window(
+        &self,
+        window: &mut Vec<FrontierEntry>,
+        capacity: usize,
+        state: &mut CrawlState,
+    ) -> Result<bool, CrawlError> {
+        let wanted = capacity.saturating_sub(window.len());
+        if wanted == 0 {
+            return Ok(true);
+        }
+
+        let popped = self
+            .frontier
+            .pop_batch(wanted)
+            .await
+            .map_err(|e| CrawlError::other_with_source("refilling the crawl window from the frontier failed", e))?;
+
+        state.frontier_pending = state.frontier_pending.saturating_sub(popped.len());
+        let filled = popped.len();
+        window.extend(popped);
+        Ok(filled == wanted)
+    }
+
+    /// Return unprocessed window entries to the frontier so a persistent or distributed
+    /// frontier does not lose the work when the loop stops early.
+    async fn spill_window(&self, window: &mut Vec<FrontierEntry>, state: &mut CrawlState) -> Result<(), CrawlError> {
+        for entry in std::mem::take(window) {
+            self.push_to_frontier(entry, state).await?;
+        }
+        Ok(())
+    }
+
+    /// Main crawl loop. Owns the selection window and returns it to the frontier on every
+    /// exit path, including the error ones.
     #[allow(clippy::too_many_arguments)]
     async fn run_crawl_loop(
         &self,
         state: &mut CrawlState,
-        working_set: &mut Vec<FrontierEntry>,
+        exclude_regexes: &[Regex],
+        include_regexes: &[Regex],
+        robots_rules: &Option<RobotsRules>,
+        base_host: &str,
+        base_host_suffix: &str,
+        max_depth: usize,
+        max_pages: usize,
+        start_time: Instant,
+        tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
+    ) -> Result<(), CrawlError> {
+        let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
+        let mut window: Vec<FrontierEntry> = Vec::with_capacity(max_concurrent);
+
+        let outcome = self
+            .drive_crawl_loop(
+                state,
+                &mut window,
+                exclude_regexes,
+                include_regexes,
+                robots_rules,
+                base_host,
+                base_host_suffix,
+                max_depth,
+                max_pages,
+                start_time,
+                tx,
+            )
+            .await;
+
+        let spilled = self.spill_window(&mut window, state).await;
+        match (outcome, spilled) {
+            (Err(loop_error), Err(spill_error)) => {
+                // ~keep The loop error is the cause the caller needs; the spill failure only
+                // means a persistent frontier lost queued URLs. Log it rather than let it
+                // mask the primary failure.
+                tracing::warn!(
+                    error = %spill_error,
+                    "returning unprocessed frontier entries failed while the crawl was already failing"
+                );
+                Err(loop_error)
+            }
+            (Err(loop_error), Ok(())) => Err(loop_error),
+            (Ok(()), spilled) => spilled,
+        }
+    }
+
+    /// Drive the crawl: refill the window, spawn fetches, process results, discover links.
+    #[allow(clippy::too_many_arguments)]
+    async fn drive_crawl_loop(
+        &self,
+        state: &mut CrawlState,
+        window: &mut Vec<FrontierEntry>,
         exclude_regexes: &[Regex],
         include_regexes: &[Regex],
         robots_rules: &Option<RobotsRules>,
@@ -556,9 +667,17 @@ impl CrawlEngine {
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut join_set: JoinSet<Result<FetchResult, (FrontierEntry, CrawlError)>> = JoinSet::new();
         let mut cancelled = false;
+        let mut frontier_may_have_entries = true;
 
-        while !cancelled && (!working_set.is_empty() || !join_set.is_empty()) {
-            while join_set.len() < max_concurrent && !working_set.is_empty() {
+        while !cancelled {
+            while join_set.len() < max_concurrent {
+                if frontier_may_have_entries && window.len() < max_concurrent {
+                    frontier_may_have_entries = self.refill_window(window, max_concurrent, state).await?;
+                }
+                if window.is_empty() {
+                    break;
+                }
+
                 let pages_processed = if state.is_streaming {
                     state.pages_count
                 } else {
@@ -579,7 +698,7 @@ impl CrawlEngine {
                     break;
                 }
 
-                let Some(entry) = super::take_selected(self.strategy.as_ref(), working_set) else {
+                let Some((index, entry)) = super::take_selected(self.strategy.as_ref(), window) else {
                     break;
                 };
 
@@ -588,7 +707,7 @@ impl CrawlEngine {
                     let _iter_span = tracing::info_span!(
                         "crawl.loop.iteration",
                         { CRAWL_DEPTH } = entry.depth as i64,
-                        { CRAWL_FRONTIER_SIZE } = working_set.len() as i64,
+                        { CRAWL_FRONTIER_SIZE } = (window.len() + state.frontier_pending) as i64,
                         { CRAWL_PAGES_COMPLETED } = state.pages.len() as i64,
                     )
                     .entered();
@@ -608,10 +727,14 @@ impl CrawlEngine {
                 // silent no-op on every native binding. Gate the same point the wasm path gates:
                 // after filtering, before a permit is taken. `break` (not cancel) matches the
                 // max_pages check above — stop spawning, let in-flight fetches finish.
+                // ~keep Budget exhaustion pauses the crawl, it does not reject this URL, so the
+                // entry goes back where it came from and is spilled to the frontier on exit.
+                // A robots/path-filtered entry above is dropped instead: that one was rejected.
                 match self.page_budget.check().await {
                     Ok(()) => {}
                     Err(crate::budget::BudgetError::Exhausted) => {
                         tracing::info!(target: "crawlberg.budget", "page budget exhausted");
+                        window.insert(index.min(window.len()), entry);
                         break;
                     }
                     Err(crate::budget::BudgetError::Backend(message)) => {
@@ -623,6 +746,7 @@ impl CrawlEngine {
                             error = %message,
                             "budget backend error; treating as exhausted"
                         );
+                        window.insert(index.min(window.len()), entry);
                         break;
                     }
                 }
@@ -709,7 +833,6 @@ impl CrawlEngine {
                         .process_fetch_result(
                             fetch,
                             state,
-                            working_set,
                             base_host,
                             base_host_suffix,
                             max_depth,
@@ -746,6 +869,11 @@ impl CrawlEngine {
                     state.pages_failed += 1;
                 }
             }
+
+            // ~keep Link discovery on the completed page may have pushed; re-arm the latch so
+            // the next refill looks again. Without it a frontier that ran dry once would never
+            // be polled after new work arrived.
+            frontier_may_have_entries = true;
 
             let pages_processed = if state.is_streaming {
                 state.pages_count
@@ -822,7 +950,6 @@ impl CrawlEngine {
         &self,
         fetch: FetchResult,
         state: &mut CrawlState,
-        working_set: &mut Vec<FrontierEntry>,
         base_host: &str,
         base_host_suffix: &str,
         max_depth: usize,
@@ -895,8 +1022,7 @@ impl CrawlEngine {
                 fetch.entry.doc_depth,
                 base_host,
                 base_host_suffix,
-                working_set,
-                &mut state.urls_discovered,
+                state,
             )
             .await?;
         }
@@ -1009,6 +1135,7 @@ impl CrawlEngine {
     ///
     /// SSRF validation is applied at enqueue time with bounded concurrency (16 concurrent
     /// DNS lookups). URLs that fail validation are logged as warnings and not enqueued.
+    /// Surviving links are pushed onto the frontier in document order.
     #[allow(clippy::too_many_arguments)]
     async fn discover_and_enqueue_links(
         &self,
@@ -1018,8 +1145,7 @@ impl CrawlEngine {
         parent_doc_depth: u32,
         base_host: &str,
         base_host_suffix: &str,
-        working_set: &mut Vec<FrontierEntry>,
-        urls_discovered: &mut usize,
+        state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
         let mut candidates = Vec::new();
         let link_cap = self.config.max_links_per_page.unwrap_or(DEFAULT_MAX_LINKS_PER_PAGE);
@@ -1082,7 +1208,7 @@ impl CrawlEngine {
         // nondeterministic and the documented breadth-first traversal unreproducible.
         // Validation is not spawned: `validate_url` awaits `tokio::net::lookup_host`, which
         // offloads the resolver itself, so the loop thread is never blocked.
-        let validated: Vec<Result<(String, bool, usize), (String, String)>> =
+        let validated: Vec<ValidatedLink> =
             futures::stream::iter(candidates.into_iter().map(|(link_url, is_doc_link, child_depth)| {
                 let ssrf_policy = self.config.ssrf.clone();
                 async move {
@@ -1127,13 +1253,17 @@ impl CrawlEngine {
                         .entered();
                     }
 
-                    working_set.push(FrontierEntry {
-                        url: link_url.clone(),
-                        depth: child_depth,
-                        doc_depth: child_doc_depth,
-                        priority,
-                    });
-                    *urls_discovered += 1;
+                    self.push_to_frontier(
+                        FrontierEntry {
+                            url: link_url.clone(),
+                            depth: child_depth,
+                            doc_depth: child_doc_depth,
+                            priority,
+                        },
+                        state,
+                    )
+                    .await?;
+                    state.urls_discovered += 1;
                     self.event_emitter.on_discovered(&link_url, child_depth).await;
                 }
                 Err((link_url, reason)) => {

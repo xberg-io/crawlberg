@@ -27,15 +27,17 @@ pub(crate) const DEFAULT_MAX_LINKS_PER_PAGE: usize = 10_000;
 /// always picks index 0 — would see the newest entry there on the next call and drain the
 /// set as first, last, second-to-last, ... instead of FIFO. Shared by the native and wasm
 /// loops so the two cannot drift, as `DEFAULT_MAX_LINKS_PER_PAGE` above is.
+/// Returns the entry together with the index it came from, so a caller that decides not to
+/// fetch it after all can put it back where it was.
 pub(crate) fn take_selected(
     strategy: &dyn crate::traits::CrawlStrategy,
     working_set: &mut Vec<crate::traits::FrontierEntry>,
-) -> Option<crate::traits::FrontierEntry> {
+) -> Option<(usize, crate::traits::FrontierEntry)> {
     let index = strategy.select_next(working_set)?;
     if index >= working_set.len() {
         return None;
     }
-    Some(working_set.remove(index))
+    Some((index, working_set.remove(index)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1076,8 +1078,6 @@ impl CrawlEngine {
     /// sequentially, which is correct for the wasm single-threaded executor.
     #[tracing::instrument(name = "crawl.engine.crawl", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
-        use std::collections::HashSet;
-
         let redacted_url = crate::net::redact_url_credentials(url);
         tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
         self.config.validate()?;
@@ -1092,18 +1092,22 @@ impl CrawlEngine {
         let exclude_regexes = Self::compile_path_regexes(&self.config.exclude_paths)?;
         let include_regexes = Self::compile_path_regexes(&self.config.include_paths)?;
 
-        let mut seen: HashSet<String> = HashSet::new();
-
         let seed_dedup = crate::normalize::normalize_url_for_dedup(url);
-        seen.insert(seed_dedup.clone());
-        let _ = self.frontier.mark_seen(&seed_dedup).await;
+        self.frontier.mark_seen(&seed_dedup).await?;
+        self.frontier
+            .push(FrontierEntry {
+                url: url.to_owned(),
+                depth: 0,
+                doc_depth: 0,
+                priority: 1.0,
+            })
+            .await?;
 
-        let mut working_set: Vec<FrontierEntry> = vec![FrontierEntry {
-            url: url.to_owned(),
-            depth: 0,
-            doc_depth: 0,
-            priority: 1.0,
-        }];
+        // ~keep One page is fetched at a time here, so the window holds a single entry and is
+        // refilled when empty: the frontier's own ordering is therefore the visit order
+        // exactly, which is what makes InMemoryFrontier breadth-first and LifoFrontier
+        // depth-first on this path too.
+        let mut window: Vec<FrontierEntry> = Vec::with_capacity(1);
 
         let mut pages: Vec<CrawlPageResult> = Vec::new();
         let mut redirect_count: usize = 0;
@@ -1114,7 +1118,14 @@ impl CrawlEngine {
         let mut crawl_error: Option<String> = None;
         let mut final_url = url.to_owned();
 
-        while !working_set.is_empty() {
+        loop {
+            if window.is_empty() {
+                window = self.frontier.pop_batch(1).await?;
+                if window.is_empty() {
+                    break;
+                }
+            }
+
             let stats = CrawlStats {
                 pages_crawled: pages.len(),
                 pages_failed,
@@ -1129,7 +1140,7 @@ impl CrawlEngine {
                 break;
             }
 
-            let Some(entry) = take_selected(self.strategy.as_ref(), &mut working_set) else {
+            let Some((_index, entry)) = take_selected(self.strategy.as_ref(), &mut window) else {
                 break;
             };
 
@@ -1253,19 +1264,23 @@ impl CrawlEngine {
                         }
                     }
 
+                    // ~keep Dedup goes through the frontier, not a loop-local set: the frontier
+                    // owns the queue, so a persistent implementation that survives a restart
+                    // would otherwise re-enqueue every URL it had already crawled.
                     let dedup_key = crate::normalize::normalize_url_for_dedup(&link_url);
-                    if !seen.contains(&dedup_key) {
-                        seen.insert(dedup_key.clone());
-                        let _ = self.frontier.mark_seen(&dedup_key).await;
+                    if !self.frontier.is_seen(&dedup_key).await? {
+                        self.frontier.mark_seen(&dedup_key).await?;
                         let child_depth = entry.depth + 1;
                         let child_doc_depth: u32 = if is_doc_link { entry.doc_depth + 1 } else { 0 };
                         let priority = self.strategy.score_url(&link_url, child_depth);
-                        working_set.push(FrontierEntry {
-                            url: link_url.clone(),
-                            depth: child_depth,
-                            doc_depth: child_doc_depth,
-                            priority,
-                        });
+                        self.frontier
+                            .push(FrontierEntry {
+                                url: link_url.clone(),
+                                depth: child_depth,
+                                doc_depth: child_doc_depth,
+                                priority,
+                            })
+                            .await?;
                         urls_discovered += 1;
                         enqueued_from_page += 1;
                         self.event_emitter.on_discovered(&link_url, child_depth).await;
@@ -1295,6 +1310,12 @@ impl CrawlEngine {
                 .await;
 
             pages.push(page);
+        }
+
+        // ~keep Return the unfetched entry the loop was holding when a limit stopped it, so a
+        // persistent or distributed frontier does not lose queued work.
+        for entry in std::mem::take(&mut window) {
+            self.frontier.push(entry).await?;
         }
 
         let _ = self
@@ -1505,7 +1526,7 @@ mod take_selected_tests {
 
     fn drain(strategy: &dyn crate::traits::CrawlStrategy, set: &mut Vec<FrontierEntry>) -> Vec<String> {
         let mut order = Vec::new();
-        while let Some(taken) = take_selected(strategy, set) {
+        while let Some((_index, taken)) = take_selected(strategy, set) {
             order.push(taken.url);
         }
         order
@@ -1526,8 +1547,9 @@ mod take_selected_tests {
     #[test]
     fn should_return_the_entry_the_strategy_selected() {
         let mut set = working_set(&["a", "b", "c"]);
-        let taken = take_selected(&BfsStrategy, &mut set).expect("non-empty set must yield an entry");
+        let (index, taken) = take_selected(&BfsStrategy, &mut set).expect("non-empty set must yield an entry");
 
+        assert_eq!(index, 0);
         assert_eq!(taken.url, "a");
         assert_eq!(
             set.iter().map(|e| e.url.as_str()).collect::<Vec<_>>(),

@@ -71,21 +71,65 @@ pub struct CompleteEvent {
 
 /// URL queue and deduplication.
 ///
-/// The engine uses `is_seen`/`mark_seen` for URL deduplication during crawling.
-/// The `push`/`pop` methods are available for custom frontier implementations
-/// (e.g., distributed queues, persistent URL storage) but the default engine
-/// manages its own in-memory working set for strategy-based URL selection.
-/// This design keeps the hot path lock-free and allows the strategy to have
-/// random access to all candidates for intelligent selection.
+/// The engine drives the crawl entirely through this trait. Every URL it intends to visit —
+/// the seed and each link that survives discovery filtering — is handed to [`push`], and the
+/// crawl loop takes work back out with [`pop_batch`]. `is_seen`/`mark_seen` deduplicate on
+/// the discovery path.
+///
+/// # Window semantics
+///
+/// The engine never holds the whole frontier in memory. It keeps at most `max_concurrent`
+/// entries in a local *window* and passes that slice — not the frontier — to
+/// [`CrawlStrategy::select_next`]. A strategy therefore chooses *within the window*:
+/// [`BestFirstStrategy`] picks the highest priority among the entries currently popped
+/// rather than the global maximum, and [`DfsStrategy`] picks the newest entry in the window
+/// rather than the newest URL discovered.
+///
+/// Global traversal order is consequently this trait's responsibility, not the strategy's.
+/// [`InMemoryFrontier`] is FIFO and yields a breadth-first crawl; [`LifoFrontier`] is LIFO
+/// and yields a depth-first one. A priority-queue or host-partitioned implementation decides
+/// which entries the strategy ever sees.
+///
+/// # Contract
+///
+/// * [`pop_batch`] may return fewer entries than requested. An empty batch means the
+///   frontier is empty *at that moment* and ends the crawl once no fetch is still in flight.
+///   It must never be used to signal failure — return `Err` for that.
+/// * A [`push`] or [`pop_batch`] error aborts the crawl. A frontier that cannot accept a URL
+///   would otherwise silently truncate the result set.
+/// * When the loop stops early — `max_pages`, an exhausted page budget, a strategy stop, a
+///   dropped stream receiver — entries still held in the window are pushed back before
+///   returning, so a persistent or distributed frontier does not lose them. They are
+///   re-pushed in window order, so the *set* is preserved but the original position is not;
+///   an implementation that must restore exact ordering should key on
+///   [`FrontierEntry::depth`] or [`FrontierEntry::priority`] rather than on arrival order.
+/// * Entries the engine pops and then rejects by robots.txt or path filters are dropped, not
+///   pushed back: they were filtered, not deferred.
+/// * An implementation returning `None` from [`isolated`] shares its queue across concurrent
+///   `crawl()` calls on the same engine, **including their seed URLs**. Return a fresh
+///   instance unless that sharing is intended.
+///
+/// [`push`]: Frontier::push
+/// [`pop_batch`]: Frontier::pop_batch
+/// [`isolated`]: Frontier::isolated
+/// [`BestFirstStrategy`]: crate::defaults::BestFirstStrategy
+/// [`DfsStrategy`]: crate::defaults::DfsStrategy
+/// [`InMemoryFrontier`]: crate::defaults::InMemoryFrontier
+/// [`LifoFrontier`]: crate::defaults::LifoFrontier
 #[async_trait]
 pub trait Frontier: Send + Sync {
     /// Push a new entry onto the frontier.
+    ///
+    /// Called for the seed URL, for every link that survives discovery filtering and SSRF
+    /// validation, and for window entries returned when the crawl loop stops early.
     async fn push(&self, entry: FrontierEntry) -> Result<(), CrawlError>;
 
     /// Pop the next entry from the frontier.
     async fn pop(&self) -> Result<Option<FrontierEntry>, CrawlError>;
 
     /// Pop up to `n` entries from the frontier.
+    ///
+    /// Returning fewer than `n` — including zero — signals an empty frontier, not an error.
     async fn pop_batch(&self, n: usize) -> Result<Vec<FrontierEntry>, CrawlError> {
         let mut batch = Vec::with_capacity(n);
         for _ in 0..n {
@@ -180,7 +224,11 @@ pub trait EventEmitter: Send + Sync {
 /// This is a synchronous trait -- implementations must be `Send + Sync`.
 pub trait CrawlStrategy: Send + Sync {
     /// Select the next URL to crawl from a set of candidates.
-    /// Returns the index into `candidates`, or `None` if none should be selected.
+    ///
+    /// `candidates` is the engine's bounded frontier window, not the whole frontier — see
+    /// [`Frontier`] for what that implies about global traversal order. Returns the index
+    /// into `candidates`, or `None` if none should be selected. The selected entry is
+    /// removed order-preservingly, so returning `0` yields the frontier's own ordering.
     fn select_next(&self, candidates: &[FrontierEntry]) -> Option<usize>;
 
     /// Score a URL for prioritisation.

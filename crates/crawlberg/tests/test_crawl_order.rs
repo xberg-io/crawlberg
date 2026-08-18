@@ -2,7 +2,7 @@
 //! breadth-first once the engine removes the selected entry order-preservingly and
 //! enqueues discovered links in document order.
 
-use crawlberg::{CrawlConfig, CrawlEngine, CrawlResult};
+use crawlberg::{CrawlConfig, CrawlEngine, CrawlResult, LifoFrontier};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -122,5 +122,38 @@ async fn should_exhaust_each_depth_level_before_descending_when_strategy_is_bfs(
         visited_paths(&result, &base),
         vec!["/".to_owned(), "/a".to_owned(), "/b".to_owned(), "/c".to_owned()],
         "all three depth-1 siblings must be visited before any grandchild"
+    );
+}
+
+/// Depth-first traversal is a property of the frontier, not of the strategy.
+///
+/// The engine passes its bounded selection window to `CrawlStrategy::select_next`, so a
+/// strategy can only reorder what has already been popped; global order comes from the
+/// frontier's own queue discipline. A LIFO frontier must therefore descend into a child
+/// before visiting its remaining siblings.
+#[tokio::test]
+async fn should_visit_deepest_branch_first_when_frontier_is_lifo() {
+    let mock = setup_branching_mock().await;
+    let base = mock.uri();
+
+    let config = CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(3),
+        max_concurrent: Some(1),
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .frontier(LifoFrontier::new())
+        .build()
+        .expect("engine must build");
+
+    let result = engine.crawl(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited_paths(&result, &base),
+        vec!["/".to_owned(), "/c".to_owned(), "/c1".to_owned()],
+        "a LIFO frontier must descend into the newest entry's child before returning to its \
+         siblings"
     );
 }

@@ -2,6 +2,45 @@
 
 All notable changes to crawlberg are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **The engine now drives the crawl through the configured `Frontier`.** `CrawlEngineBuilder::frontier` previously
+  accepted any implementation and then ignored the queue half of it: URLs lived in a `Vec` local to the crawl loop,
+  so `push`, `pop`, `pop_batch`, `len`, and `is_empty` never ran and a persistent or distributed frontier had no
+  effect on the crawl. Discovered links are now pushed to the frontier, and the loop refills a bounded local window
+  from `pop_batch`.
+- **Global traversal order is now a property of the frontier, not the strategy.** The engine passes its selection
+  window — at most `max_concurrent` entries — to `CrawlStrategy::select_next`, so a strategy reorders only what has
+  already been popped. `InMemoryFrontier` is FIFO and yields a breadth-first crawl; the new `LifoFrontier` yields a
+  depth-first one. `DfsStrategy` alone no longer produces a globally depth-first crawl, and `BestFirstStrategy`
+  now picks the highest priority within the window rather than the global maximum. With the default
+  `score_url` (inverse depth) that is not an observable difference; with a custom one, visit order changes.
+- `crawl.frontier_size` counts the selection window plus the entries pushed to the frontier and not yet popped.
+  The meaning — URLs known to be pending — and the value in the default configuration are unchanged.
+- A panic inside SSRF validation now fails the crawl instead of being downgraded to a warning and skipping the link.
+
+### Added
+
+- `LifoFrontier`, an in-memory frontier that pops the most recently pushed entry, for depth-first crawls.
+- `Serialize`/`Deserialize` on `FrontierEntry`, so a frontier backed by a database, a file, or a message queue can
+  encode the entry `push` receives instead of maintaining a mirror struct that silently drops newly added fields
+  (#40).
+
+### Fixed
+
+- The default crawl is genuinely breadth-first. The engine removed the strategy-selected entry with
+  `Vec::swap_remove`, which moves the last element into the vacated slot; since `BfsStrategy` always selects index 0,
+  index 0 held the newest URL after the first removal. A seed linking to `a`, `b`, and `c` was crawled as seed, `a`,
+  `c`, and `b` was never fetched under a `max_pages` budget (#39).
+- Discovered links reach the queue in document order. They were enqueued from a `JoinSet` drained in SSRF-validation
+  completion order, leaving sibling order nondeterministic and breadth-first traversal unreproducible (#39).
+- A URL selected immediately before the page budget was exhausted is returned to the frontier instead of being
+  silently dropped.
+- The wasm crawl loop deduplicates through the frontier rather than a loop-local `HashSet`, so a persistent frontier
+  no longer re-enqueues URLs it had already crawled. It also no longer discards `mark_seen` failures.
+
 ## [1.3.0] - 2026-08-13
 
 This release contains a source-breaking change to `CrawlError`. It is a minor bump rather than a major one, so

@@ -32,7 +32,9 @@ pub const CRAWL_STRATEGY: &str = "crawl.strategy";
 pub const CRAWL_BROWSER_MODE: &str = "crawl.browser_mode";
 /// Depth of the current URL being processed.
 pub const CRAWL_DEPTH: &str = "crawl.depth";
-/// Number of URLs currently in the frontier.
+/// Number of URLs currently pending: the engine's local selection window plus the entries it
+/// has pushed to the frontier and not yet popped back. Exact for a frontier used by a single
+/// crawl; a lower bound for one shared across crawls.
 pub const CRAWL_FRONTIER_SIZE: &str = "crawl.frontier_size";
 /// Number of pages successfully completed so far.
 pub const CRAWL_PAGES_COMPLETED: &str = "crawl.pages_completed";

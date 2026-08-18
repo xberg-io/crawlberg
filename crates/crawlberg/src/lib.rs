@@ -75,8 +75,9 @@ pub use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeBrowserExecuto
 pub use defaults::compute_backoff_ms;
 pub use defaults::{
     AdaptiveStrategy, BestFirstStrategy, BfsStrategy, DfsStrategy, EwmaDomainState, EwmaTracker, FixedBudget,
-    InMemoryFrontier, LearningRetryPolicy, NoopCache, NoopEmitter, NoopFilter, NoopStore, PerDomainThrottle,
-    SimpleRetryPolicy, UnlimitedBudget, default_retry_policy, in_memory_domain_state, unlimited_budget,
+    InMemoryFrontier, LearningRetryPolicy, LifoFrontier, NoopCache, NoopEmitter, NoopFilter, NoopStore,
+    PerDomainThrottle, SimpleRetryPolicy, UnlimitedBudget, default_retry_policy, in_memory_domain_state,
+    unlimited_budget,
 };
 pub use engine::{CrawlEngine, CrawlEngineBuilder};
 pub use error::CrawlError;
