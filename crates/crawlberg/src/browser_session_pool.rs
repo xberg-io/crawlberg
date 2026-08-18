@@ -201,23 +201,69 @@ mod tests {
         assert!(pool.acquire(&key).await.is_none());
     }
 
+    /// ~keep Named `test_insert_and_acquire_same_key` until 2026-08-18, but it inserted nothing:
+    /// `insert` needs a real `chromiumoxide::Page`, so that pairing cannot be exercised without a
+    /// browser. Renamed to what it actually asserts rather than left claiming coverage it lacked.
     #[tokio::test]
-    async fn test_insert_and_acquire_same_key() {
+    async fn should_start_with_an_empty_pool() {
         let pool = BrowserSessionPool::new();
-        let _key = SessionKey {
-            domain: "example.com".to_string(),
-            proxy: None,
-        };
-
         assert_eq!(pool.size().await, 0);
     }
 
-    #[tokio::test]
-    async fn test_evict_expired_sessions() {
-        let pool = BrowserSessionPool::with_config(Duration::from_millis(10), 100);
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    /// ~keep `PooledSession.page` is `Option`, and `evict_expired` reads only `last_used`, so the
+    /// eviction path is reachable without a live browser. The previous version of this test slept
+    /// past the idle timeout on an *empty* pool and discarded `size()`, so it passed whether or not
+    /// eviction worked at all.
+    fn parked_session(age: Duration) -> PooledSession {
+        PooledSession {
+            page: None,
+            permit: None,
+            last_used: Instant::now().checked_sub(age).expect("test clock underflow"),
+        }
+    }
 
-        let _ = pool.size().await;
+    fn key(domain: &str) -> SessionKey {
+        SessionKey {
+            domain: domain.to_string(),
+            proxy: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn should_evict_only_the_sessions_older_than_the_idle_timeout() {
+        let pool = BrowserSessionPool::with_config(Duration::from_secs(30), 100);
+        {
+            let mut sessions = pool.sessions.lock().await;
+            sessions.insert(key("stale.example"), parked_session(Duration::from_secs(60)));
+            sessions.insert(key("fresh.example"), parked_session(Duration::from_secs(1)));
+            pool.evict_expired(&mut sessions);
+        }
+
+        assert_eq!(pool.size().await, 1, "exactly one session should survive eviction");
+        let sessions = pool.sessions.lock().await;
+        assert!(
+            !sessions.contains_key(&key("stale.example")),
+            "the expired session must be evicted"
+        );
+        assert!(
+            sessions.contains_key(&key("fresh.example")),
+            "the live session must be kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_return_none_when_acquiring_a_session_past_its_idle_timeout() {
+        let pool = BrowserSessionPool::with_config(Duration::from_secs(30), 100);
+        pool.sessions
+            .lock()
+            .await
+            .insert(key("stale.example"), parked_session(Duration::from_secs(60)));
+
+        assert!(
+            pool.acquire(&key("stale.example")).await.is_none(),
+            "an expired session must not be handed back to a caller"
+        );
+        assert_eq!(pool.size().await, 0, "acquiring must also drop the expired entry");
     }
 
     #[test]
