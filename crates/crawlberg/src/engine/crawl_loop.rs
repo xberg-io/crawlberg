@@ -67,6 +67,13 @@ const DEFAULT_MAX_CONCURRENT: usize = 10;
 /// enqueued, or `(url, reason)` when it was rejected.
 type ValidatedLink = Result<(String, bool, usize), (String, String)>;
 
+/// Drop the entry for a fetch that has reported back, so only genuinely running URLs remain.
+fn retire_in_flight(in_flight: &mut Vec<FrontierEntry>, url: &str) {
+    if let Some(position) = in_flight.iter().position(|entry| entry.url == url) {
+        in_flight.swap_remove(position);
+    }
+}
+
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
     /// The final URL after all redirects have been followed.
@@ -613,11 +620,13 @@ impl CrawlEngine {
     ) -> Result<(), CrawlError> {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
         let mut window: Vec<FrontierEntry> = Vec::with_capacity(max_concurrent);
+        let mut in_flight: Vec<FrontierEntry> = Vec::with_capacity(max_concurrent);
 
         let outcome = self
             .drive_crawl_loop(
                 state,
                 &mut window,
+                &mut in_flight,
                 exclude_regexes,
                 include_regexes,
                 robots_rules,
@@ -629,6 +638,11 @@ impl CrawlEngine {
                 tx,
             )
             .await;
+
+        // ~keep In-flight entries first: they were selected before anything left in the window,
+        // so returning them ahead of it keeps the frontier's ordering closest to the order the
+        // crawl would have used had it continued.
+        window.splice(0..0, in_flight.drain(..));
 
         let spilled = self.spill_window(&mut window, state).await;
         match (outcome, spilled) {
@@ -653,6 +667,7 @@ impl CrawlEngine {
         &self,
         state: &mut CrawlState,
         window: &mut Vec<FrontierEntry>,
+        in_flight: &mut Vec<FrontierEntry>,
         exclude_regexes: &[Regex],
         include_regexes: &[Regex],
         robots_rules: &Option<RobotsRules>,
@@ -668,6 +683,7 @@ impl CrawlEngine {
         let mut join_set: JoinSet<Result<FetchResult, (FrontierEntry, CrawlError)>> = JoinSet::new();
         let mut cancelled = false;
         let mut frontier_may_have_entries = true;
+        let mut drain_confirmed = false;
 
         while !cancelled {
             while join_set.len() < max_concurrent {
@@ -780,6 +796,13 @@ impl CrawlEngine {
                     );
                 }
 
+                // ~keep The entry moves into the task, so it is unreachable if that task is
+                // aborted. Keep a copy here and drop it when the fetch reports back, so an
+                // early exit can return still-running URLs to the frontier instead of
+                // stranding them: they were marked seen at discovery and a persistent
+                // frontier would otherwise never revisit them.
+                in_flight.push(entry.clone());
+
                 join_set.spawn(async move {
                     let _permit = permit;
 
@@ -820,6 +843,16 @@ impl CrawlEngine {
             }
 
             if join_set.is_empty() {
+                // ~keep A short `pop_batch` is the cheap emptiness signal, but a queue-backed
+                // frontier may legitimately under-deliver while still holding work (SQS short
+                // polling returns 0-N messages from a non-empty queue). Before concluding the
+                // crawl, confirm with `is_empty`. Once per completed fetch at most, so a
+                // frontier that reports non-empty but never yields cannot spin the loop.
+                if window.is_empty() && !drain_confirmed && !self.frontier.is_empty().await? {
+                    drain_confirmed = true;
+                    frontier_may_have_entries = true;
+                    continue;
+                }
                 break;
             }
 
@@ -829,6 +862,7 @@ impl CrawlEngine {
 
             match result {
                 Ok(Ok(fetch)) => {
+                    retire_in_flight(in_flight, &fetch.entry.url);
                     let should_stop = self
                         .process_fetch_result(
                             fetch,
@@ -846,6 +880,7 @@ impl CrawlEngine {
                     }
                 }
                 Ok(Err((entry, error))) => {
+                    retire_in_flight(in_flight, &entry.url);
                     state.pages_failed += 1;
                     self.event_emitter
                         .on_error(&ErrorEvent {
@@ -874,6 +909,7 @@ impl CrawlEngine {
             // the next refill looks again. Without it a frontier that ran dry once would never
             // be polled after new work arrived.
             frontier_may_have_entries = true;
+            drain_confirmed = false;
 
             let pages_processed = if state.is_streaming {
                 state.pages_count

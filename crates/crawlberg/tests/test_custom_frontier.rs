@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use crawlberg::traits::{Frontier, FrontierEntry};
+use crawlberg::traits::{CrawlStats, CrawlStrategy, Frontier, FrontierEntry};
 use crawlberg::{CrawlConfig, CrawlEngine, CrawlError, InMemoryFrontier};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -311,6 +311,74 @@ async fn should_leave_unvisited_urls_in_the_frontier_when_max_pages_stops_the_cr
         "the four discovered children minus those fetched must still be queued, but the \
          frontier is empty: entries popped into the window were dropped instead of returned"
     );
+}
+
+/// Stops the crawl once `limit` pages have been collected.
+///
+/// `max_pages` cannot express this case: the engine refuses to over-spawn against that limit,
+/// so nothing is ever in flight when it trips. A strategy stop is evaluated only after a fetch
+/// completes, which is precisely when the other concurrent fetches are still running.
+#[derive(Debug)]
+struct StopAfterStrategy {
+    limit: usize,
+}
+
+impl CrawlStrategy for StopAfterStrategy {
+    fn select_next(&self, candidates: &[FrontierEntry]) -> Option<usize> {
+        if candidates.is_empty() { None } else { Some(0) }
+    }
+
+    fn should_continue(&self, stats: &CrawlStats) -> bool {
+        stats.pages_crawled < self.limit
+    }
+}
+
+/// URLs still being fetched when the crawl stops early must go back to the frontier.
+///
+/// They are marked seen at discovery time, so a persistent frontier that never got them back
+/// would blacklist them permanently: never crawled, with no error raised and no failure
+/// counted. The engine abandons in-flight fetches when it stops, so those entries have to be
+/// tracked separately from the selection window to be recoverable at all.
+#[tokio::test]
+async fn should_return_in_flight_urls_to_the_frontier_when_the_crawl_stops_early() {
+    let mock = setup_fanout_mock().await;
+    let base = mock.uri();
+    let (frontier, calls) = RecordingFrontier::new();
+
+    let config = CrawlConfig {
+        max_depth: Some(1),
+        max_concurrent: Some(4),
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .frontier(frontier)
+        .strategy(StopAfterStrategy { limit: 2 })
+        .build()
+        .expect("engine must build");
+
+    let result = engine.crawl(&base).await.expect("crawl must succeed");
+
+    let visited: Vec<String> = result
+        .pages
+        .iter()
+        .filter_map(|page| page.url.strip_prefix(&base).map(str::to_owned))
+        .collect();
+
+    let mut queued = Vec::new();
+    while let Some(entry) = calls.queue.pop().await.expect("pop must succeed") {
+        if let Some(path) = entry.url.strip_prefix(&base) {
+            queued.push(path.to_owned());
+        }
+    }
+
+    for child in ["/delta", "/alpha", "/charlie", "/bravo"] {
+        assert!(
+            visited.iter().any(|path| path == child) || queued.iter().any(|path| path == child),
+            "{child} was neither crawled nor left in the frontier: visited {visited:?}, queued \
+             {queued:?} — an abandoned in-flight fetch dropped it while it was already marked seen"
+        );
+    }
 }
 
 /// A frontier that cannot accept a URL must fail the crawl rather than silently truncate it.
