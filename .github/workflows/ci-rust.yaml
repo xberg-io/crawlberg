@@ -174,12 +174,25 @@ jobs:
         shell: bash
         run: |
           CANONICAL="crates/crawlberg-ffi/include/crawlberg.h"
+          # ~keep A missing vendored header must fail, not pass: the previous
+          # `[ -f "$VENDORED" ] &&` guard silently skipped every stale path and
+          # made this step unconditionally green.
+          VENDORED_HEADERS="packages/go/include/crawlberg.h"
           FAIL=0
-          for VENDORED in packages/go/v4/internal/ffi/crawlberg.h packages/ruby/vendor/crawlberg-ffi/crawlberg.h; do
-            if [ -f "$VENDORED" ] && ! diff -q "$CANONICAL" "$VENDORED" > /dev/null 2>&1; then
+          if [ ! -f "$CANONICAL" ]; then
+            echo "::error::canonical header $CANONICAL is missing"
+            exit 1
+          fi
+          for VENDORED in $VENDORED_HEADERS; do
+            if [ ! -f "$VENDORED" ]; then
+              echo "::error::vendored header $VENDORED is missing — restore it or update VENDORED_HEADERS in this workflow"
+              FAIL=1
+            elif ! diff -q "$CANONICAL" "$VENDORED" > /dev/null 2>&1; then
               echo "::error::$VENDORED is out of sync with $CANONICAL — run 'alef sync-versions'"
               diff "$CANONICAL" "$VENDORED" | head -20
               FAIL=1
+            else
+              echo "ok: $VENDORED matches $CANONICAL"
             fi
           done
           [ "$FAIL" -eq 0 ] || exit 1
