@@ -1653,6 +1653,24 @@ jobs:
         with:
           cache-key-prefix: publish-crates
 
+      # ~keep publish-crates takes `crates` as a required input, but an input that
+      # resolves to an empty string is not an error to GitHub — the action would
+      # publish nothing and the job would still go green. Assert the resolved list
+      # here so a mis-resolved ${{ env.CRATES_TO_PUBLISH }} fails the release
+      # instead of quietly shipping zero crates.
+      - name: Assert the crate list resolved
+        shell: bash
+        env:
+          RESOLVED_CRATES: ${{ env.CRATES_TO_PUBLISH }}
+        run: |
+          set -euo pipefail
+          COUNT=$(printf '%s' "${RESOLVED_CRATES:-}" | wc -w | tr -d '[:space:]')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::CRATES_TO_PUBLISH resolved to an empty list — refusing to publish nothing"
+            exit 1
+          fi
+          echo "Publishing ${COUNT} crate(s): ${RESOLVED_CRATES}"
+
       - uses: xberg-io/actions/publish-crates@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           crates: ${{ env.CRATES_TO_PUBLISH }}
