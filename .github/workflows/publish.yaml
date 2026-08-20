@@ -40,6 +40,14 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  # ~keep Single source of truth for the crates.io release set, in dependency order.
+  # check-cratesio and publish-crates both read this; they used to keep two
+  # hand-maintained lists that had silently diverged (the check omitted
+  # crawlberg-browser, so all_exist could report true while browser was unpublished
+  # and publish-crates was skipped outright).
+  CRATES_TO_PUBLISH: "crawlberg-browser crawlberg crawlberg-bypass crawlberg-bindings-common crawlberg-cli"
+
 concurrency:
   group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.ref || github.event.inputs.tag)) || github.ref || github.run_id }}
   cancel-in-progress: false
@@ -249,33 +257,50 @@ jobs:
     if: ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.release_crates == 'true' }}
     runs-on: ubuntu-latest
     outputs:
-      bindings_common_exists: ${{ steps.check.outputs.exists }}
-      crawlberg_exists: ${{ steps.check.outputs.crawlberg_exists }}
-      cli_exists: ${{ steps.check.outputs.cli_exists }}
-      bypass_exists: ${{ steps.check.outputs.bypass_exists }}
-      all_exist: ${{ steps.derive.outputs.all_exist }}
+      all_exist: ${{ steps.check.outputs.all_exist }}
     steps:
-      - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: actions/checkout@v6
         with:
-          registry: cratesio
-          package: crawlberg-bindings-common
-          version: ${{ needs.prepare.outputs.version }}
-          extra-packages: |
-            crawlberg_exists=crawlberg
-            cli_exists=crawlberg-cli
-            bypass_exists=crawlberg-bypass
+          ref: ${{ needs.prepare.outputs.ref }}
 
-      - id: derive
+      - uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+
+      # ~keep Loop $CRATES_TO_PUBLISH rather than restating the set. The previous
+      # form passed the extra crates through check-registry's `extra-packages`,
+      # but that composite action declares only `exists`, so every extra key
+      # interpolated to "" — the v1.2.1 run log shows this step evaluating
+      # `"" == "true"` three times.
+      - id: check
+        name: Check every crate in CRATES_TO_PUBLISH
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if [[ "${{ steps.check.outputs.exists }}" == "true" \
-            && "${{ steps.check.outputs.crawlberg_exists }}" == "true" \
-            && "${{ steps.check.outputs.cli_exists }}" == "true" \
-            && "${{ steps.check.outputs.bypass_exists }}" == "true" ]]; then
-            echo "all_exist=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "all_exist=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ -z "${CRATES_TO_PUBLISH:-}" ]; then
+            echo "::error::CRATES_TO_PUBLISH is empty — nothing would be checked"
+            exit 1
           fi
+          ALL_EXIST=true
+          for CRATE in $CRATES_TO_PUBLISH; do
+            EXISTS=""
+            for ATTEMPT in 1 2 3 4 5; do
+              if EXISTS=$(alef check-registry --registry cratesio --package "$CRATE" \
+                  --version "$VERSION" --json | jq -r '.exists'); then
+                break
+              fi
+              echo "attempt ${ATTEMPT} for ${CRATE} failed, retrying..." >&2
+              sleep "$((ATTEMPT * 3))"
+              EXISTS=""
+            done
+            case "$EXISTS" in
+              true) echo "${CRATE}@${VERSION}: present" ;;
+              false) echo "${CRATE}@${VERSION}: absent"; ALL_EXIST=false ;;
+              *) echo "::error::could not determine whether ${CRATE}@${VERSION} exists on crates.io"; exit 1 ;;
+            esac
+          done
+          echo "all_exist=${ALL_EXIST}" >>"$GITHUB_OUTPUT"
+          echo "all_exist=${ALL_EXIST}"
 
   check-hex:
     name: Check Hex.pm for existing version
@@ -1630,7 +1655,7 @@ jobs:
 
       - uses: xberg-io/actions/publish-crates@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
-          crates: crawlberg-browser crawlberg crawlberg-bypass crawlberg-bindings-common crawlberg-cli
+          crates: ${{ env.CRATES_TO_PUBLISH }}
           version: ${{ needs.prepare.outputs.version }}
           dry-run: ${{ needs.prepare.outputs.dry_run }}
 
