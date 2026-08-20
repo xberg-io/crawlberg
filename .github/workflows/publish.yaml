@@ -315,16 +315,46 @@ jobs:
     if: ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.release_kotlin_android == 'true' }}
     runs-on: ubuntu-latest
     outputs:
-      kotlin_android_exists: ${{ steps.check.outputs.kotlin_android_exists }}
+      # ~keep check-registry is a composite action and only declares `exists`, so
+      # keys passed via `extra-packages` never reach the caller — they interpolate
+      # to "" (see the v1.2.1 run, where the derive step evaluated `"" == "true"`).
+      # The coordinate this job gates on must therefore be the primary `package`.
+      kotlin_android_exists: ${{ steps.check.outputs.exists }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
+      # ~keep Derive the coordinate from the Gradle publish config rather than
+      # restating it here. The previous hard-coded `io.xberg:crawlberg-android`
+      # never matched the published `io.xberg.crawlberg.android:crawlberg-android`,
+      # so the gate below always read "not published".
+      - id: coords
+        name: Derive Maven coordinate from the Gradle publish config
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE="packages/kotlin-android/build.gradle.kts"
+          if [ ! -f "$GRADLE" ]; then
+            echo "::error::$GRADLE is missing — cannot derive the Maven coordinate"
+            exit 1
+          fi
+          COORDS=$(awk '/coordinates\(/{inblock=1} inblock{print} inblock&&/\)/{exit}' "$GRADLE")
+          GROUP_ID=$(printf '%s\n' "$COORDS" | sed -n 's/.*groupId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p')
+          ARTIFACT_ID=$(printf '%s\n' "$COORDS" | sed -n 's/.*artifactId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p')
+          if [ "$(printf '%s\n' "$GROUP_ID" | grep -c .)" != 1 ] || [ "$(printf '%s\n' "$ARTIFACT_ID" | grep -c .)" != 1 ]; then
+            echo "::error::expected exactly one groupId and one artifactId in the coordinates(...) block of $GRADLE"
+            exit 1
+          fi
+          echo "coordinate=${GROUP_ID}:${ARTIFACT_ID}" >>"$GITHUB_OUTPUT"
+          echo "Gating kotlin-android publish on ${GROUP_ID}:${ARTIFACT_ID}"
+
       - id: check
         uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
         with:
           registry: maven
-          package: io.xberg:crawlberg
+          package: ${{ steps.coords.outputs.coordinate }}
           version: ${{ needs.prepare.outputs.version }}
-          extra-packages: |
-            kotlin_android_exists=io.xberg:crawlberg-android
 
   check-homebrew:
     name: Check Homebrew tap for formula
