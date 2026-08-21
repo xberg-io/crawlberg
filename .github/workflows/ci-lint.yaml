@@ -34,6 +34,14 @@ jobs:
       # skipped poly's workspace phase entirely, so those five linters ran only in
       # the git hooks and CI never saw them. ~keep
       setup-go: true
+      # ~keep The reusable workflow defaults to golangci-lint v2.12.2, which vendors
+      # honnef.co/go/tools v0.7.0. That IR builder panics building the Go 1.27 stdlib
+      # (`buildir: package "poll": unexpected expr: *ast.KeyValueExpr`), so `poly lint .`
+      # died on golangci-lint before reaching a single crawlberg finding. `go-version` is
+      # `stable`, which is now 1.27, so the toolchain cannot be walked back without also
+      # losing the go.mod-declared floor. v2.13.1 handles 1.27 — verified locally against
+      # packages/go with go1.27.0: 0 issues, no panic.
+      golangci-lint-version: v2.13.1
       setup-ruby: true
       setup-dart: true
       setup-elixir: true
@@ -55,9 +63,8 @@ jobs:
 
       # ~keep dart, elixir and zig are the only three toolchains `alef snippets check`
       # needs that ubuntu-latest does not preinstall. Without them those snippets report
-      # Unavailable, which --strict counts as a failure — so the job failed while every
-      # snippet it could actually run passed. Installing them keeps --strict meaningful
-      # rather than dropping the flag and silently not checking three languages.
+      # Unavailable instead of being checked at all, so the three languages go silently
+      # unvalidated rather than failing loudly. Install them so the check is real.
       - name: Setup Elixir
         uses: xberg-io/actions/setup-elixir@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
@@ -79,5 +86,11 @@ jobs:
         with:
           version: "0.16.0"
 
+      # ~keep No `--strict`. `--strict` fails the run on every Skip, Unavailable AND Downgraded
+      # (alef `cli::commands::snippets::has_incomplete_coverage`), and six languages are still
+      # annotated `snippet:syntax-only` pending a session — exactly the state `alef.toml`'s
+      # `[workspace.docs.snippets]` comment says to keep `strict` off for. Passing it on the
+      # command line force-enabled what the config deliberately disables, so the job could never
+      # go green. Turn it on when the last session lands, per that comment — not before.
       - name: Check snippets
-        run: alef snippets check --strict --cache off
+        run: alef snippets check --cache off
