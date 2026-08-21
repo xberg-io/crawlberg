@@ -54,25 +54,25 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           show-initial: "false"
           show-final: "true"
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           cache-key-prefix: rust-${{ matrix.os }}
           use-sccache: "true"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/install-task@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       # ~keep ext-php-rs's build.rs shells out to a `php` binary and fails the whole
       # workspace clippy run without it. Same action/version/extensions ci-e2e.yaml
       # already trusts for the php e2e job, so this is not a newly-introduced toolchain.
       - name: Setup PHP
-        uses: xberg-io/actions/setup-php@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/setup-php@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           php-version: "8.4"
           tools: composer
@@ -99,7 +99,7 @@ jobs:
       # common::is_missing_chrome_message on every CI run.
       - name: Setup Chrome
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/setup-chrome@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/setup-chrome@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Run tests
         run: task rust:test:ci
@@ -144,19 +144,19 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Free disk space
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           show-initial: "false"
           show-final: "true"
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           cache-key-prefix: validate-rust
           use-sccache: "true"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/install-task@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Run Rust lint checks
         run: task rust:lint:check
@@ -165,7 +165,7 @@ jobs:
         run: task c:lint:check
 
       - name: Install alef
-        uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/install-alef@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Verify binding API parity
         run: alef verify --exit-code

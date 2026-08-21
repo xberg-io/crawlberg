@@ -106,7 +106,7 @@ jobs:
 
       - name: Retag for republish
         if: ${{ inputs.republish == true || github.event.client_payload.republish == true }}
-        uses: xberg-io/actions/retag-for-republish@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/retag-for-republish@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ inputs.tag || github.event.client_payload.tag }}
           token: ${{ steps.app-token.outputs.token }}
@@ -115,11 +115,11 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        uses: xberg-io/actions/prepare-release-metadata@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/prepare-release-metadata@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Ensure GitHub Release exists for tag
         if: ${{ steps.meta.outputs.is_tag == 'true' && steps.meta.outputs.dry_run != 'true' }}
-        uses: xberg-io/actions/publish-github-release@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/publish-github-release@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ steps.meta.outputs.tag }}
           target: ${{ steps.meta.outputs.target_sha }}
@@ -142,7 +142,7 @@ jobs:
           submodules: recursive
 
       - name: Validate versions
-        uses: xberg-io/actions/validate-versions@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/validate-versions@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           version: ${{ needs.prepare.outputs.version }}
 
@@ -155,7 +155,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: pypi
           package: crawlberg
@@ -170,7 +170,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: npm
           package: "@xberg-io/crawlberg"
@@ -185,7 +185,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: npm
           package: "@xberg-io/crawlberg-wasm"
@@ -200,7 +200,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: rubygems
           package: crawlberg
@@ -215,7 +215,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: maven
           package: "io.xberg.crawlberg:crawlberg"
@@ -230,7 +230,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: nuget
           package: Crawlberg
@@ -245,7 +245,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: packagist
           package: xberg-io/crawlberg
@@ -263,7 +263,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.ref }}
 
-      - uses: xberg-io/actions/install-alef@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/install-alef@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       # ~keep Loop $CRATES_TO_PUBLISH rather than restating the set. The previous
       # form passed the extra crates through check-registry's `extra-packages`,
@@ -311,7 +311,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: hex
           package: crawlberg
@@ -326,7 +326,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: github-release
           package: crawlberg-zig-v${{ needs.prepare.outputs.version }}.tar.gz
@@ -375,7 +375,7 @@ jobs:
           echo "Gating kotlin-android publish on ${GROUP_ID}:${ARTIFACT_ID}"
 
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: maven
           package: ${{ steps.coords.outputs.coordinate }}
@@ -390,7 +390,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: homebrew
           package: crawlberg
@@ -406,7 +406,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: github-release
           package: crawlberg
@@ -426,7 +426,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: github-release
           package: crawlberg
@@ -444,7 +444,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: github-release
           package: crawlberg
@@ -462,7 +462,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/check-registry@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: github-release
           package: crawlberg
@@ -490,10 +490,10 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Build wheels
-        uses: xberg-io/actions/build-python-wheels@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/build-python-wheels@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           python-version: "3.13"
           package-dir: packages/python
@@ -518,12 +518,12 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
-      - uses: xberg-io/actions/build-python-sdist@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-python-sdist@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: packages/python
           output-dir: dist
@@ -590,19 +590,19 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.rust_target || matrix.target }}
           cache-key-prefix: publish-node-${{ matrix.target }}
 
-      - uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           node-version: "22"
 
       - name: Build native module
-        uses: xberg-io/actions/build-node-napi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/build-node-napi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crate-dir: crates/crawlberg-node
           target: ${{ matrix.target }}
@@ -628,7 +628,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/install-wasi-sdk@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/install-wasi-sdk@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Configure WASM C compiler
         shell: bash
@@ -636,16 +636,16 @@ jobs:
           echo "CC_wasm32_unknown_unknown=${WASI_SDK_PATH}/bin/clang" >> "$GITHUB_ENV"
           echo "AR_wasm32_unknown_unknown=${WASI_SDK_PATH}/bin/ar" >> "$GITHUB_ENV"
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: wasm32-unknown-unknown
           cache-key-prefix: publish-wasm
 
-      - uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           node-version: "22"
 
-      - uses: xberg-io/actions/build-wasm-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-wasm-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crate-dir: crates/crawlberg-wasm
           pack-tarball: "true"
@@ -686,13 +686,13 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Drop cached CLI binaries
         shell: bash
         run: rm -rf packages/ruby/exe/* packages/ruby/pkg
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           cache-key-prefix: publish-ruby-${{ matrix.label }}
 
@@ -710,7 +710,7 @@ jobs:
           bundle config set --local path 'vendor/bundle'
           bundle install --jobs 4 --retry 3
 
-      - uses: xberg-io/actions/build-ruby-gem@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-ruby-gem@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: packages/ruby
 
@@ -763,16 +763,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/setup-php@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-php@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           php-version: ${{ matrix.php }}
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.platform.target }}
           cache-key-prefix: publish-php-${{ matrix.platform.label }}-php${{ matrix.php }}
 
-      - uses: xberg-io/actions/build-php-extension@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-php-extension@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crate-name: crawlberg-php
           lib-name: crawlberg_php
@@ -792,7 +792,7 @@ jobs:
           }
           "compiler=$compiler" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - uses: xberg-io/actions/package-php-pie@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/package-php-pie@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           php-version: ${{ matrix.php }}
           php-ts: nts
@@ -817,7 +817,7 @@ jobs:
     if: ${{ needs.prepare.outputs.release_cli == 'true' && (needs.validate-versions.result == 'success' || needs.validate-versions.result == 'skipped') && (needs.check-cli.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     permissions:
       contents: write
-    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+    uses: xberg-io/actions/.github/workflows/reusable-cli-release.yml@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
     with:
       package-name: crawlberg-cli
       binary-name: crawlberg
@@ -834,7 +834,7 @@ jobs:
     name: Verify cargo-binstall install
     needs: [prepare, cli-release]
     if: ${{ needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.cli-release.result == 'success' }}
-    uses: xberg-io/actions/.github/workflows/reusable-binstall-verify.yml@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+    uses: xberg-io/actions/.github/workflows/reusable-binstall-verify.yml@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
     with:
       package-name: crawlberg-cli
       binary-name: crawlberg
@@ -862,7 +862,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Build musl CLI via Docker
         shell: bash
@@ -913,14 +913,14 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-go-${{ matrix.platform }}
 
-      - uses: xberg-io/actions/build-go-ffi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-go-ffi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           crate-name: crawlberg-ffi
@@ -960,14 +960,14 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-c-ffi-${{ matrix.platform }}
 
-      - uses: xberg-io/actions/build-rust-ffi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-rust-ffi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crate-name: crawlberg-ffi
           target: ${{ matrix.target }}
@@ -1025,14 +1025,14 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-java-${{ matrix.classifier }}
 
-      - uses: xberg-io/actions/build-java-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-java-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           crate-name: crawlberg-ffi
@@ -1075,7 +1075,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Build musl FFI via Docker
         shell: bash
@@ -1124,14 +1124,14 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-csharp-${{ matrix.rid }}
 
-      - uses: xberg-io/actions/build-csharp-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-csharp-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           crate-name: crawlberg-ffi
@@ -1164,14 +1164,14 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-csharp-${{ matrix.rid }}
 
-      - uses: xberg-io/actions/build-csharp-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-csharp-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           crate-name: crawlberg-ffi
@@ -1214,7 +1214,7 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Override ImageOS on ARM Linux runners
         if: matrix.os == 'ubuntu-24.04-arm'
@@ -1231,12 +1231,12 @@ jobs:
           elixir-version: "1.17"
           otp-version: "27"
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-elixir-${{ matrix.label }}
 
-      - uses: xberg-io/actions/build-elixir-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-elixir-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           nif-crate-name: crawlberg_nif
@@ -1273,7 +1273,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Override ImageOS on ARM Linux runners
         if: matrix.os == 'ubuntu-24.04-arm'
@@ -1285,12 +1285,12 @@ jobs:
           elixir-version: "1.17"
           otp-version: "27"
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: publish-elixir-musl-${{ matrix.arch }}
 
-      - uses: xberg-io/actions/build-elixir-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-elixir-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           nif-crate-name: crawlberg_nif
@@ -1316,8 +1316,8 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
-      - uses: xberg-io/actions/build-swift-artifactbundle@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+      - uses: xberg-io/actions/build-swift-artifactbundle@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         id: bundle
         with:
           crate-name: crawlberg-swift
@@ -1342,9 +1342,9 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/build-swift-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-swift-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: packages/swift
           crate-name: crawlberg-swift
@@ -1366,9 +1366,9 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/build-zig-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-zig-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           ffi-crate: crawlberg-ffi
           package-dir: packages/zig
@@ -1392,7 +1392,7 @@ jobs:
           path: dist/go-ffi
           merge-multiple: true
 
-      - uses: xberg-io/actions/upload-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/upload-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/go-ffi
@@ -1448,7 +1448,7 @@ jobs:
           path: dist/c-ffi
           merge-multiple: true
 
-      - uses: xberg-io/actions/upload-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/upload-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/c-ffi
@@ -1474,7 +1474,7 @@ jobs:
           name: swift-artifactbundle
           path: dist/swift
 
-      - uses: xberg-io/actions/upload-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/upload-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/swift
@@ -1561,7 +1561,7 @@ jobs:
           path: dist/elixir
           merge-multiple: true
 
-      - uses: xberg-io/actions/upload-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/upload-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/elixir
@@ -1588,7 +1588,7 @@ jobs:
           path: dist/php-package
           merge-multiple: true
 
-      - uses: xberg-io/actions/upload-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/upload-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/php-package
@@ -1620,7 +1620,7 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           owner: xberg-io
-      - uses: xberg-io/actions/verify-release-assets@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/verify-release-assets@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           token: ${{ steps.app-token.outputs.token }}
@@ -1649,7 +1649,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           submodules: recursive
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           cache-key-prefix: publish-crates
 
@@ -1671,7 +1671,7 @@ jobs:
           fi
           echo "Publishing ${COUNT} crate(s): ${RESOLVED_CRATES}"
 
-      - uses: xberg-io/actions/publish-crates@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-crates@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crates: ${{ env.CRATES_TO_PUBLISH }}
           version: ${{ needs.prepare.outputs.version }}
@@ -1697,7 +1697,7 @@ jobs:
           name: python-sdist
           path: dist
 
-      - uses: xberg-io/actions/publish-pypi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-pypi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           packages-dir: dist
           dry-run: ${{ needs.prepare.outputs.dry_run }}
@@ -1724,7 +1724,7 @@ jobs:
 
       - uses: rubygems/configure-rubygems-credentials@v2.0.0
 
-      - uses: xberg-io/actions/publish-rubygems@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-rubygems@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           gems-dir: dist
           dry-run: ${{ needs.prepare.outputs.dry_run }}
@@ -1749,7 +1749,7 @@ jobs:
           path: node-artifacts
           merge-multiple: true
 
-      - uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org/"
@@ -1786,7 +1786,7 @@ jobs:
           mv "$tmp_pkg_json" crates/crawlberg-node/package.json
 
       - name: Publish platform sub-packages
-        uses: xberg-io/actions/publish-npm@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/publish-npm@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           packages-dir: crates/crawlberg-node/npm
           npm-tag: ${{ needs.prepare.outputs.npm_tag }}
@@ -1794,7 +1794,7 @@ jobs:
 
       - name: Wait for npm indexing (linux-x64-gnu)
         if: ${{ needs.prepare.outputs.dry_run != 'true' }}
-        uses: xberg-io/actions/wait-for-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/wait-for-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: npm
           package: "@xberg-io/crawlberg-linux-x64-gnu"
@@ -1803,7 +1803,7 @@ jobs:
 
       - name: Wait for npm indexing (linux-arm64-gnu)
         if: ${{ needs.prepare.outputs.dry_run != 'true' }}
-        uses: xberg-io/actions/wait-for-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/wait-for-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: npm
           package: "@xberg-io/crawlberg-linux-arm64-gnu"
@@ -1811,7 +1811,7 @@ jobs:
           max-attempts: "60"
 
       - name: Publish main @xberg-io/crawlberg package
-        uses: xberg-io/actions/publish-npm@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/publish-npm@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: crates/crawlberg-node
           npm-tag: ${{ needs.prepare.outputs.npm_tag }}
@@ -1819,7 +1819,7 @@ jobs:
 
       - name: Wait for main Node package indexing
         if: ${{ needs.prepare.outputs.dry_run != 'true' }}
-        uses: xberg-io/actions/wait-for-package@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/wait-for-package@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           registry: npm
           package: "@xberg-io/crawlberg"
@@ -1845,12 +1845,12 @@ jobs:
           name: wasm-bundle
           path: crates/crawlberg-wasm
 
-      - uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org/"
 
-      - uses: xberg-io/actions/publish-npm@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-npm@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: crates/crawlberg-wasm
           npm-tag: ${{ needs.prepare.outputs.npm_tag }}
@@ -1863,7 +1863,7 @@ jobs:
     if: ${{ needs.prepare.outputs.release_php == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: xberg-io/actions/publish-packagist@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-packagist@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           packagist-username: xberg-io
           package-name: xberg-io/crawlberg
@@ -1911,13 +1911,13 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
-      - uses: xberg-io/actions/setup-maven@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-maven@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/configure-maven-gpg@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/configure-maven-gpg@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           pom-file: packages/java/pom.xml
 
-      - uses: xberg-io/actions/publish-maven@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-maven@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           pom-file: packages/java/pom.xml
           maven-profile: publish
@@ -1963,7 +1963,7 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Render runtime.json from template
-        uses: xberg-io/actions/render-runtime-json@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/render-runtime-json@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           template-path: packages/csharp/Crawlberg/runtime.json.template
           version: ${{ needs.prepare.outputs.version }}
@@ -1976,7 +1976,7 @@ jobs:
             -p:Version=${{ needs.prepare.outputs.version }} \
             -o dist/nuget
 
-      - uses: xberg-io/actions/publish-nuget@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-nuget@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           packages-dir: dist/nuget
           dry-run: ${{ needs.prepare.outputs.dry_run }}
@@ -2009,7 +2009,7 @@ jobs:
 
       - name: Generate checksums from GitHub release
         if: needs.prepare.outputs.dry_run != 'true'
-        uses: xberg-io/actions/generate-elixir-checksums@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/generate-elixir-checksums@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           github-repo: ${{ github.repository }}
           tag: ${{ needs.prepare.outputs.tag }}
@@ -2066,7 +2066,7 @@ jobs:
         working-directory: packages/elixir
         shell: bash
 
-      - uses: xberg-io/actions/publish-hex@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-hex@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: packages/elixir
           skip-docs: "true"
@@ -2097,14 +2097,14 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           submodules: recursive
 
-      - uses: xberg-io/actions/setup-rust@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: kotlin-android-${{ matrix.abi }}
 
-      - uses: xberg-io/actions/setup-android-ndk@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-android-ndk@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
-      - uses: xberg-io/actions/build-android-natives@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/build-android-natives@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           crate-name: crawlberg-jni
           lib-name: cberg_jni
@@ -2143,7 +2143,7 @@ jobs:
           done
         shell: bash
 
-      - uses: xberg-io/actions/publish-maven-gradle@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-maven-gradle@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           working-directory: packages/kotlin-android
           gradle-task: publishAndReleaseToMavenCentral
@@ -2215,7 +2215,7 @@ jobs:
           ls -la "$out"
           for d in "$out"/*/; do echo "--- $d ---"; ls -la "$d"; done
 
-      - uses: xberg-io/actions/publish-zig@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-zig@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           working-directory: packages/zig
           tag: ${{ needs.prepare.outputs.tag }}
@@ -2319,14 +2319,14 @@ jobs:
 
       - name: Free disk space
         if: runner.os == 'Linux'
-        uses: xberg-io/actions/free-disk-space-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Install Homebrew (Linux)
         if: ${{ matrix.install_brew }}
-        uses: xberg-io/actions/install-homebrew-linux@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/install-homebrew-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
       - name: Build bottles
-        uses: xberg-io/actions/homebrew-build-bottles@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/homebrew-build-bottles@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           version: ${{ needs.prepare.outputs.version }}
@@ -2401,7 +2401,7 @@ jobs:
       # skip the merge rather than fail on "no JSON manifests".
       - name: Merge bottle DSL into formula
         if: ${{ steps.bottle-manifests.outputs.count != '0' }}
-        uses: xberg-io/actions/homebrew-merge-bottles@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+        uses: xberg-io/actions/homebrew-merge-bottles@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           version: ${{ needs.prepare.outputs.version }}
@@ -2477,7 +2477,7 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           owner: xberg-io
-      - uses: xberg-io/actions/finalize-release@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/finalize-release@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           is-prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' && 'true' || 'false' }}
@@ -2526,7 +2526,7 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           owner: xberg-io
-      - uses: xberg-io/actions/announce-release-discord@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/announce-release-discord@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           tag: ${{ needs.prepare.outputs.tag }}
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -2542,7 +2542,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      - uses: xberg-io/actions/publish-npm@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-npm@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           package-dir: cli-proxy/npm
           access: public
@@ -2570,7 +2570,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
-      - uses: xberg-io/actions/setup-node-workspace@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org/"
@@ -2590,7 +2590,7 @@ jobs:
       # No NODE_AUTH_TOKEN: publish via OIDC trusted publishing (like every other
       # npm job here). The classic NPM_TOKEN lacked write access to this package
       # and returned E404; trusted publishing uses the job's id-token instead. ~keep
-      - uses: xberg-io/actions/publish-npm@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-npm@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         if: steps.guard.outputs.skip != 'true'
         with:
           package-dir: plugin
@@ -2621,7 +2621,7 @@ jobs:
       - name: Build Hermes wheel
         run: uv build --wheel --out-dir dist-hermes plugin/.hermes/package
       # publish-pypi is idempotent (skips a version already on PyPI). ~keep
-      - uses: xberg-io/actions/publish-pypi@75a483180eb94ee41af61d27790b1e6593080406 # v1.8.129
+      - uses: xberg-io/actions/publish-pypi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
         with:
           packages-dir: dist-hermes
           dry-run: ${{ needs.prepare.outputs.dry_run }}
