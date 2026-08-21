@@ -17,6 +17,15 @@
   "main": "pkg/nodejs/crawlberg_wasm.js",
   "module": "pkg/web/crawlberg_wasm.js",
   "types": "pkg/nodejs/crawlberg_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/nodejs/crawlberg_wasm.d.ts",
+      "browser": "./pkg/web/crawlberg_wasm.js",
+      "import": "./pkg/nodejs/crawlberg_wasm.js",
+      "require": "./pkg/nodejs/crawlberg_wasm.js",
+      "default": "./pkg/nodejs/crawlberg_wasm.js"
+    }
+  },
   "engines": {
     "node": ">= 22"
   },

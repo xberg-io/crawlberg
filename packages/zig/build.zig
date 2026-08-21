@@ -31,11 +31,12 @@ pub fn build(b: *std.Build) void {
     module.linkSystemLibrary("crawlberg_ffi", .{});
 
     const test_module = b.createModule(.{
-        .root_source_file = b.path("src/crawlberg.zig"),
+        .root_source_file = b.path("test/crawlberg_test.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+    test_module.addImport("crawlberg", module);
     test_module.addLibraryPath(.{ .cwd_relative = ffi_path });
     test_module.addIncludePath(.{ .cwd_relative = ffi_include });
     test_module.linkSystemLibrary("crawlberg_ffi", .{});
