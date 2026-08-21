@@ -48,9 +48,9 @@
 			"value": 1
 		},
 		{
-			"type": "equals",
-			"field": "is_error",
-			"value": true
+			"type": "contains",
+			"field": "error",
+			"value": "404"
 		}
 	]
 }

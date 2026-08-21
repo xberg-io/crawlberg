@@ -45,7 +45,11 @@
 		{
 			"type": "greater_than_or_equal",
 			"field": "rate_limit.min_duration_ms",
-			"value": 150
+			"value": 150,
+			"skip": {
+				"kind": "not_representable",
+				"reason": "min_duration_ms is wall-clock elapsed time for the whole crawl() call, not a response field. Neither CrawlResult nor CrawlPageResult nor ResponseMeta carries per-request or per-crawl timing (verified against crates/crawlberg/src/types/results.rs and types/metadata.rs), and the crawl call's result_fields allowlist in alef.toml has no timing entry. The rate-limit delay itself is exercised by pages_crawled == 3 above; the elapsed-time assertion would need harness-level wall-clock measurement outside the response, which alef's e2e generator does not support."
+			}
 		}
 	]
 }

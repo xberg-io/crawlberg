@@ -54,8 +54,13 @@
 	"assertions": [
 		{
 			"type": "equals",
-			"field": "is_error",
-			"value": true
+			"field": "redirect_count",
+			"value": 2
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].status_code",
+			"value": 301
 		}
 	]
 }

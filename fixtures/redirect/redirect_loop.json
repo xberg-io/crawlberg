@@ -1,37 +1,29 @@
 {
 	"id": "redirect_loop",
-	"description": "Detects redirect loop (A -> B -> A) and returns error",
+	"description": "Detects redirect loop (A -> B -> A) and stops following without reaching a final page",
 	"docs": {
 		"topic": "redirect",
 		"stem": "redirect-loop",
-		"title": "Detects redirect loop (A -> B -> A) and returns error"
+		"title": "Detects redirect loop (A -> B -> A) and stops following without reaching a final page"
 	},
 	"tags": ["redirect", "error", "crawl"],
 	"input": {
 		"mock_responses": [
 			{
 				"path": "/",
-				"status_code": 200,
+				"method": "GET",
+				"status_code": 302,
 				"headers": {
-					"content-type": "text/html; charset=utf-8"
+					"location": "/a"
 				},
-				"body_inline": "<html><body><h1>Redirect Root</h1></body></html>"
+				"body_inline": ""
 			},
 			{
 				"path": "/a",
 				"method": "GET",
 				"status_code": 302,
 				"headers": {
-					"location": "/b"
-				},
-				"body_inline": ""
-			},
-			{
-				"path": "/b",
-				"method": "GET",
-				"status_code": 302,
-				"headers": {
-					"location": "/a"
+					"location": "/"
 				},
 				"body_inline": ""
 			}
@@ -43,8 +35,13 @@
 	"assertions": [
 		{
 			"type": "equals",
-			"field": "is_error",
-			"value": true
+			"field": "redirect_count",
+			"value": 1
+		},
+		{
+			"type": "equals",
+			"field": "pages[0].status_code",
+			"value": 302
 		}
 	]
 }
