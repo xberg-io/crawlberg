@@ -279,14 +279,22 @@ typedef struct CBERGSitemapUrl CBERGSitemapUrl;
 typedef struct CBERGSsrfPolicy CBERGSsrfPolicy;
 
 
-enum CBERGAlefFfiErrorCode {
+enum CBERGAlefFfiErrorCode
+#if __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // __STDC_VERSION__ >= 202311L
+ {
   CbergAlefNone = 0,
   CbergAlefConversion = 1,
   CbergAlefUnknown = 2,
   CbergAlefPanic = 3,
   CbergAlefInvalidHandle = 4,
 };
+#if __STDC_VERSION__ >= 202311L
+typedef enum CBERGAlefFfiErrorCode CBERGAlefFfiErrorCode;
+#else
 typedef int32_t CBERGAlefFfiErrorCode;
+#endif // __STDC_VERSION__ >= 202311L
 
 typedef uint64_t CBERGAlefHandle;
 
