@@ -158,6 +158,13 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
 
+      # ~keep `task rust:lint:check` runs `deps:check` first, which hard-fails when
+      # cargo-machete is absent rather than skipping — deliberately, so the 14 curated
+      # [package.metadata.cargo-machete] lists cannot go unread. Nothing installed it here,
+      # so the job died on its very first command. Same pattern as ci-fuzz's cargo-fuzz.
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked
+
       - name: Run Rust lint checks
         run: task rust:lint:check
 
