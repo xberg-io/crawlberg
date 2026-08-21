@@ -15,13 +15,14 @@ All notable changes to crawlberg are documented here.
   fails the run on every Skip, Unavailable *and* Downgraded result — the exact state `alef.toml`
   documents `strict = false` for while six languages are still annotated `snippet:syntax-only`.
   The command-line flag force-enabled what the config deliberately disables, so the job was
-  unpassable. Dropped from the workflow and from the matching `poly.toml` hook.
+  unpassable. Dropped from the workflow.
 
-- **The Dart snippet is really validated, at `compile` rather than not at all.** It failed with
-  `Target of URI doesn't exist: 'package:crawlberg/crawlberg.dart'` because no Dart snippet session
-  existed, so nothing resolved the local package. Added one, with `PUB_CACHE` named explicitly
-  because alef's snippet sandbox clears `HOME`, and dropped the now-unneeded `snippet:syntax-only`
-  annotation.
+- **The Dart snippet no longer hard-fails the snippet check.** It reported
+  `Target of URI doesn't exist: 'package:crawlberg/crawlberg.dart'` as a snippet defect even though
+  its `snippet:syntax-only` annotation should have made an unresolved import a pass: alef's
+  `DartValidator::is_dependency_error` matches the lowercase diagnostic codes `dart analyze` prints
+  in its human format, while the batch path runs `--format=machine`, which prints them uppercase.
+  Marked `snippet:skip` with the upstream bug recorded in its `reason`, pending the alef fix.
 
 - **CI Rust's `Validate Rust` job gets past its first command.** `task rust:lint:check` runs
   `deps:check` first, which hard-fails when `cargo-machete` is missing; nothing installed it, so

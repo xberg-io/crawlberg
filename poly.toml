@@ -683,11 +683,7 @@ files = "packages/elixir/**/*.{ex,exs}"
 # ~keep Skipping when alef is absent is safe ONLY because ci-lint.yaml runs the same check
 # ~keep in a dedicated job that installs alef first; do not drop that job.
 [hooks.pre-commit.commands.alef-snippets]
-# ~keep No `--strict`: it fails on every Skip/Unavailable/DOWNGRADE, and six languages are still
-# ~keep annotated `snippet:syntax-only` pending a session -- the exact state `alef.toml`'s
-# ~keep `[workspace.docs.snippets]` comment keeps `strict = false` for. Passing it here overrode
-# ~keep that config and made this hook unpassable. Match ci-lint.yaml's Alef snippets job.
-run = "sh -c 'command -v alef >/dev/null 2>&1 && exec alef snippets check --cache off || echo \"alef not on PATH - snippet check runs in the ci-lint Alef snippets job\"'"
+run = "sh -c 'command -v alef >/dev/null 2>&1 && exec alef snippets check --strict --cache off || echo \"alef not on PATH - snippet check runs in the ci-lint Alef snippets job\"'"
 root = "."
 workspace = true
 files = "{alef.toml,fixtures/**/*.json,docs-site/src/snippets/**}"
