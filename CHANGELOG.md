@@ -4,6 +4,29 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI Lint's `Validate (poly)` job runs again.** `poly lint .` never reached a crawlberg finding:
+  golangci-lint v2.12.2 (the reusable workflow's default) vendors `honnef.co/go/tools` v0.7.0,
+  whose IR builder panics building the Go 1.27 stdlib with
+  `buildir: package "poll": unexpected expr: *ast.KeyValueExpr`. Pin v2.13.1, which handles 1.27.
+
+- **CI Lint's `Alef snippets` job can pass.** It ran `alef snippets check --strict`, and `--strict`
+  fails the run on every Skip, Unavailable *and* Downgraded result — the exact state `alef.toml`
+  documents `strict = false` for while six languages are still annotated `snippet:syntax-only`.
+  The command-line flag force-enabled what the config deliberately disables, so the job was
+  unpassable. Dropped from the workflow and from the matching `poly.toml` hook.
+
+- **The Dart snippet is really validated, at `compile` rather than not at all.** It failed with
+  `Target of URI doesn't exist: 'package:crawlberg/crawlberg.dart'` because no Dart snippet session
+  existed, so nothing resolved the local package. Added one, with `PUB_CACHE` named explicitly
+  because alef's snippet sandbox clears `HOME`, and dropped the now-unneeded `snippet:syntax-only`
+  annotation.
+
+- **CI Rust's `Validate Rust` job gets past its first command.** `task rust:lint:check` runs
+  `deps:check` first, which hard-fails when `cargo-machete` is missing; nothing installed it, so
+  the job died before `cargo fmt`, `clippy` or the fuzz/config checks ever ran.
+
 ## [1.3.2] - 2026-08-21
 
 ### Fixed

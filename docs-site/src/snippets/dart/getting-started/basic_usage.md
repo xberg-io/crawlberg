@@ -1,4 +1,3 @@
-<!-- snippet:syntax-only reason="no session yet: alef runs `before` hooks under a scrubbed environment with no HOME, and `dart pub get` cannot locate the pub cache without it" -->
 ```dart title="Dart"
 import 'package:crawlberg/crawlberg.dart';
 import 'package:crawlberg/src/crawlberg_bridge_generated/frb_generated.dart'
