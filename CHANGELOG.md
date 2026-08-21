@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-21
+
 ### Changed
 
 - **The engine now drives the crawl through the configured `Frontier`.** `CrawlEngineBuilder::frontier` previously
@@ -20,6 +22,12 @@ All notable changes to crawlberg are documented here.
 - `crawl.frontier_size` counts the selection window plus the entries pushed to the frontier and not yet popped.
   The meaning — URLs known to be pending — and the value in the default configuration are unchanged.
 - A panic inside SSRF validation now fails the crawl instead of being downgraded to a warning and skipping the link.
+- Generated bindings regenerated on alef 0.62.8, and alef pinned to 0.62.8.
+
+- All Rust dependencies taken to their latest versions (`cargo upgrade --incompatible` followed by
+  `cargo update`): 87 packages changed, two added, six removed, none downgraded. Notable major
+  bumps: `ctor` 0.10 to 1.0, `napi` 3.8 to 3.12, `minijinja` 2.19 to 2.24, `diplomat` 0.15 to 0.16,
+  `rmcp` 3.0 to 3.1. `cbindgen` 0.29.2 to 0.29.4 changes generated C enum emission to guard on C23.
 
 ### Added
 
@@ -47,6 +55,25 @@ All notable changes to crawlberg are documented here.
   completion order, leaving sibling order nondeterministic and breadth-first traversal unreproducible (#39).
 - A URL selected immediately before the page budget was exhausted is returned to the frontier instead of being
   silently dropped.
+
+- Four e2e fixtures asserted fields that do not exist on the result type, so alef refused to
+  generate the suite. `redirect_loop`, `redirect_max_exceeded` and `redirect_to_404` asserted
+  `is_error`, and `rate_limit_basic_delay` asserted `rate_limit.min_duration_ms`; both are
+  call-level properties rather than response fields. The redirect fixtures now assert real fields
+  (`redirect_count`, `pages[0].status_code`, and `error` for the 404 case), and the rate-limit
+  fixture carries an explicit `not_representable` marker alongside a real `pages_crawled` check.
+  `redirect_loop`'s mock was also wrong: its start URL returned an unrelated 200 while the actual
+  redirect cycle sat on unreachable paths, so the fixture never exercised loop detection at all.
+
+- `packages/ruby/ext/crawlberg_rb/native/Cargo.toml` and `e2e/rust/Cargo.toml` now follow the
+  project version. Both are alef-owned but were never reached by the version sync, so each release
+  left them pinned to the previous version.
+
+### Security
+
+- `h2` advanced to 0.4.18, resolving RUSTSEC-2026-0258 (unbounded empty DATA frames: a peer could
+  queue empty frames without limit, risking unbounded memory use or a panic on length overflow).
+  Low severity.
 - The wasm crawl loop deduplicates through the frontier rather than a loop-local `HashSet`, so a persistent frontier
   no longer re-enqueues URLs it had already crawled. It also no longer discards `mark_seen` failures.
 - URLs still being fetched when a crawl stops early are returned to the frontier. They are marked seen at discovery,
