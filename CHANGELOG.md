@@ -4,6 +4,24 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-21
+
+### Fixed
+
+- **The release actually publishes.** v1.3.1 was tagged and released but published nothing to any
+  registry: the `Validate versions` gate failed on stale `Cargo.lock` files under `e2e/rust`,
+  `fuzz` and `packages/ruby/ext/crawlberg_rb/native`, which skipped the crates.io publish job.
+  Every language-package build behind it then failed with
+  `failed to select a version for the requirement ^1.3.1`, because the publish preparation was
+  retrying against a registry version that had never been pushed. Use this version instead of
+  v1.3.1, which carries no artifacts anywhere.
+
+- **`pnpm install` succeeds in the WASM and Node test suites again.** The last dependency upgrade
+  moved `vitest` to ^4.1.10 (and `@types/node` to ^26) in package.json without regenerating
+  `pnpm-lock.yaml`, so CI — where `frozen-lockfile` is on by default — refused to install:
+  `specifiers in the lockfile don't match specifiers in package.json`. The lockfiles under
+  `e2e/wasm`, `test_apps/wasm` and `test_apps/node` are regenerated.
+
 ## [1.3.1] - 2026-08-21
 
 ### Changed
