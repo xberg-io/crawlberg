@@ -40,15 +40,6 @@ public func crawlEngineHandleCrawlStreamStart(_ client: CrawlEngineHandleRef, _ 
 public func crawlEngineHandleBatchCrawlStreamStart(_ client: CrawlEngineHandleRef, _ req: BatchCrawlStreamRequestRef) throws -> CrawlEngineHandleBatchCrawlStreamStreamHandle {
     try { let val = __swift_bridge__$crawl_engine_handle_batch_crawl_stream_start(client.ptr, req.ptr); if val.is_ok { return CrawlEngineHandleBatchCrawlStreamStreamHandle(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
-public func crawlConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlConfig {
-    try { let val = __swift_bridge__$crawl_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
-}
-public func crawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlStreamRequest {
-    try { let val = __swift_bridge__$crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
-}
-public func batchCrawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchCrawlStreamRequest {
-    try { let val = __swift_bridge__$batch_crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
-}
 public func extractionMetaFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ExtractionMeta {
     try { let val = __swift_bridge__$extraction_meta_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ExtractionMeta(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -60,6 +51,9 @@ public func contentConfigFromJson<GenericIntoRustString: IntoRustString>(_ json:
 }
 public func browserConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserConfig {
     try { let val = __swift_bridge__$browser_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func crawlConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlConfig {
+    try { let val = __swift_bridge__$crawl_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
 public func browserExtrasFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BrowserExtras {
     try { let val = __swift_bridge__$browser_extras_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BrowserExtras(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
@@ -127,6 +121,12 @@ public func responseMetaFromJson<GenericIntoRustString: IntoRustString>(_ json: 
 public func pageMetadataFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> PageMetadata {
     try { let val = __swift_bridge__$page_metadata_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return PageMetadata(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
+public func crawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlStreamRequest {
+    try { let val = __swift_bridge__$crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func batchCrawlStreamRequestFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> BatchCrawlStreamRequest {
+    try { let val = __swift_bridge__$batch_crawl_stream_request_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return BatchCrawlStreamRequest(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func citationResultFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CitationResult {
     try { let val = __swift_bridge__$citation_result_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CitationResult(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -160,6 +160,12 @@ public func browserBackendFromJson<GenericIntoRustString: IntoRustString>(_ json
 public func documentContentEncodingFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> DocumentContentEncoding {
     try { let val = __swift_bridge__$document_content_encoding_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return DocumentContentEncoding(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
+public func crawlStrategyKindFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> CrawlStrategyKind {
+    try { let val = __swift_bridge__$crawl_strategy_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return CrawlStrategyKind(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func contentFilterKindFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ContentFilterKind {
+    try { let val = __swift_bridge__$content_filter_kind_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ContentFilterKind(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
 public func authConfigFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> AuthConfig {
     try { let val = __swift_bridge__$auth_config_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return AuthConfig(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
@@ -183,6 +189,9 @@ public func pageActionFromJson<GenericIntoRustString: IntoRustString>(_ json: Ge
 }
 public func scrollDirectionFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> ScrollDirection {
     try { let val = __swift_bridge__$scroll_direction_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return ScrollDirection(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
+}
+public func hostMatcherFromJson<GenericIntoRustString: IntoRustString>(_ json: GenericIntoRustString) throws -> HostMatcher {
+    try { let val = __swift_bridge__$host_matcher_from_json({ let rustString = json.intoRustString(); rustString.isOwned = false; return rustString.ptr }()); if val.is_ok { return HostMatcher(ptr: val.ok_or_err!) } else { throw RustString(ptr: val.ok_or_err!) } }()
 }
 public func __alef_phantom_vec_extraction_meta() -> RustVec<ExtractionMeta> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_extraction_meta())
@@ -297,6 +306,12 @@ public func __alef_phantom_vec_browser_backend() -> RustVec<BrowserBackend> {
 }
 public func __alef_phantom_vec_document_content_encoding() -> RustVec<DocumentContentEncoding> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_document_content_encoding())
+}
+public func __alef_phantom_vec_crawl_strategy_kind() -> RustVec<CrawlStrategyKind> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_crawl_strategy_kind())
+}
+public func __alef_phantom_vec_content_filter_kind() -> RustVec<ContentFilterKind> {
+    RustVec(ptr: __swift_bridge__$__alef_phantom_vec_content_filter_kind())
 }
 public func __alef_phantom_vec_auth_config() -> RustVec<AuthConfig> {
     RustVec(ptr: __swift_bridge__$__alef_phantom_vec_auth_config())
@@ -828,6 +843,22 @@ extension CrawlConfigRef {
 
     public func maxConcurrent() -> Optional<UInt> {
         __swift_bridge__$CrawlConfig$max_concurrent(ptr).intoSwiftRepr()
+    }
+
+    public func crawlStrategy() -> RustString {
+        RustString(ptr: __swift_bridge__$CrawlConfig$crawl_strategy(ptr))
+    }
+
+    public func contentFilter() -> Optional<RustString> {
+        { let val = __swift_bridge__$CrawlConfig$content_filter(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func bm25Query() -> Optional<RustString> {
+        { let val = __swift_bridge__$CrawlConfig$bm25_query(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func bm25Threshold() -> Optional<Double> {
+        __swift_bridge__$CrawlConfig$bm25_threshold(ptr).intoSwiftRepr()
     }
 
     public func respectRobotsTxt() -> Bool {
@@ -4665,6 +4696,166 @@ extension DocumentContentEncoding: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_DocumentContentEncoding$len(vecPtr)
+    }
+}
+
+
+public class CrawlStrategyKind: CrawlStrategyKindRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$CrawlStrategyKind$_free(ptr)
+        }
+    }
+}
+public class CrawlStrategyKindRefMut: CrawlStrategyKindRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class CrawlStrategyKindRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension CrawlStrategyKindRef {
+    public func to_string() -> RustString {
+        RustString(ptr: __swift_bridge__$CrawlStrategyKind$to_string(ptr))
+    }
+}
+extension CrawlStrategyKind: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_CrawlStrategyKind$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_CrawlStrategyKind$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: CrawlStrategyKind) {
+        __swift_bridge__$Vec_CrawlStrategyKind$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_CrawlStrategyKind$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (CrawlStrategyKind(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<CrawlStrategyKindRef> {
+        let pointer = __swift_bridge__$Vec_CrawlStrategyKind$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return CrawlStrategyKindRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<CrawlStrategyKindRefMut> {
+        let pointer = __swift_bridge__$Vec_CrawlStrategyKind$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return CrawlStrategyKindRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<CrawlStrategyKindRef> {
+        UnsafePointer<CrawlStrategyKindRef>(OpaquePointer(__swift_bridge__$Vec_CrawlStrategyKind$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_CrawlStrategyKind$len(vecPtr)
+    }
+}
+
+
+public class ContentFilterKind: ContentFilterKindRefMut {
+    public var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$ContentFilterKind$_free(ptr)
+        }
+    }
+}
+public class ContentFilterKindRefMut: ContentFilterKindRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class ContentFilterKindRef {
+    public var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension ContentFilterKindRef {
+    public func to_string() -> RustString {
+        RustString(ptr: __swift_bridge__$ContentFilterKind$to_string(ptr))
+    }
+}
+extension ContentFilterKind: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_ContentFilterKind$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_ContentFilterKind$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: ContentFilterKind) {
+        __swift_bridge__$Vec_ContentFilterKind$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_ContentFilterKind$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (ContentFilterKind(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContentFilterKindRef> {
+        let pointer = __swift_bridge__$Vec_ContentFilterKind$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContentFilterKindRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<ContentFilterKindRefMut> {
+        let pointer = __swift_bridge__$Vec_ContentFilterKind$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return ContentFilterKindRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<ContentFilterKindRef> {
+        UnsafePointer<ContentFilterKindRef>(OpaquePointer(__swift_bridge__$Vec_ContentFilterKind$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_ContentFilterKind$len(vecPtr)
     }
 }
 

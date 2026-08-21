@@ -96,6 +96,10 @@ typedef struct CBERGCitationResult CBERGCitationResult;
  */
 typedef struct CBERGContentConfig CBERGContentConfig;
 /**
+ * Content filter applied to each crawled page before it reaches the result.
+ */
+typedef struct CBERGContentFilterKind CBERGContentFilterKind;
+/**
  * Information about an HTTP cookie received from a response.
  */
 typedef struct CBERGCookieInfo CBERGCookieInfo;
@@ -109,7 +113,7 @@ typedef struct CBERGCrawlConfig CBERGCrawlConfig;
  * Constructed via `create_engine` with an optional `CrawlConfig`.
  * Default implementations for all pluggable components are used internally.
  */
-typedef struct CBERGCrawlEngineHandle CBERGCrawlEngineHandle;
+typedef uint64_t CBERGCrawlEngineHandle;
 /**
  * An event emitted during a streaming crawl operation.
  *
@@ -127,6 +131,14 @@ typedef struct CBERGCrawlPageResult CBERGCrawlPageResult;
  * The result of a multi-page crawl operation.
  */
 typedef struct CBERGCrawlResult CBERGCrawlResult;
+/**
+ * Traversal order for a crawl.
+ *
+ * Selects both the queue discipline and the selection strategy, because global order is a
+ * property of the frontier: the engine hands its bounded selection window to the strategy, so
+ * a strategy alone can only reorder URLs that have already been dequeued.
+ */
+typedef struct CBERGCrawlStrategyKind CBERGCrawlStrategyKind;
 /**
  * Request to begin a single-URL streaming crawl.
  *
@@ -267,21 +279,16 @@ typedef struct CBERGSitemapUrl CBERGSitemapUrl;
 typedef struct CBERGSsrfPolicy CBERGSsrfPolicy;
 
 
-/**
- * Opaque handle owning a tokio runtime and a boxed chat-stream for iterator-style consumption.
- *
- * Created by `cberg_crawl_engine_handle_batch_crawl_stream_start`, advanced by `cberg_crawl_engine_handle_batch_crawl_stream_next`, destroyed by `cberg_crawl_engine_handle_batch_crawl_stream_free`.
- * The handle is NOT thread-safe — callers must ensure only one thread calls `_next` at a time.
- */
-typedef struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle;
+enum CBERGAlefFfiErrorCode {
+  CbergAlefNone = 0,
+  CbergAlefConversion = 1,
+  CbergAlefUnknown = 2,
+  CbergAlefPanic = 3,
+  CbergAlefInvalidHandle = 4,
+};
+typedef int32_t CBERGAlefFfiErrorCode;
 
-/**
- * Opaque handle owning a tokio runtime and a boxed chat-stream for iterator-style consumption.
- *
- * Created by `cberg_crawl_engine_handle_crawl_stream_start`, advanced by `cberg_crawl_engine_handle_crawl_stream_next`, destroyed by `cberg_crawl_engine_handle_crawl_stream_free`.
- * The handle is NOT thread-safe — callers must ensure only one thread calls `_next` at a time.
- */
-typedef struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle;
+typedef uint64_t CBERGAlefHandle;
 
 /**
  * Callback invoked for each streamed chunk.
@@ -314,18 +321,6 @@ const char *cberg_last_error_context(void);
 void cberg_free_string(char *ptr);
 
 /**
- * Free a byte buffer previously returned by this library via out-params.
- * `ptr`, `len`, and `cap` must match the values written by the library function,
- * or the call must pass `ptr = null` (in which case it is a no-op).
- * # Safety
- * Pointer must have been returned by this library (via out_ptr / out_len / out_cap
- * out-params), and ownership must not already have been released.
- */
-void cberg_free_bytes(uint8_t *ptr,
-                      uintptr_t len,
-                      uintptr_t cap);
-
-/**
  * Return the library version string. The pointer is static and must NOT be freed.
  * # Safety
  * Caller must ensure all pointer arguments are valid or null.
@@ -344,8 +339,8 @@ const char *cberg_version(void);
  * `req` must be a non-null valid pointer to a live `crawlberg::CrawlStreamRequest` produced by this library.
  * Both pointers must remain valid until this function returns.
  */
-struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *cberg_crawl_engine_handle_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                        const CBERGCrawlStreamRequest *req);
+CBERGAlefHandle cberg_crawl_engine_handle_crawl_stream_start(CBERGAlefHandle client,
+                                                             CBERGAlefHandle req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -362,7 +357,7 @@ struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *cberg_crawl_engine_ha
  * freed. Calling `_next` after `_free` is undefined behaviour. The handle must not be shared
  * across threads without external synchronisation.
  */
-CBERGCrawlEvent *cberg_crawl_engine_handle_crawl_stream_next(struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
+CBERGAlefHandle cberg_crawl_engine_handle_crawl_stream_next(CBERGAlefHandle handle);
 
 /**
  * Free a stream handle created by `cberg_crawl_engine_handle_crawl_stream_start`.
@@ -373,7 +368,7 @@ CBERGCrawlEvent *cberg_crawl_engine_handle_crawl_stream_next(struct CBERGCbergCr
  * `handle` must either be null or a valid pointer previously returned by `cberg_crawl_engine_handle_crawl_stream_start` and
  * not yet freed. Double-free is undefined behaviour.
  */
-void cberg_crawl_engine_handle_crawl_stream_free(struct CBERGCbergCrawlEngineHandleCrawlStreamStreamHandle *handle);
+void cberg_crawl_engine_handle_crawl_stream_free(CBERGAlefHandle handle);
 
 /**
  * Start a streaming chat completion and return an opaque iterator handle.
@@ -386,8 +381,8 @@ void cberg_crawl_engine_handle_crawl_stream_free(struct CBERGCbergCrawlEngineHan
  * `req` must be a non-null valid pointer to a live `crawlberg::BatchCrawlStreamRequest` produced by this library.
  * Both pointers must remain valid until this function returns.
  */
-struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *cberg_crawl_engine_handle_batch_crawl_stream_start(const CBERGCrawlEngineHandle *client,
-                                                                                                                   const CBERGBatchCrawlStreamRequest *req);
+CBERGAlefHandle cberg_crawl_engine_handle_batch_crawl_stream_start(CBERGAlefHandle client,
+                                                                   CBERGAlefHandle req);
 
 /**
  * Advance the stream and return a heap-allocated chunk, or null.
@@ -404,7 +399,7 @@ struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *cberg_crawl_engi
  * freed. Calling `_next` after `_free` is undefined behaviour. The handle must not be shared
  * across threads without external synchronisation.
  */
-CBERGCrawlEvent *cberg_crawl_engine_handle_batch_crawl_stream_next(struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
+CBERGAlefHandle cberg_crawl_engine_handle_batch_crawl_stream_next(CBERGAlefHandle handle);
 
 /**
  * Free a stream handle created by `cberg_crawl_engine_handle_batch_crawl_stream_start`.
@@ -415,7 +410,7 @@ CBERGCrawlEvent *cberg_crawl_engine_handle_batch_crawl_stream_next(struct CBERGC
  * `handle` must either be null or a valid pointer previously returned by `cberg_crawl_engine_handle_batch_crawl_stream_start` and
  * not yet freed. Double-free is undefined behaviour.
  */
-void cberg_crawl_engine_handle_batch_crawl_stream_free(struct CBERGCbergCrawlEngineHandleBatchCrawlStreamStreamHandle *handle);
+void cberg_crawl_engine_handle_batch_crawl_stream_free(CBERGAlefHandle handle);
 
 /**
  * Create a `ExtractionMeta` from a JSON string. Returns null on failure.
@@ -423,57 +418,59 @@ void cberg_crawl_engine_handle_batch_crawl_stream_free(struct CBERGCbergCrawlEng
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_extraction_meta_free`.
  */
-CBERGExtractionMeta *cberg_extraction_meta_from_json(const char *json);
+CBERGAlefHandle cberg_extraction_meta_from_json(const char *json);
 
 /**
  * Serialize a `ExtractionMeta` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_extraction_meta_to_json(const CBERGExtractionMeta *ptr);
+char *cberg_extraction_meta_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ExtractionMeta` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_extraction_meta_free(CBERGExtractionMeta *ptr);
+void cberg_extraction_meta_free(CBERGAlefHandle handle);
 
 /**
  * Get the `cost` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-double cberg_extraction_meta_cost(const CBERGExtractionMeta *ptr);
+double cberg_extraction_meta_cost(CBERGAlefHandle handle);
 
 /**
  * Get the `prompt_tokens` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_extraction_meta_prompt_tokens(const CBERGExtractionMeta *ptr);
+uint64_t cberg_extraction_meta_prompt_tokens(CBERGAlefHandle handle);
 
 /**
  * Get the `completion_tokens` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_extraction_meta_completion_tokens(const CBERGExtractionMeta *ptr);
+uint64_t cberg_extraction_meta_completion_tokens(CBERGAlefHandle handle);
 
 /**
  * Get the `model` field from a `ExtractionMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_extraction_meta_model(const CBERGExtractionMeta *ptr);
+char *cberg_extraction_meta_model(CBERGAlefHandle handle);
 
 /**
  * Get the `chunks_processed` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_extraction_meta_chunks_processed(const CBERGExtractionMeta *ptr);
+uintptr_t cberg_extraction_meta_chunks_processed(CBERGAlefHandle handle);
 
 /**
  * Create a `ProxyConfig` from a JSON string. Returns null on failure.
@@ -481,43 +478,49 @@ uintptr_t cberg_extraction_meta_chunks_processed(const CBERGExtractionMeta *ptr)
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_proxy_config_free`.
  */
-CBERGProxyConfig *cberg_proxy_config_from_json(const char *json);
+CBERGAlefHandle cberg_proxy_config_from_json(const char *json);
 
 /**
  * Serialize a `ProxyConfig` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_proxy_config_to_json(const CBERGProxyConfig *ptr);
+char *cberg_proxy_config_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ProxyConfig` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_proxy_config_free(CBERGProxyConfig *ptr);
+void cberg_proxy_config_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `ProxyConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_proxy_config_url(const CBERGProxyConfig *ptr);
+char *cberg_proxy_config_url(CBERGAlefHandle handle);
 
 /**
  * Get the `username` field from a `ProxyConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_proxy_config_username(const CBERGProxyConfig *ptr);
+char *cberg_proxy_config_username(CBERGAlefHandle handle);
 
 /**
  * Get the `password` field from a `ProxyConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_proxy_config_password(const CBERGProxyConfig *ptr);
+char *cberg_proxy_config_password(CBERGAlefHandle handle);
 
 /**
  * Create a `ContentConfig` from a JSON string. Returns null on failure.
@@ -525,112 +528,122 @@ char *cberg_proxy_config_password(const CBERGProxyConfig *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_content_config_free`.
  */
-CBERGContentConfig *cberg_content_config_from_json(const char *json);
+CBERGAlefHandle cberg_content_config_from_json(const char *json);
 
 /**
  * Serialize a `ContentConfig` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_content_config_to_json(const CBERGContentConfig *ptr);
+char *cberg_content_config_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ContentConfig` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_content_config_free(CBERGContentConfig *ptr);
+void cberg_content_config_free(CBERGAlefHandle handle);
 
 /**
  * Get the `output_format` field from a `ContentConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_content_config_output_format(const CBERGContentConfig *ptr);
+char *cberg_content_config_output_format(CBERGAlefHandle handle);
 
 /**
  * Get the `preprocessing_preset` field from a `ContentConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_content_config_preprocessing_preset(const CBERGContentConfig *ptr);
+char *cberg_content_config_preprocessing_preset(CBERGAlefHandle handle);
 
 /**
  * Get the `remove_navigation` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_remove_navigation(const CBERGContentConfig *ptr);
+int32_t cberg_content_config_remove_navigation(CBERGAlefHandle handle);
 
 /**
  * Get the `remove_forms` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_remove_forms(const CBERGContentConfig *ptr);
+int32_t cberg_content_config_remove_forms(CBERGAlefHandle handle);
 
 /**
  * Get the `strip_tags` field from a `ContentConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_content_config_strip_tags(const CBERGContentConfig *ptr);
+char *cberg_content_config_strip_tags(CBERGAlefHandle handle);
 
 /**
  * Get the `preserve_tags` field from a `ContentConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_content_config_preserve_tags(const CBERGContentConfig *ptr);
+char *cberg_content_config_preserve_tags(CBERGAlefHandle handle);
 
 /**
  * Get the `exclude_selectors` field from a `ContentConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_content_config_exclude_selectors(const CBERGContentConfig *ptr);
+char *cberg_content_config_exclude_selectors(CBERGAlefHandle handle);
 
 /**
  * Get the `skip_images` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_skip_images(const CBERGContentConfig *ptr);
+int32_t cberg_content_config_skip_images(CBERGAlefHandle handle);
 
 /**
  * Get the `max_depth` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_content_config_max_depth(const CBERGContentConfig *ptr);
+uintptr_t cberg_content_config_max_depth(CBERGAlefHandle handle);
 
 /**
  * Get the `wrap` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_wrap(const CBERGContentConfig *ptr);
+int32_t cberg_content_config_wrap(CBERGAlefHandle handle);
 
 /**
  * Get the `wrap_width` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_content_config_wrap_width(const CBERGContentConfig *ptr);
+uintptr_t cberg_content_config_wrap_width(CBERGAlefHandle handle);
 
 /**
  * Get the `include_document_structure` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_content_config_include_document_structure(const CBERGContentConfig *ptr);
+int32_t cberg_content_config_include_document_structure(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGContentConfig *cberg_content_config_default(void);
+CBERGAlefHandle cberg_content_config_default(void);
 
 /**
  * Create a `BrowserConfig` from a JSON string. Returns null on failure.
@@ -638,119 +651,137 @@ CBERGContentConfig *cberg_content_config_default(void);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_browser_config_free`.
  */
-CBERGBrowserConfig *cberg_browser_config_from_json(const char *json);
+CBERGAlefHandle cberg_browser_config_from_json(const char *json);
 
 /**
  * Serialize a `BrowserConfig` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_config_to_json(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BrowserConfig` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_browser_config_free(CBERGBrowserConfig *ptr);
+void cberg_browser_config_free(CBERGAlefHandle handle);
 
 /**
  * Get the `mode` field from a `BrowserConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_browser_mode_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserMode *cberg_browser_config_mode(const CBERGBrowserConfig *ptr);
+CBERGAlefHandle cberg_browser_config_mode(CBERGAlefHandle handle);
 
 /**
  * Get the `backend` field from a `BrowserConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_browser_backend_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserBackend *cberg_browser_config_backend(const CBERGBrowserConfig *ptr);
+CBERGAlefHandle cberg_browser_config_backend(CBERGAlefHandle handle);
 
 /**
  * Get the `endpoint` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_config_endpoint(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_endpoint(CBERGAlefHandle handle);
 
 /**
  * Get the `timeout` field from a `BrowserConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_browser_config_timeout(const CBERGBrowserConfig *ptr);
+uint64_t cberg_browser_config_timeout(CBERGAlefHandle handle);
 
 /**
  * Get the `wait` field from a `BrowserConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_browser_wait_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserWait *cberg_browser_config_wait(const CBERGBrowserConfig *ptr);
+CBERGAlefHandle cberg_browser_config_wait(CBERGAlefHandle handle);
 
 /**
  * Get the `wait_selector` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_config_wait_selector(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_wait_selector(CBERGAlefHandle handle);
 
 /**
  * Get the `extra_wait` field from a `BrowserConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_browser_config_extra_wait(const CBERGBrowserConfig *ptr);
+uint64_t cberg_browser_config_extra_wait(CBERGAlefHandle handle);
 
 /**
  * Get the `proxy` field from a `BrowserConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_proxy_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGProxyConfig *cberg_browser_config_proxy(const CBERGBrowserConfig *ptr);
+CBERGAlefHandle cberg_browser_config_proxy(CBERGAlefHandle handle);
 
 /**
  * Get the `block_url_patterns` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_config_block_url_patterns(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_block_url_patterns(CBERGAlefHandle handle);
 
 /**
  * Get the `eval_script` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_config_eval_script(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_eval_script(CBERGAlefHandle handle);
 
 /**
  * Get the `robots_user_agent` field from a `BrowserConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_config_robots_user_agent(const CBERGBrowserConfig *ptr);
+char *cberg_browser_config_robots_user_agent(CBERGAlefHandle handle);
 
 /**
  * Get the `capture_network_events` field from a `BrowserConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_browser_config_capture_network_events(const CBERGBrowserConfig *ptr);
+int32_t cberg_browser_config_capture_network_events(CBERGAlefHandle handle);
 
 /**
  * Get the `session_affinity` field from a `BrowserConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_browser_config_session_affinity(const CBERGBrowserConfig *ptr);
+int32_t cberg_browser_config_session_affinity(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGBrowserConfig *cberg_browser_config_default(void);
+CBERGAlefHandle cberg_browser_config_default(void);
 
 /**
  * Create a `CrawlConfig` from a JSON string. Returns null on failure.
@@ -758,336 +789,408 @@ CBERGBrowserConfig *cberg_browser_config_default(void);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_crawl_config_free`.
  */
-CBERGCrawlConfig *cberg_crawl_config_from_json(const char *json);
+CBERGAlefHandle cberg_crawl_config_from_json(const char *json);
 
 /**
  * Serialize a `CrawlConfig` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_config_to_json(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CrawlConfig` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_config_free(CBERGCrawlConfig *ptr);
+void cberg_crawl_config_free(CBERGAlefHandle handle);
 
 /**
  * Get the `max_depth` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_depth(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_depth(CBERGAlefHandle handle);
 
 /**
  * Get the `max_pages` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_pages(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_pages(CBERGAlefHandle handle);
 
 /**
  * Get the `max_links_per_page` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_links_per_page(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_links_per_page(CBERGAlefHandle handle);
 
 /**
  * Get the `max_concurrent` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_concurrent(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_concurrent(CBERGAlefHandle handle);
+
+/**
+ * Get the `crawl_strategy` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_crawl_strategy_kind_free`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+CBERGAlefHandle cberg_crawl_config_crawl_strategy(CBERGAlefHandle handle);
+
+/**
+ * Get the `content_filter` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_content_filter_kind_free`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+CBERGAlefHandle cberg_crawl_config_content_filter(CBERGAlefHandle handle);
+
+/**
+ * Get the `bm25_query` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_config_bm25_query(CBERGAlefHandle handle);
+
+/**
+ * Get the `bm25_threshold` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+double cberg_crawl_config_bm25_threshold(CBERGAlefHandle handle);
 
 /**
  * Get the `respect_robots_txt` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_respect_robots_txt(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_respect_robots_txt(CBERGAlefHandle handle);
 
 /**
  * Get the `soft_http_errors` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_soft_http_errors(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_soft_http_errors(CBERGAlefHandle handle);
 
 /**
  * Get the `user_agent` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_user_agent(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_user_agent(CBERGAlefHandle handle);
 
 /**
  * Get the `stay_on_domain` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_stay_on_domain(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_stay_on_domain(CBERGAlefHandle handle);
 
 /**
  * Get the `allow_subdomains` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_allow_subdomains(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_allow_subdomains(CBERGAlefHandle handle);
 
 /**
  * Get the `include_paths` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_include_paths(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_include_paths(CBERGAlefHandle handle);
 
 /**
  * Get the `exclude_paths` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_exclude_paths(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_exclude_paths(CBERGAlefHandle handle);
 
 /**
  * Get the `custom_headers` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_custom_headers(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_custom_headers(CBERGAlefHandle handle);
 
 /**
  * Get the `request_timeout` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_crawl_config_request_timeout(const CBERGCrawlConfig *ptr);
+uint64_t cberg_crawl_config_request_timeout(CBERGAlefHandle handle);
 
 /**
  * Get the `rate_limit_ms` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_crawl_config_rate_limit_ms(const CBERGCrawlConfig *ptr);
+uint64_t cberg_crawl_config_rate_limit_ms(CBERGAlefHandle handle);
 
 /**
  * Get the `max_redirects` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_redirects(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_redirects(CBERGAlefHandle handle);
 
 /**
  * Get the `retry_count` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_retry_count(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_retry_count(CBERGAlefHandle handle);
 
 /**
  * Get the `retry_codes` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_retry_codes(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_retry_codes(CBERGAlefHandle handle);
 
 /**
  * Get the `cookies_enabled` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_cookies_enabled(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_cookies_enabled(CBERGAlefHandle handle);
 
 /**
  * Get the `auth` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_auth_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGAuthConfig *cberg_crawl_config_auth(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_auth(CBERGAlefHandle handle);
 
 /**
  * Get the `max_body_size` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_body_size(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_body_size(CBERGAlefHandle handle);
 
 /**
  * Get the `remove_tags` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_remove_tags(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_remove_tags(CBERGAlefHandle handle);
 
 /**
  * Get the `content` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_content_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGContentConfig *cberg_crawl_config_content(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_content(CBERGAlefHandle handle);
 
 /**
  * Get the `map_limit` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_map_limit(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_map_limit(CBERGAlefHandle handle);
 
 /**
  * Get the `map_search` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_map_search(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_map_search(CBERGAlefHandle handle);
 
 /**
  * Get the `download_assets` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_download_assets(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_download_assets(CBERGAlefHandle handle);
 
 /**
  * Get the `asset_types` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_asset_types(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_asset_types(CBERGAlefHandle handle);
 
 /**
  * Get the `max_asset_size` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_max_asset_size(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_max_asset_size(CBERGAlefHandle handle);
 
 /**
  * Get the `browser` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_browser_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserConfig *cberg_crawl_config_browser(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_browser(CBERGAlefHandle handle);
 
 /**
  * Get the `proxy` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_proxy_config_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGProxyConfig *cberg_crawl_config_proxy(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_proxy(CBERGAlefHandle handle);
 
 /**
  * Get the `user_agents` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_user_agents(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_user_agents(CBERGAlefHandle handle);
 
 /**
  * Get the `capture_screenshot` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_capture_screenshot(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_capture_screenshot(CBERGAlefHandle handle);
 
 /**
  * Get the `follow_document_urls` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_follow_document_urls(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_follow_document_urls(CBERGAlefHandle handle);
 
 /**
  * Get the `document_url_depth` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint32_t cberg_crawl_config_document_url_depth(const CBERGCrawlConfig *ptr);
+uint32_t cberg_crawl_config_document_url_depth(CBERGAlefHandle handle);
 
 /**
  * Get the `download_documents` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_download_documents(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_download_documents(CBERGAlefHandle handle);
 
 /**
  * Get the `document_max_size` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_config_document_max_size(const CBERGCrawlConfig *ptr);
+uintptr_t cberg_crawl_config_document_max_size(CBERGAlefHandle handle);
 
 /**
  * Get the `document_mime_types` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_document_mime_types(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_document_mime_types(CBERGAlefHandle handle);
 
 /**
  * Get the `document_output_dir` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_document_output_dir(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_document_output_dir(CBERGAlefHandle handle);
 
 /**
  * Get the `document_content_encoding` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_document_content_encoding_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGDocumentContentEncoding *cberg_crawl_config_document_content_encoding(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_document_content_encoding(CBERGAlefHandle handle);
 
 /**
  * Get the `warc_output` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_warc_output(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_warc_output(CBERGAlefHandle handle);
 
 /**
  * Get the `browser_profile` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_config_browser_profile(const CBERGCrawlConfig *ptr);
+char *cberg_crawl_config_browser_profile(CBERGAlefHandle handle);
 
 /**
  * Get the `save_browser_profile` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_save_browser_profile(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_save_browser_profile(CBERGAlefHandle handle);
 
 /**
  * Get the `ssrf` field from a `CrawlConfig`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_ssrf_policy_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGSsrfPolicy *cberg_crawl_config_ssrf(const CBERGCrawlConfig *ptr);
+CBERGAlefHandle cberg_crawl_config_ssrf(CBERGAlefHandle handle);
 
 /**
  * Get the `ssrf_deny_private_explicit` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_config_ssrf_deny_private_explicit(const CBERGCrawlConfig *ptr);
+int32_t cberg_crawl_config_ssrf_deny_private_explicit(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGCrawlConfig *cberg_crawl_config_default(void);
+CBERGAlefHandle cberg_crawl_config_default(void);
 
 /**
  * Validate the configuration, returning an error if any values are invalid.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-int32_t cberg_crawl_config_validate(const CBERGCrawlConfig *this_);
+int32_t cberg_crawl_config_validate(CBERGAlefHandle this_);
 
 /**
  * Create a `BrowserExtras` from a JSON string. Returns null on failure.
@@ -1095,43 +1198,49 @@ int32_t cberg_crawl_config_validate(const CBERGCrawlConfig *this_);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_browser_extras_free`.
  */
-CBERGBrowserExtras *cberg_browser_extras_from_json(const char *json);
+CBERGAlefHandle cberg_browser_extras_from_json(const char *json);
 
 /**
  * Serialize a `BrowserExtras` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_extras_to_json(const CBERGBrowserExtras *ptr);
+char *cberg_browser_extras_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BrowserExtras` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_browser_extras_free(CBERGBrowserExtras *ptr);
+void cberg_browser_extras_free(CBERGAlefHandle handle);
 
 /**
  * Get the `eval_result` field from a `BrowserExtras`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_extras_eval_result(const CBERGBrowserExtras *ptr);
+char *cberg_browser_extras_eval_result(CBERGAlefHandle handle);
 
 /**
  * Get the `network_events` field from a `BrowserExtras`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_extras_network_events(const CBERGBrowserExtras *ptr);
+char *cberg_browser_extras_network_events(CBERGAlefHandle handle);
 
 /**
  * Get the `cookies` field from a `BrowserExtras`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_browser_extras_cookies(const CBERGBrowserExtras *ptr);
+char *cberg_browser_extras_cookies(CBERGAlefHandle handle);
 
 /**
  * Create a `DownloadedDocument` from a JSON string. Returns null on failure.
@@ -1139,85 +1248,99 @@ char *cberg_browser_extras_cookies(const CBERGBrowserExtras *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_downloaded_document_free`.
  */
-CBERGDownloadedDocument *cberg_downloaded_document_from_json(const char *json);
+CBERGAlefHandle cberg_downloaded_document_from_json(const char *json);
 
 /**
  * Serialize a `DownloadedDocument` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_downloaded_document_to_json(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `DownloadedDocument` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_downloaded_document_free(CBERGDownloadedDocument *ptr);
+void cberg_downloaded_document_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_url(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_url(CBERGAlefHandle handle);
 
 /**
  * Get the `mime_type` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_mime_type(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_mime_type(CBERGAlefHandle handle);
 
 /**
  * Get the `size` field from a `DownloadedDocument`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_downloaded_document_size(const CBERGDownloadedDocument *ptr);
+uintptr_t cberg_downloaded_document_size(CBERGAlefHandle handle);
 
 /**
  * Get the `filename` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_filename(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_filename(CBERGAlefHandle handle);
 
 /**
  * Get the `content_hash` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_content_hash(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_content_hash(CBERGAlefHandle handle);
 
 /**
  * Get the `headers` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_headers(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_headers(CBERGAlefHandle handle);
 
 /**
  * Get the `truncated` field from a `DownloadedDocument`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_downloaded_document_truncated(const CBERGDownloadedDocument *ptr);
+int32_t cberg_downloaded_document_truncated(CBERGAlefHandle handle);
 
 /**
  * Get the `content_path` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_content_path(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_content_path(CBERGAlefHandle handle);
 
 /**
  * Get the `content_base64` field from a `DownloadedDocument`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_document_content_base64(const CBERGDownloadedDocument *ptr);
+char *cberg_downloaded_document_content_base64(CBERGAlefHandle handle);
 
 /**
  * Create a `InteractionResult` from a JSON string. Returns null on failure.
@@ -1225,50 +1348,58 @@ char *cberg_downloaded_document_content_base64(const CBERGDownloadedDocument *pt
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_interaction_result_free`.
  */
-CBERGInteractionResult *cberg_interaction_result_from_json(const char *json);
+CBERGAlefHandle cberg_interaction_result_from_json(const char *json);
 
 /**
  * Serialize a `InteractionResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_interaction_result_to_json(const CBERGInteractionResult *ptr);
+char *cberg_interaction_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `InteractionResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_interaction_result_free(CBERGInteractionResult *ptr);
+void cberg_interaction_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `action_results` field from a `InteractionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_interaction_result_action_results(const CBERGInteractionResult *ptr);
+char *cberg_interaction_result_action_results(CBERGAlefHandle handle);
 
 /**
  * Get the `final_html` field from a `InteractionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_interaction_result_final_html(const CBERGInteractionResult *ptr);
+char *cberg_interaction_result_final_html(CBERGAlefHandle handle);
 
 /**
  * Get the `final_url` field from a `InteractionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_interaction_result_final_url(const CBERGInteractionResult *ptr);
+char *cberg_interaction_result_final_url(CBERGAlefHandle handle);
 
 /**
  * Get the `screenshot_base64` field from a `InteractionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_interaction_result_screenshot_base64(const CBERGInteractionResult *ptr);
+char *cberg_interaction_result_screenshot_base64(CBERGAlefHandle handle);
 
 /**
  * Create a `ActionResult` from a JSON string. Returns null on failure.
@@ -1276,57 +1407,63 @@ char *cberg_interaction_result_screenshot_base64(const CBERGInteractionResult *p
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_action_result_free`.
  */
-CBERGActionResult *cberg_action_result_from_json(const char *json);
+CBERGAlefHandle cberg_action_result_from_json(const char *json);
 
 /**
  * Serialize a `ActionResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_action_result_to_json(const CBERGActionResult *ptr);
+char *cberg_action_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ActionResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_action_result_free(CBERGActionResult *ptr);
+void cberg_action_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `action_index` field from a `ActionResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_action_result_action_index(const CBERGActionResult *ptr);
+uintptr_t cberg_action_result_action_index(CBERGAlefHandle handle);
 
 /**
  * Get the `action_type` field from a `ActionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_action_result_action_type(const CBERGActionResult *ptr);
+char *cberg_action_result_action_type(CBERGAlefHandle handle);
 
 /**
  * Get the `success` field from a `ActionResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_action_result_success(const CBERGActionResult *ptr);
+int32_t cberg_action_result_success(CBERGAlefHandle handle);
 
 /**
  * Get the `data` field from a `ActionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_action_result_data(const CBERGActionResult *ptr);
+char *cberg_action_result_data(CBERGAlefHandle handle);
 
 /**
  * Get the `error` field from a `ActionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_action_result_error(const CBERGActionResult *ptr);
+char *cberg_action_result_error(CBERGAlefHandle handle);
 
 /**
  * Create a `ScrapeResult` from a JSON string. Returns null on failure.
@@ -1334,225 +1471,261 @@ char *cberg_action_result_error(const CBERGActionResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_scrape_result_free`.
  */
-CBERGScrapeResult *cberg_scrape_result_from_json(const char *json);
+CBERGAlefHandle cberg_scrape_result_from_json(const char *json);
 
 /**
  * Serialize a `ScrapeResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_scrape_result_to_json(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ScrapeResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_scrape_result_free(CBERGScrapeResult *ptr);
+void cberg_scrape_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `status_code` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint16_t cberg_scrape_result_status_code(const CBERGScrapeResult *ptr);
+uint16_t cberg_scrape_result_status_code(CBERGAlefHandle handle);
 
 /**
  * Get the `final_url` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_final_url(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_final_url(CBERGAlefHandle handle);
 
 /**
  * Get the `content_type` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_content_type(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_content_type(CBERGAlefHandle handle);
 
 /**
  * Get the `html` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_html(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_html(CBERGAlefHandle handle);
 
 /**
  * Get the `body_size` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_scrape_result_body_size(const CBERGScrapeResult *ptr);
+uintptr_t cberg_scrape_result_body_size(CBERGAlefHandle handle);
 
 /**
  * Get the `metadata` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_page_metadata_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGPageMetadata *cberg_scrape_result_metadata(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_metadata(CBERGAlefHandle handle);
 
 /**
  * Get the `links` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_links(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_links(CBERGAlefHandle handle);
 
 /**
  * Get the `images` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_images(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_images(CBERGAlefHandle handle);
 
 /**
  * Get the `feeds` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_feeds(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_feeds(CBERGAlefHandle handle);
 
 /**
  * Get the `json_ld` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_json_ld(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_json_ld(CBERGAlefHandle handle);
 
 /**
  * Get the `is_allowed` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_is_allowed(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_is_allowed(CBERGAlefHandle handle);
 
 /**
  * Get the `crawl_delay` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint64_t cberg_scrape_result_crawl_delay(const CBERGScrapeResult *ptr);
+uint64_t cberg_scrape_result_crawl_delay(CBERGAlefHandle handle);
 
 /**
  * Get the `noindex_detected` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_noindex_detected(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_noindex_detected(CBERGAlefHandle handle);
 
 /**
  * Get the `nofollow_detected` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_nofollow_detected(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_nofollow_detected(CBERGAlefHandle handle);
 
 /**
  * Get the `x_robots_tag` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_x_robots_tag(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_x_robots_tag(CBERGAlefHandle handle);
 
 /**
  * Get the `is_pdf` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_is_pdf(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_is_pdf(CBERGAlefHandle handle);
 
 /**
  * Get the `was_skipped` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_was_skipped(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_was_skipped(CBERGAlefHandle handle);
 
 /**
  * Get the `detected_charset` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_detected_charset(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_detected_charset(CBERGAlefHandle handle);
 
 /**
  * Get the `auth_header_sent` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_auth_header_sent(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_auth_header_sent(CBERGAlefHandle handle);
 
 /**
  * Get the `response_meta` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_response_meta_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGResponseMeta *cberg_scrape_result_response_meta(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_response_meta(CBERGAlefHandle handle);
 
 /**
  * Get the `assets` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_assets(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_assets(CBERGAlefHandle handle);
 
 /**
  * Get the `js_render_hint` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_js_render_hint(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_js_render_hint(CBERGAlefHandle handle);
 
 /**
  * Get the `browser_used` field from a `ScrapeResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_scrape_result_browser_used(const CBERGScrapeResult *ptr);
+int32_t cberg_scrape_result_browser_used(CBERGAlefHandle handle);
 
 /**
  * Get the `markdown` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_markdown_result_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGMarkdownResult *cberg_scrape_result_markdown(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_markdown(CBERGAlefHandle handle);
 
 /**
  * Get the `extracted_data` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_extracted_data(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_extracted_data(CBERGAlefHandle handle);
 
 /**
  * Get the `extraction_meta` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_extraction_meta_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGExtractionMeta *cberg_scrape_result_extraction_meta(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_extraction_meta(CBERGAlefHandle handle);
 
 /**
  * Get the `screenshot_base64` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_scrape_result_screenshot_base64(const CBERGScrapeResult *ptr);
+char *cberg_scrape_result_screenshot_base64(CBERGAlefHandle handle);
 
 /**
  * Get the `downloaded_document` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_downloaded_document_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGDownloadedDocument *cberg_scrape_result_downloaded_document(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_downloaded_document(CBERGAlefHandle handle);
 
 /**
  * Get the `browser` field from a `ScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_browser_extras_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGBrowserExtras *cberg_scrape_result_browser(const CBERGScrapeResult *ptr);
+CBERGAlefHandle cberg_scrape_result_browser(CBERGAlefHandle handle);
 
 /**
  * Create a `CrawlPageResult` from a JSON string. Returns null on failure.
@@ -1560,169 +1733,197 @@ CBERGBrowserExtras *cberg_scrape_result_browser(const CBERGScrapeResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_crawl_page_result_free`.
  */
-CBERGCrawlPageResult *cberg_crawl_page_result_from_json(const char *json);
+CBERGAlefHandle cberg_crawl_page_result_from_json(const char *json);
 
 /**
  * Serialize a `CrawlPageResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_page_result_to_json(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CrawlPageResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_page_result_free(CBERGCrawlPageResult *ptr);
+void cberg_crawl_page_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_url(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_url(CBERGAlefHandle handle);
 
 /**
  * Get the `normalized_url` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_normalized_url(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_normalized_url(CBERGAlefHandle handle);
 
 /**
  * Get the `status_code` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint16_t cberg_crawl_page_result_status_code(const CBERGCrawlPageResult *ptr);
+uint16_t cberg_crawl_page_result_status_code(CBERGAlefHandle handle);
 
 /**
  * Get the `content_type` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_content_type(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_content_type(CBERGAlefHandle handle);
 
 /**
  * Get the `html` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_html(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_html(CBERGAlefHandle handle);
 
 /**
  * Get the `body_size` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_page_result_body_size(const CBERGCrawlPageResult *ptr);
+uintptr_t cberg_crawl_page_result_body_size(CBERGAlefHandle handle);
 
 /**
  * Get the `metadata` field from a `CrawlPageResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_page_metadata_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGPageMetadata *cberg_crawl_page_result_metadata(const CBERGCrawlPageResult *ptr);
+CBERGAlefHandle cberg_crawl_page_result_metadata(CBERGAlefHandle handle);
 
 /**
  * Get the `links` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_links(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_links(CBERGAlefHandle handle);
 
 /**
  * Get the `images` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_images(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_images(CBERGAlefHandle handle);
 
 /**
  * Get the `feeds` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_feeds(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_feeds(CBERGAlefHandle handle);
 
 /**
  * Get the `json_ld` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_json_ld(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_json_ld(CBERGAlefHandle handle);
 
 /**
  * Get the `depth` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_page_result_depth(const CBERGCrawlPageResult *ptr);
+uintptr_t cberg_crawl_page_result_depth(CBERGAlefHandle handle);
 
 /**
  * Get the `stayed_on_domain` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_page_result_stayed_on_domain(const CBERGCrawlPageResult *ptr);
+int32_t cberg_crawl_page_result_stayed_on_domain(CBERGAlefHandle handle);
 
 /**
  * Get the `was_skipped` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_page_result_was_skipped(const CBERGCrawlPageResult *ptr);
+int32_t cberg_crawl_page_result_was_skipped(CBERGAlefHandle handle);
 
 /**
  * Get the `is_pdf` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_page_result_is_pdf(const CBERGCrawlPageResult *ptr);
+int32_t cberg_crawl_page_result_is_pdf(CBERGAlefHandle handle);
 
 /**
  * Get the `detected_charset` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_detected_charset(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_detected_charset(CBERGAlefHandle handle);
 
 /**
  * Get the `markdown` field from a `CrawlPageResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_markdown_result_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGMarkdownResult *cberg_crawl_page_result_markdown(const CBERGCrawlPageResult *ptr);
+CBERGAlefHandle cberg_crawl_page_result_markdown(CBERGAlefHandle handle);
 
 /**
  * Get the `extracted_data` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_page_result_extracted_data(const CBERGCrawlPageResult *ptr);
+char *cberg_crawl_page_result_extracted_data(CBERGAlefHandle handle);
 
 /**
  * Get the `extraction_meta` field from a `CrawlPageResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_extraction_meta_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGExtractionMeta *cberg_crawl_page_result_extraction_meta(const CBERGCrawlPageResult *ptr);
+CBERGAlefHandle cberg_crawl_page_result_extraction_meta(CBERGAlefHandle handle);
 
 /**
  * Get the `downloaded_document` field from a `CrawlPageResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_downloaded_document_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGDownloadedDocument *cberg_crawl_page_result_downloaded_document(const CBERGCrawlPageResult *ptr);
+CBERGAlefHandle cberg_crawl_page_result_downloaded_document(CBERGAlefHandle handle);
 
 /**
  * Get the `browser_used` field from a `CrawlPageResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_page_result_browser_used(const CBERGCrawlPageResult *ptr);
+int32_t cberg_crawl_page_result_browser_used(CBERGAlefHandle handle);
 
 /**
  * Create a `CrawlResult` from a JSON string. Returns null on failure.
@@ -1730,78 +1931,86 @@ int32_t cberg_crawl_page_result_browser_used(const CBERGCrawlPageResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_crawl_result_free`.
  */
-CBERGCrawlResult *cberg_crawl_result_from_json(const char *json);
+CBERGAlefHandle cberg_crawl_result_from_json(const char *json);
 
 /**
  * Serialize a `CrawlResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_result_to_json(const CBERGCrawlResult *ptr);
+char *cberg_crawl_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CrawlResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_result_free(CBERGCrawlResult *ptr);
+void cberg_crawl_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `pages` field from a `CrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_result_pages(const CBERGCrawlResult *ptr);
+char *cberg_crawl_result_pages(CBERGAlefHandle handle);
 
 /**
  * Get the `final_url` field from a `CrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_result_final_url(const CBERGCrawlResult *ptr);
+char *cberg_crawl_result_final_url(CBERGAlefHandle handle);
 
 /**
  * Get the `redirect_count` field from a `CrawlResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_crawl_result_redirect_count(const CBERGCrawlResult *ptr);
+uintptr_t cberg_crawl_result_redirect_count(CBERGAlefHandle handle);
 
 /**
  * Get the `was_skipped` field from a `CrawlResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_result_was_skipped(const CBERGCrawlResult *ptr);
+int32_t cberg_crawl_result_was_skipped(CBERGAlefHandle handle);
 
 /**
  * Get the `error` field from a `CrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_result_error(const CBERGCrawlResult *ptr);
+char *cberg_crawl_result_error(CBERGAlefHandle handle);
 
 /**
  * Get the `cookies` field from a `CrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_result_cookies(const CBERGCrawlResult *ptr);
+char *cberg_crawl_result_cookies(CBERGAlefHandle handle);
 
 /**
  * Get the `stayed_on_domain` field from a `CrawlResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_result_stayed_on_domain(const CBERGCrawlResult *ptr);
+int32_t cberg_crawl_result_stayed_on_domain(CBERGAlefHandle handle);
 
 /**
  * Get the `browser_used` field from a `CrawlResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_crawl_result_browser_used(const CBERGCrawlResult *ptr);
+int32_t cberg_crawl_result_browser_used(CBERGAlefHandle handle);
 
 /**
  * Returns the count of unique normalized URLs encountered during crawling.
@@ -1815,7 +2024,7 @@ int32_t cberg_crawl_result_browser_used(const CBERGCrawlResult *ptr);
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-uintptr_t cberg_crawl_result_unique_normalized_urls(const CBERGCrawlResult *this_);
+uintptr_t cberg_crawl_result_unique_normalized_urls(CBERGAlefHandle this_);
 
 /**
  * Create a `SitemapUrl` from a JSON string. Returns null on failure.
@@ -1823,50 +2032,58 @@ uintptr_t cberg_crawl_result_unique_normalized_urls(const CBERGCrawlResult *this
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_sitemap_url_free`.
  */
-CBERGSitemapUrl *cberg_sitemap_url_from_json(const char *json);
+CBERGAlefHandle cberg_sitemap_url_from_json(const char *json);
 
 /**
  * Serialize a `SitemapUrl` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_sitemap_url_to_json(const CBERGSitemapUrl *ptr);
+char *cberg_sitemap_url_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `SitemapUrl` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_sitemap_url_free(CBERGSitemapUrl *ptr);
+void cberg_sitemap_url_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `SitemapUrl`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_sitemap_url_url(const CBERGSitemapUrl *ptr);
+char *cberg_sitemap_url_url(CBERGAlefHandle handle);
 
 /**
  * Get the `lastmod` field from a `SitemapUrl`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_sitemap_url_lastmod(const CBERGSitemapUrl *ptr);
+char *cberg_sitemap_url_lastmod(CBERGAlefHandle handle);
 
 /**
  * Get the `changefreq` field from a `SitemapUrl`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_sitemap_url_changefreq(const CBERGSitemapUrl *ptr);
+char *cberg_sitemap_url_changefreq(CBERGAlefHandle handle);
 
 /**
  * Get the `priority` field from a `SitemapUrl`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_sitemap_url_priority(const CBERGSitemapUrl *ptr);
+char *cberg_sitemap_url_priority(CBERGAlefHandle handle);
 
 /**
  * Create a `MapResult` from a JSON string. Returns null on failure.
@@ -1874,29 +2091,31 @@ char *cberg_sitemap_url_priority(const CBERGSitemapUrl *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_map_result_free`.
  */
-CBERGMapResult *cberg_map_result_from_json(const char *json);
+CBERGAlefHandle cberg_map_result_from_json(const char *json);
 
 /**
  * Serialize a `MapResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_map_result_to_json(const CBERGMapResult *ptr);
+char *cberg_map_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `MapResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_map_result_free(CBERGMapResult *ptr);
+void cberg_map_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `urls` field from a `MapResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_map_result_urls(const CBERGMapResult *ptr);
+char *cberg_map_result_urls(CBERGAlefHandle handle);
 
 /**
  * Create a `MarkdownResult` from a JSON string. Returns null on failure.
@@ -1904,64 +2123,74 @@ char *cberg_map_result_urls(const CBERGMapResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_markdown_result_free`.
  */
-CBERGMarkdownResult *cberg_markdown_result_from_json(const char *json);
+CBERGAlefHandle cberg_markdown_result_from_json(const char *json);
 
 /**
  * Serialize a `MarkdownResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_markdown_result_to_json(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `MarkdownResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_markdown_result_free(CBERGMarkdownResult *ptr);
+void cberg_markdown_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `content` field from a `MarkdownResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_markdown_result_content(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_content(CBERGAlefHandle handle);
 
 /**
  * Get the `document_structure` field from a `MarkdownResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_markdown_result_document_structure(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_document_structure(CBERGAlefHandle handle);
 
 /**
  * Get the `tables` field from a `MarkdownResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_markdown_result_tables(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_tables(CBERGAlefHandle handle);
 
 /**
  * Get the `warnings` field from a `MarkdownResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_markdown_result_warnings(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_warnings(CBERGAlefHandle handle);
 
 /**
  * Get the `citations` field from a `MarkdownResult`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_markdown_result_citations(const CBERGMarkdownResult *ptr);
+int32_t cberg_markdown_result_citations(CBERGAlefHandle handle);
 
 /**
  * Get the `fit_content` field from a `MarkdownResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_markdown_result_fit_content(const CBERGMarkdownResult *ptr);
+char *cberg_markdown_result_fit_content(CBERGAlefHandle handle);
 
 /**
  * Create a `LinkInfo` from a JSON string. Returns null on failure.
@@ -1969,57 +2198,65 @@ char *cberg_markdown_result_fit_content(const CBERGMarkdownResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_link_info_free`.
  */
-CBERGLinkInfo *cberg_link_info_from_json(const char *json);
+CBERGAlefHandle cberg_link_info_from_json(const char *json);
 
 /**
  * Serialize a `LinkInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_link_info_to_json(const CBERGLinkInfo *ptr);
+char *cberg_link_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `LinkInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_link_info_free(CBERGLinkInfo *ptr);
+void cberg_link_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `LinkInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_link_info_url(const CBERGLinkInfo *ptr);
+char *cberg_link_info_url(CBERGAlefHandle handle);
 
 /**
  * Get the `text` field from a `LinkInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_link_info_text(const CBERGLinkInfo *ptr);
+char *cberg_link_info_text(CBERGAlefHandle handle);
 
 /**
  * Get the `link_type` field from a `LinkInfo`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_link_type_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGLinkType *cberg_link_info_link_type(const CBERGLinkInfo *ptr);
+CBERGAlefHandle cberg_link_info_link_type(CBERGAlefHandle handle);
 
 /**
  * Get the `rel` field from a `LinkInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_link_info_rel(const CBERGLinkInfo *ptr);
+char *cberg_link_info_rel(CBERGAlefHandle handle);
 
 /**
  * Get the `nofollow` field from a `LinkInfo`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_link_info_nofollow(const CBERGLinkInfo *ptr);
+int32_t cberg_link_info_nofollow(CBERGAlefHandle handle);
 
 /**
  * Create a `ImageInfo` from a JSON string. Returns null on failure.
@@ -2027,57 +2264,63 @@ int32_t cberg_link_info_nofollow(const CBERGLinkInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_image_info_free`.
  */
-CBERGImageInfo *cberg_image_info_from_json(const char *json);
+CBERGAlefHandle cberg_image_info_from_json(const char *json);
 
 /**
  * Serialize a `ImageInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_image_info_to_json(const CBERGImageInfo *ptr);
+char *cberg_image_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ImageInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_image_info_free(CBERGImageInfo *ptr);
+void cberg_image_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `ImageInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_image_info_url(const CBERGImageInfo *ptr);
+char *cberg_image_info_url(CBERGAlefHandle handle);
 
 /**
  * Get the `alt` field from a `ImageInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_image_info_alt(const CBERGImageInfo *ptr);
+char *cberg_image_info_alt(CBERGAlefHandle handle);
 
 /**
  * Get the `width` field from a `ImageInfo`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint32_t cberg_image_info_width(const CBERGImageInfo *ptr);
+uint32_t cberg_image_info_width(CBERGAlefHandle handle);
 
 /**
  * Get the `height` field from a `ImageInfo`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint32_t cberg_image_info_height(const CBERGImageInfo *ptr);
+uint32_t cberg_image_info_height(CBERGAlefHandle handle);
 
 /**
  * Get the `source` field from a `ImageInfo`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_image_source_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGImageSource *cberg_image_info_source(const CBERGImageInfo *ptr);
+CBERGAlefHandle cberg_image_info_source(CBERGAlefHandle handle);
 
 /**
  * Create a `FeedInfo` from a JSON string. Returns null on failure.
@@ -2085,43 +2328,49 @@ CBERGImageSource *cberg_image_info_source(const CBERGImageInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_feed_info_free`.
  */
-CBERGFeedInfo *cberg_feed_info_from_json(const char *json);
+CBERGAlefHandle cberg_feed_info_from_json(const char *json);
 
 /**
  * Serialize a `FeedInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_feed_info_to_json(const CBERGFeedInfo *ptr);
+char *cberg_feed_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `FeedInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_feed_info_free(CBERGFeedInfo *ptr);
+void cberg_feed_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `FeedInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_feed_info_url(const CBERGFeedInfo *ptr);
+char *cberg_feed_info_url(CBERGAlefHandle handle);
 
 /**
  * Get the `title` field from a `FeedInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_feed_info_title(const CBERGFeedInfo *ptr);
+char *cberg_feed_info_title(CBERGAlefHandle handle);
 
 /**
  * Get the `feed_type` field from a `FeedInfo`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_feed_type_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGFeedType *cberg_feed_info_feed_type(const CBERGFeedInfo *ptr);
+CBERGAlefHandle cberg_feed_info_feed_type(CBERGAlefHandle handle);
 
 /**
  * Create a `JsonLdEntry` from a JSON string. Returns null on failure.
@@ -2129,43 +2378,49 @@ CBERGFeedType *cberg_feed_info_feed_type(const CBERGFeedInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_json_ld_entry_free`.
  */
-CBERGJsonLdEntry *cberg_json_ld_entry_from_json(const char *json);
+CBERGAlefHandle cberg_json_ld_entry_from_json(const char *json);
 
 /**
  * Serialize a `JsonLdEntry` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_json_ld_entry_to_json(const CBERGJsonLdEntry *ptr);
+char *cberg_json_ld_entry_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `JsonLdEntry` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_json_ld_entry_free(CBERGJsonLdEntry *ptr);
+void cberg_json_ld_entry_free(CBERGAlefHandle handle);
 
 /**
  * Get the `schema_type` field from a `JsonLdEntry`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_json_ld_entry_schema_type(const CBERGJsonLdEntry *ptr);
+char *cberg_json_ld_entry_schema_type(CBERGAlefHandle handle);
 
 /**
  * Get the `name` field from a `JsonLdEntry`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_json_ld_entry_name(const CBERGJsonLdEntry *ptr);
+char *cberg_json_ld_entry_name(CBERGAlefHandle handle);
 
 /**
  * Get the `raw` field from a `JsonLdEntry`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_json_ld_entry_raw(const CBERGJsonLdEntry *ptr);
+char *cberg_json_ld_entry_raw(CBERGAlefHandle handle);
 
 /**
  * Create a `CookieInfo` from a JSON string. Returns null on failure.
@@ -2173,50 +2428,58 @@ char *cberg_json_ld_entry_raw(const CBERGJsonLdEntry *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_cookie_info_free`.
  */
-CBERGCookieInfo *cberg_cookie_info_from_json(const char *json);
+CBERGAlefHandle cberg_cookie_info_from_json(const char *json);
 
 /**
  * Serialize a `CookieInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_cookie_info_to_json(const CBERGCookieInfo *ptr);
+char *cberg_cookie_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CookieInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_cookie_info_free(CBERGCookieInfo *ptr);
+void cberg_cookie_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `name` field from a `CookieInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_cookie_info_name(const CBERGCookieInfo *ptr);
+char *cberg_cookie_info_name(CBERGAlefHandle handle);
 
 /**
  * Get the `value` field from a `CookieInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_cookie_info_value(const CBERGCookieInfo *ptr);
+char *cberg_cookie_info_value(CBERGAlefHandle handle);
 
 /**
  * Get the `domain` field from a `CookieInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_cookie_info_domain(const CBERGCookieInfo *ptr);
+char *cberg_cookie_info_domain(CBERGAlefHandle handle);
 
 /**
  * Get the `path` field from a `CookieInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_cookie_info_path(const CBERGCookieInfo *ptr);
+char *cberg_cookie_info_path(CBERGAlefHandle handle);
 
 /**
  * Create a `DownloadedAsset` from a JSON string. Returns null on failure.
@@ -2224,64 +2487,74 @@ char *cberg_cookie_info_path(const CBERGCookieInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_downloaded_asset_free`.
  */
-CBERGDownloadedAsset *cberg_downloaded_asset_from_json(const char *json);
+CBERGAlefHandle cberg_downloaded_asset_from_json(const char *json);
 
 /**
  * Serialize a `DownloadedAsset` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_downloaded_asset_to_json(const CBERGDownloadedAsset *ptr);
+char *cberg_downloaded_asset_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `DownloadedAsset` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_downloaded_asset_free(CBERGDownloadedAsset *ptr);
+void cberg_downloaded_asset_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `DownloadedAsset`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_asset_url(const CBERGDownloadedAsset *ptr);
+char *cberg_downloaded_asset_url(CBERGAlefHandle handle);
 
 /**
  * Get the `content_hash` field from a `DownloadedAsset`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_asset_content_hash(const CBERGDownloadedAsset *ptr);
+char *cberg_downloaded_asset_content_hash(CBERGAlefHandle handle);
 
 /**
  * Get the `mime_type` field from a `DownloadedAsset`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_asset_mime_type(const CBERGDownloadedAsset *ptr);
+char *cberg_downloaded_asset_mime_type(CBERGAlefHandle handle);
 
 /**
  * Get the `size` field from a `DownloadedAsset`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_downloaded_asset_size(const CBERGDownloadedAsset *ptr);
+uintptr_t cberg_downloaded_asset_size(CBERGAlefHandle handle);
 
 /**
  * Get the `asset_category` field from a `DownloadedAsset`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_asset_category_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGAssetCategory *cberg_downloaded_asset_asset_category(const CBERGDownloadedAsset *ptr);
+CBERGAlefHandle cberg_downloaded_asset_asset_category(CBERGAlefHandle handle);
 
 /**
  * Get the `html_tag` field from a `DownloadedAsset`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_downloaded_asset_html_tag(const CBERGDownloadedAsset *ptr);
+char *cberg_downloaded_asset_html_tag(CBERGAlefHandle handle);
 
 /**
  * Create a `ArticleMetadata` from a JSON string. Returns null on failure.
@@ -2289,57 +2562,67 @@ char *cberg_downloaded_asset_html_tag(const CBERGDownloadedAsset *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_article_metadata_free`.
  */
-CBERGArticleMetadata *cberg_article_metadata_from_json(const char *json);
+CBERGAlefHandle cberg_article_metadata_from_json(const char *json);
 
 /**
  * Serialize a `ArticleMetadata` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_article_metadata_to_json(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ArticleMetadata` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_article_metadata_free(CBERGArticleMetadata *ptr);
+void cberg_article_metadata_free(CBERGAlefHandle handle);
 
 /**
  * Get the `published_time` field from a `ArticleMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_article_metadata_published_time(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_published_time(CBERGAlefHandle handle);
 
 /**
  * Get the `modified_time` field from a `ArticleMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_article_metadata_modified_time(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_modified_time(CBERGAlefHandle handle);
 
 /**
  * Get the `author` field from a `ArticleMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_article_metadata_author(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_author(CBERGAlefHandle handle);
 
 /**
  * Get the `section` field from a `ArticleMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_article_metadata_section(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_section(CBERGAlefHandle handle);
 
 /**
  * Get the `tags` field from a `ArticleMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_article_metadata_tags(const CBERGArticleMetadata *ptr);
+char *cberg_article_metadata_tags(CBERGAlefHandle handle);
 
 /**
  * Create a `HreflangEntry` from a JSON string. Returns null on failure.
@@ -2347,36 +2630,40 @@ char *cberg_article_metadata_tags(const CBERGArticleMetadata *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_hreflang_entry_free`.
  */
-CBERGHreflangEntry *cberg_hreflang_entry_from_json(const char *json);
+CBERGAlefHandle cberg_hreflang_entry_from_json(const char *json);
 
 /**
  * Serialize a `HreflangEntry` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_hreflang_entry_to_json(const CBERGHreflangEntry *ptr);
+char *cberg_hreflang_entry_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `HreflangEntry` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_hreflang_entry_free(CBERGHreflangEntry *ptr);
+void cberg_hreflang_entry_free(CBERGAlefHandle handle);
 
 /**
  * Get the `lang` field from a `HreflangEntry`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_hreflang_entry_lang(const CBERGHreflangEntry *ptr);
+char *cberg_hreflang_entry_lang(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `HreflangEntry`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_hreflang_entry_url(const CBERGHreflangEntry *ptr);
+char *cberg_hreflang_entry_url(CBERGAlefHandle handle);
 
 /**
  * Create a `FaviconInfo` from a JSON string. Returns null on failure.
@@ -2384,50 +2671,58 @@ char *cberg_hreflang_entry_url(const CBERGHreflangEntry *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_favicon_info_free`.
  */
-CBERGFaviconInfo *cberg_favicon_info_from_json(const char *json);
+CBERGAlefHandle cberg_favicon_info_from_json(const char *json);
 
 /**
  * Serialize a `FaviconInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_favicon_info_to_json(const CBERGFaviconInfo *ptr);
+char *cberg_favicon_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `FaviconInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_favicon_info_free(CBERGFaviconInfo *ptr);
+void cberg_favicon_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `FaviconInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_favicon_info_url(const CBERGFaviconInfo *ptr);
+char *cberg_favicon_info_url(CBERGAlefHandle handle);
 
 /**
  * Get the `rel` field from a `FaviconInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_favicon_info_rel(const CBERGFaviconInfo *ptr);
+char *cberg_favicon_info_rel(CBERGAlefHandle handle);
 
 /**
  * Get the `sizes` field from a `FaviconInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_favicon_info_sizes(const CBERGFaviconInfo *ptr);
+char *cberg_favicon_info_sizes(CBERGAlefHandle handle);
 
 /**
  * Get the `mime_type` field from a `FaviconInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_favicon_info_mime_type(const CBERGFaviconInfo *ptr);
+char *cberg_favicon_info_mime_type(CBERGAlefHandle handle);
 
 /**
  * Create a `HeadingInfo` from a JSON string. Returns null on failure.
@@ -2435,36 +2730,38 @@ char *cberg_favicon_info_mime_type(const CBERGFaviconInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_heading_info_free`.
  */
-CBERGHeadingInfo *cberg_heading_info_from_json(const char *json);
+CBERGAlefHandle cberg_heading_info_from_json(const char *json);
 
 /**
  * Serialize a `HeadingInfo` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_heading_info_to_json(const CBERGHeadingInfo *ptr);
+char *cberg_heading_info_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `HeadingInfo` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_heading_info_free(CBERGHeadingInfo *ptr);
+void cberg_heading_info_free(CBERGAlefHandle handle);
 
 /**
  * Get the `level` field from a `HeadingInfo`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint8_t cberg_heading_info_level(const CBERGHeadingInfo *ptr);
+uint8_t cberg_heading_info_level(CBERGAlefHandle handle);
 
 /**
  * Get the `text` field from a `HeadingInfo`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_heading_info_text(const CBERGHeadingInfo *ptr);
+char *cberg_heading_info_text(CBERGAlefHandle handle);
 
 /**
  * Create a `ResponseMeta` from a JSON string. Returns null on failure.
@@ -2472,71 +2769,85 @@ char *cberg_heading_info_text(const CBERGHeadingInfo *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_response_meta_free`.
  */
-CBERGResponseMeta *cberg_response_meta_from_json(const char *json);
+CBERGAlefHandle cberg_response_meta_from_json(const char *json);
 
 /**
  * Serialize a `ResponseMeta` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_response_meta_to_json(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `ResponseMeta` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_response_meta_free(CBERGResponseMeta *ptr);
+void cberg_response_meta_free(CBERGAlefHandle handle);
 
 /**
  * Get the `etag` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_etag(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_etag(CBERGAlefHandle handle);
 
 /**
  * Get the `last_modified` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_last_modified(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_last_modified(CBERGAlefHandle handle);
 
 /**
  * Get the `cache_control` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_cache_control(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_cache_control(CBERGAlefHandle handle);
 
 /**
  * Get the `server` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_server(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_server(CBERGAlefHandle handle);
 
 /**
  * Get the `x_powered_by` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_x_powered_by(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_x_powered_by(CBERGAlefHandle handle);
 
 /**
  * Get the `content_language` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_content_language(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_content_language(CBERGAlefHandle handle);
 
 /**
  * Get the `content_encoding` field from a `ResponseMeta`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_response_meta_content_encoding(const CBERGResponseMeta *ptr);
+char *cberg_response_meta_content_encoding(CBERGAlefHandle handle);
 
 /**
  * Create a `PageMetadata` from a JSON string. Returns null on failure.
@@ -2544,323 +2855,407 @@ char *cberg_response_meta_content_encoding(const CBERGResponseMeta *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_page_metadata_free`.
  */
-CBERGPageMetadata *cberg_page_metadata_from_json(const char *json);
+CBERGAlefHandle cberg_page_metadata_from_json(const char *json);
 
 /**
  * Serialize a `PageMetadata` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_page_metadata_to_json(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `PageMetadata` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_page_metadata_free(CBERGPageMetadata *ptr);
+void cberg_page_metadata_free(CBERGAlefHandle handle);
 
 /**
  * Get the `title` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_title(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_title(CBERGAlefHandle handle);
 
 /**
  * Get the `description` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_description(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_description(CBERGAlefHandle handle);
 
 /**
  * Get the `canonical_url` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_canonical_url(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_canonical_url(CBERGAlefHandle handle);
 
 /**
  * Get the `keywords` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_keywords(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_keywords(CBERGAlefHandle handle);
 
 /**
  * Get the `author` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_author(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_author(CBERGAlefHandle handle);
 
 /**
  * Get the `viewport` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_viewport(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_viewport(CBERGAlefHandle handle);
 
 /**
  * Get the `theme_color` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_theme_color(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_theme_color(CBERGAlefHandle handle);
 
 /**
  * Get the `generator` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_generator(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_generator(CBERGAlefHandle handle);
 
 /**
  * Get the `robots` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_robots(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_robots(CBERGAlefHandle handle);
 
 /**
  * Get the `html_lang` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_html_lang(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_html_lang(CBERGAlefHandle handle);
 
 /**
  * Get the `html_dir` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_html_dir(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_html_dir(CBERGAlefHandle handle);
 
 /**
  * Get the `og_title` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_title(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_title(CBERGAlefHandle handle);
 
 /**
  * Get the `og_type` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_type(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_type(CBERGAlefHandle handle);
 
 /**
  * Get the `og_image` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_image(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_image(CBERGAlefHandle handle);
 
 /**
  * Get the `og_description` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_description(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_description(CBERGAlefHandle handle);
 
 /**
  * Get the `og_url` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_url(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_url(CBERGAlefHandle handle);
 
 /**
  * Get the `og_site_name` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_site_name(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_site_name(CBERGAlefHandle handle);
 
 /**
  * Get the `og_locale` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_locale(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_locale(CBERGAlefHandle handle);
 
 /**
  * Get the `og_video` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_video(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_video(CBERGAlefHandle handle);
 
 /**
  * Get the `og_audio` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_audio(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_audio(CBERGAlefHandle handle);
 
 /**
  * Get the `og_locale_alternates` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_og_locale_alternates(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_og_locale_alternates(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_card` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_card(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_card(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_title` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_title(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_title(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_description` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_description(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_description(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_image` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_image(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_image(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_site` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_site(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_site(CBERGAlefHandle handle);
 
 /**
  * Get the `twitter_creator` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_twitter_creator(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_twitter_creator(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_title` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_title(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_title(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_creator` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_creator(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_creator(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_subject` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_subject(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_subject(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_description` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_description(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_description(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_publisher` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_publisher(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_publisher(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_date` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_date(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_date(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_type` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_type(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_type(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_format` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_format(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_format(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_identifier` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_identifier(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_identifier(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_language` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_language(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_language(CBERGAlefHandle handle);
 
 /**
  * Get the `dc_rights` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_dc_rights(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_dc_rights(CBERGAlefHandle handle);
 
 /**
  * Get the `article` field from a `PageMetadata`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_article_metadata_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGArticleMetadata *cberg_page_metadata_article(const CBERGPageMetadata *ptr);
+CBERGAlefHandle cberg_page_metadata_article(CBERGAlefHandle handle);
 
 /**
  * Get the `hreflangs` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_hreflangs(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_hreflangs(CBERGAlefHandle handle);
 
 /**
  * Get the `favicons` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_favicons(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_favicons(CBERGAlefHandle handle);
 
 /**
  * Get the `headings` field from a `PageMetadata`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_page_metadata_headings(const CBERGPageMetadata *ptr);
+char *cberg_page_metadata_headings(CBERGAlefHandle handle);
 
 /**
  * Get the `word_count` field from a `PageMetadata`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_page_metadata_word_count(const CBERGPageMetadata *ptr);
+uintptr_t cberg_page_metadata_word_count(CBERGAlefHandle handle);
 
 /**
  * Create a `CrawlStreamRequest` from a JSON string. Returns null on failure.
@@ -2868,29 +3263,31 @@ uintptr_t cberg_page_metadata_word_count(const CBERGPageMetadata *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_crawl_stream_request_free`.
  */
-CBERGCrawlStreamRequest *cberg_crawl_stream_request_from_json(const char *json);
+CBERGAlefHandle cberg_crawl_stream_request_from_json(const char *json);
 
 /**
  * Serialize a `CrawlStreamRequest` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_stream_request_to_json(const CBERGCrawlStreamRequest *ptr);
+char *cberg_crawl_stream_request_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CrawlStreamRequest` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_stream_request_free(CBERGCrawlStreamRequest *ptr);
+void cberg_crawl_stream_request_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `CrawlStreamRequest`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_crawl_stream_request_url(const CBERGCrawlStreamRequest *ptr);
+char *cberg_crawl_stream_request_url(CBERGAlefHandle handle);
 
 /**
  * Create a `BatchCrawlStreamRequest` from a JSON string. Returns null on failure.
@@ -2898,29 +3295,31 @@ char *cberg_crawl_stream_request_url(const CBERGCrawlStreamRequest *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_crawl_stream_request_free`.
  */
-CBERGBatchCrawlStreamRequest *cberg_batch_crawl_stream_request_from_json(const char *json);
+CBERGAlefHandle cberg_batch_crawl_stream_request_from_json(const char *json);
 
 /**
  * Serialize a `BatchCrawlStreamRequest` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_crawl_stream_request_to_json(const CBERGBatchCrawlStreamRequest *ptr);
+char *cberg_batch_crawl_stream_request_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BatchCrawlStreamRequest` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_batch_crawl_stream_request_free(CBERGBatchCrawlStreamRequest *ptr);
+void cberg_batch_crawl_stream_request_free(CBERGAlefHandle handle);
 
 /**
  * Get the `urls` field from a `BatchCrawlStreamRequest`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_crawl_stream_request_urls(const CBERGBatchCrawlStreamRequest *ptr);
+char *cberg_batch_crawl_stream_request_urls(CBERGAlefHandle handle);
 
 /**
  * Create a `CitationResult` from a JSON string. Returns null on failure.
@@ -2928,36 +3327,40 @@ char *cberg_batch_crawl_stream_request_urls(const CBERGBatchCrawlStreamRequest *
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_citation_result_free`.
  */
-CBERGCitationResult *cberg_citation_result_from_json(const char *json);
+CBERGAlefHandle cberg_citation_result_from_json(const char *json);
 
 /**
  * Serialize a `CitationResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_citation_result_to_json(const CBERGCitationResult *ptr);
+char *cberg_citation_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CitationResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_citation_result_free(CBERGCitationResult *ptr);
+void cberg_citation_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `content` field from a `CitationResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_citation_result_content(const CBERGCitationResult *ptr);
+char *cberg_citation_result_content(CBERGAlefHandle handle);
 
 /**
  * Get the `references` field from a `CitationResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_citation_result_references(const CBERGCitationResult *ptr);
+char *cberg_citation_result_references(CBERGAlefHandle handle);
 
 /**
  * Create a `CitationReference` from a JSON string. Returns null on failure.
@@ -2965,50 +3368,54 @@ char *cberg_citation_result_references(const CBERGCitationResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_citation_reference_free`.
  */
-CBERGCitationReference *cberg_citation_reference_from_json(const char *json);
+CBERGAlefHandle cberg_citation_reference_from_json(const char *json);
 
 /**
  * Serialize a `CitationReference` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_citation_reference_to_json(const CBERGCitationReference *ptr);
+char *cberg_citation_reference_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `CitationReference` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_citation_reference_free(CBERGCitationReference *ptr);
+void cberg_citation_reference_free(CBERGAlefHandle handle);
 
 /**
  * Get the `index` field from a `CitationReference`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_citation_reference_index(const CBERGCitationReference *ptr);
+uintptr_t cberg_citation_reference_index(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `CitationReference`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_citation_reference_url(const CBERGCitationReference *ptr);
+char *cberg_citation_reference_url(CBERGAlefHandle handle);
 
 /**
  * Get the `text` field from a `CitationReference`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_citation_reference_text(const CBERGCitationReference *ptr);
+char *cberg_citation_reference_text(CBERGAlefHandle handle);
 
 /**
  * Free a `CrawlEngineHandle` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_engine_handle_free(CBERGCrawlEngineHandle *ptr);
+void cberg_crawl_engine_handle_free(CBERGAlefHandle handle);
 
 /**
  * Stream a single-URL crawl, yielding `CrawlEvent`s as pages are processed.
@@ -3023,7 +3430,7 @@ void cberg_crawl_engine_handle_free(CBERGCrawlEngineHandle *ptr);
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *client,
+int32_t cberg_crawl_engine_handle_crawl_stream(CBERGAlefHandle client,
                                                const char *request_json,
                                                CBERGCbergStreamCallback callback,
                                                void *user_data);
@@ -3041,7 +3448,7 @@ int32_t cberg_crawl_engine_handle_crawl_stream(const CBERGCrawlEngineHandle *cli
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-int32_t cberg_crawl_engine_handle_batch_crawl_stream(const CBERGCrawlEngineHandle *client,
+int32_t cberg_crawl_engine_handle_batch_crawl_stream(CBERGAlefHandle client,
                                                      const char *request_json,
                                                      CBERGCbergStreamCallback callback,
                                                      void *user_data);
@@ -3052,43 +3459,49 @@ int32_t cberg_crawl_engine_handle_batch_crawl_stream(const CBERGCrawlEngineHandl
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_scrape_result_free`.
  */
-CBERGBatchScrapeResult *cberg_batch_scrape_result_from_json(const char *json);
+CBERGAlefHandle cberg_batch_scrape_result_from_json(const char *json);
 
 /**
  * Serialize a `BatchScrapeResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_scrape_result_to_json(const CBERGBatchScrapeResult *ptr);
+char *cberg_batch_scrape_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BatchScrapeResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_batch_scrape_result_free(CBERGBatchScrapeResult *ptr);
+void cberg_batch_scrape_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `BatchScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_scrape_result_url(const CBERGBatchScrapeResult *ptr);
+char *cberg_batch_scrape_result_url(CBERGAlefHandle handle);
 
 /**
  * Get the `result` field from a `BatchScrapeResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_scrape_result_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGScrapeResult *cberg_batch_scrape_result_result(const CBERGBatchScrapeResult *ptr);
+CBERGAlefHandle cberg_batch_scrape_result_result(CBERGAlefHandle handle);
 
 /**
  * Get the `error` field from a `BatchScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_scrape_result_error(const CBERGBatchScrapeResult *ptr);
+char *cberg_batch_scrape_result_error(CBERGAlefHandle handle);
 
 /**
  * Create a `BatchCrawlResult` from a JSON string. Returns null on failure.
@@ -3096,43 +3509,49 @@ char *cberg_batch_scrape_result_error(const CBERGBatchScrapeResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_crawl_result_free`.
  */
-CBERGBatchCrawlResult *cberg_batch_crawl_result_from_json(const char *json);
+CBERGAlefHandle cberg_batch_crawl_result_from_json(const char *json);
 
 /**
  * Serialize a `BatchCrawlResult` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_crawl_result_to_json(const CBERGBatchCrawlResult *ptr);
+char *cberg_batch_crawl_result_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BatchCrawlResult` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_batch_crawl_result_free(CBERGBatchCrawlResult *ptr);
+void cberg_batch_crawl_result_free(CBERGAlefHandle handle);
 
 /**
  * Get the `url` field from a `BatchCrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_crawl_result_url(const CBERGBatchCrawlResult *ptr);
+char *cberg_batch_crawl_result_url(CBERGAlefHandle handle);
 
 /**
  * Get the `result` field from a `BatchCrawlResult`.
+ * A non-null returned handle is owned by the caller.
+ * It must be freed with `cberg_crawl_result_free`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-CBERGCrawlResult *cberg_batch_crawl_result_result(const CBERGBatchCrawlResult *ptr);
+CBERGAlefHandle cberg_batch_crawl_result_result(CBERGAlefHandle handle);
 
 /**
  * Get the `error` field from a `BatchCrawlResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_crawl_result_error(const CBERGBatchCrawlResult *ptr);
+char *cberg_batch_crawl_result_error(CBERGAlefHandle handle);
 
 /**
  * Create a `BatchScrapeResults` from a JSON string. Returns null on failure.
@@ -3140,50 +3559,52 @@ char *cberg_batch_crawl_result_error(const CBERGBatchCrawlResult *ptr);
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_scrape_results_free`.
  */
-CBERGBatchScrapeResults *cberg_batch_scrape_results_from_json(const char *json);
+CBERGAlefHandle cberg_batch_scrape_results_from_json(const char *json);
 
 /**
  * Serialize a `BatchScrapeResults` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_scrape_results_to_json(const CBERGBatchScrapeResults *ptr);
+char *cberg_batch_scrape_results_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BatchScrapeResults` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_batch_scrape_results_free(CBERGBatchScrapeResults *ptr);
+void cberg_batch_scrape_results_free(CBERGAlefHandle handle);
 
 /**
  * Get the `results` field from a `BatchScrapeResults`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_scrape_results_results(const CBERGBatchScrapeResults *ptr);
+char *cberg_batch_scrape_results_results(CBERGAlefHandle handle);
 
 /**
  * Get the `total_count` field from a `BatchScrapeResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_total_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t cberg_batch_scrape_results_total_count(CBERGAlefHandle handle);
 
 /**
  * Get the `completed_count` field from a `BatchScrapeResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_completed_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t cberg_batch_scrape_results_completed_count(CBERGAlefHandle handle);
 
 /**
  * Get the `failed_count` field from a `BatchScrapeResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_scrape_results_failed_count(const CBERGBatchScrapeResults *ptr);
+uintptr_t cberg_batch_scrape_results_failed_count(CBERGAlefHandle handle);
 
 /**
  * Create a `BatchCrawlResults` from a JSON string. Returns null on failure.
@@ -3191,50 +3612,52 @@ uintptr_t cberg_batch_scrape_results_failed_count(const CBERGBatchScrapeResults 
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_batch_crawl_results_free`.
  */
-CBERGBatchCrawlResults *cberg_batch_crawl_results_from_json(const char *json);
+CBERGAlefHandle cberg_batch_crawl_results_from_json(const char *json);
 
 /**
  * Serialize a `BatchCrawlResults` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_batch_crawl_results_to_json(const CBERGBatchCrawlResults *ptr);
+char *cberg_batch_crawl_results_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `BatchCrawlResults` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_batch_crawl_results_free(CBERGBatchCrawlResults *ptr);
+void cberg_batch_crawl_results_free(CBERGAlefHandle handle);
 
 /**
  * Get the `results` field from a `BatchCrawlResults`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_batch_crawl_results_results(const CBERGBatchCrawlResults *ptr);
+char *cberg_batch_crawl_results_results(CBERGAlefHandle handle);
 
 /**
  * Get the `total_count` field from a `BatchCrawlResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_total_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t cberg_batch_crawl_results_total_count(CBERGAlefHandle handle);
 
 /**
  * Get the `completed_count` field from a `BatchCrawlResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_completed_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t cberg_batch_crawl_results_completed_count(CBERGAlefHandle handle);
 
 /**
  * Get the `failed_count` field from a `BatchCrawlResults`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uintptr_t cberg_batch_crawl_results_failed_count(const CBERGBatchCrawlResults *ptr);
+uintptr_t cberg_batch_crawl_results_failed_count(CBERGAlefHandle handle);
 
 /**
  * Create a `SsrfPolicy` from a JSON string. Returns null on failure.
@@ -3242,49 +3665,51 @@ uintptr_t cberg_batch_crawl_results_failed_count(const CBERGBatchCrawlResults *p
  * JSON string must be valid UTF-8 and null-terminated.
  * Returned handle must be freed with `cberg_ssrf_policy_free`.
  */
-CBERGSsrfPolicy *cberg_ssrf_policy_from_json(const char *json);
+CBERGAlefHandle cberg_ssrf_policy_from_json(const char *json);
 
 /**
  * Serialize a `SsrfPolicy` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_ssrf_policy_to_json(const CBERGSsrfPolicy *ptr);
+char *cberg_ssrf_policy_to_json(CBERGAlefHandle handle);
 
 /**
  * Free a `SsrfPolicy` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_ssrf_policy_free(CBERGSsrfPolicy *ptr);
+void cberg_ssrf_policy_free(CBERGAlefHandle handle);
 
 /**
  * Get the `deny_private` field from a `SsrfPolicy`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-int32_t cberg_ssrf_policy_deny_private(const CBERGSsrfPolicy *ptr);
+int32_t cberg_ssrf_policy_deny_private(CBERGAlefHandle handle);
 
 /**
  * Get the `allowlist` field from a `SsrfPolicy`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-char *cberg_ssrf_policy_allowlist(const CBERGSsrfPolicy *ptr);
+char *cberg_ssrf_policy_allowlist(CBERGAlefHandle handle);
 
 /**
  * Get the `max_redirects` field from a `SsrfPolicy`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
-uint8_t cberg_ssrf_policy_max_redirects(const CBERGSsrfPolicy *ptr);
+uint8_t cberg_ssrf_policy_max_redirects(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGSsrfPolicy *cberg_ssrf_policy_default(void);
+CBERGAlefHandle cberg_ssrf_policy_default(void);
 
 /**
  * Create a policy from environment variables.
@@ -3308,7 +3733,7 @@ CBERGSsrfPolicy *cberg_ssrf_policy_default(void);
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGSsrfPolicy *cberg_ssrf_policy_from_env(void);
+CBERGAlefHandle cberg_ssrf_policy_from_env(void);
 
 /**
  * Convert an integer to a `BrowserMode` variant. Returns -1 on invalid input.
@@ -3369,6 +3794,36 @@ int32_t cberg_document_content_encoding_from_i32(int32_t value);
  * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
  */
 int32_t cberg_document_content_encoding_from_str(const char *name);
+
+/**
+ * Convert an integer to a `CrawlStrategyKind` variant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+int32_t cberg_crawl_strategy_kind_from_i32(int32_t value);
+
+/**
+ * Convert a `CrawlStrategyKind` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ */
+int32_t cberg_crawl_strategy_kind_from_str(const char *name);
+
+/**
+ * Convert an integer to a `ContentFilterKind` variant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure all pointer arguments are valid or null.
+ * Returned pointers must be freed with the appropriate free function.
+ */
+int32_t cberg_content_filter_kind_from_i32(int32_t value);
+
+/**
+ * Convert a `ContentFilterKind` serde wire value (C string) to its integer discriminant. Returns -1 on invalid input.
+ * # Safety
+ * Caller must ensure `ptr` is a valid pointer to a `c_char` or null.
+ */
+int32_t cberg_content_filter_kind_from_str(const char *name);
 
 /**
  * Convert an integer to a `AuthConfig` variant. Returns -1 on invalid input.
@@ -3506,254 +3961,304 @@ int32_t cberg_host_matcher_from_i32(int32_t value);
 int32_t cberg_host_matcher_from_str(const char *name);
 
 /**
- * Free a heap-allocated `BrowserMode` returned by a pointer-returning FFI function.
+ * Free a `BrowserMode` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_browser_mode_free(CBERGBrowserMode *ptr);
+void cberg_browser_mode_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `BrowserMode` to a JSON string.
+ * Serialize a `BrowserMode` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_mode_to_json(const CBERGBrowserMode *ptr);
+char *cberg_browser_mode_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `BrowserMode` as its string representation
+ * Render a `BrowserMode` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_mode_to_string(const CBERGBrowserMode *ptr);
+char *cberg_browser_mode_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `BrowserWait` returned by a pointer-returning FFI function.
+ * Free a `BrowserWait` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_browser_wait_free(CBERGBrowserWait *ptr);
+void cberg_browser_wait_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `BrowserWait` to a JSON string.
+ * Serialize a `BrowserWait` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_wait_to_json(const CBERGBrowserWait *ptr);
+char *cberg_browser_wait_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `BrowserWait` as its string representation
+ * Render a `BrowserWait` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_wait_to_string(const CBERGBrowserWait *ptr);
+char *cberg_browser_wait_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `BrowserBackend` returned by a pointer-returning FFI function.
+ * Free a `BrowserBackend` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_browser_backend_free(CBERGBrowserBackend *ptr);
+void cberg_browser_backend_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `BrowserBackend` to a JSON string.
+ * Serialize a `BrowserBackend` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_backend_to_json(const CBERGBrowserBackend *ptr);
+char *cberg_browser_backend_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `BrowserBackend` as its string representation
+ * Render a `BrowserBackend` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_browser_backend_to_string(const CBERGBrowserBackend *ptr);
+char *cberg_browser_backend_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `DocumentContentEncoding` returned by a pointer-returning FFI function.
+ * Free a `DocumentContentEncoding` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_document_content_encoding_free(CBERGDocumentContentEncoding *ptr);
+void cberg_document_content_encoding_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `DocumentContentEncoding` to a JSON string.
+ * Serialize a `DocumentContentEncoding` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_document_content_encoding_to_json(const CBERGDocumentContentEncoding *ptr);
+char *cberg_document_content_encoding_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `DocumentContentEncoding` as its string representation
+ * Render a `DocumentContentEncoding` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_document_content_encoding_to_string(const CBERGDocumentContentEncoding *ptr);
+char *cberg_document_content_encoding_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `AuthConfig` returned by a pointer-returning FFI function.
+ * Free a `CrawlStrategyKind` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_auth_config_free(CBERGAuthConfig *ptr);
+void cberg_crawl_strategy_kind_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `AuthConfig` to a JSON string.
+ * Serialize a `CrawlStrategyKind` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_auth_config_to_json(const CBERGAuthConfig *ptr);
+char *cberg_crawl_strategy_kind_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `AuthConfig` as its string representation
+ * Render a `CrawlStrategyKind` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_auth_config_to_string(const CBERGAuthConfig *ptr);
+char *cberg_crawl_strategy_kind_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `LinkType` returned by a pointer-returning FFI function.
+ * Free a `ContentFilterKind` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_link_type_free(CBERGLinkType *ptr);
+void cberg_content_filter_kind_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `LinkType` to a JSON string.
+ * Serialize a `ContentFilterKind` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_link_type_to_json(const CBERGLinkType *ptr);
+char *cberg_content_filter_kind_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `LinkType` as its string representation
+ * Render a `ContentFilterKind` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_link_type_to_string(const CBERGLinkType *ptr);
+char *cberg_content_filter_kind_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `ImageSource` returned by a pointer-returning FFI function.
+ * Free a `AuthConfig` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_image_source_free(CBERGImageSource *ptr);
+void cberg_auth_config_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `ImageSource` to a JSON string.
+ * Serialize a `AuthConfig` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_image_source_to_json(const CBERGImageSource *ptr);
+char *cberg_auth_config_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `ImageSource` as its string representation
+ * Render a `AuthConfig` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_image_source_to_string(const CBERGImageSource *ptr);
+char *cberg_auth_config_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `FeedType` returned by a pointer-returning FFI function.
+ * Free a `LinkType` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_feed_type_free(CBERGFeedType *ptr);
+void cberg_link_type_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `FeedType` to a JSON string.
+ * Serialize a `LinkType` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_feed_type_to_json(const CBERGFeedType *ptr);
+char *cberg_link_type_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `FeedType` as its string representation
+ * Render a `LinkType` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_feed_type_to_string(const CBERGFeedType *ptr);
+char *cberg_link_type_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `AssetCategory` returned by a pointer-returning FFI function.
+ * Free a `ImageSource` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_asset_category_free(CBERGAssetCategory *ptr);
+void cberg_image_source_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `AssetCategory` to a JSON string.
+ * Serialize a `ImageSource` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_asset_category_to_json(const CBERGAssetCategory *ptr);
+char *cberg_image_source_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `AssetCategory` as its string representation
+ * Render a `ImageSource` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_asset_category_to_string(const CBERGAssetCategory *ptr);
+char *cberg_image_source_to_string(CBERGAlefHandle handle);
 
 /**
- * Free a heap-allocated `CrawlEvent` returned by a pointer-returning FFI function.
+ * Free a `FeedType` handle.
  * # Safety
- * Pointer must have been returned by this library, or be null.
+ * Handle must have been returned by this library, or be zero.
  */
-void cberg_crawl_event_free(CBERGCrawlEvent *ptr);
+void cberg_feed_type_free(CBERGAlefHandle handle);
 
 /**
- * Serialize a heap-allocated `CrawlEvent` to a JSON string.
+ * Serialize a `FeedType` to a JSON string. Returns null on failure.
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_event_to_json(const CBERGCrawlEvent *ptr);
+char *cberg_feed_type_to_json(CBERGAlefHandle handle);
 
 /**
- * Render a heap-allocated `CrawlEvent` as its string representation
+ * Render a `FeedType` as its string representation
  * (the unit-variant name as serialized by serde — e.g. `"completed"`,
  * without surrounding JSON quotes).
  * # Safety
- * `ptr` must be a valid, non-null pointer returned by a `cberg` function.
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
  * The returned string must be freed with `cberg_free_string`.
  */
-char *cberg_crawl_event_to_string(const CBERGCrawlEvent *ptr);
+char *cberg_feed_type_to_string(CBERGAlefHandle handle);
+
+/**
+ * Free a `AssetCategory` handle.
+ * # Safety
+ * Handle must have been returned by this library, or be zero.
+ */
+void cberg_asset_category_free(CBERGAlefHandle handle);
+
+/**
+ * Serialize a `AssetCategory` to a JSON string. Returns null on failure.
+ * # Safety
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_asset_category_to_json(CBERGAlefHandle handle);
+
+/**
+ * Render a `AssetCategory` as its string representation
+ * (the unit-variant name as serialized by serde — e.g. `"completed"`,
+ * without surrounding JSON quotes).
+ * # Safety
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_asset_category_to_string(CBERGAlefHandle handle);
+
+/**
+ * Free a `CrawlEvent` handle.
+ * # Safety
+ * Handle must have been returned by this library, or be zero.
+ */
+void cberg_crawl_event_free(CBERGAlefHandle handle);
+
+/**
+ * Serialize a `CrawlEvent` to a JSON string. Returns null on failure.
+ * # Safety
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_crawl_event_to_json(CBERGAlefHandle handle);
+
+/**
+ * Render a `CrawlEvent` as its string representation
+ * (the unit-variant name as serialized by serde — e.g. `"completed"`,
+ * without surrounding JSON quotes).
+ * # Safety
+ * `handle` must be a valid, non-zero handle returned by a `cberg` function.
+ * The returned string must be freed with `cberg_free_string`.
+ */
+char *cberg_crawl_event_to_string(CBERGAlefHandle handle);
 
 /**
  * Convert markdown links to numbered citations.
@@ -3764,7 +4269,7 @@ char *cberg_crawl_event_to_string(const CBERGCrawlEvent *ptr);
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGCitationResult *cberg_generate_citations(const char *markdown);
+CBERGAlefHandle cberg_generate_citations(const char *markdown);
 
 /**
  * Create a new crawl engine with the given configuration.
@@ -3774,30 +4279,30 @@ CBERGCitationResult *cberg_generate_citations(const char *markdown);
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGCrawlEngineHandle *cberg_create_engine(const CBERGCrawlConfig *config);
+CBERGAlefHandle cberg_create_engine(CBERGAlefHandle config);
 
 /**
  * Scrape a single URL, returning extracted page data.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGScrapeResult *cberg_scrape(const CBERGCrawlEngineHandle *engine,
-                                const char *url);
+CBERGAlefHandle cberg_scrape(CBERGAlefHandle engine,
+                             const char *url);
 
 /**
  * Crawl a website starting from `url`, following links up to the configured depth.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGCrawlResult *cberg_crawl(const CBERGCrawlEngineHandle *engine,
-                              const char *url);
+CBERGAlefHandle cberg_crawl(CBERGAlefHandle engine,
+                            const char *url);
 
 /**
  * Discover all pages on a website by following links and sitemaps.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGMapResult *cberg_map_urls(const CBERGCrawlEngineHandle *engine,
+CBERGAlefHandle cberg_map_urls(CBERGAlefHandle engine,
                                const char *url);
 
 /**
@@ -3805,24 +4310,24 @@ CBERGMapResult *cberg_map_urls(const CBERGCrawlEngineHandle *engine,
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGInteractionResult *cberg_interact(const CBERGCrawlEngineHandle *engine,
-                                       const char *url,
-                                       const char *actions);
+CBERGAlefHandle cberg_interact(CBERGAlefHandle engine,
+                               const char *url,
+                               const char *actions);
 
 /**
  * Scrape multiple URLs concurrently.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGBatchScrapeResults *cberg_batch_scrape(const CBERGCrawlEngineHandle *engine,
-                                            const char *urls);
+CBERGAlefHandle cberg_batch_scrape(CBERGAlefHandle engine,
+                                   const char *urls);
 
 /**
  * Crawl multiple seed URLs concurrently, each following links to configured depth.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
-CBERGBatchCrawlResults *cberg_batch_crawl(const CBERGCrawlEngineHandle *engine,
-                                          const char *urls);
+CBERGAlefHandle cberg_batch_crawl(CBERGAlefHandle engine,
+                                  const char *urls);
 
 #endif  /* CBERG_H */

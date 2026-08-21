@@ -2197,6 +2197,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ContentFilterKind dco_decode_box_autoadd_content_filter_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_content_filter_kind(raw);
+  }
+
+  @protected
   CrawlConfig dco_decode_box_autoadd_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_crawl_config(raw);
@@ -2378,6 +2384,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ContentFilterKind dco_decode_content_filter_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ContentFilterKind.values[raw as int];
+  }
+
+  @protected
   CookieInfo dco_decode_cookie_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2395,53 +2407,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 43)
-      throw Exception('unexpected arr length: expect 43 but see ${arr.length}');
+    if (arr.length != 47)
+      throw Exception('unexpected arr length: expect 47 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
       maxLinksPerPage: dco_decode_opt_box_autoadd_i_64(arr[2]),
       maxConcurrent: dco_decode_opt_box_autoadd_i_64(arr[3]),
-      respectRobotsTxt: dco_decode_bool(arr[4]),
-      softHttpErrors: dco_decode_bool(arr[5]),
-      userAgent: dco_decode_opt_String(arr[6]),
-      stayOnDomain: dco_decode_bool(arr[7]),
-      allowSubdomains: dco_decode_bool(arr[8]),
-      includePaths: dco_decode_list_String(arr[9]),
-      excludePaths: dco_decode_list_String(arr[10]),
-      customHeaders: dco_decode_Map_String_String_None(arr[11]),
-      requestTimeout: dco_decode_i_64(arr[12]),
-      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[13]),
-      maxRedirects: dco_decode_i_64(arr[14]),
-      retryCount: dco_decode_i_64(arr[15]),
-      retryCodes: dco_decode_list_prim_i_64_strict(arr[16]),
-      cookiesEnabled: dco_decode_bool(arr[17]),
-      auth: dco_decode_opt_box_autoadd_auth_config(arr[18]),
-      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[19]),
-      removeTags: dco_decode_list_String(arr[20]),
-      content: dco_decode_content_config(arr[21]),
-      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[22]),
-      mapSearch: dco_decode_opt_String(arr[23]),
-      downloadAssets: dco_decode_bool(arr[24]),
-      assetTypes: dco_decode_list_asset_category(arr[25]),
-      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[26]),
-      browser: dco_decode_browser_config(arr[27]),
-      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[28]),
-      userAgents: dco_decode_list_String(arr[29]),
-      captureScreenshot: dco_decode_bool(arr[30]),
-      followDocumentUrls: dco_decode_bool(arr[31]),
-      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[32]),
-      downloadDocuments: dco_decode_bool(arr[33]),
-      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[34]),
-      documentMimeTypes: dco_decode_list_String(arr[35]),
-      documentOutputDir: dco_decode_opt_String(arr[36]),
+      crawlStrategy: dco_decode_crawl_strategy_kind(arr[4]),
+      contentFilter: dco_decode_opt_box_autoadd_content_filter_kind(arr[5]),
+      bm25Query: dco_decode_opt_String(arr[6]),
+      bm25Threshold: dco_decode_opt_box_autoadd_f_64(arr[7]),
+      respectRobotsTxt: dco_decode_bool(arr[8]),
+      softHttpErrors: dco_decode_bool(arr[9]),
+      userAgent: dco_decode_opt_String(arr[10]),
+      stayOnDomain: dco_decode_bool(arr[11]),
+      allowSubdomains: dco_decode_bool(arr[12]),
+      includePaths: dco_decode_list_String(arr[13]),
+      excludePaths: dco_decode_list_String(arr[14]),
+      customHeaders: dco_decode_Map_String_String_None(arr[15]),
+      requestTimeout: dco_decode_i_64(arr[16]),
+      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[17]),
+      maxRedirects: dco_decode_i_64(arr[18]),
+      retryCount: dco_decode_i_64(arr[19]),
+      retryCodes: dco_decode_list_prim_i_64_strict(arr[20]),
+      cookiesEnabled: dco_decode_bool(arr[21]),
+      auth: dco_decode_opt_box_autoadd_auth_config(arr[22]),
+      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[23]),
+      removeTags: dco_decode_list_String(arr[24]),
+      content: dco_decode_content_config(arr[25]),
+      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[26]),
+      mapSearch: dco_decode_opt_String(arr[27]),
+      downloadAssets: dco_decode_bool(arr[28]),
+      assetTypes: dco_decode_list_asset_category(arr[29]),
+      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[30]),
+      browser: dco_decode_browser_config(arr[31]),
+      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[32]),
+      userAgents: dco_decode_list_String(arr[33]),
+      captureScreenshot: dco_decode_bool(arr[34]),
+      followDocumentUrls: dco_decode_bool(arr[35]),
+      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[36]),
+      downloadDocuments: dco_decode_bool(arr[37]),
+      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[38]),
+      documentMimeTypes: dco_decode_list_String(arr[39]),
+      documentOutputDir: dco_decode_opt_String(arr[40]),
       documentContentEncoding:
-          dco_decode_opt_box_autoadd_document_content_encoding(arr[37]),
-      warcOutput: dco_decode_opt_String(arr[38]),
-      browserProfile: dco_decode_opt_String(arr[39]),
-      saveBrowserProfile: dco_decode_bool(arr[40]),
-      ssrf: dco_decode_ssrf_policy(arr[41]),
-      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[42]),
+          dco_decode_opt_box_autoadd_document_content_encoding(arr[41]),
+      warcOutput: dco_decode_opt_String(arr[42]),
+      browserProfile: dco_decode_opt_String(arr[43]),
+      saveBrowserProfile: dco_decode_bool(arr[44]),
+      ssrf: dco_decode_ssrf_policy(arr[45]),
+      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[46]),
     );
   }
 
@@ -2450,49 +2466,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-        return CrawlError_NotFound(field0: dco_decode_String(raw[1]));
+        return CrawlError_NotFound(message: dco_decode_String(raw[1]));
       case 1:
-        return CrawlError_Unauthorized(field0: dco_decode_String(raw[1]));
+        return CrawlError_Unauthorized(message: dco_decode_String(raw[1]));
       case 2:
-        return CrawlError_Forbidden(field0: dco_decode_String(raw[1]));
+        return CrawlError_Forbidden(message: dco_decode_String(raw[1]));
       case 3:
         return CrawlError_WafBlocked(
           vendor: dco_decode_String(raw[1]),
           message: dco_decode_String(raw[2]),
         );
       case 4:
-        return CrawlError_Timeout(field0: dco_decode_String(raw[1]));
+        return CrawlError_Timeout(message: dco_decode_String(raw[1]));
       case 5:
-        return CrawlError_RateLimited(field0: dco_decode_String(raw[1]));
+        return CrawlError_RateLimited(message: dco_decode_String(raw[1]));
       case 6:
-        return CrawlError_ServerError(field0: dco_decode_String(raw[1]));
+        return CrawlError_ServerError(message: dco_decode_String(raw[1]));
       case 7:
-        return CrawlError_BadGateway(field0: dco_decode_String(raw[1]));
+        return CrawlError_BadGateway(message: dco_decode_String(raw[1]));
       case 8:
-        return CrawlError_Gone(field0: dco_decode_String(raw[1]));
+        return CrawlError_Gone(message: dco_decode_String(raw[1]));
       case 9:
-        return CrawlError_Connection(field0: dco_decode_String(raw[1]));
+        return CrawlError_Connection(message: dco_decode_String(raw[1]));
       case 10:
-        return CrawlError_Dns(field0: dco_decode_String(raw[1]));
+        return CrawlError_Dns(message: dco_decode_String(raw[1]));
       case 11:
-        return CrawlError_Ssl(field0: dco_decode_String(raw[1]));
+        return CrawlError_Ssl(message: dco_decode_String(raw[1]));
       case 12:
-        return CrawlError_DataLoss(field0: dco_decode_String(raw[1]));
+        return CrawlError_DataLoss(message: dco_decode_String(raw[1]));
       case 13:
-        return CrawlError_BrowserError(field0: dco_decode_String(raw[1]));
+        return CrawlError_BrowserError(message: dco_decode_String(raw[1]));
       case 14:
-        return CrawlError_BrowserTimeout(field0: dco_decode_String(raw[1]));
+        return CrawlError_BrowserTimeout(message: dco_decode_String(raw[1]));
       case 15:
-        return CrawlError_InvalidConfig(field0: dco_decode_String(raw[1]));
+        return CrawlError_InvalidConfig(message: dco_decode_String(raw[1]));
       case 16:
-        return CrawlError_Unsupported(field0: dco_decode_String(raw[1]));
+        return CrawlError_Unsupported(message: dco_decode_String(raw[1]));
       case 17:
         return CrawlError_SsrfPolicyViolation(
           url: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
       case 18:
-        return CrawlError_Other(field0: dco_decode_String(raw[1]));
+        return CrawlError_Other(message: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
     }
@@ -2567,6 +2583,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       stayedOnDomain: dco_decode_bool(arr[6]),
       browserUsed: dco_decode_bool(arr[7]),
     );
+  }
+
+  @protected
+  CrawlStrategyKind dco_decode_crawl_strategy_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CrawlStrategyKind.values[raw as int];
   }
 
   @protected
@@ -2984,6 +3006,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_browser_extras(raw);
+  }
+
+  @protected
+  ContentFilterKind? dco_decode_opt_box_autoadd_content_filter_kind(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_content_filter_kind(raw);
   }
 
   @protected
@@ -3565,6 +3595,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ContentFilterKind sse_decode_box_autoadd_content_filter_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_content_filter_kind(deserializer));
+  }
+
+  @protected
   CrawlConfig sse_decode_box_autoadd_crawl_config(
     SseDeserializer deserializer,
   ) {
@@ -3782,6 +3820,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ContentFilterKind sse_decode_content_filter_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ContentFilterKind.values[inner];
+  }
+
+  @protected
   CookieInfo sse_decode_cookie_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_name = sse_decode_String(deserializer);
@@ -3803,6 +3850,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_maxPages = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_maxLinksPerPage = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_maxConcurrent = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_crawlStrategy = sse_decode_crawl_strategy_kind(deserializer);
+    var var_contentFilter = sse_decode_opt_box_autoadd_content_filter_kind(
+      deserializer,
+    );
+    var var_bm25Query = sse_decode_opt_String(deserializer);
+    var var_bm25Threshold = sse_decode_opt_box_autoadd_f_64(deserializer);
     var var_respectRobotsTxt = sse_decode_bool(deserializer);
     var var_softHttpErrors = sse_decode_bool(deserializer);
     var var_userAgent = sse_decode_opt_String(deserializer);
@@ -3850,6 +3903,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       maxPages: var_maxPages,
       maxLinksPerPage: var_maxLinksPerPage,
       maxConcurrent: var_maxConcurrent,
+      crawlStrategy: var_crawlStrategy,
+      contentFilter: var_contentFilter,
+      bm25Query: var_bm25Query,
+      bm25Threshold: var_bm25Threshold,
       respectRobotsTxt: var_respectRobotsTxt,
       softHttpErrors: var_softHttpErrors,
       userAgent: var_userAgent,
@@ -3899,64 +3956,64 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_NotFound(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_NotFound(message: var_message);
       case 1:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Unauthorized(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Unauthorized(message: var_message);
       case 2:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Forbidden(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Forbidden(message: var_message);
       case 3:
         var var_vendor = sse_decode_String(deserializer);
         var var_message = sse_decode_String(deserializer);
         return CrawlError_WafBlocked(vendor: var_vendor, message: var_message);
       case 4:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Timeout(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Timeout(message: var_message);
       case 5:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_RateLimited(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_RateLimited(message: var_message);
       case 6:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_ServerError(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_ServerError(message: var_message);
       case 7:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_BadGateway(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_BadGateway(message: var_message);
       case 8:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Gone(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Gone(message: var_message);
       case 9:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Connection(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Connection(message: var_message);
       case 10:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Dns(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Dns(message: var_message);
       case 11:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Ssl(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Ssl(message: var_message);
       case 12:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_DataLoss(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_DataLoss(message: var_message);
       case 13:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_BrowserError(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_BrowserError(message: var_message);
       case 14:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_BrowserTimeout(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_BrowserTimeout(message: var_message);
       case 15:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_InvalidConfig(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_InvalidConfig(message: var_message);
       case 16:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Unsupported(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Unsupported(message: var_message);
       case 17:
         var var_url = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return CrawlError_SsrfPolicyViolation(url: var_url, reason: var_reason);
       case 18:
-        var var_field0 = sse_decode_String(deserializer);
-        return CrawlError_Other(field0: var_field0);
+        var var_message = sse_decode_String(deserializer);
+        return CrawlError_Other(message: var_message);
       default:
         throw UnimplementedError('');
     }
@@ -4057,6 +4114,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       stayedOnDomain: var_stayedOnDomain,
       browserUsed: var_browserUsed,
     );
+  }
+
+  @protected
+  CrawlStrategyKind sse_decode_crawl_strategy_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CrawlStrategyKind.values[inner];
   }
 
   @protected
@@ -4673,6 +4739,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_browser_extras(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  ContentFilterKind? sse_decode_opt_box_autoadd_content_filter_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_content_filter_kind(deserializer));
     } else {
       return null;
     }
@@ -5436,6 +5515,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_content_filter_kind(
+    ContentFilterKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_content_filter_kind(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_crawl_config(
     CrawlConfig self,
     SseSerializer serializer,
@@ -5635,6 +5723,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_content_filter_kind(
+    ContentFilterKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_cookie_info(CookieInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.name, serializer);
@@ -5650,6 +5747,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_i_64(self.maxPages, serializer);
     sse_encode_opt_box_autoadd_i_64(self.maxLinksPerPage, serializer);
     sse_encode_opt_box_autoadd_i_64(self.maxConcurrent, serializer);
+    sse_encode_crawl_strategy_kind(self.crawlStrategy, serializer);
+    sse_encode_opt_box_autoadd_content_filter_kind(
+      self.contentFilter,
+      serializer,
+    );
+    sse_encode_opt_String(self.bm25Query, serializer);
+    sse_encode_opt_box_autoadd_f_64(self.bm25Threshold, serializer);
     sse_encode_bool(self.respectRobotsTxt, serializer);
     sse_encode_bool(self.softHttpErrors, serializer);
     sse_encode_opt_String(self.userAgent, serializer);
@@ -5698,65 +5802,65 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_crawl_error(CrawlError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
-      case CrawlError_NotFound(field0: final field0):
+      case CrawlError_NotFound(message: final message):
         sse_encode_i_32(0, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Unauthorized(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Unauthorized(message: final message):
         sse_encode_i_32(1, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Forbidden(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Forbidden(message: final message):
         sse_encode_i_32(2, serializer);
-        sse_encode_String(field0, serializer);
+        sse_encode_String(message, serializer);
       case CrawlError_WafBlocked(vendor: final vendor, message: final message):
         sse_encode_i_32(3, serializer);
         sse_encode_String(vendor, serializer);
         sse_encode_String(message, serializer);
-      case CrawlError_Timeout(field0: final field0):
+      case CrawlError_Timeout(message: final message):
         sse_encode_i_32(4, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_RateLimited(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_RateLimited(message: final message):
         sse_encode_i_32(5, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_ServerError(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_ServerError(message: final message):
         sse_encode_i_32(6, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_BadGateway(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_BadGateway(message: final message):
         sse_encode_i_32(7, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Gone(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Gone(message: final message):
         sse_encode_i_32(8, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Connection(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Connection(message: final message):
         sse_encode_i_32(9, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Dns(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Dns(message: final message):
         sse_encode_i_32(10, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Ssl(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Ssl(message: final message):
         sse_encode_i_32(11, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_DataLoss(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_DataLoss(message: final message):
         sse_encode_i_32(12, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_BrowserError(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_BrowserError(message: final message):
         sse_encode_i_32(13, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_BrowserTimeout(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_BrowserTimeout(message: final message):
         sse_encode_i_32(14, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_InvalidConfig(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_InvalidConfig(message: final message):
         sse_encode_i_32(15, serializer);
-        sse_encode_String(field0, serializer);
-      case CrawlError_Unsupported(field0: final field0):
+        sse_encode_String(message, serializer);
+      case CrawlError_Unsupported(message: final message):
         sse_encode_i_32(16, serializer);
-        sse_encode_String(field0, serializer);
+        sse_encode_String(message, serializer);
       case CrawlError_SsrfPolicyViolation(url: final url, reason: final reason):
         sse_encode_i_32(17, serializer);
         sse_encode_String(url, serializer);
         sse_encode_String(reason, serializer);
-      case CrawlError_Other(field0: final field0):
+      case CrawlError_Other(message: final message):
         sse_encode_i_32(18, serializer);
-        sse_encode_String(field0, serializer);
+        sse_encode_String(message, serializer);
     }
   }
 
@@ -5820,6 +5924,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_cookie_info(self.cookies, serializer);
     sse_encode_bool(self.stayedOnDomain, serializer);
     sse_encode_bool(self.browserUsed, serializer);
+  }
+
+  @protected
+  void sse_encode_crawl_strategy_kind(
+    CrawlStrategyKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -6352,6 +6465,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_browser_extras(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_content_filter_kind(
+    ContentFilterKind? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_content_filter_kind(self, serializer);
     }
   }
 

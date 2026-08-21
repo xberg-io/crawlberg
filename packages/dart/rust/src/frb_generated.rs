@@ -28,7 +28,7 @@
 
 use crate::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -1525,6 +1525,10 @@ const _: fn() = || {
         let _: Option<i64> = CrawlConfig.max_pages;
         let _: Option<i64> = CrawlConfig.max_links_per_page;
         let _: Option<i64> = CrawlConfig.max_concurrent;
+        let _: crate::CrawlStrategyKind = CrawlConfig.crawl_strategy;
+        let _: Option<crate::ContentFilterKind> = CrawlConfig.content_filter;
+        let _: Option<String> = CrawlConfig.bm25_query;
+        let _: Option<f64> = CrawlConfig.bm25_threshold;
         let _: bool = CrawlConfig.respect_robots_txt;
         let _: bool = CrawlConfig.soft_http_errors;
         let _: Option<String> = CrawlConfig.user_agent;
@@ -1566,64 +1570,64 @@ const _: fn() = || {
         let _: Option<bool> = CrawlConfig.ssrf_deny_private_explicit;
     }
     match None::<crate::CrawlError>.unwrap() {
-        crate::CrawlError::NotFound { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::NotFound { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Unauthorized { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Unauthorized { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Forbidden { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Forbidden { message } => {
+            let _: String = message;
         }
         crate::CrawlError::WafBlocked { vendor, message } => {
             let _: String = vendor;
             let _: String = message;
         }
-        crate::CrawlError::Timeout { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Timeout { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::RateLimited { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::RateLimited { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::ServerError { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::ServerError { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::BadGateway { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::BadGateway { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Gone { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Gone { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Connection { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Connection { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Dns { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Dns { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Ssl { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Ssl { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::DataLoss { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::DataLoss { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::BrowserError { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::BrowserError { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::BrowserTimeout { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::BrowserTimeout { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::InvalidConfig { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::InvalidConfig { message } => {
+            let _: String = message;
         }
-        crate::CrawlError::Unsupported { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Unsupported { message } => {
+            let _: String = message;
         }
         crate::CrawlError::SsrfPolicyViolation { url, reason } => {
             let _: String = url;
             let _: String = reason;
         }
-        crate::CrawlError::Other { field0 } => {
-            let _: String = field0;
+        crate::CrawlError::Other { message } => {
+            let _: String = message;
         }
     }
     match None::<crate::CrawlEvent>.unwrap() {
@@ -2309,6 +2313,17 @@ impl SseDecode for crate::ContentConfig {
     }
 }
 
+impl SseDecode for crate::ContentFilterKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::ContentFilterKind::Bm25,
+            _ => unreachable!("Invalid variant for ContentFilterKind: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::CookieInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2332,6 +2347,10 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_maxPages = <Option<i64>>::sse_decode(deserializer);
         let mut var_maxLinksPerPage = <Option<i64>>::sse_decode(deserializer);
         let mut var_maxConcurrent = <Option<i64>>::sse_decode(deserializer);
+        let mut var_crawlStrategy = <crate::CrawlStrategyKind>::sse_decode(deserializer);
+        let mut var_contentFilter = <Option<crate::ContentFilterKind>>::sse_decode(deserializer);
+        let mut var_bm25Query = <Option<String>>::sse_decode(deserializer);
+        let mut var_bm25Threshold = <Option<f64>>::sse_decode(deserializer);
         let mut var_respectRobotsTxt = <bool>::sse_decode(deserializer);
         let mut var_softHttpErrors = <bool>::sse_decode(deserializer);
         let mut var_userAgent = <Option<String>>::sse_decode(deserializer);
@@ -2376,6 +2395,10 @@ impl SseDecode for crate::CrawlConfig {
             max_pages: var_maxPages,
             max_links_per_page: var_maxLinksPerPage,
             max_concurrent: var_maxConcurrent,
+            crawl_strategy: var_crawlStrategy,
+            content_filter: var_contentFilter,
+            bm25_query: var_bm25Query,
+            bm25_threshold: var_bm25Threshold,
             respect_robots_txt: var_respectRobotsTxt,
             soft_http_errors: var_softHttpErrors,
             user_agent: var_userAgent,
@@ -2425,16 +2448,16 @@ impl SseDecode for crate::CrawlError {
         let mut tag_ = <i32>::sse_decode(deserializer);
         match tag_ {
             0 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::NotFound { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::NotFound { message: var_message };
             }
             1 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Unauthorized { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Unauthorized { message: var_message };
             }
             2 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Forbidden { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Forbidden { message: var_message };
             }
             3 => {
                 let mut var_vendor = <String>::sse_decode(deserializer);
@@ -2445,56 +2468,56 @@ impl SseDecode for crate::CrawlError {
                 };
             }
             4 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Timeout { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Timeout { message: var_message };
             }
             5 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::RateLimited { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::RateLimited { message: var_message };
             }
             6 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::ServerError { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::ServerError { message: var_message };
             }
             7 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BadGateway { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::BadGateway { message: var_message };
             }
             8 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Gone { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Gone { message: var_message };
             }
             9 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Connection { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Connection { message: var_message };
             }
             10 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Dns { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Dns { message: var_message };
             }
             11 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Ssl { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Ssl { message: var_message };
             }
             12 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::DataLoss { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::DataLoss { message: var_message };
             }
             13 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserError { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::BrowserError { message: var_message };
             }
             14 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::BrowserTimeout { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::BrowserTimeout { message: var_message };
             }
             15 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::InvalidConfig { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::InvalidConfig { message: var_message };
             }
             16 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Unsupported { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Unsupported { message: var_message };
             }
             17 => {
                 let mut var_url = <String>::sse_decode(deserializer);
@@ -2505,8 +2528,8 @@ impl SseDecode for crate::CrawlError {
                 };
             }
             18 => {
-                let mut var_field0 = <String>::sse_decode(deserializer);
-                return crate::CrawlError::Other { field0: var_field0 };
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::CrawlError::Other { message: var_message };
             }
             _ => {
                 unimplemented!("");
@@ -2615,6 +2638,20 @@ impl SseDecode for crate::CrawlResult {
             cookies: var_cookies,
             stayed_on_domain: var_stayedOnDomain,
             browser_used: var_browserUsed,
+        };
+    }
+}
+
+impl SseDecode for crate::CrawlStrategyKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::CrawlStrategyKind::Bfs,
+            1 => crate::CrawlStrategyKind::Dfs,
+            2 => crate::CrawlStrategyKind::BestFirst,
+            3 => crate::CrawlStrategyKind::Adaptive,
+            _ => unreachable!("Invalid variant for CrawlStrategyKind: {}", inner),
         };
     }
 }
@@ -3261,6 +3298,17 @@ impl SseDecode for Option<crate::BrowserExtras> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::BrowserExtras>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::ContentFilterKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::ContentFilterKind>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -4210,6 +4258,21 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::ContentConfig>> for cra
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentFilterKind> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::ContentFilterKind::Bm25 => 0.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::ContentFilterKind> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::ContentFilterKind>> for crate::ContentFilterKind {
+    fn into_into_dart(self) -> FrbWrapper<crate::ContentFilterKind> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CookieInfo> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4235,6 +4298,10 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.max_pages.into_into_dart().into_dart(),
             self.0.max_links_per_page.into_into_dart().into_dart(),
             self.0.max_concurrent.into_into_dart().into_dart(),
+            self.0.crawl_strategy.into_into_dart().into_dart(),
+            self.0.content_filter.into_into_dart().into_dart(),
+            self.0.bm25_query.into_into_dart().into_dart(),
+            self.0.bm25_threshold.into_into_dart().into_dart(),
             self.0.respect_robots_txt.into_into_dart().into_dart(),
             self.0.soft_http_errors.into_into_dart().into_dart(),
             self.0.user_agent.into_into_dart().into_dart(),
@@ -4288,45 +4355,51 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::CrawlConfig>> for crate
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self.0 {
-            crate::CrawlError::NotFound { field0 } => [0.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::Unauthorized { field0 } => {
-                [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::NotFound { message } => {
+                [0.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Forbidden { field0 } => [2.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Unauthorized { message } => {
+                [1.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            crate::CrawlError::Forbidden { message } => {
+                [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
             crate::CrawlError::WafBlocked { vendor, message } => [
                 3.into_dart(),
                 vendor.into_into_dart().into_dart(),
                 message.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::CrawlError::Timeout { field0 } => [4.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::RateLimited { field0 } => {
-                [5.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::Timeout { message } => [4.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::RateLimited { message } => {
+                [5.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::ServerError { field0 } => {
-                [6.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::ServerError { message } => {
+                [6.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BadGateway { field0 } => {
-                [7.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::BadGateway { message } => {
+                [7.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Gone { field0 } => [8.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::Connection { field0 } => {
-                [9.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::Gone { message } => [8.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Connection { message } => {
+                [9.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Dns { field0 } => [10.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::Ssl { field0 } => [11.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::DataLoss { field0 } => [12.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
-            crate::CrawlError::BrowserError { field0 } => {
-                [13.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::Dns { message } => [10.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Ssl { message } => [11.into_dart(), message.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::DataLoss { message } => {
+                [12.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::BrowserTimeout { field0 } => {
-                [14.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::BrowserError { message } => {
+                [13.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::InvalidConfig { field0 } => {
-                [15.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::BrowserTimeout { message } => {
+                [14.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
-            crate::CrawlError::Unsupported { field0 } => {
-                [16.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            crate::CrawlError::InvalidConfig { message } => {
+                [15.into_dart(), message.into_into_dart().into_dart()].into_dart()
+            }
+            crate::CrawlError::Unsupported { message } => {
+                [16.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
             crate::CrawlError::SsrfPolicyViolation { url, reason } => [
                 17.into_dart(),
@@ -4334,7 +4407,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlError> {
                 reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::CrawlError::Other { field0 } => [18.into_dart(), field0.into_into_dart().into_dart()].into_dart(),
+            crate::CrawlError::Other { message } => [18.into_dart(), message.into_into_dart().into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -4427,6 +4500,24 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlResult> {
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::CrawlResult> {}
 impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::CrawlResult>> for crate::CrawlResult {
     fn into_into_dart(self) -> FrbWrapper<crate::CrawlResult> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlStrategyKind> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::CrawlStrategyKind::Bfs => 0.into_dart(),
+            crate::CrawlStrategyKind::Dfs => 1.into_dart(),
+            crate::CrawlStrategyKind::BestFirst => 2.into_dart(),
+            crate::CrawlStrategyKind::Adaptive => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<crate::CrawlStrategyKind> {}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::CrawlStrategyKind>> for crate::CrawlStrategyKind {
+    fn into_into_dart(self) -> FrbWrapper<crate::CrawlStrategyKind> {
         self.into()
     }
 }
@@ -5314,6 +5405,21 @@ impl SseEncode for crate::ContentConfig {
     }
 }
 
+impl SseEncode for crate::ContentFilterKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::ContentFilterKind::Bm25 => 0,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::CookieInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5331,6 +5437,10 @@ impl SseEncode for crate::CrawlConfig {
         <Option<i64>>::sse_encode(self.max_pages, serializer);
         <Option<i64>>::sse_encode(self.max_links_per_page, serializer);
         <Option<i64>>::sse_encode(self.max_concurrent, serializer);
+        <crate::CrawlStrategyKind>::sse_encode(self.crawl_strategy, serializer);
+        <Option<crate::ContentFilterKind>>::sse_encode(self.content_filter, serializer);
+        <Option<String>>::sse_encode(self.bm25_query, serializer);
+        <Option<f64>>::sse_encode(self.bm25_threshold, serializer);
         <bool>::sse_encode(self.respect_robots_txt, serializer);
         <bool>::sse_encode(self.soft_http_errors, serializer);
         <Option<String>>::sse_encode(self.user_agent, serializer);
@@ -5377,83 +5487,83 @@ impl SseEncode for crate::CrawlError {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         match self {
-            crate::CrawlError::NotFound { field0 } => {
+            crate::CrawlError::NotFound { message } => {
                 <i32>::sse_encode(0, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Unauthorized { field0 } => {
+            crate::CrawlError::Unauthorized { message } => {
                 <i32>::sse_encode(1, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Forbidden { field0 } => {
+            crate::CrawlError::Forbidden { message } => {
                 <i32>::sse_encode(2, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
             crate::CrawlError::WafBlocked { vendor, message } => {
                 <i32>::sse_encode(3, serializer);
                 <String>::sse_encode(vendor, serializer);
                 <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Timeout { field0 } => {
+            crate::CrawlError::Timeout { message } => {
                 <i32>::sse_encode(4, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::RateLimited { field0 } => {
+            crate::CrawlError::RateLimited { message } => {
                 <i32>::sse_encode(5, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::ServerError { field0 } => {
+            crate::CrawlError::ServerError { message } => {
                 <i32>::sse_encode(6, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BadGateway { field0 } => {
+            crate::CrawlError::BadGateway { message } => {
                 <i32>::sse_encode(7, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Gone { field0 } => {
+            crate::CrawlError::Gone { message } => {
                 <i32>::sse_encode(8, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Connection { field0 } => {
+            crate::CrawlError::Connection { message } => {
                 <i32>::sse_encode(9, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Dns { field0 } => {
+            crate::CrawlError::Dns { message } => {
                 <i32>::sse_encode(10, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Ssl { field0 } => {
+            crate::CrawlError::Ssl { message } => {
                 <i32>::sse_encode(11, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::DataLoss { field0 } => {
+            crate::CrawlError::DataLoss { message } => {
                 <i32>::sse_encode(12, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserError { field0 } => {
+            crate::CrawlError::BrowserError { message } => {
                 <i32>::sse_encode(13, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::BrowserTimeout { field0 } => {
+            crate::CrawlError::BrowserTimeout { message } => {
                 <i32>::sse_encode(14, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::InvalidConfig { field0 } => {
+            crate::CrawlError::InvalidConfig { message } => {
                 <i32>::sse_encode(15, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
-            crate::CrawlError::Unsupported { field0 } => {
+            crate::CrawlError::Unsupported { message } => {
                 <i32>::sse_encode(16, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
             crate::CrawlError::SsrfPolicyViolation { url, reason } => {
                 <i32>::sse_encode(17, serializer);
                 <String>::sse_encode(url, serializer);
                 <String>::sse_encode(reason, serializer);
             }
-            crate::CrawlError::Other { field0 } => {
+            crate::CrawlError::Other { message } => {
                 <i32>::sse_encode(18, serializer);
-                <String>::sse_encode(field0, serializer);
+                <String>::sse_encode(message, serializer);
             }
             _ => {
                 unimplemented!("");
@@ -5524,6 +5634,24 @@ impl SseEncode for crate::CrawlResult {
         <Vec<crate::CookieInfo>>::sse_encode(self.cookies, serializer);
         <bool>::sse_encode(self.stayed_on_domain, serializer);
         <bool>::sse_encode(self.browser_used, serializer);
+    }
+}
+
+impl SseEncode for crate::CrawlStrategyKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::CrawlStrategyKind::Bfs => 0,
+                crate::CrawlStrategyKind::Dfs => 1,
+                crate::CrawlStrategyKind::BestFirst => 2,
+                crate::CrawlStrategyKind::Adaptive => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -6059,6 +6187,16 @@ impl SseEncode for Option<crate::BrowserExtras> {
     }
 }
 
+impl SseEncode for Option<crate::ContentFilterKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::ContentFilterKind>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::CrawlConfig> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6474,7 +6612,7 @@ mod io {
     use super::*;
     use crate::*;
     use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -6515,7 +6653,7 @@ mod web {
     use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
+    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

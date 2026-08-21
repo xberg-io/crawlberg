@@ -8,13 +8,13 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// Convert markdown links to numbered citations.
 ///
 /// `[Example](https://example.com)` becomes `Example[1]`
 /// with `[1]: https://example.com` in the reference list.
-/// Images `![alt](url)` are preserved unchanged.
+/// Images `!alt` are preserved unchanged.
 Future<CitationResult> generateCitations({required String markdown}) =>
     RustLib.instance.api.crateGenerateCitations(markdown: markdown);
 
@@ -781,7 +781,7 @@ class ContentConfig {
   /// tracking pixels, GTM iframes) is meant for browsers with JavaScript
   /// disabled, not for a markdown reader, and `strip_tags` cannot drop it —
   /// on `preprocessing_preset: "standard"` (crawlberg's only path) it only
-  /// removes the wrapper and still renders the children. ~keep
+  /// removes the wrapper and still renders the children.
   ///
   /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
   final List<String> excludeSelectors;
@@ -850,6 +850,12 @@ class ContentConfig {
           includeDocumentStructure == other.includeDocumentStructure;
 }
 
+/// Content filter applied to each crawled page before it reaches the result.
+enum ContentFilterKind {
+  /// Keep only pages scoring at or above `bm25_threshold` for `bm25_query`.
+  bm25,
+}
+
 /// Information about an HTTP cookie received from a response.
 class CookieInfo {
   /// The cookie name.
@@ -902,6 +908,23 @@ class CrawlConfig {
 
   /// Maximum number of concurrent requests.
   final PlatformInt64? maxConcurrent;
+
+  /// Traversal order. Defaults to breadth-first.
+  ///
+  /// A frontier or strategy set explicitly on `CrawlEngineBuilder` takes precedence over
+  /// this field.
+  final CrawlStrategyKind crawlStrategy;
+
+  /// Content filter applied to each page. `None` keeps every page.
+  ///
+  /// A content filter set explicitly on `CrawlEngineBuilder` takes precedence.
+  final ContentFilterKind? contentFilter;
+
+  /// Query the BM25 content filter scores pages against. Required by `ContentFilterKind::Bm25`.
+  final String? bm25Query;
+
+  /// Minimum BM25 score a page must reach to be kept. Defaults to `0.0`.
+  final double? bm25Threshold;
 
   /// Whether to respect robots.txt directives.
   final bool respectRobotsTxt;
@@ -956,6 +979,11 @@ class CrawlConfig {
   final AuthConfig? auth;
 
   /// Maximum response body size in bytes.
+  ///
+  /// `None` does not mean unbounded: an unset cap falls back to a 100 MiB safety
+  /// ceiling, because HTTP responses are decompressed while being read and a few
+  /// hundred compressed bytes can otherwise expand to gigabytes in memory. To read
+  /// bodies larger than that, set this explicitly.
   final PlatformInt64? maxBodySize;
 
   /// CSS selectors for tags to remove from HTML before processing.
@@ -1088,6 +1116,10 @@ class CrawlConfig {
     this.maxPages,
     this.maxLinksPerPage,
     this.maxConcurrent,
+    required this.crawlStrategy,
+    this.contentFilter,
+    this.bm25Query,
+    this.bm25Threshold,
     required this.respectRobotsTxt,
     required this.softHttpErrors,
     this.userAgent,
@@ -1135,6 +1167,10 @@ class CrawlConfig {
       maxPages.hashCode ^
       maxLinksPerPage.hashCode ^
       maxConcurrent.hashCode ^
+      crawlStrategy.hashCode ^
+      contentFilter.hashCode ^
+      bm25Query.hashCode ^
+      bm25Threshold.hashCode ^
       respectRobotsTxt.hashCode ^
       softHttpErrors.hashCode ^
       userAgent.hashCode ^
@@ -1184,6 +1220,10 @@ class CrawlConfig {
           maxPages == other.maxPages &&
           maxLinksPerPage == other.maxLinksPerPage &&
           maxConcurrent == other.maxConcurrent &&
+          crawlStrategy == other.crawlStrategy &&
+          contentFilter == other.contentFilter &&
+          bm25Query == other.bm25Query &&
+          bm25Threshold == other.bm25Threshold &&
           respectRobotsTxt == other.respectRobotsTxt &&
           softHttpErrors == other.softHttpErrors &&
           userAgent == other.userAgent &&
@@ -1230,15 +1270,15 @@ sealed class CrawlError with _$CrawlError {
   const CrawlError._();
 
   /// The requested page was not found (HTTP 404).
-  const factory CrawlError.notFound({required String field0}) =
+  const factory CrawlError.notFound({required String message}) =
       CrawlError_NotFound;
 
   /// The request was unauthorized (HTTP 401).
-  const factory CrawlError.unauthorized({required String field0}) =
+  const factory CrawlError.unauthorized({required String message}) =
       CrawlError_Unauthorized;
 
   /// The request was forbidden (HTTP 403).
-  const factory CrawlError.forbidden({required String field0}) =
+  const factory CrawlError.forbidden({required String message}) =
       CrawlError_Forbidden;
 
   /// The request was blocked by a WAF or bot protection (HTTP 403 with WAF indicators).
@@ -1256,52 +1296,52 @@ sealed class CrawlError with _$CrawlError {
   }) = CrawlError_WafBlocked;
 
   /// The request timed out.
-  const factory CrawlError.timeout({required String field0}) =
+  const factory CrawlError.timeout({required String message}) =
       CrawlError_Timeout;
 
   /// The request was rate-limited (HTTP 429).
-  const factory CrawlError.rateLimited({required String field0}) =
+  const factory CrawlError.rateLimited({required String message}) =
       CrawlError_RateLimited;
 
   /// A server error occurred (HTTP 5xx).
-  const factory CrawlError.serverError({required String field0}) =
+  const factory CrawlError.serverError({required String message}) =
       CrawlError_ServerError;
 
   /// A bad gateway error occurred (HTTP 502).
-  const factory CrawlError.badGateway({required String field0}) =
+  const factory CrawlError.badGateway({required String message}) =
       CrawlError_BadGateway;
 
   /// The resource is permanently gone (HTTP 410).
-  const factory CrawlError.gone({required String field0}) = CrawlError_Gone;
+  const factory CrawlError.gone({required String message}) = CrawlError_Gone;
 
   /// A connection error occurred.
-  const factory CrawlError.connection({required String field0}) =
+  const factory CrawlError.connection({required String message}) =
       CrawlError_Connection;
 
   /// A DNS resolution error occurred.
-  const factory CrawlError.dns({required String field0}) = CrawlError_Dns;
+  const factory CrawlError.dns({required String message}) = CrawlError_Dns;
 
   /// An SSL/TLS error occurred.
-  const factory CrawlError.ssl({required String field0}) = CrawlError_Ssl;
+  const factory CrawlError.ssl({required String message}) = CrawlError_Ssl;
 
   /// Data was lost or truncated during transfer.
-  const factory CrawlError.dataLoss({required String field0}) =
+  const factory CrawlError.dataLoss({required String message}) =
       CrawlError_DataLoss;
 
   /// The browser failed to launch, connect, or navigate.
-  const factory CrawlError.browserError({required String field0}) =
+  const factory CrawlError.browserError({required String message}) =
       CrawlError_BrowserError;
 
   /// The browser page load or rendering timed out.
-  const factory CrawlError.browserTimeout({required String field0}) =
+  const factory CrawlError.browserTimeout({required String message}) =
       CrawlError_BrowserTimeout;
 
   /// The provided configuration is invalid.
-  const factory CrawlError.invalidConfig({required String field0}) =
+  const factory CrawlError.invalidConfig({required String message}) =
       CrawlError_InvalidConfig;
 
   /// The requested capability is not supported by the active backend or build.
-  const factory CrawlError.unsupported({required String field0}) =
+  const factory CrawlError.unsupported({required String message}) =
       CrawlError_Unsupported;
 
   /// A URL was rejected by SSRF policy (private IP, metadata, disallowed scheme, etc).
@@ -1311,7 +1351,7 @@ sealed class CrawlError with _$CrawlError {
   }) = CrawlError_SsrfPolicyViolation;
 
   /// An unclassified error occurred.
-  const factory CrawlError.other({required String field0}) = CrawlError_Other;
+  const factory CrawlError.other({required String message}) = CrawlError_Other;
 }
 
 @freezed
@@ -1542,6 +1582,25 @@ class CrawlResult {
           cookies == other.cookies &&
           stayedOnDomain == other.stayedOnDomain &&
           browserUsed == other.browserUsed;
+}
+
+/// Traversal order for a crawl.
+///
+/// Selects both the queue discipline and the selection strategy, because global order is a
+/// property of the frontier: the engine hands its bounded selection window to the strategy, so
+/// a strategy alone can only reorder URLs that have already been dequeued.
+enum CrawlStrategyKind {
+  /// Breadth-first: a FIFO frontier visits every URL at one depth before the next.
+  bfs,
+
+  /// Depth-first: a LIFO frontier descends into a page's children before its siblings.
+  dfs,
+
+  /// Highest-priority-first within the selection window, scored by `CrawlStrategy::score_url`.
+  bestFirst,
+
+  /// Like `BestFirst`, but stops once newly crawled pages stop contributing new terms.
+  adaptive,
 }
 
 /// Request to begin a single-URL streaming crawl.

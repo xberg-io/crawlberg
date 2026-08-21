@@ -543,28 +543,28 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String field0)?  notFound,TResult Function( String field0)?  unauthorized,TResult Function( String field0)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String field0)?  timeout,TResult Function( String field0)?  rateLimited,TResult Function( String field0)?  serverError,TResult Function( String field0)?  badGateway,TResult Function( String field0)?  gone,TResult Function( String field0)?  connection,TResult Function( String field0)?  dns,TResult Function( String field0)?  ssl,TResult Function( String field0)?  dataLoss,TResult Function( String field0)?  browserError,TResult Function( String field0)?  browserTimeout,TResult Function( String field0)?  invalidConfig,TResult Function( String field0)?  unsupported,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String field0)?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String message)?  notFound,TResult Function( String message)?  unauthorized,TResult Function( String message)?  forbidden,TResult Function( String vendor,  String message)?  wafBlocked,TResult Function( String message)?  timeout,TResult Function( String message)?  rateLimited,TResult Function( String message)?  serverError,TResult Function( String message)?  badGateway,TResult Function( String message)?  gone,TResult Function( String message)?  connection,TResult Function( String message)?  dns,TResult Function( String message)?  ssl,TResult Function( String message)?  dataLoss,TResult Function( String message)?  browserError,TResult Function( String message)?  browserTimeout,TResult Function( String message)?  invalidConfig,TResult Function( String message)?  unsupported,TResult Function( String url,  String reason)?  ssrfPolicyViolation,TResult Function( String message)?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
-return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
-return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
-return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
+return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
+return unauthorized(_that.message);case CrawlError_Forbidden() when forbidden != null:
+return forbidden(_that.message);case CrawlError_WafBlocked() when wafBlocked != null:
 return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
-return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
-return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
-return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
-return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
-return gone(_that.field0);case CrawlError_Connection() when connection != null:
-return connection(_that.field0);case CrawlError_Dns() when dns != null:
-return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
-return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
-return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
-return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
-return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return timeout(_that.message);case CrawlError_RateLimited() when rateLimited != null:
+return rateLimited(_that.message);case CrawlError_ServerError() when serverError != null:
+return serverError(_that.message);case CrawlError_BadGateway() when badGateway != null:
+return badGateway(_that.message);case CrawlError_Gone() when gone != null:
+return gone(_that.message);case CrawlError_Connection() when connection != null:
+return connection(_that.message);case CrawlError_Dns() when dns != null:
+return dns(_that.message);case CrawlError_Ssl() when ssl != null:
+return ssl(_that.message);case CrawlError_DataLoss() when dataLoss != null:
+return dataLoss(_that.message);case CrawlError_BrowserError() when browserError != null:
+return browserError(_that.message);case CrawlError_BrowserTimeout() when browserTimeout != null:
+return browserTimeout(_that.message);case CrawlError_InvalidConfig() when invalidConfig != null:
+return invalidConfig(_that.message);case CrawlError_Unsupported() when unsupported != null:
+return unsupported(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
-return other(_that.field0);case _:
+return other(_that.message);case _:
   return orElse();
 
 }
@@ -582,28 +582,28 @@ return other(_that.field0);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String field0)  notFound,required TResult Function( String field0)  unauthorized,required TResult Function( String field0)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String field0)  timeout,required TResult Function( String field0)  rateLimited,required TResult Function( String field0)  serverError,required TResult Function( String field0)  badGateway,required TResult Function( String field0)  gone,required TResult Function( String field0)  connection,required TResult Function( String field0)  dns,required TResult Function( String field0)  ssl,required TResult Function( String field0)  dataLoss,required TResult Function( String field0)  browserError,required TResult Function( String field0)  browserTimeout,required TResult Function( String field0)  invalidConfig,required TResult Function( String field0)  unsupported,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String field0)  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String message)  notFound,required TResult Function( String message)  unauthorized,required TResult Function( String message)  forbidden,required TResult Function( String vendor,  String message)  wafBlocked,required TResult Function( String message)  timeout,required TResult Function( String message)  rateLimited,required TResult Function( String message)  serverError,required TResult Function( String message)  badGateway,required TResult Function( String message)  gone,required TResult Function( String message)  connection,required TResult Function( String message)  dns,required TResult Function( String message)  ssl,required TResult Function( String message)  dataLoss,required TResult Function( String message)  browserError,required TResult Function( String message)  browserTimeout,required TResult Function( String message)  invalidConfig,required TResult Function( String message)  unsupported,required TResult Function( String url,  String reason)  ssrfPolicyViolation,required TResult Function( String message)  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound():
-return notFound(_that.field0);case CrawlError_Unauthorized():
-return unauthorized(_that.field0);case CrawlError_Forbidden():
-return forbidden(_that.field0);case CrawlError_WafBlocked():
+return notFound(_that.message);case CrawlError_Unauthorized():
+return unauthorized(_that.message);case CrawlError_Forbidden():
+return forbidden(_that.message);case CrawlError_WafBlocked():
 return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout():
-return timeout(_that.field0);case CrawlError_RateLimited():
-return rateLimited(_that.field0);case CrawlError_ServerError():
-return serverError(_that.field0);case CrawlError_BadGateway():
-return badGateway(_that.field0);case CrawlError_Gone():
-return gone(_that.field0);case CrawlError_Connection():
-return connection(_that.field0);case CrawlError_Dns():
-return dns(_that.field0);case CrawlError_Ssl():
-return ssl(_that.field0);case CrawlError_DataLoss():
-return dataLoss(_that.field0);case CrawlError_BrowserError():
-return browserError(_that.field0);case CrawlError_BrowserTimeout():
-return browserTimeout(_that.field0);case CrawlError_InvalidConfig():
-return invalidConfig(_that.field0);case CrawlError_Unsupported():
-return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation():
+return timeout(_that.message);case CrawlError_RateLimited():
+return rateLimited(_that.message);case CrawlError_ServerError():
+return serverError(_that.message);case CrawlError_BadGateway():
+return badGateway(_that.message);case CrawlError_Gone():
+return gone(_that.message);case CrawlError_Connection():
+return connection(_that.message);case CrawlError_Dns():
+return dns(_that.message);case CrawlError_Ssl():
+return ssl(_that.message);case CrawlError_DataLoss():
+return dataLoss(_that.message);case CrawlError_BrowserError():
+return browserError(_that.message);case CrawlError_BrowserTimeout():
+return browserTimeout(_that.message);case CrawlError_InvalidConfig():
+return invalidConfig(_that.message);case CrawlError_Unsupported():
+return unsupported(_that.message);case CrawlError_SsrfPolicyViolation():
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other():
-return other(_that.field0);}
+return other(_that.message);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -617,28 +617,28 @@ return other(_that.field0);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String field0)?  notFound,TResult? Function( String field0)?  unauthorized,TResult? Function( String field0)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String field0)?  timeout,TResult? Function( String field0)?  rateLimited,TResult? Function( String field0)?  serverError,TResult? Function( String field0)?  badGateway,TResult? Function( String field0)?  gone,TResult? Function( String field0)?  connection,TResult? Function( String field0)?  dns,TResult? Function( String field0)?  ssl,TResult? Function( String field0)?  dataLoss,TResult? Function( String field0)?  browserError,TResult? Function( String field0)?  browserTimeout,TResult? Function( String field0)?  invalidConfig,TResult? Function( String field0)?  unsupported,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String field0)?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String message)?  notFound,TResult? Function( String message)?  unauthorized,TResult? Function( String message)?  forbidden,TResult? Function( String vendor,  String message)?  wafBlocked,TResult? Function( String message)?  timeout,TResult? Function( String message)?  rateLimited,TResult? Function( String message)?  serverError,TResult? Function( String message)?  badGateway,TResult? Function( String message)?  gone,TResult? Function( String message)?  connection,TResult? Function( String message)?  dns,TResult? Function( String message)?  ssl,TResult? Function( String message)?  dataLoss,TResult? Function( String message)?  browserError,TResult? Function( String message)?  browserTimeout,TResult? Function( String message)?  invalidConfig,TResult? Function( String message)?  unsupported,TResult? Function( String url,  String reason)?  ssrfPolicyViolation,TResult? Function( String message)?  other,}) {final _that = this;
 switch (_that) {
 case CrawlError_NotFound() when notFound != null:
-return notFound(_that.field0);case CrawlError_Unauthorized() when unauthorized != null:
-return unauthorized(_that.field0);case CrawlError_Forbidden() when forbidden != null:
-return forbidden(_that.field0);case CrawlError_WafBlocked() when wafBlocked != null:
+return notFound(_that.message);case CrawlError_Unauthorized() when unauthorized != null:
+return unauthorized(_that.message);case CrawlError_Forbidden() when forbidden != null:
+return forbidden(_that.message);case CrawlError_WafBlocked() when wafBlocked != null:
 return wafBlocked(_that.vendor,_that.message);case CrawlError_Timeout() when timeout != null:
-return timeout(_that.field0);case CrawlError_RateLimited() when rateLimited != null:
-return rateLimited(_that.field0);case CrawlError_ServerError() when serverError != null:
-return serverError(_that.field0);case CrawlError_BadGateway() when badGateway != null:
-return badGateway(_that.field0);case CrawlError_Gone() when gone != null:
-return gone(_that.field0);case CrawlError_Connection() when connection != null:
-return connection(_that.field0);case CrawlError_Dns() when dns != null:
-return dns(_that.field0);case CrawlError_Ssl() when ssl != null:
-return ssl(_that.field0);case CrawlError_DataLoss() when dataLoss != null:
-return dataLoss(_that.field0);case CrawlError_BrowserError() when browserError != null:
-return browserError(_that.field0);case CrawlError_BrowserTimeout() when browserTimeout != null:
-return browserTimeout(_that.field0);case CrawlError_InvalidConfig() when invalidConfig != null:
-return invalidConfig(_that.field0);case CrawlError_Unsupported() when unsupported != null:
-return unsupported(_that.field0);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
+return timeout(_that.message);case CrawlError_RateLimited() when rateLimited != null:
+return rateLimited(_that.message);case CrawlError_ServerError() when serverError != null:
+return serverError(_that.message);case CrawlError_BadGateway() when badGateway != null:
+return badGateway(_that.message);case CrawlError_Gone() when gone != null:
+return gone(_that.message);case CrawlError_Connection() when connection != null:
+return connection(_that.message);case CrawlError_Dns() when dns != null:
+return dns(_that.message);case CrawlError_Ssl() when ssl != null:
+return ssl(_that.message);case CrawlError_DataLoss() when dataLoss != null:
+return dataLoss(_that.message);case CrawlError_BrowserError() when browserError != null:
+return browserError(_that.message);case CrawlError_BrowserTimeout() when browserTimeout != null:
+return browserTimeout(_that.message);case CrawlError_InvalidConfig() when invalidConfig != null:
+return invalidConfig(_that.message);case CrawlError_Unsupported() when unsupported != null:
+return unsupported(_that.message);case CrawlError_SsrfPolicyViolation() when ssrfPolicyViolation != null:
 return ssrfPolicyViolation(_that.url,_that.reason);case CrawlError_Other() when other != null:
-return other(_that.field0);case _:
+return other(_that.message);case _:
   return null;
 
 }
@@ -650,10 +650,10 @@ return other(_that.field0);case _:
 
 
 class CrawlError_NotFound extends CrawlError {
-  const CrawlError_NotFound({required this.field0}): super._();
+  const CrawlError_NotFound({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -665,16 +665,16 @@ $CrawlError_NotFoundCopyWith<CrawlError_NotFound> get copyWith => _$CrawlError_N
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_NotFound&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_NotFound&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.notFound(field0: $field0)';
+  return 'CrawlError.notFound(message: $message)';
 }
 
 
@@ -685,7 +685,7 @@ abstract mixin class $CrawlError_NotFoundCopyWith<$Res> implements $CrawlErrorCo
   factory $CrawlError_NotFoundCopyWith(CrawlError_NotFound value, $Res Function(CrawlError_NotFound) _then) = _$CrawlError_NotFoundCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -702,9 +702,9 @@ class _$CrawlError_NotFoundCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_NotFound(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -716,10 +716,10 @@ as String,
 
 
 class CrawlError_Unauthorized extends CrawlError {
-  const CrawlError_Unauthorized({required this.field0}): super._();
+  const CrawlError_Unauthorized({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -731,16 +731,16 @@ $CrawlError_UnauthorizedCopyWith<CrawlError_Unauthorized> get copyWith => _$Craw
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Unauthorized&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Unauthorized&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.unauthorized(field0: $field0)';
+  return 'CrawlError.unauthorized(message: $message)';
 }
 
 
@@ -751,7 +751,7 @@ abstract mixin class $CrawlError_UnauthorizedCopyWith<$Res> implements $CrawlErr
   factory $CrawlError_UnauthorizedCopyWith(CrawlError_Unauthorized value, $Res Function(CrawlError_Unauthorized) _then) = _$CrawlError_UnauthorizedCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -768,9 +768,9 @@ class _$CrawlError_UnauthorizedCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Unauthorized(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -782,10 +782,10 @@ as String,
 
 
 class CrawlError_Forbidden extends CrawlError {
-  const CrawlError_Forbidden({required this.field0}): super._();
+  const CrawlError_Forbidden({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -797,16 +797,16 @@ $CrawlError_ForbiddenCopyWith<CrawlError_Forbidden> get copyWith => _$CrawlError
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Forbidden&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Forbidden&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.forbidden(field0: $field0)';
+  return 'CrawlError.forbidden(message: $message)';
 }
 
 
@@ -817,7 +817,7 @@ abstract mixin class $CrawlError_ForbiddenCopyWith<$Res> implements $CrawlErrorC
   factory $CrawlError_ForbiddenCopyWith(CrawlError_Forbidden value, $Res Function(CrawlError_Forbidden) _then) = _$CrawlError_ForbiddenCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -834,9 +834,9 @@ class _$CrawlError_ForbiddenCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Forbidden(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -916,10 +916,10 @@ as String,
 
 
 class CrawlError_Timeout extends CrawlError {
-  const CrawlError_Timeout({required this.field0}): super._();
+  const CrawlError_Timeout({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -931,16 +931,16 @@ $CrawlError_TimeoutCopyWith<CrawlError_Timeout> get copyWith => _$CrawlError_Tim
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Timeout&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Timeout&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.timeout(field0: $field0)';
+  return 'CrawlError.timeout(message: $message)';
 }
 
 
@@ -951,7 +951,7 @@ abstract mixin class $CrawlError_TimeoutCopyWith<$Res> implements $CrawlErrorCop
   factory $CrawlError_TimeoutCopyWith(CrawlError_Timeout value, $Res Function(CrawlError_Timeout) _then) = _$CrawlError_TimeoutCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -968,9 +968,9 @@ class _$CrawlError_TimeoutCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Timeout(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -982,10 +982,10 @@ as String,
 
 
 class CrawlError_RateLimited extends CrawlError {
-  const CrawlError_RateLimited({required this.field0}): super._();
+  const CrawlError_RateLimited({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -997,16 +997,16 @@ $CrawlError_RateLimitedCopyWith<CrawlError_RateLimited> get copyWith => _$CrawlE
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_RateLimited&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_RateLimited&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.rateLimited(field0: $field0)';
+  return 'CrawlError.rateLimited(message: $message)';
 }
 
 
@@ -1017,7 +1017,7 @@ abstract mixin class $CrawlError_RateLimitedCopyWith<$Res> implements $CrawlErro
   factory $CrawlError_RateLimitedCopyWith(CrawlError_RateLimited value, $Res Function(CrawlError_RateLimited) _then) = _$CrawlError_RateLimitedCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1034,9 +1034,9 @@ class _$CrawlError_RateLimitedCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_RateLimited(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1048,10 +1048,10 @@ as String,
 
 
 class CrawlError_ServerError extends CrawlError {
-  const CrawlError_ServerError({required this.field0}): super._();
+  const CrawlError_ServerError({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1063,16 +1063,16 @@ $CrawlError_ServerErrorCopyWith<CrawlError_ServerError> get copyWith => _$CrawlE
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_ServerError&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_ServerError&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.serverError(field0: $field0)';
+  return 'CrawlError.serverError(message: $message)';
 }
 
 
@@ -1083,7 +1083,7 @@ abstract mixin class $CrawlError_ServerErrorCopyWith<$Res> implements $CrawlErro
   factory $CrawlError_ServerErrorCopyWith(CrawlError_ServerError value, $Res Function(CrawlError_ServerError) _then) = _$CrawlError_ServerErrorCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1100,9 +1100,9 @@ class _$CrawlError_ServerErrorCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_ServerError(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1114,10 +1114,10 @@ as String,
 
 
 class CrawlError_BadGateway extends CrawlError {
-  const CrawlError_BadGateway({required this.field0}): super._();
+  const CrawlError_BadGateway({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1129,16 +1129,16 @@ $CrawlError_BadGatewayCopyWith<CrawlError_BadGateway> get copyWith => _$CrawlErr
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BadGateway&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BadGateway&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.badGateway(field0: $field0)';
+  return 'CrawlError.badGateway(message: $message)';
 }
 
 
@@ -1149,7 +1149,7 @@ abstract mixin class $CrawlError_BadGatewayCopyWith<$Res> implements $CrawlError
   factory $CrawlError_BadGatewayCopyWith(CrawlError_BadGateway value, $Res Function(CrawlError_BadGateway) _then) = _$CrawlError_BadGatewayCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1166,9 +1166,9 @@ class _$CrawlError_BadGatewayCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_BadGateway(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1180,10 +1180,10 @@ as String,
 
 
 class CrawlError_Gone extends CrawlError {
-  const CrawlError_Gone({required this.field0}): super._();
+  const CrawlError_Gone({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1195,16 +1195,16 @@ $CrawlError_GoneCopyWith<CrawlError_Gone> get copyWith => _$CrawlError_GoneCopyW
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Gone&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Gone&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.gone(field0: $field0)';
+  return 'CrawlError.gone(message: $message)';
 }
 
 
@@ -1215,7 +1215,7 @@ abstract mixin class $CrawlError_GoneCopyWith<$Res> implements $CrawlErrorCopyWi
   factory $CrawlError_GoneCopyWith(CrawlError_Gone value, $Res Function(CrawlError_Gone) _then) = _$CrawlError_GoneCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1232,9 +1232,9 @@ class _$CrawlError_GoneCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Gone(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1246,10 +1246,10 @@ as String,
 
 
 class CrawlError_Connection extends CrawlError {
-  const CrawlError_Connection({required this.field0}): super._();
+  const CrawlError_Connection({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1261,16 +1261,16 @@ $CrawlError_ConnectionCopyWith<CrawlError_Connection> get copyWith => _$CrawlErr
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Connection&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Connection&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.connection(field0: $field0)';
+  return 'CrawlError.connection(message: $message)';
 }
 
 
@@ -1281,7 +1281,7 @@ abstract mixin class $CrawlError_ConnectionCopyWith<$Res> implements $CrawlError
   factory $CrawlError_ConnectionCopyWith(CrawlError_Connection value, $Res Function(CrawlError_Connection) _then) = _$CrawlError_ConnectionCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1298,9 +1298,9 @@ class _$CrawlError_ConnectionCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Connection(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1312,10 +1312,10 @@ as String,
 
 
 class CrawlError_Dns extends CrawlError {
-  const CrawlError_Dns({required this.field0}): super._();
+  const CrawlError_Dns({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1327,16 +1327,16 @@ $CrawlError_DnsCopyWith<CrawlError_Dns> get copyWith => _$CrawlError_DnsCopyWith
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Dns&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Dns&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.dns(field0: $field0)';
+  return 'CrawlError.dns(message: $message)';
 }
 
 
@@ -1347,7 +1347,7 @@ abstract mixin class $CrawlError_DnsCopyWith<$Res> implements $CrawlErrorCopyWit
   factory $CrawlError_DnsCopyWith(CrawlError_Dns value, $Res Function(CrawlError_Dns) _then) = _$CrawlError_DnsCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1364,9 +1364,9 @@ class _$CrawlError_DnsCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Dns(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1378,10 +1378,10 @@ as String,
 
 
 class CrawlError_Ssl extends CrawlError {
-  const CrawlError_Ssl({required this.field0}): super._();
+  const CrawlError_Ssl({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1393,16 +1393,16 @@ $CrawlError_SslCopyWith<CrawlError_Ssl> get copyWith => _$CrawlError_SslCopyWith
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Ssl&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Ssl&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.ssl(field0: $field0)';
+  return 'CrawlError.ssl(message: $message)';
 }
 
 
@@ -1413,7 +1413,7 @@ abstract mixin class $CrawlError_SslCopyWith<$Res> implements $CrawlErrorCopyWit
   factory $CrawlError_SslCopyWith(CrawlError_Ssl value, $Res Function(CrawlError_Ssl) _then) = _$CrawlError_SslCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1430,9 +1430,9 @@ class _$CrawlError_SslCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Ssl(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1444,10 +1444,10 @@ as String,
 
 
 class CrawlError_DataLoss extends CrawlError {
-  const CrawlError_DataLoss({required this.field0}): super._();
+  const CrawlError_DataLoss({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1459,16 +1459,16 @@ $CrawlError_DataLossCopyWith<CrawlError_DataLoss> get copyWith => _$CrawlError_D
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_DataLoss&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_DataLoss&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.dataLoss(field0: $field0)';
+  return 'CrawlError.dataLoss(message: $message)';
 }
 
 
@@ -1479,7 +1479,7 @@ abstract mixin class $CrawlError_DataLossCopyWith<$Res> implements $CrawlErrorCo
   factory $CrawlError_DataLossCopyWith(CrawlError_DataLoss value, $Res Function(CrawlError_DataLoss) _then) = _$CrawlError_DataLossCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1496,9 +1496,9 @@ class _$CrawlError_DataLossCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_DataLoss(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1510,10 +1510,10 @@ as String,
 
 
 class CrawlError_BrowserError extends CrawlError {
-  const CrawlError_BrowserError({required this.field0}): super._();
+  const CrawlError_BrowserError({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1525,16 +1525,16 @@ $CrawlError_BrowserErrorCopyWith<CrawlError_BrowserError> get copyWith => _$Craw
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BrowserError&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BrowserError&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.browserError(field0: $field0)';
+  return 'CrawlError.browserError(message: $message)';
 }
 
 
@@ -1545,7 +1545,7 @@ abstract mixin class $CrawlError_BrowserErrorCopyWith<$Res> implements $CrawlErr
   factory $CrawlError_BrowserErrorCopyWith(CrawlError_BrowserError value, $Res Function(CrawlError_BrowserError) _then) = _$CrawlError_BrowserErrorCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1562,9 +1562,9 @@ class _$CrawlError_BrowserErrorCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_BrowserError(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1576,10 +1576,10 @@ as String,
 
 
 class CrawlError_BrowserTimeout extends CrawlError {
-  const CrawlError_BrowserTimeout({required this.field0}): super._();
+  const CrawlError_BrowserTimeout({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1591,16 +1591,16 @@ $CrawlError_BrowserTimeoutCopyWith<CrawlError_BrowserTimeout> get copyWith => _$
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BrowserTimeout&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_BrowserTimeout&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.browserTimeout(field0: $field0)';
+  return 'CrawlError.browserTimeout(message: $message)';
 }
 
 
@@ -1611,7 +1611,7 @@ abstract mixin class $CrawlError_BrowserTimeoutCopyWith<$Res> implements $CrawlE
   factory $CrawlError_BrowserTimeoutCopyWith(CrawlError_BrowserTimeout value, $Res Function(CrawlError_BrowserTimeout) _then) = _$CrawlError_BrowserTimeoutCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1628,9 +1628,9 @@ class _$CrawlError_BrowserTimeoutCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_BrowserTimeout(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1642,10 +1642,10 @@ as String,
 
 
 class CrawlError_InvalidConfig extends CrawlError {
-  const CrawlError_InvalidConfig({required this.field0}): super._();
+  const CrawlError_InvalidConfig({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1657,16 +1657,16 @@ $CrawlError_InvalidConfigCopyWith<CrawlError_InvalidConfig> get copyWith => _$Cr
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_InvalidConfig&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_InvalidConfig&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.invalidConfig(field0: $field0)';
+  return 'CrawlError.invalidConfig(message: $message)';
 }
 
 
@@ -1677,7 +1677,7 @@ abstract mixin class $CrawlError_InvalidConfigCopyWith<$Res> implements $CrawlEr
   factory $CrawlError_InvalidConfigCopyWith(CrawlError_InvalidConfig value, $Res Function(CrawlError_InvalidConfig) _then) = _$CrawlError_InvalidConfigCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1694,9 +1694,9 @@ class _$CrawlError_InvalidConfigCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_InvalidConfig(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1708,10 +1708,10 @@ as String,
 
 
 class CrawlError_Unsupported extends CrawlError {
-  const CrawlError_Unsupported({required this.field0}): super._();
+  const CrawlError_Unsupported({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1723,16 +1723,16 @@ $CrawlError_UnsupportedCopyWith<CrawlError_Unsupported> get copyWith => _$CrawlE
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Unsupported&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Unsupported&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.unsupported(field0: $field0)';
+  return 'CrawlError.unsupported(message: $message)';
 }
 
 
@@ -1743,7 +1743,7 @@ abstract mixin class $CrawlError_UnsupportedCopyWith<$Res> implements $CrawlErro
   factory $CrawlError_UnsupportedCopyWith(CrawlError_Unsupported value, $Res Function(CrawlError_Unsupported) _then) = _$CrawlError_UnsupportedCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1760,9 +1760,9 @@ class _$CrawlError_UnsupportedCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Unsupported(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }
@@ -1842,10 +1842,10 @@ as String,
 
 
 class CrawlError_Other extends CrawlError {
-  const CrawlError_Other({required this.field0}): super._();
+  const CrawlError_Other({required this.message}): super._();
 
 
- final  String field0;
+ final  String message;
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
@@ -1857,16 +1857,16 @@ $CrawlError_OtherCopyWith<CrawlError_Other> get copyWith => _$CrawlError_OtherCo
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Other&&(identical(other.field0, field0) || other.field0 == field0));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is CrawlError_Other&&(identical(other.message, message) || other.message == message));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,field0);
+int get hashCode => Object.hash(runtimeType,message);
 
 @override
 String toString() {
-  return 'CrawlError.other(field0: $field0)';
+  return 'CrawlError.other(message: $message)';
 }
 
 
@@ -1877,7 +1877,7 @@ abstract mixin class $CrawlError_OtherCopyWith<$Res> implements $CrawlErrorCopyW
   factory $CrawlError_OtherCopyWith(CrawlError_Other value, $Res Function(CrawlError_Other) _then) = _$CrawlError_OtherCopyWithImpl;
 @useResult
 $Res call({
- String field0
+ String message
 });
 
 
@@ -1894,9 +1894,9 @@ class _$CrawlError_OtherCopyWithImpl<$Res>
 
 /// Create a copy of CrawlError
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(CrawlError_Other(
-field0: null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }

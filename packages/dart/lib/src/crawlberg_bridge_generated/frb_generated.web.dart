@@ -102,6 +102,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BrowserExtras dco_decode_box_autoadd_browser_extras(dynamic raw);
 
   @protected
+  ContentFilterKind dco_decode_box_autoadd_content_filter_kind(dynamic raw);
+
+  @protected
   CrawlConfig dco_decode_box_autoadd_crawl_config(dynamic raw);
 
   @protected
@@ -167,6 +170,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ContentConfig dco_decode_content_config(dynamic raw);
 
   @protected
+  ContentFilterKind dco_decode_content_filter_kind(dynamic raw);
+
+  @protected
   CookieInfo dco_decode_cookie_info(dynamic raw);
 
   @protected
@@ -183,6 +189,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlResult dco_decode_crawl_result(dynamic raw);
+
+  @protected
+  CrawlStrategyKind dco_decode_crawl_strategy_kind(dynamic raw);
 
   @protected
   CrawlStreamRequest dco_decode_crawl_stream_request(dynamic raw);
@@ -333,6 +342,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BrowserExtras? dco_decode_opt_box_autoadd_browser_extras(dynamic raw);
+
+  @protected
+  ContentFilterKind? dco_decode_opt_box_autoadd_content_filter_kind(
+    dynamic raw,
+  );
 
   @protected
   CrawlConfig? dco_decode_opt_box_autoadd_crawl_config(dynamic raw);
@@ -516,6 +530,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ContentFilterKind sse_decode_box_autoadd_content_filter_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CrawlConfig sse_decode_box_autoadd_crawl_config(SseDeserializer deserializer);
 
   @protected
@@ -595,6 +614,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ContentConfig sse_decode_content_config(SseDeserializer deserializer);
 
   @protected
+  ContentFilterKind sse_decode_content_filter_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CookieInfo sse_decode_cookie_info(SseDeserializer deserializer);
 
   @protected
@@ -611,6 +635,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CrawlResult sse_decode_crawl_result(SseDeserializer deserializer);
+
+  @protected
+  CrawlStrategyKind sse_decode_crawl_strategy_kind(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CrawlStreamRequest sse_decode_crawl_stream_request(
@@ -791,6 +820,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BrowserExtras? sse_decode_opt_box_autoadd_browser_extras(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ContentFilterKind? sse_decode_opt_box_autoadd_content_filter_kind(
     SseDeserializer deserializer,
   );
 
@@ -1022,6 +1056,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_content_filter_kind(
+    ContentFilterKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_crawl_config(
     CrawlConfig self,
     SseSerializer serializer,
@@ -1130,6 +1170,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_content_config(ContentConfig self, SseSerializer serializer);
 
   @protected
+  void sse_encode_content_filter_kind(
+    ContentFilterKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cookie_info(CookieInfo self, SseSerializer serializer);
 
   @protected
@@ -1149,6 +1195,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_crawl_result(CrawlResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_crawl_strategy_kind(
+    CrawlStrategyKind self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_crawl_stream_request(
@@ -1387,6 +1439,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_browser_extras(
     BrowserExtras? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_content_filter_kind(
+    ContentFilterKind? self,
     SseSerializer serializer,
   );
 

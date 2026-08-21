@@ -12,6 +12,4 @@
 # hand-written file that happens to match must never be claimed. Do not hand-add
 # entries; run `alef adopt <path>`, read the diff it prints, and let it write.
 
-owned_paths = [
-  "e2e/c/Makefile",
-]
+owned_paths = ["e2e/c/Makefile", "packages/kotlin-android/src/main/AndroidManifest.xml"]
