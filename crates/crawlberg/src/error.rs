@@ -449,9 +449,14 @@ pub(crate) fn error_chain_string(e: &reqwest::Error) -> String {
 ///
 /// Walks the full source chain to detect DNS, SSL/TLS, timeout, and connection
 /// errors that reqwest may wrap inside generic connect errors.
+///
+/// ~keep The scan runs over the chain with the request URL removed. Every keyword below
+/// (`dns`, `ssl`, `timeout`, `certificate`, `proxy`, `connect`, ...) is a word a URL path or
+/// hostname can spell, and `reqwest::Error`'s `Display` embeds the request URL — so scanning
+/// the raw chain let the page being fetched pick its own error class.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn network_error_kind(e: &reqwest::Error) -> NetworkErrorKind {
-    let chain = error_chain_string(e);
+    let chain = chain_without_request_url(e, &error_chain_string(e));
     if e.is_timeout() || chain.contains("timed out") || chain.contains("timeout") {
         NetworkErrorKind::Timeout
     } else if chain.contains("dns") || chain.contains("resolve") || chain.contains("lookup") {
@@ -479,9 +484,12 @@ pub(crate) fn network_error_kind(e: &reqwest::Error) -> NetworkErrorKind {
 ///
 /// On wasm32, reqwest does not expose `.is_timeout()`, `.is_connect()`, or `.is_body()`
 /// methods, so we rely solely on the error chain string for classification.
+///
+/// ~keep With no structural predicates available here, stripping the request URL from the
+/// chain is the only thing keeping the fetched path out of the classification.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn network_error_kind(e: &reqwest::Error) -> NetworkErrorKind {
-    let chain = error_chain_string(e);
+    let chain = chain_without_request_url(e, &error_chain_string(e));
     if chain.contains("timed out") || chain.contains("timeout") {
         NetworkErrorKind::Timeout
     } else if chain.contains("dns") || chain.contains("resolve") || chain.contains("lookup") {
@@ -774,30 +782,6 @@ mod tests {
             assert!(msg.contains("timeout"), "expected 'timeout' in '{msg}'");
         }
 
-        #[tokio::test]
-        async fn invalid_proxy_produces_connection_tag() {
-            let client = reqwest::Client::builder()
-                .proxy(reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy parse"))
-                .timeout(Duration::from_millis(500))
-                .build()
-                .expect("client build");
-            let raw_err = client
-                .get("http://example.com/")
-                .send()
-                .await
-                .expect_err("expected proxy error");
-            let err = classify_reqwest_error(raw_err);
-            let msg = err.to_string();
-            assert!(
-                msg.contains("[network:connection]") || msg.contains("[network:proxy]"),
-                "expected [network:connection] or [network:proxy] in '{msg}'"
-            );
-            assert!(
-                msg.contains("connection") || msg.contains("proxy"),
-                "expected 'connection' or 'proxy' in '{msg}'"
-            );
-        }
-
         /// A body truncated relative to its declared `content-length` must classify as
         /// `DataLoss`, and the rendered message must carry the `data_loss:` prefix.
         ///
@@ -839,6 +823,62 @@ mod tests {
             let msg = classify_reqwest_error(raw_err).to_string();
 
             assert!(msg.contains("data_loss:"), "expected 'data_loss:' in '{msg}'");
+        }
+
+        /// Every keyword the classifier scans for must be inert when it comes from the URL.
+        ///
+        /// ~keep `reqwest::Error`'s `Display` embeds the request URL, so before the chain was
+        /// stripped, scraping `/blog/dns-explained` reported a DNS failure and
+        /// `/fixtures/error_invalid_proxy` reported a proxy failure — both were plain refused
+        /// TCP connections. This is table-driven because the exposure is per keyword: fixing
+        /// one arm of `network_error_kind` and leaving the rest is the failure mode.
+        #[tokio::test]
+        async fn no_url_keyword_can_pick_the_network_error_kind() {
+            for keyword_path in [
+                "/blog/dns-explained",
+                "/blog/how-to-resolve-a-hostname",
+                "/docs/lookup-tables",
+                "/blog/ssl-explained",
+                "/reference/tls-primer",
+                "/blog/certificate-pinning",
+                "/guide/tcp-handshake",
+                "/blog/timeout-tuning",
+                "/fixtures/error_invalid_proxy",
+                "/help/proxy-setup",
+            ] {
+                let url = format!("http://127.0.0.1:1{keyword_path}");
+                let err = scrape_url(&url).await;
+                let msg = err.to_string();
+                assert!(
+                    msg.starts_with("connection: [network:connection]"),
+                    "a refused TCP connection to '{url}' must classify as a connection error, got '{msg}'"
+                );
+            }
+        }
+
+        /// A proxy that refuses the connection is a connection error, not a proxy error.
+        ///
+        /// ~keep A refused proxy CONNECT renders as `tcp connect error | connection refused`;
+        /// nothing in the chain says "proxy". The `[network:proxy]` tag this used to carry came
+        /// entirely from the word "proxy" in the request URL, which is why the assertion below
+        /// is now a single expected tag rather than a disjunction that either arm could satisfy.
+        #[tokio::test]
+        async fn a_refused_proxy_is_tagged_as_a_connection_error() {
+            let client = reqwest::Client::builder()
+                .proxy(reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy parse"))
+                .timeout(Duration::from_millis(500))
+                .build()
+                .expect("client build");
+            let raw_err = client
+                .get("http://example.invalid/fixtures/error_invalid_proxy")
+                .send()
+                .await
+                .expect_err("expected proxy error");
+            let msg = classify_reqwest_error(raw_err).to_string();
+            assert!(
+                msg.contains("[network:connection]"),
+                "expected [network:connection] in '{msg}'"
+            );
         }
 
         /// A request path that happens to spell a classification keyword must not decide the

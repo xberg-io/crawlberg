@@ -6,6 +6,25 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The URL being scraped decided its own network error classification.** `network_error_kind`
+  keyword-scanned a string built from `reqwest::Error`'s `Display`, which embeds the request URL,
+  so every keyword the scan looks for — `dns`, `ssl`, `tls`, `certificate`, `handshake`, `resolve`,
+  `lookup`, `timeout`, `proxy`, `connect` — could be supplied by the path or hostname being fetched
+  rather than by the failure. Measured against a refused TCP connection: `/blog/dns-explained`
+  reported `dns:`, `/blog/ssl-explained` and `/blog/certificate-pinning` reported `ssl:`, and
+  `/blog/timeout-tuning` reported `timeout:` — all four were `connection refused (os error 61)`.
+  The scan now runs over `chain_without_request_url`, which `3afbde890` had applied only inside the
+  data-loss predicate. The one classification this changes in the fixture suite is
+  `error_invalid_proxy`: it was tagged `[network:proxy]` purely because its path spells "proxy",
+  while its actual chain is `tcp connect error ... connection refused`, and it is now tagged
+  `[network:connection]`. The `CrawlError` variant is `Connection` either way — `NetworkErrorKind::Proxy`
+  has always mapped to `connection_with_source` — so the fixture's `connection` assertion is
+  unchanged and still correct.
+
+  A refused proxy CONNECT names no proxy anywhere in its chain, so `[network:proxy]` was in practice
+  reachable only through the request URL. The unit test that accepted either tag is replaced by one
+  that pins `[network:connection]`, alongside a table-driven test that walks every scanned keyword.
+
 - **Two more e2e assertions matched a substring of their own request URL.** Same defect class as
   `error_unsupported_scheme`: every classified network error embeds the URL, and the URL embeds the
   fixture id, so an assertion whose expected substring also occurs in the id passes on the address
