@@ -723,10 +723,8 @@ async fn no_chromiumoxide_backend_interact_returns_unsupported() {
 
     let result = interact(&engine, "https://example.com", vec![PageAction::Scrape]).await;
 
-    match result {
-        Err(CrawlError::unsupported(message)) => {
-            assert!(message.contains("browser-chromiumoxide"));
-        }
-        other => panic!("expected Unsupported, got {other:?}"),
-    }
+    assert!(
+        matches!(&result, Err(CrawlError::Unsupported { message, .. }) if message.contains("browser-chromiumoxide")),
+        "expected Unsupported mentioning browser-chromiumoxide, got {result:?}"
+    );
 }

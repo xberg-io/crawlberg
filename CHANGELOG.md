@@ -6,6 +6,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **`cargo test -p crawlberg` could not compile.** `crates/crawlberg/tests/test_interact.rs` matched
+  on `CrawlError::unsupported(message)` — the macro-generated constructor function, not the enum
+  variant — which is E0164 (`fn` calls are not allowed in patterns). Since `browser-chromiumoxide`
+  is off by default, the `#[cfg(not(feature = ...))]` test was always compiled and always failed the
+  build. Replaced with the `matches!(..., Err(CrawlError::Unsupported { message, .. }) if ...)` idiom
+  used elsewhere in the file.
 - **Redirect-cycle detection missed the first return to a bare-origin seed URL.** In
   `follow_redirects` (`crates/crawlberg/src/engine/crawl_loop.rs`), the cycle-detection `seen` set
   was seeded with the caller's raw URL string, while every subsequent hop key came from
