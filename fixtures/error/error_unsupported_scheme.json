@@ -13,9 +13,10 @@
 		},
 		{
 			"type": "error",
-			"value": "unsupported"
+			"value": "disallowed scheme: gopher"
 		}
 	],
+	"preserve_input_urls": true,
 	"input": {
 		"url": "gopher://invalid.example.com/",
 		"config": {}

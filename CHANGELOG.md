@@ -6,6 +6,22 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Four SSRF/scheme fixtures asserted against the mock server address instead of the address under
+  test.** `validation_ssrf_loopback_denied`, `validation_ssrf_ipv4_mapped_ipv6_denied`,
+  `validation_ssrf_nat64_loopback_denied` and `error_unsupported_scheme` each declare an `input.url`
+  that *is* the subject of the assertion, but every backend's `mock_url` argument discarded it and
+  substituted the per-fixture mock server address. All three SSRF fixtures therefore exercised the
+  same trivial IPv4-loopback case, and the IPv4-mapped-IPv6 (`::ffff:127.0.0.1`) and NAT64
+  (`64:ff9b::7f00:1`) normalization paths in `crates/crawlberg/src/net/ssrf.rs` had no e2e coverage
+  in any of the 16 generated language suites. Set `preserve_input_urls: true` on those four fixtures
+  so the declared addresses reach the call verbatim.
+- **`error_unsupported_scheme` asserted on a substring of its own fixture id.** With the mock server
+  URL substituted, the error text contained `.../fixtures/error_unsupported_scheme`, so
+  `contains("unsupported")` matched regardless of what actually failed. With the real
+  `gopher://invalid.example.com/` URL, crawlberg returns
+  `ssrf_policy_violation: gopher://invalid.example.com/ - disallowed scheme: gopher`, not an
+  `Unsupported` error — the old assertion does not hold. Tightened the assertion to
+  `disallowed scheme: gopher`, which names the rejection the fixture exists to cover.
 - **`cargo test -p crawlberg` could not compile.** `crates/crawlberg/tests/test_interact.rs` matched
   on `CrawlError::unsupported(message)` — the macro-generated constructor function, not the enum
   variant — which is E0164 (`fn` calls are not allowed in patterns). Since `browser-chromiumoxide`

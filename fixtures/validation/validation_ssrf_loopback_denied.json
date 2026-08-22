@@ -23,6 +23,7 @@
       "value": "ssrf_policy_violation"
     }
   ],
+  "preserve_input_urls": true,
   "input": {
     "url": "http://127.0.0.1:9/",
     "config": {
