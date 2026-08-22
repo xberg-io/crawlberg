@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.64.0"
+alef_version = "0.65.0"
 languages = [
   "python",
   "node",
