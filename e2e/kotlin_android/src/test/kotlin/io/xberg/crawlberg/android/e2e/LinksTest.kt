@@ -98,7 +98,8 @@ class LinksTest {
         val url = (System.getProperty("mockServerUrl", System.getenv("MOCK_SERVER_URL") ?: "") ?: "") + "/fixtures/links_protocol_relative"
         val result = Crawlberg.scrape(engine, url)
         assertTrue(result.links.size > 1, "expected > 1")
-        assertTrue(result.links.any { e -> e.url.toString().contains("//") }, "expected to contain: " + "//")
+        assertTrue(result.links.any { e -> e.url.toString().contains("http://cdn.example.com/resource") }, "expected to contain: " + "http://cdn.example.com/resource")
+        assertTrue(result.links.any { e -> e.url.toString().contains("http://images.example.com/photo.jpg") }, "expected to contain: " + "http://images.example.com/photo.jpg")
     }
 
     @Test

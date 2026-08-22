@@ -89,7 +89,7 @@ void test_strategy_best_first_seed(void) {
     char* pages_0_json = alef_json_array_get_index(pages_json, 0);
     char* strategy_first_page_url_contains = alef_json_get_string(pages_0_json, "url");
     assert(crawl_pages_crawled == 3 && "equals assertion failed");
-    assert(strategy_first_page_url_contains != NULL && strstr(strategy_first_page_url_contains, "/") != NULL && "expected to contain substring");
+    assert(strategy_first_page_url_contains != NULL && strstr(strategy_first_page_url_contains, "/page") == NULL && "expected non-null value without substring");
     free(strategy_first_page_url_contains);
     free(pages_0_json);
     cberg_free_string(pages_json);

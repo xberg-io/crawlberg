@@ -83,7 +83,7 @@ describe("strategy", () => {
 		const url = process.env.MOCK_SERVER_STRATEGY_BEST_FIRST_SEED ?? `${process.env.MOCK_SERVER_URL}/fixtures/strategy_best_first_seed`;
 		const result = await crawl(engine, url);
     expect(result.pages.length).toBe(3);
-    expect(result.pages[0].url).toContain("/");
+    expect(result.pages[0].url).not.toContain("/page");
 
 	}, 30000);
 

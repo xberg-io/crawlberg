@@ -107,7 +107,8 @@ final class LinksTest extends TestCase
         $result = Crawlberg::scrape($engine, $url);
 
         $this->assertGreaterThan(1, count($result->getLinks()));
-        $this->assertTrue((bool)array_filter($result->getLinks(), fn ($e) => str_contains((string)$e->url, "//")));
+        $this->assertTrue((bool)array_filter($result->getLinks(), fn ($e) => str_contains((string)$e->url, "http://cdn.example.com/resource")));
+        $this->assertTrue((bool)array_filter($result->getLinks(), fn ($e) => str_contains((string)$e->url, "http://images.example.com/photo.jpg")));
 
 
     }

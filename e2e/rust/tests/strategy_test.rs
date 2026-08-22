@@ -65,7 +65,11 @@ async fn test_strategy_best_first_seed() {
     });
     let result = crawl(&engine, &url).await.expect("call failed");
     assert_eq!(result.pages.len(), 3, "equals assertion failed");
-    assert!(result.pages[0].url.contains(r#"/"#), "expected to contain: {}", r#"/"#);
+    assert!(
+        !result.pages[0].url.contains(r#"/page"#),
+        "expected NOT to contain: {}",
+        r#"/page"#
+    );
 }
 
 #[tokio::test]

@@ -82,7 +82,10 @@ test_links_protocol_relative() {
   assert_greater_than "$val_links_length" '1' 'links.length'
   local val_links___url
   val_links___url=$(echo "$output" | jq -r '.links[].url')
-  assert_contains "$val_links___url" '//' 'links[].url'
+  assert_contains "$val_links___url" 'http://cdn.example.com/resource' 'links[].url'
+  local val_links___url
+  val_links___url=$(echo "$output" | jq -r '.links[].url')
+  assert_contains "$val_links___url" 'http://images.example.com/photo.jpg' 'links[].url'
 }
 
 test_links_rel_attributes() {

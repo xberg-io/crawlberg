@@ -48,8 +48,8 @@ final class StrategyTests: XCTestCase {
         let url = ProcessInfo.processInfo.environment["MOCK_SERVER_STRATEGY_BEST_FIRST_SEED"] ?? (AlefE2EMockServer.baseURL + "/fixtures/strategy_best_first_seed")
         let result = try await Crawlberg.crawl(engine: engineObj, url: url)
         XCTAssertEqual(result.pages().count, 3)
-        let _vec_pages_contains_b6fa8b51 = result.pages()
-        XCTAssertTrue("/".isEmpty || _vec_pages_contains_b6fa8b51[0].url().toString().contains("/"), "expected to contain: \("/")")
+        let _vec_pages_not_contains_11ffe89 = result.pages()
+        XCTAssertFalse(_vec_pages_not_contains_11ffe89[0].url().toString().contains("/page"), "expected NOT to contain: \("/page")")
     }
 
     func testStrategyBfsDefaultOrder() async throws {

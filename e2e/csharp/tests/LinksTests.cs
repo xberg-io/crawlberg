@@ -102,7 +102,8 @@ namespace Crawlberg
             var url = Environment.GetEnvironmentVariable("MOCK_SERVER_URL") + "/fixtures/links_protocol_relative";
             var result = await CrawlbergConverter.ScrapeAsync(engine, url);
             Assert.True(result.Links.Count > 1, "expected > 1");
-            Assert.True(result.Links?.Any(e223a199d => Convert.ToString(e223a199d.Url)!.Contains("//")) == true, "element of 'links[].url': //");
+            Assert.True(result.Links?.Any(e72be4945 => Convert.ToString(e72be4945.Url)!.Contains("http://cdn.example.com/resource")) == true, "element of 'links[].url': http://cdn.example.com/resource");
+            Assert.True(result.Links?.Any(ead80a051 => Convert.ToString(ead80a051.Url)!.Contains("http://images.example.com/photo.jpg")) == true, "element of 'links[].url': http://images.example.com/photo.jpg");
 
         }
 

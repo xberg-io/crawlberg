@@ -107,7 +107,8 @@ public class LinksTest {
         String url = System.getProperty("mockServerUrl", System.getenv("MOCK_SERVER_URL")) + "/fixtures/links_protocol_relative";
         var result = Crawlberg.scrape(engine, url);
         assertTrue(result.links().size() > 1, "expected > 1");
-        assertTrue(result.links().stream().anyMatch(e223a199d -> String.valueOf(e223a199d.url()).contains("//")), "expected some element of 'links[].url' to contain: //");
+        assertTrue(result.links().stream().anyMatch(e72be4945 -> String.valueOf(e72be4945.url()).contains("http://cdn.example.com/resource")), "expected some element of 'links[].url' to contain: http://cdn.example.com/resource");
+        assertTrue(result.links().stream().anyMatch(ead80a051 -> String.valueOf(ead80a051.url()).contains("http://images.example.com/photo.jpg")), "expected some element of 'links[].url' to contain: http://images.example.com/photo.jpg");
 
 
     }

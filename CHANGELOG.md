@@ -6,6 +6,18 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Two e2e assertions were tautologies rather than URL leaks, and tested nothing.**
+  `links_protocol_relative` exists to prove that `<a href="//cdn.example.com/resource">` inherits
+  the page's scheme, but asserted only that some link URL contains `//` — true of every absolute
+  URL, and satisfied by the fixture's one ordinary `https://example.com/normal` link without the
+  protocol-relative pair being resolved at all. It now asserts both resolved forms,
+  `http://cdn.example.com/resource` and `http://images.example.com/photo.jpg`, which a passthrough
+  of the raw href cannot produce. `strategy_best_first_seed` asserted that `pages[0].url` contains
+  `/` — true of every URL, including the `/page1` and `/page2` results the fixture exists to rule
+  out. Its seed is the mock origin root and carries no path, so it now asserts `not_contains`
+  `/page`, which fails if any non-seed page is crawled first. Both were confirmed to fail under
+  mutation before being accepted.
+
 - **The URL being scraped decided its own network error classification.** `network_error_kind`
   keyword-scanned a string built from `reqwest::Error`'s `Display`, which embeds the request URL,
   so every keyword the scan looks for — `dns`, `ssl`, `tls`, `certificate`, `handshake`, `resolve`,

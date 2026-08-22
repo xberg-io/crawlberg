@@ -62,7 +62,7 @@ public class StrategyTest {
         String url = System.getProperty("mockServer.strategy_best_first_seed", System.getProperty("mockServerUrl", System.getenv("MOCK_SERVER_URL")) + "/fixtures/strategy_best_first_seed");
         var result = Crawlberg.crawl(engine, url);
         assertEquals(3, result.pages().size());
-        assertTrue(result.pages().get(0).url().contains("/"), "expected to contain: " + "/");
+        assertFalse(result.pages().get(0).url().contains("/page"), "expected NOT to contain: " + "/page");
 
 
     }

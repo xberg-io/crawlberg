@@ -211,7 +211,7 @@ void main() {
     final url = _fixtureUrl("strategy_best_first_seed");
     final result = await CrawlbergBridge.crawl(engine, url);
     expect(result.pages.length, equals(3));
-    expect(result.pages[0].url, contains('/'));
+    expect(result.pages[0].url, isNot(contains('/page')));
   });
 
   test('BFS strategy visits pages in breadth-first order', () async {

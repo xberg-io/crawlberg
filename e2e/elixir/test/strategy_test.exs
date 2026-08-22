@@ -45,7 +45,7 @@ defmodule E2e.StrategyTest do
 
       {:ok, result} = Crawlberg.crawl(engine, url)
       assert length(result.pages) == 3
-      assert String.contains?(to_string(Enum.at(result.pages, 0).url), "/")
+      refute String.contains?(to_string(Enum.at(result.pages, 0).url), "/page")
     end
   end
 

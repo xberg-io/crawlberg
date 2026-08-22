@@ -31,7 +31,7 @@ RSpec.describe 'strategy' do
     url = ENV.fetch('MOCK_SERVER_STRATEGY_BEST_FIRST_SEED', nil) || "#{ENV.fetch('MOCK_SERVER_URL')}/fixtures/strategy_best_first_seed"
     result = Crawlberg.crawl(engine, url)
     expect(result.pages.length).to eq(3)
-    expect(result.pages[0].url.to_s).to include('/')
+    expect(result.pages[0].url.to_s).not_to include('/page')
   end
 
   it 'strategy_bfs_default_order: BFS strategy visits pages in breadth-first order' do

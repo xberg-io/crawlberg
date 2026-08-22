@@ -28,7 +28,12 @@
 		{
 			"type": "contains",
 			"field": "links[].url",
-			"value": "//"
+			"value": "http://cdn.example.com/resource"
+		},
+		{
+			"type": "contains",
+			"field": "links[].url",
+			"value": "http://images.example.com/photo.jpg"
 		}
 	]
 }

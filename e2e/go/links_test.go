@@ -185,15 +185,25 @@ func Test_LinksProtocolRelative(t *testing.T) {
 	if len(result.Links) < 2 {
 		t.Errorf("expected > 1, got %v", len(result.Links))
 	}
-	found825e9426 := false
+	founde77bf8bc := false
 	for _, e := range result.Links {
-		if strings.Contains(fmt.Sprintf("%v", e.URL), `//`) {
-			found825e9426 = true
+		if strings.Contains(fmt.Sprintf("%v", e.URL), `http://cdn.example.com/resource`) {
+			founde77bf8bc = true
 			break
 		}
 	}
-	if !found825e9426 {
-		t.Errorf("expected some element of 'links[].url' to contain %v", `//`)
+	if !founde77bf8bc {
+		t.Errorf("expected some element of 'links[].url' to contain %v", `http://cdn.example.com/resource`)
+	}
+	found971e31bc := false
+	for _, e := range result.Links {
+		if strings.Contains(fmt.Sprintf("%v", e.URL), `http://images.example.com/photo.jpg`) {
+			found971e31bc = true
+			break
+		}
+	}
+	if !found971e31bc {
+		t.Errorf("expected some element of 'links[].url' to contain %v", `http://images.example.com/photo.jpg`)
 	}
 }
 

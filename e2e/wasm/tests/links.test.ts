@@ -130,7 +130,8 @@ describe("links", () => {
 		const url = `${process.env.MOCK_SERVER_URL}/fixtures/links_protocol_relative`;
 		const result = await scrape(engine, url);
     expect(Number(result.links.length)).toBeGreaterThan(1);
-    expect((result.links ?? []).some((e) => String(e.url).includes("//"))).toBe(true);
+    expect((result.links ?? []).some((e) => String(e.url).includes("http://cdn.example.com/resource"))).toBe(true);
+    expect((result.links ?? []).some((e) => String(e.url).includes("http://images.example.com/photo.jpg"))).toBe(true);
 
 	}, 30000);
 

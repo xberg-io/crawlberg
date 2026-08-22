@@ -77,7 +77,8 @@ defmodule E2e.LinksTest do
       url = (System.get_env("MOCK_SERVER_URL") || "") <> "/fixtures/links_protocol_relative"
       {:ok, result} = Crawlberg.scrape(engine, url)
       assert length(result.links) > 1
-      assert Enum.any?(result.links || [], fn e -> String.contains?(to_string(e.url), "//") end)
+      assert Enum.any?(result.links || [], fn e -> String.contains?(to_string(e.url), "http://cdn.example.com/resource") end)
+      assert Enum.any?(result.links || [], fn e -> String.contains?(to_string(e.url), "http://images.example.com/photo.jpg") end)
     end
   end
 

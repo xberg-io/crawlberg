@@ -147,9 +147,20 @@ async fn test_links_protocol_relative() {
     let result = scrape(&engine, &url).await.expect("call failed");
     assert!(result.links.len() > 1, "expected > 1");
     assert!(
-        result.links.iter().any(|e| e.url.to_string().contains(r#"//"#)),
+        result
+            .links
+            .iter()
+            .any(|e| e.url.to_string().contains(r#"http://cdn.example.com/resource"#)),
         "expected some element of links[].url to contain: {}",
-        r#"//"#
+        r#"http://cdn.example.com/resource"#
+    );
+    assert!(
+        result
+            .links
+            .iter()
+            .any(|e| e.url.to_string().contains(r#"http://images.example.com/photo.jpg"#)),
+        "expected some element of links[].url to contain: {}",
+        r#"http://images.example.com/photo.jpg"#
     );
 }
 

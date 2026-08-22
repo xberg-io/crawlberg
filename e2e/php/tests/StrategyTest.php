@@ -54,7 +54,7 @@ final class StrategyTest extends TestCase
         $result = Crawlberg::crawl($engine, $url);
 
         $this->assertEquals(3, count($result->getPages()));
-        $this->assertStringContainsString("/", $result->getPages()[0]->url);
+        $this->assertStringNotContainsString("/page", $result->getPages()[0]->url);
 
 
     }

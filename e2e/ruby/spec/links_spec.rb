@@ -60,7 +60,8 @@ RSpec.describe 'links' do
     url = "#{ENV.fetch('MOCK_SERVER_URL')}/fixtures/links_protocol_relative"
     result = Crawlberg.scrape(engine, url)
     expect(result.links.length).to be > 1
-    expect(result.links.any? { |e| e.url.to_s.include?('//') }).to be true
+    expect(result.links.any? { |e| e.url.to_s.include?('http://cdn.example.com/resource') }).to be true
+    expect(result.links.any? { |e| e.url.to_s.include?('http://images.example.com/photo.jpg') }).to be true
   end
 
   it 'links_rel_attributes: Preserves rel=nofollow and rel=canonical attributes' do

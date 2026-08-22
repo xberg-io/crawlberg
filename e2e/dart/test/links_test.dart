@@ -244,7 +244,18 @@ void main() {
     final url = _fixtureUrl("links_protocol_relative");
     final result = await CrawlbergBridge.scrape(engine, url);
     expect(result.links.length, greaterThan(1));
-    expect(result.links.any((e) => e.url.toString().contains('//')), isTrue);
+    expect(
+      result.links.any(
+        (e) => e.url.toString().contains('http://cdn.example.com/resource'),
+      ),
+      isTrue,
+    );
+    expect(
+      result.links.any(
+        (e) => e.url.toString().contains('http://images.example.com/photo.jpg'),
+      ),
+      isTrue,
+    );
   });
 
   test('Preserves rel=nofollow and rel=canonical attributes', () async {

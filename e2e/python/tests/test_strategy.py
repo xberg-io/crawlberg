@@ -50,7 +50,7 @@ async def test_strategy_best_first_seed() -> None:
 
     result = await crawl(engine, url)
     assert len(result.pages) == 3  # noqa: S101
-    assert "/".lower() in str(result.pages[0].url).lower()  # noqa: S101
+    assert "/page".lower() not in str(result.pages[0].url).lower()  # noqa: S101
 
 
 @pytest.mark.asyncio

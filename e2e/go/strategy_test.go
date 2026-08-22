@@ -85,8 +85,8 @@ func Test_StrategyBestFirstSeed(t *testing.T) {
 	if len(result.Pages) == 0 {
 		t.Fatalf("expected non-empty %s", `result.Pages`)
 	}
-	if !strings.Contains(string(result.Pages[0].URL), `/`) {
-		t.Errorf("expected to contain %s, got %v", `/`, result.Pages[0].URL)
+	if strings.Contains(string(result.Pages[0].URL), `/page`) {
+		t.Errorf("expected NOT to contain %s, got %v", `/page`, result.Pages[0].URL)
 	}
 }
 

@@ -36,7 +36,7 @@ test_strategy_best_first_seed() {
   assert_equals "$val_crawl_pages_crawled" '3' 'crawl.pages_crawled'
   local val_strategy_first_page_url_contains
   val_strategy_first_page_url_contains=$(echo "$output" | jq -r '.pages[0].url')
-  assert_contains "$val_strategy_first_page_url_contains" '/' 'strategy.first_page_url_contains'
+  assert_not_contains "$val_strategy_first_page_url_contains" '/page' 'strategy.first_page_url_contains'
 }
 
 test_strategy_bfs_default_order() {

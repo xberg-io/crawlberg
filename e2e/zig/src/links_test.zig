@@ -253,7 +253,26 @@ test "links_protocol_relative" {
                     const _jv = (_wce.object.get("url") orelse return error.WildcardElementFieldMissing);
                     const _js = if (_jv == .string) _jv.string else try std.json.Stringify.valueAlloc(std.heap.c_allocator, _jv, .{});
                     defer if (_jv != .string) std.heap.c_allocator.free(_js);
-                    try testing.expect(std.mem.indexOf(u8, _js, "//") != null);
+                    try testing.expect(std.mem.indexOf(u8, _js, "http://cdn.example.com/resource") != null);
+                }
+            }
+        };
+        var _wc_found = false;
+        for (result.object.get("links").?.array.items) |_wc_item| {
+            _WildcardCheck.check(_wc_item) catch continue;
+            _wc_found = true;
+            break;
+        }
+        try testing.expect(_wc_found); // no element of 'links' matched
+    }
+    {
+        const _WildcardCheck = struct {
+            fn check(_wce: std.json.Value) anyerror!void {
+                {
+                    const _jv = (_wce.object.get("url") orelse return error.WildcardElementFieldMissing);
+                    const _js = if (_jv == .string) _jv.string else try std.json.Stringify.valueAlloc(std.heap.c_allocator, _jv, .{});
+                    defer if (_jv != .string) std.heap.c_allocator.free(_js);
+                    try testing.expect(std.mem.indexOf(u8, _js, "http://images.example.com/photo.jpg") != null);
                 }
             }
         };

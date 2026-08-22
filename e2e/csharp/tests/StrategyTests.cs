@@ -58,7 +58,7 @@ namespace Crawlberg
             var url = !string.IsNullOrEmpty(_pfUrl_url) ? _pfUrl_url : Environment.GetEnvironmentVariable("MOCK_SERVER_URL") + "/fixtures/strategy_best_first_seed";
             var result = await CrawlbergConverter.CrawlAsync(engine, url);
             Assert.True(result.Pages.Count == 3);
-            Assert.Contains("/", result.Pages[0].Url.ToString());
+            Assert.DoesNotContain("/page", result.Pages[0].Url.ToString());
 
         }
 

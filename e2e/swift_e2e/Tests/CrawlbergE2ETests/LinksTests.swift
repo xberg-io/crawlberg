@@ -81,7 +81,8 @@ final class LinksTests: XCTestCase {
         let url = AlefE2EMockServer.baseURL + "/fixtures/links_protocol_relative"
         let result = try await Crawlberg.scrape(engine: engineObj, url: url)
         XCTAssertGreaterThan(result.links().count, 1)
-        XCTAssertTrue(result.links().contains(where: { $0.url().toString().contains("//") }), "expected to contain: \("//")")
+        XCTAssertTrue(result.links().contains(where: { $0.url().toString().contains("http://cdn.example.com/resource") }), "expected to contain: \("http://cdn.example.com/resource")")
+        XCTAssertTrue(result.links().contains(where: { $0.url().toString().contains("http://images.example.com/photo.jpg") }), "expected to contain: \("http://images.example.com/photo.jpg")")
     }
 
     func testLinksRelAttributes() async throws {

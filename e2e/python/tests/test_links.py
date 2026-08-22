@@ -88,7 +88,8 @@ async def test_links_protocol_relative() -> None:
 
     result = await scrape(engine, url)
     assert len(result.links) > 1  # noqa: S101
-    assert any("//" in str(_e.url) for _e in (result.links or []))  # noqa: S101
+    assert any("http://cdn.example.com/resource" in str(_e.url) for _e in (result.links or []))  # noqa: S101
+    assert any("http://images.example.com/photo.jpg" in str(_e.url) for _e in (result.links or []))  # noqa: S101
 
 
 @pytest.mark.asyncio

@@ -48,9 +48,9 @@
 			"value": 3
 		},
 		{
-			"type": "contains",
+			"type": "not_contains",
 			"field": "strategy.first_page_url_contains",
-			"value": "/"
+			"value": "/page"
 		}
 	]
 }

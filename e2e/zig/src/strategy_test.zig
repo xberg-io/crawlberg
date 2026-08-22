@@ -63,10 +63,10 @@ test "strategy_best_first_seed" {
     const result = &_parsed.value;
     try testing.expectEqual(@as(usize, 3), result.object.get("pages").?.array.items.len);
     {
-        const _jv = result.object.get("pages").?.array.items[0].object.get("url").?;
-        const _js = if (_jv == .string) _jv.string else try std.json.Stringify.valueAlloc(std.heap.c_allocator, _jv, .{});
-        defer if (_jv != .string) std.heap.c_allocator.free(_js);
-        try testing.expect(std.mem.indexOf(u8, _js, "/") != null);
+        const _jvnc = result.object.get("pages").?.array.items[0].object.get("url").?;
+        const _jsnc = if (_jvnc == .string) _jvnc.string else try std.json.Stringify.valueAlloc(std.heap.c_allocator, _jvnc, .{});
+        defer if (_jvnc != .string) std.heap.c_allocator.free(_jsnc);
+        try testing.expect(std.mem.indexOf(u8, _jsnc, "/page") == null);
     }
 }
 

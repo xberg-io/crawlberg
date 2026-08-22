@@ -256,7 +256,19 @@ void test_links_protocol_relative(void) {
         for (int _wc_i = 0; _wc_i < _wc_count; _wc_i++) {
             char* _wc_elem = alef_json_array_get_index(links_json, _wc_i);
             char* _wc_val = alef_json_get_string(_wc_elem, "url");
-            if (_wc_val != NULL && strstr(_wc_val, "//") != NULL) { found = 1; }
+            if (_wc_val != NULL && strstr(_wc_val, "http://cdn.example.com/resource") != NULL) { found = 1; }
+            free(_wc_val);
+            free(_wc_elem);
+        }
+        assert(found && "expected some element to contain a substring");
+    }
+    {
+        int found = 0;
+        int _wc_count = alef_json_array_count(links_json);
+        for (int _wc_i = 0; _wc_i < _wc_count; _wc_i++) {
+            char* _wc_elem = alef_json_array_get_index(links_json, _wc_i);
+            char* _wc_val = alef_json_get_string(_wc_elem, "url");
+            if (_wc_val != NULL && strstr(_wc_val, "http://images.example.com/photo.jpg") != NULL) { found = 1; }
             free(_wc_val);
             free(_wc_elem);
         }
