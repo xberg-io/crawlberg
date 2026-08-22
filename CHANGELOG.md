@@ -44,6 +44,12 @@ All notable changes to crawlberg are documented here.
   `deps:check` first, which hard-fails when `cargo-machete` is missing; nothing installed it, so
   the job died before `cargo fmt`, `clippy` or the fuzz/config checks ever ran.
 
+- **`e2e/dart/test/metadata_test.dart` compiles again.** `favicons` and `hreflangs` on
+  `PageMetadata` are `Option<Vec<_>>` in the Rust core, so the generated Dart bindings expose them
+  as nullable `List<FaviconInfo>?` / `List<HreflangEntry>?`. The test called `.any(...)` on them
+  directly instead of the already-established `?.length`/`!` pattern used elsewhere in the same
+  file, which Dart's null safety rejects at compile time. Changed both call sites to `!.any(...)`.
+
 ## [1.3.2] - 2026-08-21
 
 ### Fixed

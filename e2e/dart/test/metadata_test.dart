@@ -243,7 +243,7 @@ void main() {
     expect(result.statusCode, equals(200));
     expect(result.metadata.favicons?.length, equals(5));
     expect(
-      result.metadata.favicons.any(
+      result.metadata.favicons!.any(
         (e) => e.rel.toString().contains('apple-touch-icon'),
       ),
       isTrue,
@@ -270,7 +270,7 @@ void main() {
     expect(result.statusCode, equals(200));
     expect(result.metadata.hreflangs?.length, equals(4));
     expect(
-      result.metadata.hreflangs.any((e) => e.lang.toString().contains('en')),
+      result.metadata.hreflangs!.any((e) => e.lang.toString().contains('en')),
       isTrue,
     );
   });
