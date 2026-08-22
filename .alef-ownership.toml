@@ -62,5 +62,6 @@ owned_paths = [
   "packages/ruby/sig/types.rbs",
   "packages/swift/README.md",
   "test_apps/c/Makefile",
+  "test_apps/java/.mvn/wrapper/maven-wrapper.properties",
   "test_apps/php/phpunit.xml",
 ]
