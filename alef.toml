@@ -66,16 +66,38 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep Deliberately still the flat, hand-written tree, NOT `docs-site/src/snippets/generated`
 # ~keep like tslp/h2m. `[crates.e2e.snippets]` below is wired and proven correct (verified via an
 # ~keep isolated probe against `engine/engine_scrape_basic.json` with `preserve_input_urls` +
-# ~keep `$mock_url`), but `alef e2e generate` cannot write ANY snippet today: 263 of 264
-# ~keep `docs`-tagged fixtures leak `MOCK_SERVER_URL` scaffolding into their would-be snippet body
-# ~keep (alef's mock-harness guard, `src/e2e/snippets/mod.rs::reject_mock_harness_scaffolding`),
-# ~keep and that guard's rejection aborts the whole batch before anything is written — none of
-# ~keep tslp/h2m's fixtures need `preserve_input_urls` because their fixtures aren't URL-driven,
-# ~keep but nearly every crawlberg call takes a URL. Repointing `dirs` here before `generated/`
-# ~keep has real content would silently drop snippet-check coverage of these 14 files to zero
-# ~keep (`alef snippets list --snippets docs-site/src/snippets/generated` reports "0 snippets",
-# ~keep exit 0 -- not an error, just silently nothing). Re-add the repoint only once
-# ~keep `alef e2e generate` actually produces files under `generated/`.
+# ~keep `$mock_url`), but `alef e2e generate` still cannot write ANY snippet: as of alef 0.65.0
+# ~keep (which fixed #168, the C e2e engine-factory's `input.url`-only read) the rejection count
+# ~keep dropped from 263/264 to 11/264 -- all eleven are C-language, all batch/list-shaped
+# ~keep (`batch_crawl_*`, `batch_scrape_*`, `scrape_batch_*`, `engine_batch_basic`), and the guard
+# ~keep still aborts the whole batch on any single rejection. Two distinct alef gaps produce the
+# ~keep eleven, neither fixable from this repo:
+# ~keep 1. `batch_crawl_stream_events`/`batch_crawl_stream_partial_failure` route through
+# ~keep    `[crates.e2e.calls.batch_crawl_stream]`, whose `skip_languages` already lists `c` (the
+# ~keep    executable suite correctly never generates a C test for this call) -- but
+# ~keep    `src/e2e/snippets/mod.rs` never consults `call.skip_languages`, only `fixture.skip`, so
+# ~keep    the docs-snippet path still attempts a C render for a call C cannot represent.
+# ~keep 2. The other nine route through `batch_crawl`/`batch_scrape`, which properly declare a
+# ~keep    `mock_url_list` arg on field `batch_urls` and are NOT c-skipped. Per
+# ~keep    `src/e2e/snippets/mock_url_defaults.rs`'s own doc comment this should auto-inject a
+# ~keep    `https://example.com/...` literal and `preserve_input_urls` with zero fixture edits --
+# ~keep    and `src/e2e/codegen/c/call_patterns/batch_url_regression_tests.rs` unit-tests exactly
+# ~keep    this shape passing -- yet real generation still falls back to raw `MOCK_SERVER_URL`
+# ~keep    scaffolding for all nine. Forcing `preserve_input_urls: true` directly onto the raw
+# ~keep    fixtures (bypassing the auto-injection question) did NOT clear the rejection either,
+# ~keep    and independently broke the EXECUTABLE suite for every non-C language (bare
+# ~keep    `batch_urls` paths like `/seed1` stopped resolving against the live mock server and
+# ~keep    were passed to the network call literally) -- reverted. `call_patterns.rs`'s own
+# ~keep    comment says this emitter "has no ArgMapping" and reads `input.url`/`input.urls`
+# ~keep    by convention rather than through the args config the injection module targets; the
+# ~keep    exact divergence between the passing unit test and the failing real pipeline was not
+# ~keep    isolated without alef-side debug instrumentation. Reported upstream 2026-08-22.
+# ~keep None of tslp/h2m's fixtures need `preserve_input_urls` because their fixtures aren't
+# ~keep URL-driven, but nearly every crawlberg call takes a URL. Repointing `dirs` here before
+# ~keep `generated/` has real content would silently drop snippet-check coverage of these 14
+# ~keep files to zero (`alef snippets list --snippets docs-site/src/snippets/generated` reports
+# ~keep "0 snippets", exit 0 -- not an error, just silently nothing). Re-add the repoint only
+# ~keep once `alef e2e generate` actually produces files under `generated/`.
 dirs = ["docs-site/src/snippets"]
 validation_level = "compile"
 timeout_secs = 300
