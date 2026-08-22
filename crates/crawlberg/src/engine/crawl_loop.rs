@@ -101,6 +101,22 @@ fn url_host(url: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Canonicalize a URL for redirect-cycle-set membership.
+///
+/// ~keep The seed comes from the caller's raw string, but every hop key comes from
+/// ~keep `resolve_redirect`, which WHATWG-serializes via `Url::join` (e.g. adding a
+/// ~keep trailing slash to a bare origin). Without canonicalizing the seed the same
+/// ~keep way, a chain that returns to the seed URL in a different-but-equivalent form
+/// ~keep (e.g. `http://host:port` vs `http://host:port/`) is missed by `seen.contains`
+/// ~keep on its first return and only caught one hop later. Falls back to the original
+/// ~keep string when it fails to parse, so an unparsable URL still participates in
+/// ~keep cycle detection via literal string equality.
+fn canonical_redirect_key(url: &str) -> String {
+    Url::parse(url)
+        .map(|parsed| parsed.to_string())
+        .unwrap_or_else(|_| url.to_owned())
+}
+
 /// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
 ///
 /// This is the shared redirect-following implementation used by both
@@ -124,7 +140,7 @@ pub(crate) async fn follow_redirects(
 ) -> Result<RedirectOutcome, CrawlError> {
     let mut current_url = initial_url.to_owned();
     let mut seen: HashSet<String> = HashSet::with_capacity(max_redirects + 1);
-    seen.insert(current_url.clone());
+    seen.insert(canonical_redirect_key(&current_url));
     let mut redirect_count: usize = 0;
     let mut intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)> = Vec::new();
 
@@ -166,14 +182,15 @@ pub(crate) async fn follow_redirects(
             && let Some(location) = resp.headers.get("location").and_then(|v| v.first())
         {
             let target = resolve_redirect(&current_url, location);
-            if !seen.contains(&target) {
+            let target_key = canonical_redirect_key(&target);
+            if !seen.contains(&target_key) {
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push((url_host(&current_url), resp.headers));
-                seen.insert(target.clone());
+                seen.insert(target_key);
                 redirect_count += 1;
                 current_url = target;
                 continue;
@@ -186,14 +203,15 @@ pub(crate) async fn follow_redirects(
         {
             let target_path = refresh[pos + 4..].trim();
             let target = resolve_redirect(&current_url, target_path);
-            if !seen.contains(&target) {
+            let target_key = canonical_redirect_key(&target);
+            if !seen.contains(&target_key) {
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push((url_host(&current_url), resp.headers));
-                seen.insert(target.clone());
+                seen.insert(target_key);
                 redirect_count += 1;
                 current_url = target;
                 continue;
@@ -210,14 +228,15 @@ pub(crate) async fn follow_redirects(
             };
         if let Some(refresh_target) = meta_refresh_target {
             let target = resolve_redirect(&current_url, &refresh_target);
-            if !seen.contains(&target) {
+            let target_key = canonical_redirect_key(&target);
+            if !seen.contains(&target_key) {
                 if let Ok(parsed_target) = url::Url::parse(&target)
                     && let Err(e) = validate_url(&parsed_target, &engine.config.ssrf).await
                 {
                     return Err(CrawlError::ssrf_violation(target, e.to_string()));
                 }
                 intermediate_headers.push((url_host(&current_url), resp.headers));
-                seen.insert(target.clone());
+                seen.insert(target_key);
                 redirect_count += 1;
                 current_url = target;
                 continue;

@@ -4,6 +4,18 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Redirect-cycle detection missed the first return to a bare-origin seed URL.** In
+  `follow_redirects` (`crates/crawlberg/src/engine/crawl_loop.rs`), the cycle-detection `seen` set
+  was seeded with the caller's raw URL string, while every subsequent hop key came from
+  `resolve_redirect`'s WHATWG-serialized `Url::join` output. A chain seeded at a bare origin (e.g.
+  `http://host:port`, no trailing slash) that redirects back to `/` produced a hop key of
+  `http://host:port/` — never equal to the raw seed — so the cycle was missed on its first return
+  and only caught one hop later (`redirect_count == 2` instead of `1`). Added
+  `canonical_redirect_key`, used for the seed and for every hop's `contains`/`insert` pair across
+  all three redirect mechanisms (3xx `Location`, `Refresh` header, `<meta http-equiv="refresh">`).
+
 ### Changed
 
 - Added `[crates.e2e.snippets]` (`output = "docs-site/src/snippets/generated"`) to `alef.toml`,

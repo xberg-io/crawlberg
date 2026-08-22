@@ -2,7 +2,7 @@
 //! Refresh headers, and meta-refresh directives, and that network errors
 //! encountered during a redirect chain propagate with the correct tag.
 
-use crawlberg::{CrawlConfig, CrawlError, create_engine, scrape};
+use crawlberg::{CrawlConfig, CrawlError, crawl, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -144,6 +144,55 @@ async fn scrape_stops_on_redirect_cycle() {
     );
     let page = result.unwrap();
     assert_eq!(page.status_code, 302, "final status must be the unfollowed 3xx");
+}
+
+/// Regression test for a seed-normalization bug: when the crawl is seeded with a bare
+/// origin (no path) and the redirect chain returns to that same origin via a relative
+/// `Location: /`, the WHATWG-serialized hop key (`http://host:port/`) must still match
+/// the raw seed (`http://host:port`) for cycle detection, or the cycle is missed on its
+/// first return and only caught one hop late.
+#[tokio::test]
+async fn crawl_stops_on_redirect_cycle_seeded_at_bare_origin() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .append_header("location", "/a")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .append_header("location", "/")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = default_engine();
+    let url = mock.uri();
+    let result = crawl(&handle, &url).await;
+
+    assert!(
+        result.is_ok(),
+        "crawl must not raise on a redirect cycle: {:?}",
+        result.err()
+    );
+    let crawl_result = result.unwrap();
+    assert_eq!(
+        crawl_result.redirect_count, 1,
+        "cycle must be detected on the first return to the seed URL"
+    );
+    assert_eq!(
+        crawl_result.pages[0].status_code, 302,
+        "final status must be the unfollowed 3xx"
+    );
 }
 
 /// When a redirect chain exceeds `max_redirects`, scrape() must stop and
