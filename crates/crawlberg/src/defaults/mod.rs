@@ -19,6 +19,8 @@ pub use domain_state::{EwmaDomainState, EwmaTracker, LearningRetryPolicy, in_mem
 pub use emitter::NoopEmitter;
 pub use filter::{Bm25Filter, NoopFilter};
 pub use frontier::{InMemoryFrontier, LifoFrontier};
+#[cfg(feature = "ai")]
+pub use llm_extractor::{LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
 #[cfg(test)]
 pub use rate_limiter::NoopRateLimiter;
 pub use rate_limiter::PerDomainThrottle;

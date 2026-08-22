@@ -1,7 +1,9 @@
 //! LLM-powered content extraction using liter-llm.
-#![allow(dead_code)]
 //!
 //! Requires the `ai` feature flag.
+
+#[cfg(feature = "ai")]
+pub use inner::{LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
 
 #[cfg(feature = "ai")]
 mod inner {

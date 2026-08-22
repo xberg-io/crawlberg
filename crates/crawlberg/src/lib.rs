@@ -79,6 +79,8 @@ pub use defaults::{
     PerDomainThrottle, SimpleRetryPolicy, UnlimitedBudget, default_retry_policy, in_memory_domain_state,
     unlimited_budget,
 };
+#[cfg(feature = "ai")]
+pub use defaults::{LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
 pub use engine::{CrawlEngine, CrawlEngineBuilder};
 pub use error::CrawlError;
 pub use interact::{

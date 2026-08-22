@@ -19,6 +19,14 @@ All notable changes to crawlberg are documented here.
   existing signature and picks up the default bound. Enabling `ai` now also enables
   `liter-llm/tower`, which supplies `ManagedClient` and the limiter.
 
+- **`LlmExtractor` is now public API (`ai` feature).** `crawlberg::{LlmExtractor,
+  LlmExtractorConfig, LlmResponseCacheConfig}` are exported from the crate root. The extractor had
+  been declared as a private `mod llm_extractor;` inside a `pub(crate)` module with no re-export
+  and a file-level `#![allow(dead_code)]`, so it and its `ContentFilter` implementation were
+  unreachable from outside the crate -- including the in-flight bound above. The `allow(dead_code)`
+  is removed; the type is reachable and used. Like the other `defaults` implementations it is a
+  Rust-level export only and is not part of the generated language bindings.
+
 ### Fixed
 
 - **Two e2e assertions were tautologies rather than URL leaks, and tested nothing.**
