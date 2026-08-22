@@ -15,6 +15,11 @@ All notable changes to crawlberg are documented here.
   and only caught one hop later (`redirect_count == 2` instead of `1`). Added
   `canonical_redirect_key`, used for the seed and for every hop's `contains`/`insert` pair across
   all three redirect mechanisms (3xx `Location`, `Refresh` header, `<meta http-equiv="refresh">`).
+- Skipped `redirect_loop` and `redirect_max_exceeded` for the wasm binding
+  (`fixtures/redirect/redirect_loop.json`, `fixtures/redirect/redirect_max_exceeded.json`): wasm's
+  `fetch` follows redirects transparently with no manual hop tracking, so `max_redirects` is never
+  enforced there and a genuine cycle exhausts the browser's own redirect budget and errors instead
+  of stopping at one hop.
 
 ### Changed
 

@@ -7,6 +7,10 @@
 		"title": "Aborts when redirect count exceeds max_redirects limit"
 	},
 	"tags": ["redirect", "error", "crawl"],
+	"skip": {
+		"languages": ["wasm"],
+		"reason": "config.max_redirects is not enforced on wasm: the browser fetch backing reqwest there is not built with Policy::none(), so it follows the whole redirect chain transparently in one round trip instead of stopping at the configured hop limit"
+	},
 	"input": {
 		"mock_responses": [
 			{

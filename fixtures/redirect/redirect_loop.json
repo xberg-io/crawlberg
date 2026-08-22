@@ -7,6 +7,10 @@
 		"title": "Detects redirect loop (A -> B -> A) and stops following without reaching a final page"
 	},
 	"tags": ["redirect", "error", "crawl"],
+	"skip": {
+		"languages": ["wasm"],
+		"reason": "wasm fetch follows redirects transparently and has no cycle detection, so a loop exhausts the redirect budget and errors instead of stopping at one hop"
+	},
 	"input": {
 		"mock_responses": [
 			{
