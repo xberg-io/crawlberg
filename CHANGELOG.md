@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-22
+
 ### Fixed
 
 - **CI Lint's `Validate (poly)` job runs again.** `poly lint .` never reached a crawlberg finding:
