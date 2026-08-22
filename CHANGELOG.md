@@ -4,6 +4,21 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded LLM extraction concurrency (`ai` feature).** `LlmExtractor` now builds a
+  `liter_llm::ManagedClient` instead of a bare `DefaultClient`, with liter-llm 1.18.0's queueing
+  `InFlightLimitLayer` wired in. The new `LlmExtractorConfig::max_in_flight` caps simultaneously
+  outstanding provider requests globally for the extractor's client rather than per call site, so
+  a wide crawl fan-out cannot burst past a provider's per-key concurrency allowance. `None` leaves
+  the client unbounded; `Some(0)` is rejected as `CrawlError::InvalidConfig` because a zero bound
+  admits no request at all and would deadlock every extraction. The default is `Some(8)`.
+  `LlmExtractorConfig::response_cache` optionally puts liter-llm's in-memory response cache in
+  front of the provider; cache hits are served without consuming an in-flight permit, so repeat
+  pages still answer immediately while the bound is saturated. `LlmExtractor::new` keeps its
+  existing signature and picks up the default bound. Enabling `ai` now also enables
+  `liter-llm/tower`, which supplies `ManagedClient` and the limiter.
+
 ### Fixed
 
 - **Two e2e assertions were tautologies rather than URL leaks, and tested nothing.**

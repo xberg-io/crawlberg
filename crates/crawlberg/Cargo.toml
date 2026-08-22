@@ -24,7 +24,9 @@ native-runtime = []
 browser = ["browser-chromiumoxide"]
 browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
-ai = ["dep:liter-llm", "dep:minijinja"]
+# ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
+# ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
+ai = ["dep:liter-llm", "liter-llm/tower", "dep:minijinja"]
 # ~keep Emit-only: the library never installs a subscriber/exporter (that is the
 # ~keep CLI's / service's job). `otel` only forwards `liter-llm/otel` so the `ai`
 # ~keep integration's GenAI metrics compile in; crawlberg's own OTel spans, semconv
