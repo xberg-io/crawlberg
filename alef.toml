@@ -967,13 +967,14 @@ rust = "(cd {dir} && cargo fmt --all)"
 python = "ruff check --fix {dir} && ruff format {dir}"
 go = "gofmt -w {dir}"
 ruby = "(cd {dir} && bundle exec rubocop --config .rubocop.yaml --autocorrect-all .)"
-# ~keep {dir} is e2e/php, so ../.. is the repo root. This used to point into
-# ~keep packages/php/vendor/bin, which has had no composer.json (and so no reproducible vendor/)
-# ~keep since f76aa7c31. php-cs-fixer is installed at repo-root vendor/bin instead (present there
-# ~keep today; note the root composer.json require-dev block does not currently list
-# ~keep friendsofphp/php-cs-fixer even though composer.lock and vendor/bin do — a pre-existing
-# ~keep drift this hook does not attempt to fix).
-php = "(cd {dir} && ../../vendor/bin/php-cs-fixer fix --rules='@PSR12,@PHP82Migration' --path-mode=override .)"
+# ~keep vendor/ is gitignored, so a fresh checkout (every CI runner) has no php-cs-fixer until
+# ~keep `composer install` runs. alef has no `before` hook for e2e formatters and silently no-ops
+# ~keep when the command is missing, so the install is inlined here and the tool is invoked through
+# ~keep `composer exec` — that resolves via the repo-root composer.json regardless of the cwd alef
+# ~keep chose. friendsofphp/php-cs-fixer is a require-dev entry pinned by composer.lock, which is
+# ~keep what makes this reproducible: the runner and the laptop format with the same version.
+# ~keep The php e2e job installs `composer` (.github/workflows/ci-e2e.yaml), so this resolves there.
+php = "composer install --no-interaction --no-progress --quiet && composer exec -- php-cs-fixer fix --rules='@PSR12,@PHP82Migration' --path-mode=override {dir}"
 dart = "cd {dir} && dart format ."
 zig = "zig fmt {dir}"
 

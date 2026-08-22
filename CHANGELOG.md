@@ -6,6 +6,17 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The PHP e2e format hook pointed at a php-cs-fixer that no checkout has.**
+  `[crates.e2e.format].php` invoked `../../vendor/bin/php-cs-fixer`, but `vendor/` is gitignored and
+  the repo-root `composer.json` never declared `friendsofphp/php-cs-fixer` — only the lock file did.
+  So no fresh checkout (every CI runner, and this one) could resolve the binary, and alef's format
+  hook silently no-ops on a missing command: regeneration rewrote all 31 generated PHP files with
+  alef's raw, over-indented template output and reported nothing. Declared
+  `friendsofphp/php-cs-fixer` in `require-dev` (pinning to the v3.95.1 the lock already carried, so
+  no dependency churn) and rewrote the hook to `composer install` first and invoke the tool through
+  `composer exec`, which resolves from the repo-root manifest regardless of cwd. The php e2e job
+  already installs `composer`, so this now resolves in CI rather than only on a developer machine.
+
 - **Four SSRF/scheme fixtures asserted against the mock server address instead of the address under
   test.** `validation_ssrf_loopback_denied`, `validation_ssrf_ipv4_mapped_ipv6_denied`,
   `validation_ssrf_nat64_loopback_denied` and `error_unsupported_scheme` each declare an `input.url`
