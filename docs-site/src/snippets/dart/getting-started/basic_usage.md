@@ -1,4 +1,3 @@
-<!-- snippet:skip reason="alef bug: DartValidator::is_dependency_error matches the lowercase diagnostic codes `dart analyze` prints in its human format, but the batch path runs `--format=machine`, which prints them uppercase (URI_DOES_NOT_EXIST). The unresolved `package:crawlberg` import is therefore classified as a snippet defect and hard-fails instead of passing at syntax level. Restore validation with a `[workspace.docs.snippets.sessions.dart]` session (cwd packages/dart, manifest pubspec.yaml, before `dart pub get`, env PUB_CACHE) -- verified to PASS at compile -- once the repo takes the full-tree alef.toml hash restamp that any alef.toml edit forces." -->
 ```dart title="Dart"
 import 'package:crawlberg/crawlberg.dart';
 import 'package:crawlberg/src/crawlberg_bridge_generated/frb_generated.dart'

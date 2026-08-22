@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.62.10"
+alef_version = "0.62.11"
 languages = [
   "python",
   "node",
@@ -94,8 +94,25 @@ include_paths = ["crates/crawlberg-ffi/include"]
 cwd = "packages/csharp"
 manifest = "packages/csharp/Crawlberg/Crawlberg.csproj"
 
+# ~keep The dart snippet imports `package:crawlberg`, which `dart analyze` resolves by walking up
+# ~keep from the analyzed file -- alef places dart scratch under `manifest`'s directory precisely
+# ~keep so that walk finds this package (see alef `snippets::scratch::resolves_package_from_the_scratch_file`).
+# ~keep `dart pub get` must run first because `.dart_tool/package_config.json` is not checked in.
+[workspace.docs.snippets.sessions.dart]
+cwd = "packages/dart"
+manifest = "packages/dart/pubspec.yaml"
+before = ["dart pub get"]
+
+# ~keep alef clears the child environment and re-adds a Unix allowlist that has no `HOME`
+# ~keep (alef `snippets::validators::SANITIZED_ENVIRONMENT_VARIABLES`), so both `dart pub get` and
+# ~keep `dart analyze` abort with "Could not find the pub cache. No `HOME` environment variable
+# ~keep exists." Naming PUB_CACHE outright is dart's own documented remedy; the path is relative to
+# ~keep `cwd`, and `.alef/` is already gitignored.
+[workspace.docs.snippets.sessions.dart.env]
+PUB_CACHE = ".alef/pub-cache"
+
 [workspace.sync]
-extra_paths = ["package.json", "crates/crawlberg-node/package.json", "crates/crawlberg-py/src/pyproject.toml"]
+extra_paths = ["package.json", "crates/crawlberg-node/package.json"]
 
 [workspace.citation]
 title = "crawlberg"
