@@ -10,9 +10,14 @@ All notable changes to crawlberg are documented here.
   `liter_llm::ManagedClient` instead of a bare `DefaultClient`, with liter-llm 1.18.0's queueing
   `InFlightLimitLayer` wired in. The new `LlmExtractorConfig::max_in_flight` caps simultaneously
   outstanding provider requests globally for the extractor's client rather than per call site, so
-  a wide crawl fan-out cannot burst past a provider's per-key concurrency allowance. `None` leaves
-  the client unbounded; `Some(0)` is rejected as `CrawlError::InvalidConfig` because a zero bound
-  admits no request at all and would deadlock every extraction. The default is `Some(8)`.
+  a wide crawl fan-out cannot burst past a provider's per-key concurrency allowance. The bound is a
+  dedicated `InFlightBound` enum -- `Limited(NonZeroUsize)` or `Unlimited` -- rather than an
+  `Option<usize>`, so neither unsafe state is reachable by accident: the default is
+  `Limited(8)`, lifting the bound requires naming `InFlightBound::Unlimited` at the call site, and
+  a zero bound (which admits no request at all and would deadlock every extraction) is a compile
+  error rather than a runtime `CrawlError::InvalidConfig`. `LlmExtractorConfig` implements
+  `Default`, so `..Default::default()` picks up the bounded default instead of silently disabling
+  the limiter. `InFlightBound` is exported from the crate root.
   `LlmExtractorConfig::response_cache` optionally puts liter-llm's in-memory response cache in
   front of the provider; cache hits are served without consuming an in-flight permit, so repeat
   pages still answer immediately while the bound is saturated. `LlmExtractor::new` keeps its

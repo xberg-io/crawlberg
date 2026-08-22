@@ -80,7 +80,7 @@ pub use defaults::{
     unlimited_budget,
 };
 #[cfg(feature = "ai")]
-pub use defaults::{LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
+pub use defaults::{InFlightBound, LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
 pub use engine::{CrawlEngine, CrawlEngineBuilder};
 pub use error::CrawlError;
 pub use interact::{

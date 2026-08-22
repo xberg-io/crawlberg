@@ -3,10 +3,11 @@
 //! Requires the `ai` feature flag.
 
 #[cfg(feature = "ai")]
-pub use inner::{LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
+pub use inner::{InFlightBound, LlmExtractor, LlmExtractorConfig, LlmResponseCacheConfig};
 
 #[cfg(feature = "ai")]
 mod inner {
+    use std::num::NonZeroUsize;
     use std::time::Duration;
 
     use async_trait::async_trait;
@@ -37,7 +38,7 @@ Content:
     /// Chosen to keep a crawl's LLM fan-out well inside the per-minute request
     /// quotas the major providers apply to a single API key, while still
     /// overlapping enough calls to hide per-request latency. ~keep
-    const DEFAULT_MAX_IN_FLIGHT: usize = 8;
+    const DEFAULT_MAX_IN_FLIGHT: NonZeroUsize = NonZeroUsize::new(8).expect("8 is not zero");
 
     /// Default number of extraction responses retained by the response cache.
     const DEFAULT_CACHE_MAX_ENTRIES: usize = 256;
@@ -67,8 +68,44 @@ Content:
         }
     }
 
+    /// Ceiling on provider requests in flight at once for one extractor.
+    ///
+    /// Modelled as a dedicated enum rather than `Option<usize>` so that neither
+    /// unsafe state is reachable by accident. `Option`'s absent value would make
+    /// `None` mean *unbounded*, which is the same token that correctly means
+    /// "no override" on every other optional field of [`LlmExtractorConfig`] --
+    /// so an author who had not thought about concurrency would spell the
+    /// dangerous choice exactly like the harmless ones. Here the unthinking
+    /// value is [`Default`], which is bounded, and lifting the bound requires
+    /// naming [`InFlightBound::Unlimited`] at the call site. The payload is
+    /// `NonZeroUsize` because a zero bound admits no request at all and would
+    /// deadlock every extraction. ~keep
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum InFlightBound {
+        /// No ceiling: every extraction is dispatched as soon as it is requested.
+        Unlimited,
+        /// At most this many provider requests outstanding at once.
+        Limited(NonZeroUsize),
+    }
+
+    impl Default for InFlightBound {
+        fn default() -> Self {
+            Self::Limited(DEFAULT_MAX_IN_FLIGHT)
+        }
+    }
+
+    impl InFlightBound {
+        /// The ceiling as liter-llm expects it: `None` is unbounded.
+        fn as_limit(self) -> Option<usize> {
+            match self {
+                Self::Unlimited => None,
+                Self::Limited(limit) => Some(limit.get()),
+            }
+        }
+    }
+
     /// Crawlberg-owned configuration for [`LlmExtractor`].
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq, Eq, Default)]
     pub struct LlmExtractorConfig {
         /// Model identifier (e.g. `"openai/gpt-4o-mini"`).
         pub model: String,
@@ -81,9 +118,8 @@ Content:
         /// Ceiling on provider requests in flight at once, applied globally per
         /// client rather than per call site.
         ///
-        /// `None` means unlimited. `Some(0)` is rejected by
-        /// [`LlmExtractor::with_config`] as invalid configuration.
-        pub max_in_flight: Option<usize>,
+        /// Defaults to a bounded value; see [`InFlightBound`].
+        pub max_in_flight: InFlightBound,
         /// Response cache placed in front of the provider. `None` disables caching.
         pub response_cache: Option<LlmResponseCacheConfig>,
         /// Override for the provider base URL. `None` uses provider auto-detection.
@@ -95,12 +131,7 @@ Content:
         pub fn new(model: impl Into<String>) -> Self {
             Self {
                 model: model.into(),
-                schema: None,
-                instruction: None,
-                prompt_template: None,
-                max_in_flight: Some(DEFAULT_MAX_IN_FLIGHT),
-                response_cache: None,
-                base_url: None,
+                ..Self::default()
             }
         }
     }
@@ -157,20 +188,14 @@ Content:
         ///
         /// # Errors
         ///
-        /// Returns [`CrawlError::InvalidConfig`] when `max_in_flight` is `Some(0)`:
-        /// a bound of zero admits no request at all and would deadlock every
-        /// extraction. Use `None` to disable the bound.
+        /// Returns [`CrawlError`] when the underlying provider client cannot be
+        /// built. A zero bound needs no check here: [`InFlightBound`] cannot
+        /// represent one.
         pub fn with_config(api_key: &str, config: LlmExtractorConfig) -> Result<Self, CrawlError> {
-            if config.max_in_flight == Some(0) {
-                return Err(CrawlError::invalid_config(
-                    "llm max_in_flight must be greater than zero; use None for an unlimited bound",
-                ));
-            }
-
             let mut client_config = liter_llm::ClientConfig::new(api_key);
             client_config.base_url = config.base_url.clone();
             client_config.in_flight_limit_config = Some(liter_llm::InFlightLimitConfig {
-                max_in_flight: config.max_in_flight,
+                max_in_flight: config.max_in_flight.as_limit(),
             });
             client_config.cache_config = config.response_cache.as_ref().map(|cache| liter_llm::CacheConfig {
                 max_entries: cache.max_entries,
@@ -360,7 +385,12 @@ Content:
             }
         }
 
-        fn extractor_for(base_url: String, max_in_flight: Option<usize>) -> LlmExtractor {
+        /// A bound of `limit`, which the test author has asserted is non-zero.
+        fn bound(limit: usize) -> InFlightBound {
+            InFlightBound::Limited(NonZeroUsize::new(limit).expect("test bound must be non-zero"))
+        }
+
+        fn extractor_for(base_url: String, max_in_flight: InFlightBound) -> LlmExtractor {
             LlmExtractor::with_config(
                 "test-key",
                 LlmExtractorConfig {
@@ -382,7 +412,7 @@ Content:
         #[tokio::test]
         async fn should_cap_simultaneous_provider_requests_at_max_in_flight() {
             let (base_url, stats) = spawn_fake_provider(Duration::from_millis(150)).await;
-            let extractor = extractor_for(base_url, Some(2));
+            let extractor = extractor_for(base_url, bound(2));
 
             extract_all(&extractor, 6).await;
 
@@ -398,10 +428,45 @@ Content:
             );
         }
 
+        /// A config that never names a concurrency policy must still be bounded.
+        ///
+        /// `..Default::default()` is the idiomatic way to build a config when the
+        /// caller only cares about one field. If that path yields an unbounded
+        /// extractor, the safe default is opt-in and a crawl's LLM fan-out can
+        /// burst past the provider's per-key allowance without anyone choosing
+        /// that. ~keep
         #[tokio::test]
-        async fn should_leave_provider_requests_unbounded_when_max_in_flight_is_none() {
+        async fn should_bound_the_provider_when_the_config_names_no_concurrency_policy() {
             let (base_url, stats) = spawn_fake_provider(Duration::from_millis(250)).await;
-            let extractor = extractor_for(base_url, None);
+            let extractor = LlmExtractor::with_config(
+                "test-key",
+                LlmExtractorConfig {
+                    model: "gpt-4o-mini".to_owned(),
+                    base_url: Some(base_url),
+                    ..Default::default()
+                },
+            )
+            .expect("extractor should build");
+
+            let pages = DEFAULT_MAX_IN_FLIGHT.get() + 4;
+            extract_all(&extractor, pages).await;
+
+            assert_eq!(
+                stats.total.load(Ordering::SeqCst),
+                pages,
+                "every page should reach the provider"
+            );
+            assert_eq!(
+                stats.peak.load(Ordering::SeqCst),
+                DEFAULT_MAX_IN_FLIGHT.get(),
+                "a config that named no bound left the provider unbounded",
+            );
+        }
+
+        #[tokio::test]
+        async fn should_leave_provider_requests_unbounded_when_the_bound_is_explicitly_unlimited() {
+            let (base_url, stats) = spawn_fake_provider(Duration::from_millis(250)).await;
+            let extractor = extractor_for(base_url, InFlightBound::Unlimited);
 
             extract_all(&extractor, 6).await;
 
@@ -409,7 +474,7 @@ Content:
             assert_eq!(
                 stats.peak.load(Ordering::SeqCst),
                 6,
-                "a `None` bound must not serialise provider requests",
+                "an explicitly unlimited bound must not serialise provider requests",
             );
         }
 
@@ -420,7 +485,7 @@ Content:
                 LlmExtractor::with_config(
                     "test-key",
                     LlmExtractorConfig {
-                        max_in_flight: Some(1),
+                        max_in_flight: bound(1),
                         response_cache: Some(LlmResponseCacheConfig::default()),
                         base_url: Some(base_url),
                         ..LlmExtractorConfig::new("gpt-4o-mini")
@@ -493,26 +558,16 @@ Content:
         }
 
         #[test]
-        fn should_reject_a_zero_max_in_flight_as_invalid_config() {
-            let result = LlmExtractor::with_config(
-                "test-key",
-                LlmExtractorConfig {
-                    max_in_flight: Some(0),
-                    ..LlmExtractorConfig::new("gpt-4o-mini")
-                },
+        fn should_default_the_bound_to_a_limit_rather_than_unlimited() {
+            assert_eq!(
+                LlmExtractorConfig::default().max_in_flight,
+                InFlightBound::Limited(DEFAULT_MAX_IN_FLIGHT),
+                "the default bound must be a limit, not `Unlimited`",
             );
-
-            let error = match result {
-                Ok(_) => panic!("a zero bound must be rejected"),
-                Err(error) => error,
-            };
-            assert!(
-                matches!(error, CrawlError::InvalidConfig { .. }),
-                "unexpected error: {error:?}"
-            );
-            assert!(
-                error.to_string().contains("max_in_flight"),
-                "unexpected message: {error}"
+            assert_eq!(
+                LlmExtractorConfig::new("gpt-4o-mini").max_in_flight,
+                InFlightBound::Limited(DEFAULT_MAX_IN_FLIGHT),
+                "`new` and `default` must agree on the bound",
             );
         }
 
