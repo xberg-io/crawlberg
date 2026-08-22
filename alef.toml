@@ -63,6 +63,19 @@ template_dir = "templates/docs/skills"
 outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"]
 
 [workspace.docs.snippets]
+# ~keep Deliberately still the flat, hand-written tree, NOT `docs-site/src/snippets/generated`
+# ~keep like tslp/h2m. `[crates.e2e.snippets]` below is wired and proven correct (verified via an
+# ~keep isolated probe against `engine/engine_scrape_basic.json` with `preserve_input_urls` +
+# ~keep `$mock_url`), but `alef e2e generate` cannot write ANY snippet today: 263 of 264
+# ~keep `docs`-tagged fixtures leak `MOCK_SERVER_URL` scaffolding into their would-be snippet body
+# ~keep (alef's mock-harness guard, `src/e2e/snippets/mod.rs::reject_mock_harness_scaffolding`),
+# ~keep and that guard's rejection aborts the whole batch before anything is written — none of
+# ~keep tslp/h2m's fixtures need `preserve_input_urls` because their fixtures aren't URL-driven,
+# ~keep but nearly every crawlberg call takes a URL. Repointing `dirs` here before `generated/`
+# ~keep has real content would silently drop snippet-check coverage of these 14 files to zero
+# ~keep (`alef snippets list --snippets docs-site/src/snippets/generated` reports "0 snippets",
+# ~keep exit 0 -- not an error, just silently nothing). Re-add the repoint only once
+# ~keep `alef e2e generate` actually produces files under `generated/`.
 dirs = ["docs-site/src/snippets"]
 validation_level = "compile"
 timeout_secs = 300
@@ -924,6 +937,26 @@ result_fields = [
   "downloaded_document",
   "browser",
   "final_url",
+]
+
+[crates.e2e.snippets]
+output = "docs-site/src/snippets/generated"
+languages = [
+  "python",
+  "node",
+  "ruby",
+  "php",
+  "c",
+  "go",
+  "java",
+  "csharp",
+  "elixir",
+  "wasm",
+  "rust",
+  "kotlin_android",
+  "swift",
+  "dart",
+  "zig",
 ]
 
 [crates.e2e.env]

@@ -4,6 +4,20 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Added `[crates.e2e.snippets]` (`output = "docs-site/src/snippets/generated"`) to `alef.toml`,
+  matching the config shape tree-sitter-language-pack and html-to-markdown use for the alef
+  doc-snippet migration. `[workspace.docs.snippets].dirs` still points at the flat, hand-written
+  `docs-site/src/snippets` tree, deliberately not yet repointed at `generated/`: `alef e2e generate`
+  cannot write any snippet today because 263 of 264 `docs`-tagged fixtures leak `MOCK_SERVER_URL`
+  mock-harness scaffolding into their would-be snippet body and alef's mock-harness guard aborts
+  the whole batch before writing anything. Unlike tslp/h2m, nearly every crawlberg e2e call takes
+  a URL, so this needs `preserve_input_urls` + a `$mock_url` placeholder added across the fixture
+  set — verified correct in isolation against `fixtures/engine/engine_scrape_basic.json`, but not
+  applied repo-wide pending its own review. The 14 hand-written `getting-started/basic_usage.md`
+  snippets are unchanged.
+
 ## [1.3.3] - 2026-08-22
 
 ### Fixed
