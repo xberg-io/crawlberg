@@ -118,6 +118,12 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Bumped the declared `liter-llm` minimum from `1.17` to `1.18` (resolved: 1.18.0) now that the
+  in-flight limiter is used, and refreshed `html-to-markdown-rs` to 3.11.4 in the lockfile.
+  liter-llm 1.18.0 is a breaking change shipped as a minor — `EmbeddingProvider::embed` takes
+  `&EmbeddingInput` rather than `&str`, and `VectorMetadata` gained an `image_url` field — but
+  crawlberg references none of those three surfaces, so the upgrade is source-compatible here.
+
 - Added `[crates.e2e.snippets]` (`output = "docs-site/src/snippets/generated"`) to `alef.toml`,
   matching the config shape tree-sitter-language-pack and html-to-markdown use for the alef
   doc-snippet migration. `[workspace.docs.snippets].dirs` still points at the flat, hand-written

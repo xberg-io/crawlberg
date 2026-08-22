@@ -2693,9 +2693,9 @@ checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.11.2"
+version = "3.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "718ba0514ab76ad0caccf199863df9fb94ed0b7196ae39505900826d4f7441ab"
+checksum = "6331a4c21bc99309e5863092660c08505c426eb1158e0472013487ecff85412b"
 dependencies = [
  "ahash 0.8.12",
  "astral-tl",
@@ -3395,9 +3395,9 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "liter-llm"
-version = "1.17.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85274631cadee9c5dbd8ea87254492c4e488d2e478f2f44872a90c28e6acf152"
+checksum = "de5d980b9ebe69c204ce3dfcd1fb5f01cf374d6ecd99f04f791b98faec0a1b27"
 dependencies = [
  "ahash 0.8.12",
  "arc-swap",
@@ -3406,10 +3406,12 @@ dependencies = [
  "bytes",
  "dashmap 6.2.1",
  "futures-core",
+ "futures-util",
  "gcp_auth",
  "memchr",
  "opentelemetry",
  "pin-project-lite",
+ "rand 0.10.2",
  "regex",
  "reqwest",
  "rust_decimal",
@@ -3421,6 +3423,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 1.1.4+spec-1.1.0",
+ "tower",
+ "tower-http 0.7.0",
  "tracing",
  "tracing-opentelemetry",
  "url",
@@ -6376,9 +6380,11 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
+ "url",
  "uuid",
 ]
 
