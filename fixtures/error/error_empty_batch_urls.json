@@ -14,7 +14,7 @@
 	"assertions": [
 		{
 			"type": "error",
-			"value": "urls"
+			"value": "not_found"
 		}
 	]
 }

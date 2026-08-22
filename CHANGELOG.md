@@ -6,6 +6,23 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Two more e2e assertions matched a substring of their own request URL.** Same defect class as
+  `error_unsupported_scheme`: every classified network error embeds the URL, and the URL embeds the
+  fixture id, so an assertion whose expected substring also occurs in the id passes on the address
+  rather than the behaviour. `error_data_loss_truncated` asserted `data_loss` while actually
+  returning `connection: [network:connection] ... /fixtures/error_data_loss_truncated` — its mock
+  route declares a `content-length` its body does not satisfy, which panics hyper 1.9.0 in the
+  generated mock server, and the test passed 5/5 anyway. It now asserts `data_loss:`, a prefix no
+  URL path segment can carry. `error_empty_batch_urls` asserted `urls`, which its own id supplies;
+  the fixture was long ago repurposed to a 404 case (`mock_responses` is empty and the description
+  says so), so it now asserts `not_found`, matching what it actually exercises.
+
+  `error_data_loss_truncated` is consequently red, and stays red: like its sibling
+  `error_partial_response` it needs a mock server that can emit an unknown-length or truncated
+  body, and both alef-generated harnesses build every response as a known-length `Body::from`.
+  A red test that names a real gap is the correct state; loosening the assertion would only
+  restore the false pass.
+
 - **`CrawlError::DataLoss` was unreachable for the case it names, and network classification
   keyed off the request URL.** `classify_reqwest_error` only reached its data-loss branch under
   `NetworkErrorKind::Other`, but hyper renders a truncated body's `IncompleteMessage` as

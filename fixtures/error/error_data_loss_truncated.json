@@ -13,7 +13,7 @@
 		},
 		{
 			"type": "error",
-			"value": "data_loss"
+			"value": "data_loss:"
 		}
 	],
 	"mock_response": {
