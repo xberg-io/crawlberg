@@ -515,23 +515,44 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
         NetworkErrorKind::Timeout => CrawlError::timeout_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Dns => CrawlError::dns_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
-        NetworkErrorKind::Proxy | NetworkErrorKind::Connection => {
-            CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e)
+        NetworkErrorKind::Proxy => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Connection | NetworkErrorKind::Other if is_body_data_loss(&e, &chain) => {
+            CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
         }
-        NetworkErrorKind::Other => {
-            if e.is_body()
-                || chain.contains("content-length")
-                || chain.contains("truncate")
-                || chain.contains("incomplete")
-                || chain.contains("decoding response body")
-                || chain.contains("error decoding")
-            {
-                CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
-            } else {
-                CrawlError::other_with_source(format!("other: {e}"), e)
-            }
-        }
+        NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Other => CrawlError::other_with_source(format!("other: {e}"), e),
     }
+}
+
+/// The error chain with the request URL removed, for keyword matching.
+///
+/// ~keep `reqwest::Error`'s own `Display` embeds the request URL, so the raw chain matches
+/// keywords that came from the path being fetched rather than from the failure. Scraping
+/// `/blog/dns-explained` must not classify as a DNS error.
+fn chain_without_request_url(e: &reqwest::Error, chain: &str) -> String {
+    match e.url() {
+        Some(url) => chain.replace(&url.to_string().to_lowercase(), ""),
+        None => chain.to_string(),
+    }
+}
+
+/// Whether a reqwest error describes a body that arrived truncated or undecodable.
+///
+/// ~keep hyper renders the underlying `IncompleteMessage` as "connection closed before
+/// message completed", so the generic `contains("connection")` arm of `network_error_kind`
+/// claims every truncated-body error first. Checking this predicate for `Connection` as well
+/// as `Other` is what keeps `CrawlError::DataLoss` reachable for the case it exists to name.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_body_data_loss(e: &reqwest::Error, chain: &str) -> bool {
+    if e.is_body() {
+        return true;
+    }
+    let chain = chain_without_request_url(e, chain);
+    chain.contains("content-length")
+        || chain.contains("truncate")
+        || chain.contains("incomplete")
+        || chain.contains("decoding response body")
+        || chain.contains("error decoding")
 }
 
 /// Classify a `reqwest::Error` into the appropriate `CrawlError` variant (wasm fallback).
@@ -548,17 +569,24 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
         NetworkErrorKind::Timeout => CrawlError::timeout_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Dns => CrawlError::dns_with_source(format!("[network:{tag}] {e}"), e),
         NetworkErrorKind::Ssl => CrawlError::ssl_with_source(format!("[network:{tag}] {e}"), e),
-        NetworkErrorKind::Proxy | NetworkErrorKind::Connection => {
-            CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e)
+        NetworkErrorKind::Proxy => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Connection | NetworkErrorKind::Other if is_body_data_loss(&e, &chain) => {
+            CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
         }
-        NetworkErrorKind::Other => {
-            if chain.contains("content-length") || chain.contains("truncate") || chain.contains("incomplete") {
-                CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
-            } else {
-                CrawlError::other_with_source(format!("other: {e}"), e)
-            }
-        }
+        NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
+        NetworkErrorKind::Other => CrawlError::other_with_source(format!("other: {e}"), e),
     }
+}
+
+/// Whether a reqwest error describes a body that arrived truncated or undecodable (wasm).
+///
+/// ~keep wasm32 reqwest exposes no `is_body()`, so this relies on the source chain alone.
+/// The `Connection` arm is checked for the same reason as the native build: the truncated
+/// body surfaces as a closed connection and would otherwise never reach `DataLoss`.
+#[cfg(target_arch = "wasm32")]
+fn is_body_data_loss(e: &reqwest::Error, chain: &str) -> bool {
+    let chain = chain_without_request_url(e, chain);
+    chain.contains("content-length") || chain.contains("truncate") || chain.contains("incomplete")
 }
 
 #[cfg(test)]
@@ -767,6 +795,69 @@ mod tests {
             assert!(
                 msg.contains("connection") || msg.contains("proxy"),
                 "expected 'connection' or 'proxy' in '{msg}'"
+            );
+        }
+
+        /// A body truncated relative to its declared `content-length` must classify as
+        /// `DataLoss`, and the rendered message must carry the `data_loss:` prefix.
+        ///
+        /// ~keep This is the assertion string the `error_data_loss_truncated` e2e fixture
+        /// checks for. The fixture's own id contains the bare substring `data_loss`, and the
+        /// classified message embeds the request URL, so `contains("data_loss")` matched the
+        /// URL rather than the classification. `data_loss:` cannot occur in a URL path
+        /// segment, which is why the fixture asserts the prefix and why this test pins it.
+        #[tokio::test]
+        async fn truncated_body_produces_data_loss_prefix() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind failed");
+            let addr = listener.local_addr().expect("addr");
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let mut discard = [0_u8; 1024];
+                    let _ = socket.read(&mut discard).await;
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: 500000\r\n\r\n<html><body>Incomplete content",
+                        )
+                        .await;
+                    let _ = socket.flush().await;
+                }
+            });
+
+            let url = format!("http://{addr}/");
+            assert!(
+                !url.contains("data_loss"),
+                "the probe URL must not contain the asserted substring, got '{url}'"
+            );
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("client build must not fail");
+            let response = client.get(&url).send().await.expect("response headers must arrive");
+            let raw_err = response.text().await.expect_err("truncated body read must fail");
+            let msg = classify_reqwest_error(raw_err).to_string();
+
+            assert!(msg.contains("data_loss:"), "expected 'data_loss:' in '{msg}'");
+        }
+
+        /// A request path that happens to spell a classification keyword must not decide the
+        /// classification.
+        ///
+        /// ~keep `reqwest::Error`'s `Display` embeds the request URL, so the keyword scan ran
+        /// over the path being fetched. This URL is a plain connection refusal; only its path
+        /// says "truncated".
+        #[tokio::test]
+        async fn a_url_spelling_truncated_is_not_a_data_loss() {
+            let err = scrape_url("http://127.0.0.1:1/fixtures/error_data_loss_truncated").await;
+            let msg = err.to_string();
+            assert!(
+                !msg.starts_with("data_loss:"),
+                "a refused connection must not classify as data loss, got '{msg}'"
+            );
+            assert!(
+                msg.contains("[network:connection]"),
+                "expected [network:connection] in '{msg}'"
             );
         }
     }

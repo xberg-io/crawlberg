@@ -6,6 +6,20 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **`CrawlError::DataLoss` was unreachable for the case it names, and network classification
+  keyed off the request URL.** `classify_reqwest_error` only reached its data-loss branch under
+  `NetworkErrorKind::Other`, but hyper renders a truncated body's `IncompleteMessage` as
+  "connection closed before message completed", so `network_error_kind`'s generic
+  `contains("connection")` arm claimed every truncated body first — a response cut short against
+  its declared `content-length` came back as a plain connection failure. Worse, the string those
+  heuristics scan is built from `reqwest::Error`'s `Display`, which embeds the request URL, so a
+  path such as `/blog/dns-explained` or `/fixtures/error_data_loss_truncated` decided its own
+  classification. The data-loss predicate now runs for `Connection` as well as `Other`, and it
+  matches against the chain with the request URL removed. Covered by
+  `truncated_body_produces_data_loss_prefix` (a raw socket that under-delivers its
+  `content-length`) and `a_url_spelling_truncated_is_not_a_data_loss` (a refused connection whose
+  path spells the keyword).
+
 - **The PHP e2e format hook pointed at a php-cs-fixer that no checkout has.**
   `[crates.e2e.format].php` invoked `../../vendor/bin/php-cs-fixer`, but `vendor/` is gitignored and
   the repo-root `composer.json` never declared `friendsofphp/php-cs-fixer` — only the lock file did.
