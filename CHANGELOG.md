@@ -34,6 +34,21 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The coding-agent plugin version gate never ran on the commits that cause drift.**
+  `plugin/` sat at 1.3.1 while core shipped 1.3.2 and 1.3.3, so every runtime bundle —
+  OpenCode, Hermes, Claude Code, Cursor, Codex, Gemini, Kimi, Factory — declared a version
+  two releases stale. The checker for this already existed
+  (`scripts/sync_plugin_version.py --check`, run by `CI Plugin`), but `ci-plugin.yaml`'s
+  `paths:` filter did not list `Cargo.toml`. A release commit bumps `Cargo.toml` and nothing
+  under `plugin/`, so the workflow was never triggered and the gate reported nothing rather
+  than failing — `CI Plugin` last ran on the 1.3.1 release. `Cargo.toml` and
+  `.task/tools/version-sync.yml` are now in the filter, so any core bump re-runs the gate.
+  `sync_plugin_version.py` also grew `--expect <version>`, which asserts that core *and* the
+  plugin both equal the version being released; `publish.yaml`'s `validate-versions` job runs
+  it against the tag, so a drifted plugin now fails the release instead of publishing a bundle
+  that lags the version it claims to be. The 13 stale version declarations are re-synced to
+  1.3.3.
+
 - **Two e2e assertions were tautologies rather than URL leaks, and tested nothing.**
   `links_protocol_relative` exists to prove that `<a href="//cdn.example.com/resource">` inherits
   the page's scheme, but asserted only that some link URL contains `//` — true of every absolute
