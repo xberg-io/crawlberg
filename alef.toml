@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.66.0"
+alef_version = "0.67.1"
 languages = [
   "python",
   "node",
@@ -63,51 +63,48 @@ template_dir = "templates/docs/skills"
 outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"]
 
 [workspace.docs.snippets]
-# ~keep Deliberately still the flat, hand-written tree, NOT `docs-site/src/snippets/generated`
-# ~keep like tslp/h2m. `[crates.e2e.snippets]` below is wired and proven correct (verified via an
-# ~keep isolated probe against `engine/engine_scrape_basic.json` with `preserve_input_urls` +
-# ~keep `$mock_url`), but `alef e2e generate` still cannot write ANY snippet: as of alef 0.65.0
-# ~keep (which fixed #168, the C e2e engine-factory's `input.url`-only read) the rejection count
-# ~keep dropped from 263/264 to 11/264 -- all eleven are C-language, all batch/list-shaped
-# ~keep (`batch_crawl_*`, `batch_scrape_*`, `scrape_batch_*`, `engine_batch_basic`), and the guard
-# ~keep still aborts the whole batch on any single rejection. Two distinct alef gaps produce the
-# ~keep eleven, neither fixable from this repo:
-# ~keep 1. `batch_crawl_stream_events`/`batch_crawl_stream_partial_failure` route through
-# ~keep    `[crates.e2e.calls.batch_crawl_stream]`, whose `skip_languages` already lists `c` (the
-# ~keep    executable suite correctly never generates a C test for this call) -- but
-# ~keep    `src/e2e/snippets/mod.rs` never consults `call.skip_languages`, only `fixture.skip`, so
-# ~keep    the docs-snippet path still attempts a C render for a call C cannot represent.
-# ~keep 2. The other nine route through `batch_crawl`/`batch_scrape`, which properly declare a
-# ~keep    `mock_url_list` arg on field `batch_urls` and are NOT c-skipped. Per
-# ~keep    `src/e2e/snippets/mock_url_defaults.rs`'s own doc comment this should auto-inject a
-# ~keep    `https://example.com/...` literal and `preserve_input_urls` with zero fixture edits --
-# ~keep    and `src/e2e/codegen/c/call_patterns/batch_url_regression_tests.rs` unit-tests exactly
-# ~keep    this shape passing -- yet real generation still falls back to raw `MOCK_SERVER_URL`
-# ~keep    scaffolding for all nine. Forcing `preserve_input_urls: true` directly onto the raw
-# ~keep    fixtures (bypassing the auto-injection question) did NOT clear the rejection either,
-# ~keep    and independently broke the EXECUTABLE suite for every non-C language (bare
-# ~keep    `batch_urls` paths like `/seed1` stopped resolving against the live mock server and
-# ~keep    were passed to the network call literally) -- reverted. `call_patterns.rs`'s own
-# ~keep    comment says this emitter "has no ArgMapping" and reads `input.url`/`input.urls`
-# ~keep    by convention rather than through the args config the injection module targets; the
-# ~keep    exact divergence between the passing unit test and the failing real pipeline was not
-# ~keep    isolated without alef-side debug instrumentation. Reported upstream 2026-08-22.
-# ~keep UPDATE 2026-08-23: alef 0.66.0 (fix(e2e/c): resolve batch/list URLs for the
-# ~keep engine-factory pattern, commit 0b44c4fa5) fixed both gaps above -- `alef e2e generate`
-# ~keep rejection count is now 1/264, not 11/264. The ten cleared were exactly the ten with a
-# ~keep non-empty `batch_urls`/`batch_crawl_stream` shape. The survivor,
-# ~keep `batch_scrape_empty_urls_error`, is a third, distinct gap: its fixture sets
-# ~keep `batch_urls: []` deliberately (it asserts the empty-array error path), so
-# ~keep `mock_url_defaults.rs` has no URL to auto-inject and the C emitter still falls back to
-# ~keep raw `MOCK_SERVER_URL`. Not fixable by feeding it a URL without breaking the fixture's own
-# ~keep assertion. Still open upstream.
-# ~keep None of tslp/h2m's fixtures need `preserve_input_urls` because their fixtures aren't
-# ~keep URL-driven, but nearly every crawlberg call takes a URL. Repointing `dirs` here before
-# ~keep `generated/` has real content would silently drop snippet-check coverage of these 14
-# ~keep files to zero (`alef snippets list --snippets docs-site/src/snippets/generated` reports
-# ~keep "0 snippets", exit 0 -- not an error, just silently nothing). Re-add the repoint only
-# ~keep once `alef e2e generate` actually produces files under `generated/`.
+# ~keep `dirs` is the PARENT of `generated/`, so the alef-written tree under
+# ~keep `docs-site/src/snippets/generated/` is ALREADY in scope here -- there is no separate
+# ~keep "repoint at generated/" step to perform, and doing so would drop the 14 hand-authored
+# ~keep `<lang>/getting-started/basic_usage.md` files (the only snippets `docs-site` actually
+# ~keep imports, and the source of 14 package READMEs via `[crates.readme] snippets_dir`).
+# ~keep History: `alef e2e generate` could write NO snippet at all until 0.67.0. 0.65.0 fixed #168
+# ~keep and took the rejection count 263/264 -> 11/264; 0.66.0 fixed the batch/list URL resolution
+# ~keep and took it 11 -> 1; 0.67.0 fixed #185 (the engine-factory collapsed a preserved URL list
+# ~keep via `.and_then(|urls| urls.into_iter().next())`, making "declared empty on purpose"
+# ~keep indistinguishable from "unset", so `batch_scrape_empty_urls_error` fell through to the
+# ~keep mock-server branch) and took it 1 -> 0. That single rejection aborted the whole batch, so
+# ~keep it was not merely one missing snippet: `alef e2e generate` EXITED 1 having written
+# ~keep "Generated 0 e2e files", which failed the `Check e2e/<lang> freshness` gate in 12 of 13
+# ~keep CI E2E jobs and the `alef verify --exit-code` step in CI Rust. All of that is fixed by the
+# ~keep 0.67.1 pin; the committed `e2e/` output is byte-identical before and after, because the
+# ~keep files were always correct -- only the exit code was wrong.
+# ~keep `generated/` must stay committed: `alef verify --exit-code` reads
+# ~keep `generated/.alef-snippet-coverage.json` and fails the whole command if it is absent.
 dirs = ["docs-site/src/snippets"]
+# ~keep 26 of the 3,895 generated snippets do not compile, and `alef snippets check` fails on
+# ~keep them. Each is an alef CODEGEN defect, not a crawlberg config gap, and NONE is suppressible
+# ~keep from here: `[workspace.docs.snippets] exclude` is read only by the audit and gap passes
+# ~keep (`src/snippets/audit.rs`, `src/snippets/gaps.rs`), never by validation, and the only other
+# ~keep lever -- a `snippet:syntax-only` annotation -- cannot be applied to a file alef overwrites
+# ~keep on every generate. So this list is documentation, not configuration; the CI `Alef snippets`
+# ~keep job stays red until these land upstream. Reported upstream 2026-08-23 against alef 0.67.1:
+# ~keep 1. dart/interaction/ (12) -- the snippet emitter calls `_parsePageAction(...)`, a private
+# ~keep    helper that exists only in the generated e2e harness. A snippet is a standalone
+# ~keep    program, so the helper is never emitted: "Error: Method not found: '_parsePageAction'".
+# ~keep 2. csharp/stream/ (8) + csharp/engine/engine-stream-basic.md (1) -- stream calls are
+# ~keep    emitted passing a bare `string` / `List<string>` where the C# binding takes a
+# ~keep    `CrawlStreamRequest` / `BatchCrawlStreamRequest` wrapper: "CS1503: Argument 2: cannot
+# ~keep    convert from 'string' to 'Crawlberg.CrawlStreamRequest'". These are the same fixtures
+# ~keep    alef already warns it "rendered no runnable expectation" for, so the executable e2e
+# ~keep    suite does not cover them either -- one root cause, two silent surfaces.
+# ~keep 3. {typescript,wasm}/batch/batch-scrape-empty-urls-error.md (2) -- an empty list is
+# ~keep    emitted as `const urls = [];` with no type annotation, which is TS7034/TS7005 under
+# ~keep    `noImplicitAny`. Needs `const urls: string[] = []`. Same empty-array blind spot as
+# ~keep    #185, in the TS emitter rather than the C one.
+# ~keep 4. wasm/validation/validation-ssrf-*.md (3) -- the nested-struct initializer IIFE
+# ~keep    references `WasmSsrfPolicy.default()` but the import collector never adds
+# ~keep    `WasmSsrfPolicy` to the import list: "TS2304: Cannot find name 'WasmSsrfPolicy'".
 validation_level = "compile"
 timeout_secs = 300
 # ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 7 of 14 languages are
