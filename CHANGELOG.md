@@ -34,6 +34,25 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The Ruby gem published on a failed build and bypassed version validation.** `publish-rubygems`
+  accepted `needs.ruby-gem.result == 'failure'` and carried `!cancelled()`, so a release in which
+  the gem build failed still ran the publish step against whatever artifacts happened to exist.
+  Only the `linux` matrix leg keeps the source gem -- the other three legs delete it -- and that
+  source gem is the only artifact crawlberg has ever shipped: all 23 versions on RubyGems are
+  platform `ruby`, with no per-platform gem in the registry's history. So the accepted `failure`
+  never preserved a partial-platform publish; it only allowed a release with no source gem at all.
+  The disjunction was not a deliberate choice either -- it entered in a bulk regeneration commit,
+  replacing an explicit `== 'success'`. The job now requires `ruby-gem` to succeed. Separately, it
+  was reached without `validate-versions` in `needs:` at all. The other publish jobs that omit it
+  still inherit the gate, either through a `needs` chain carrying no skip override (`publish-pypi`,
+  `publish-packagist`) or through an explicit success check on a job that does carry it
+  (`publish-hex`, `publish-homebrew-bottles`); the `!cancelled()` here removed both routes, so the
+  version gate could not block a Ruby publish. `validate-versions` is now a dependency and its
+  success is required. Dropping `!cancelled()` also restores the default dependency skip, so a
+  failed `check-rubygems` no longer lets the publish proceed on an unanswered
+  already-published check. The gate now matches `publish-node`, `publish-maven`, and
+  `publish-nuget` exactly.
+
 - **Entity-escaped sitemap URLs were truncated to the text after the last entity.** quick-xml
   reports an entity reference as its own `Event::GeneralRef` and splits the element's character
   data around it, so `<loc>https://example.com/s1.xml?a=1&amp;b=2</loc>` arrived as three events.
