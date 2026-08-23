@@ -87,16 +87,8 @@ jobs:
       # ~keep crawlberg-node and crawlberg-wasm are not excluded: napi-build's setup()
       # only reads cargo-set env vars (no `node` binary needed) and crawlberg-wasm has no
       # build.rs at all, so both lint cleanly on every runner without extra setup.
-      # ~keep -A clippy::collapsible_if: the build.rs alef 0.67.1 generates for crawlberg-ffi
-      # nests `if let Err(error) = fs::remove_file(&backup)` inside `if had_destination`
-      # (crates/crawlberg-ffi/build.rs:197); clippy wants the edition-2024 let-chain and
-      # `-D warnings` makes it a hard error. `--exclude crawlberg-ffi` does NOT cover it --
-      # the excluded package's build script is still compiled, so the lint fires anyway.
-      # The file carries an `alef:hash` and `alef verify` rejects hand edits, so it can only be
-      # suppressed here. `.task/languages/rust.yml` carries the same flag for `task
-      # rust:lint:check`. Drop both once alef emits the collapsed form. Reported 2026-08-23.
       - name: Run clippy
-        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --all-features -- -D warnings -A clippy::collapsible_if
+        run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --all-features -- -D warnings
         shell: bash
 
       # ~keep macOS runners ship Chrome preinstalled (see actions/runner-images macos

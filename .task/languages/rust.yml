@@ -186,15 +186,9 @@ tasks:
       - task: deps:check
       - cargo fmt --all -- --check
       # -A clippy::inherent_to_string: alef-generated swift-bridge crate emits inherent
-      # ~keep -A clippy::collapsible_if: the build.rs alef 0.67.1 generates for crawlberg-ffi
-      # nests `if let Err(error) = fs::remove_file(&backup)` inside `if had_destination`
-      # (crates/crawlberg-ffi/build.rs:197). clippy wants the edition-2024 let-chain, and
-      # `-D warnings` makes that a hard error, so `cargo clippy` fails on a file this repo
-      # cannot edit: it carries an `alef:hash` and `alef verify` rejects any hand edit.
-      # Drop this once alef emits the collapsed form. Reported upstream 2026-08-23.
       # ~keep php stays excluded: ext-php-rs's build script shells out to a `php` binary,
       # which is not guaranteed to be present on every local machine (CI installs it).
-      - cargo clippy --workspace --exclude crawlberg-php -- -D warnings -A clippy::inherent_to_string -A clippy::collapsible_if
+      - cargo clippy --workspace --exclude crawlberg-php -- -D warnings -A clippy::inherent_to_string
       - task: fuzz:check
       - task: config:check
 
