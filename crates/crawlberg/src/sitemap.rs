@@ -50,21 +50,21 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
-                b"url" => {
+                "url" => {
                     in_url = true;
                     current_loc.clear();
                     current_lastmod = None;
                     current_changefreq = None;
                     current_priority = None;
                 }
-                b"loc" if in_url => in_loc = true,
-                b"lastmod" if in_url => in_lastmod = true,
-                b"changefreq" if in_url => in_changefreq = true,
-                b"priority" if in_url => in_priority = true,
+                "loc" if in_url => in_loc = true,
+                "lastmod" if in_url => in_lastmod = true,
+                "changefreq" if in_url => in_changefreq = true,
+                "priority" if in_url => in_priority = true,
                 _ => {}
             },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
-                b"url" => {
+                "url" => {
                     if in_url && !current_loc.is_empty() {
                         urls.push(SitemapUrl {
                             url: current_loc.clone(),
@@ -75,24 +75,22 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
                     }
                     in_url = false;
                 }
-                b"loc" => in_loc = false,
-                b"lastmod" => in_lastmod = false,
-                b"changefreq" => in_changefreq = false,
-                b"priority" => in_priority = false,
+                "loc" => in_loc = false,
+                "lastmod" => in_lastmod = false,
+                "changefreq" => in_changefreq = false,
+                "priority" => in_priority = false,
                 _ => {}
             },
             Ok(Event::Text(ref e)) => {
-                if let Ok(text) = e.xml_content(XmlVersion::default()) {
-                    let text = text.trim().to_owned();
-                    if in_loc {
-                        current_loc = text;
-                    } else if in_lastmod {
-                        current_lastmod = Some(text);
-                    } else if in_changefreq {
-                        current_changefreq = Some(text);
-                    } else if in_priority {
-                        current_priority = Some(text);
-                    }
+                let text = e.xml_content(XmlVersion::default()).trim().to_owned();
+                if in_loc {
+                    current_loc = text;
+                } else if in_lastmod {
+                    current_lastmod = Some(text);
+                } else if in_changefreq {
+                    current_changefreq = Some(text);
+                } else if in_priority {
+                    current_priority = Some(text);
                 }
             }
             Ok(Event::Eof) => break,
@@ -117,27 +115,25 @@ pub fn parse_sitemap_index(body: &str) -> Vec<String> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => match e.name().as_ref() {
-                b"sitemap" => {
+                "sitemap" => {
                     in_sitemap = true;
                     current_loc.clear();
                 }
-                b"loc" if in_sitemap => in_loc = true,
+                "loc" if in_sitemap => in_loc = true,
                 _ => {}
             },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
-                b"sitemap" => {
+                "sitemap" => {
                     if in_sitemap && !current_loc.is_empty() {
                         child_urls.push(current_loc.clone());
                     }
                     in_sitemap = false;
                 }
-                b"loc" => in_loc = false,
+                "loc" => in_loc = false,
                 _ => {}
             },
-            Ok(Event::Text(ref e)) => {
-                if in_loc && let Ok(text) = e.xml_content(XmlVersion::default()) {
-                    current_loc = text.trim().to_owned();
-                }
+            Ok(Event::Text(ref e)) if in_loc => {
+                current_loc = e.xml_content(XmlVersion::default()).trim().to_owned();
             }
             Ok(Event::Eof) => break,
             Err(_) => break,

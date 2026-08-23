@@ -178,6 +178,14 @@ All notable changes to crawlberg are documented here.
 
 ### Changed
 
+- Upgraded workspace dependencies across semver-incompatible boundaries (`cargo upgrade
+  --incompatible`): `quick-xml` 0.41 -> 0.42 and `uuid` 1.24 -> 1.25. quick-xml 0.42 is a breaking
+  change — element names now read as `&str` instead of `&[u8]`, and `BytesText::xml_content` is
+  infallible rather than returning a `Result` — so `sitemap.rs` matches on string literals and
+  consumes the decoded text directly. The `flutter_rust_bridge` (`=2.12.0`) and renamed `getrandom`
+  (0.2/0.3) requirements were deliberately left behind; both are pinned on purpose, the latter to
+  force the JS backend features into the older getrandom lines pulled in transitively.
+
 - Bumped the declared `liter-llm` minimum from `1.17` to `1.18` (resolved: 1.18.0) now that the
   in-flight limiter is used, and refreshed `html-to-markdown-rs` to 3.11.4 in the lockfile.
   liter-llm 1.18.0 is a breaking change shipped as a minor — `EmbeddingProvider::embed` takes
