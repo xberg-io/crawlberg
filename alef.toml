@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.65.0"
+alef_version = "0.66.0"
 languages = [
   "python",
   "node",
@@ -92,6 +92,15 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep    by convention rather than through the args config the injection module targets; the
 # ~keep    exact divergence between the passing unit test and the failing real pipeline was not
 # ~keep    isolated without alef-side debug instrumentation. Reported upstream 2026-08-22.
+# ~keep UPDATE 2026-08-23: alef 0.66.0 (fix(e2e/c): resolve batch/list URLs for the
+# ~keep engine-factory pattern, commit 0b44c4fa5) fixed both gaps above -- `alef e2e generate`
+# ~keep rejection count is now 1/264, not 11/264. The ten cleared were exactly the ten with a
+# ~keep non-empty `batch_urls`/`batch_crawl_stream` shape. The survivor,
+# ~keep `batch_scrape_empty_urls_error`, is a third, distinct gap: its fixture sets
+# ~keep `batch_urls: []` deliberately (it asserts the empty-array error path), so
+# ~keep `mock_url_defaults.rs` has no URL to auto-inject and the C emitter still falls back to
+# ~keep raw `MOCK_SERVER_URL`. Not fixable by feeding it a URL without breaking the fixture's own
+# ~keep assertion. Still open upstream.
 # ~keep None of tslp/h2m's fixtures need `preserve_input_urls` because their fixtures aren't
 # ~keep URL-driven, but nearly every crawlberg call takes a URL. Repointing `dirs` here before
 # ~keep `generated/` has real content would silently drop snippet-check coverage of these 14
