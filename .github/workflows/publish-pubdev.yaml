@@ -23,7 +23,7 @@ jobs:
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
@@ -82,7 +82,7 @@ jobs:
               rid: windows-x64,
             }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
@@ -133,7 +133,7 @@ jobs:
     needs: [prepare, dart-natives]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0

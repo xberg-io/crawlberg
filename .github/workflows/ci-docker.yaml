@@ -24,7 +24,7 @@ jobs:
       matrix:
         variant: [full, cli]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Free disk space
         uses: xberg-io/actions/free-disk-space-linux@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141

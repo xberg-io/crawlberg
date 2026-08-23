@@ -17,7 +17,7 @@ jobs:
       matrix:
         target: [toml_loader, waf_classify]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - name: Set nightly as default toolchain
         run: rustup default nightly

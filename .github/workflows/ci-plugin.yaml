@@ -39,7 +39,7 @@ jobs:
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v7
       # Plugin version must track the core crate version (task version:sync keeps it pinned).
