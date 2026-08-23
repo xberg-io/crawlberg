@@ -34,6 +34,23 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The docs advertised musl artifacts that are not published.** The README claimed precompiled
+  binaries "across every binding" and linked a platform matrix that did not exist, and
+  `RELEASE.md` described the two Node musl packages as an OIDC misconfiguration with a
+  trusted-publisher fix. Neither held up against the registries: `@xberg-io/crawlberg-linux-x64-musl`
+  and `@xberg-io/crawlberg-linux-arm64-musl` are name-reservation placeholders at `0.0.1` and have
+  never carried a release, PyPI has no `musllinux` wheels, and the Go and PHP release assets are
+  glibc-only. The cause is not credentials — the `node-bindings` matrix in `publish.yaml` has no
+  musl target, so no artifact is built, and the publish step skips platform directories with no
+  binary rather than failing. Installation now carries a per-ecosystem musl support matrix stating
+  which bindings work on Alpine (CLI, Docker, Rust, Ruby, Java, C#, Elixir) and which do not (Node,
+  Python, Go, PHP), why the omission is deliberate, and the Alpine workarounds. It also records the
+  two silent failure modes: `npm install` on Alpine exits 0 while installing no native binary,
+  because npm skips the unresolvable optional dependency, and `pip` falls back to an sdist build.
+  `RELEASE.md` now documents the decision instead of a fix that would publish nothing, and the two
+  placeholder package READMEs say they are unpublished rather than describing a binary that does
+  not exist.
+
 - **The coding-agent plugin version gate never ran on the commits that cause drift.**
   `plugin/` sat at 1.3.1 while core shipped 1.3.2 and 1.3.3, so every runtime bundle —
   OpenCode, Hermes, Claude Code, Cursor, Codex, Gemini, Kimi, Factory — declared a version

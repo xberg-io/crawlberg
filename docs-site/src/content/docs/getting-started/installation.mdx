@@ -119,6 +119,10 @@ uv add crawlberg
 
 The package ships pre-built wheels with the Rust core compiled via [maturin](https://www.maturin.rs/). No Rust toolchain needed.
 
+:::caution[No musl wheels]
+Wheels are built for glibc Linux (`manylinux`), macOS, and Windows. There is no `musllinux` wheel, so on Alpine `pip` falls back to a source build. See [platform support](#platform-support).
+:::
+
 </TabItem>
 <TabItem label="TypeScript">
 
@@ -135,6 +139,10 @@ pnpm add @xberg-io/crawlberg
 ```
 
 The package includes pre-built native binaries via [NAPI-RS](https://napi.rs/) and ships with TypeScript type definitions (`.d.ts`).
+
+:::caution[Not available on Alpine]
+Native binaries are built for glibc Linux, macOS, and Windows — not musl. On Alpine the install still exits 0, because npm silently skips the musl optional dependency, but no native binary is installed and `require()` fails at runtime. See [platform support](#platform-support).
+:::
 
 </TabItem>
 <TabItem label="Ruby">
@@ -341,6 +349,50 @@ docker run --rm -v $(pwd)/output:/output \
   ghcr.io/xberg-io/crawlberg:latest \
   crawl https://example.com --depth 2 --warc-output /output/archive.warc
 ```
+
+---
+
+### Platform support
+
+Every binding ships prebuilt artifacts for glibc Linux (x86_64 and aarch64), macOS, and
+Windows. On **musl Linux — Alpine and anything else built on musl — coverage is deliberately
+partial**, and the table below is the authoritative statement of it.
+
+| Distribution                   | glibc Linux | musl Linux                     |
+| ------------------------------ | ----------- | ------------------------------ |
+| CLI (GitHub release, Homebrew) | ✅          | ✅ x86_64, aarch64             |
+| Docker (`ghcr.io/xberg-io/…`)  | ✅          | ✅ Alpine image, static binary |
+| Rust (crates.io)               | ✅          | ✅ builds from source          |
+| Ruby (RubyGems)                | ✅          | ✅ compiles at install         |
+| Java (Maven Central)           | ✅          | ✅ bundled in the jar          |
+| C# (NuGet)                     | ✅          | ✅ bundled in the package      |
+| Elixir (Hex)                   | ✅          | ✅ precompiled NIF             |
+| **Node (npm)**                 | ✅          | ❌ **not published**           |
+| **Python (PyPI)**              | ✅          | ❌ **not published**           |
+| **Go**                         | ✅          | ❌ **not published**           |
+| **PHP**                        | ✅          | ❌ **not published**           |
+
+#### Why musl is omitted for Node, Python, Go, and PHP
+
+These four bindings load a native library that must be built specifically for musl. Producing
+and testing that second Linux artifact doubles the release matrix for each of them, and the
+platforms where Alpine is actually used — containers and CI images — are already served by the
+statically linked CLI and the Alpine Docker image. So the omission is a deliberate scope
+decision, not an oversight or a broken build, and it is not scheduled to change. **If you need
+Crawlberg on Alpine, use the CLI or the Docker image, or run your application on a glibc base
+image** such as `node:22-bookworm-slim`, `python:3.13-slim`, or `debian:bookworm-slim`.
+
+Two consequences are worth knowing about, because neither announces itself:
+
+- **npm installs succeed on Alpine and then fail at runtime.** `@xberg-io/crawlberg` declares
+  `@xberg-io/crawlberg-linux-x64-musl` and `@xberg-io/crawlberg-linux-arm64-musl` as optional
+  dependencies. Those package names are registered but hold only a `0.0.1` placeholder, so npm
+  skips them without an error and installs no native binary at all. The failure surfaces later,
+  when `require()` cannot find a native module. Do not read a clean `npm install` on Alpine as
+  evidence that the package works there.
+- **pip finds no musl wheel and falls back to the sdist.** PyPI carries `manylinux` wheels
+  only, so `pip install crawlberg` on Alpine attempts a source build and needs a full Rust
+  toolchain to have any chance of succeeding.
 
 ---
 

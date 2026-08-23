@@ -36,7 +36,7 @@ Every part of the pipeline is a trait you can swap — the crawl frontier, rate 
 
 ### Supported Platforms
 
-Precompiled binaries for Linux (x86_64/aarch64), macOS (ARM64), and Windows (x64) across every binding. See the [platform support reference](https://docs.crawlberg.xberg.io) for the full matrix.
+Precompiled binaries for glibc Linux (x86_64/aarch64), macOS, and Windows across every binding. On musl Linux (Alpine) coverage is deliberately partial — the CLI, Docker image, Rust, Ruby, Java, C#, and Elixir work there; the Node, Python, Go, and PHP bindings do not ship musl artifacts. See the [platform support matrix](https://docs.crawlberg.xberg.io/getting-started/installation/#platform-support) for the full table and the Alpine workarounds.
 
 <p align="center"><strong>⭐ Star this repo to show your support — it helps others discover Crawlberg.</strong></p>
 

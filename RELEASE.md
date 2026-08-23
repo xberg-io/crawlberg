@@ -2,22 +2,39 @@
 
 ## Publishing (CI/CD)
 
-### Node Platform Packages OIDC Configuration
+### Node musl Platform Packages Are Intentionally Not Published
 
-The Node platform sub-package `@xberg-io/crawlberg-linux-x64-musl` requires manual OIDC trusted-publisher setup on npm.
+`@xberg-io/crawlberg-linux-x64-musl` and `@xberg-io/crawlberg-linux-arm64-musl` are **not
+published, by design**. Both names are registered on npm and hold a `0.0.1` placeholder whose
+description reads "Placeholder to reserve …". Neither has ever carried a real release.
 
-**Issue**: The package publishes `0.0.0-bootstrap` only because npm doesn't recognize the GitHub Actions workflow as a trusted publisher.
+This is not an OIDC or credentials problem. The `node-bindings` matrix in
+`.github/workflows/publish.yaml` builds six targets — `aarch64-apple-darwin`,
+`x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc` — and **no musl target**. Nothing is built,
+so nothing is published. The publish step skips platform directories that have no `.node`
+binary rather than failing (`fd712707e`), which is why the release stays green while two of the
+eight declared platform packages never ship.
 
-**Fix**: Go to <https://www.npmjs.com/package/@xberg-io/crawlberg-linux-x64-musl/access> → Settings → Trusted Publishers → **Add a new trusted publisher**:
+**Do not "fix" this by adding a trusted publisher.** Adding one publishes nothing, because
+there is no artifact. Reversing the decision means adding the two musl targets to the
+`node-bindings` matrix first.
 
-- Provider: GitHub
-- Repository: xberg-io/crawlberg
-- Workflow: .github/workflows/publish.yaml
-- Job: Publish Node packages
+**Two things stay stale as long as this holds**, and both are deliberate rather than pending
+work:
 
-All other 7 platform packages (`linux-x64-gnu`, `linux-arm64-gnu`, `linux-arm64-musl`, `darwin-arm64`, `darwin-x64`, `win32-x64`, `win32-arm64`) publish via OIDC without issue.
+- `crates/crawlberg-node/package.json` still lists both musl targets under `napi.targets` and
+  pins both as `optionalDependencies` at the current version. Those versions 404 on npm.
+  npm treats an unresolvable optional dependency as a skip, so `npm install` on Alpine exits 0
+  and installs no native binary; the failure surfaces at `require()` time. Verified with
+  `npm install @xberg-io/crawlberg@1.3.3 --os=linux --cpu=x64 --libc=musl`, which adds one
+  package (the glibc equivalent adds two).
+- `crates/crawlberg-node/npm/linux-{x64,arm64}-musl/` still exist as package directories.
 
-This is a one-time setup; npm will cache the trusted relationship per release workflow.
+The user-facing statement of all of this lives in the [platform support
+matrix](https://docs.crawlberg.xberg.io/getting-started/installation/#platform-support), which
+is the document to update if the decision changes. Python (no `musllinux` wheels), Go, and PHP
+omit musl on the same grounds.
 
 ### PHP Extension PIE Configuration
 
