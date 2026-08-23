@@ -82,13 +82,15 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep `generated/` must stay committed: `alef verify --exit-code` reads
 # ~keep `generated/.alef-snippet-coverage.json` and fails the whole command if it is absent.
 dirs = ["docs-site/src/snippets"]
-# ~keep 26 of the 3,895 generated snippets do not compile, and `alef snippets check` fails on
+# ~keep 38 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
 # ~keep them. Each is an alef CODEGEN defect, not a crawlberg config gap, and NONE is suppressible
 # ~keep from here: `[workspace.docs.snippets] exclude` is read only by the audit and gap passes
 # ~keep (`src/snippets/audit.rs`, `src/snippets/gaps.rs`), never by validation, and the only other
 # ~keep lever -- a `snippet:syntax-only` annotation -- cannot be applied to a file alef overwrites
 # ~keep on every generate. So this list is documentation, not configuration; the CI `Alef snippets`
-# ~keep job stays red until these land upstream. Reported upstream 2026-08-23 against alef 0.67.1:
+# ~keep job stays red until these land upstream. Clusters 1-4 were reported upstream
+# ~keep 2026-08-23 against alef 0.67.1 and are UNCHANGED under the 0.67.2 pin; cluster 5 is a
+# ~keep 0.67.2 REGRESSION, measured locally 2026-08-23 with `alef snippets check --lang ...`:
 # ~keep 1. dart/interaction/ (12) -- the snippet emitter calls `_parsePageAction(...)`, a private
 # ~keep    helper that exists only in the generated e2e harness. A snippet is a standalone
 # ~keep    program, so the helper is never emitted: "Error: Method not found: '_parsePageAction'".
@@ -105,6 +107,22 @@ dirs = ["docs-site/src/snippets"]
 # ~keep 4. wasm/validation/validation-ssrf-*.md (3) -- the nested-struct initializer IIFE
 # ~keep    references `WasmSsrfPolicy.default()` but the import collector never adds
 # ~keep    `WasmSsrfPolicy` to the import list: "TS2304: Cannot find name 'WasmSsrfPolicy'".
+# ~keep 5. NEW IN 0.67.2 (12) -- dart/stream/ (8), dart/engine/engine-stream-basic.md (1),
+# ~keep    {dart,csharp}/rate-limit/rate-limit-basic-delay.md (2), and
+# ~keep    csharp/metadata/metadata-headings.md (1). 0.67.2 replaced the placeholder
+# ~keep    `writeln(result)` / `WriteLine(result)` tail with rendered assertion expressions,
+# ~keep    and that rendering is wrong in two ways. (a) A fixture's assertion NAMESPACE is
+# ~keep    emitted as a member path on the result object, but no such member exists:
+# ~keep    `result.rateLimit.minDurationMs` / `result.RateLimit.MinDurationMs` against a
+# ~keep    `CrawlResult` that carries no rate-limit member, and `result.stream.eventCountMin`
+# ~keep    against the `List` returned by `.toList()` ("The getter 'stream' isn't defined for
+# ~keep    the type 'List'"). (b) C# nullable access is guarded inconsistently inside a single
+# ~keep    snippet -- `result.Metadata.Headings[0].Level` unguarded beside
+# ~keep    `result.Metadata.Headings!.Count` -- tripping CS8602.
+# ~keep    Only statically typed targets surface this: python/php/ruby/elixir pass 1045/1045,
+# ~keep    because a bogus member access is not a compile error there. 38 is a FLOOR, not a
+# ~keep    total: rust, c, java, kotlin, go, swift and zig report every snippet `unavailable`
+# ~keep    locally (their packages are unbuilt), so CI may find the same shape in them too.
 validation_level = "compile"
 timeout_secs = 300
 # ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 7 of 14 languages are
