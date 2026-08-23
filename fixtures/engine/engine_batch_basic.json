@@ -38,12 +38,12 @@
 	"assertions": [
 		{
 			"type": "equals",
-			"field": "batch.completed_count",
+			"field": "completed_count",
 			"value": 2
 		},
 		{
 			"type": "equals",
-			"field": "batch.total_count",
+			"field": "total_count",
 			"value": 2
 		}
 	]
