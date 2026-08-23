@@ -23,13 +23,43 @@
 
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
-use quick_xml::events::Event;
+use quick_xml::escape::resolve_predefined_entity;
+use quick_xml::events::{BytesRef, Event};
 use url::Url;
 
 use crate::http::http_fetch;
 use crate::map::MapFilter;
 use crate::normalize::{resolve_redirect, rewrite_url_host};
 use crate::types::{CrawlConfig, SitemapUrl};
+
+/// Which text-bearing child of a `<url>` entry the reader is currently inside.
+#[derive(Clone, Copy)]
+enum UrlField {
+    Loc,
+    LastMod,
+    ChangeFreq,
+    Priority,
+}
+
+/// Append the text an entity reference stands for to `buffer`.
+///
+/// ~keep quick-xml reports entity references as standalone `Event::GeneralRef` events
+/// rather than folding them into the surrounding `Event::Text`, so a reference both
+/// splits an element's character data and carries a character of its own. Dropping
+/// these events loses that character: `?a=1&amp;b=2` would rejoin as `?a=1b=2`.
+/// An entity this parser cannot resolve — a document may declare its own in a DTD —
+/// contributes nothing, matching how the surrounding parser skips what it cannot read.
+fn push_entity_ref(buffer: &mut String, entity: &BytesRef<'_>) {
+    match entity.resolve_char_ref() {
+        Ok(Some(character)) => buffer.push(character),
+        Ok(None) => {
+            if let Some(text) = resolve_predefined_entity(entity.as_ref()) {
+                buffer.push_str(text);
+            }
+        }
+        Err(_) => {}
+    }
+}
 
 /// Parse a sitemap XML document and extract URL entries.
 pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
@@ -38,10 +68,11 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
     let mut reader = Reader::from_str(body);
     let mut buf = Vec::new();
     let mut in_url = false;
-    let mut in_loc = false;
-    let mut in_lastmod = false;
-    let mut in_changefreq = false;
-    let mut in_priority = false;
+    let mut current_field: Option<UrlField> = None;
+    // ~keep Character data arrives in several events whenever entity references appear
+    // ~keep inside an element, so text is accumulated here and only committed to a field
+    // ~keep on the closing tag.
+    let mut text = String::new();
     let mut current_loc = String::new();
     let mut current_lastmod: Option<String> = None;
     let mut current_changefreq: Option<String> = None;
@@ -49,20 +80,27 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
-                "url" => {
-                    in_url = true;
-                    current_loc.clear();
-                    current_lastmod = None;
-                    current_changefreq = None;
-                    current_priority = None;
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let field = match e.name().as_ref() {
+                    "url" => {
+                        in_url = true;
+                        current_loc.clear();
+                        current_lastmod = None;
+                        current_changefreq = None;
+                        current_priority = None;
+                        None
+                    }
+                    "loc" if in_url => Some(UrlField::Loc),
+                    "lastmod" if in_url => Some(UrlField::LastMod),
+                    "changefreq" if in_url => Some(UrlField::ChangeFreq),
+                    "priority" if in_url => Some(UrlField::Priority),
+                    _ => None,
+                };
+                if field.is_some() {
+                    text.clear();
+                    current_field = field;
                 }
-                "loc" if in_url => in_loc = true,
-                "lastmod" if in_url => in_lastmod = true,
-                "changefreq" if in_url => in_changefreq = true,
-                "priority" if in_url => in_priority = true,
-                _ => {}
-            },
+            }
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 "url" => {
                     if in_url && !current_loc.is_empty() {
@@ -74,25 +112,28 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
                         });
                     }
                     in_url = false;
+                    current_field = None;
                 }
-                "loc" => in_loc = false,
-                "lastmod" => in_lastmod = false,
-                "changefreq" => in_changefreq = false,
-                "priority" => in_priority = false,
+                "loc" | "lastmod" | "changefreq" | "priority" => {
+                    let value = text.trim();
+                    if !value.is_empty() {
+                        match current_field {
+                            Some(UrlField::Loc) => current_loc = value.to_owned(),
+                            Some(UrlField::LastMod) => current_lastmod = Some(value.to_owned()),
+                            Some(UrlField::ChangeFreq) => current_changefreq = Some(value.to_owned()),
+                            Some(UrlField::Priority) => current_priority = Some(value.to_owned()),
+                            None => {}
+                        }
+                    }
+                    current_field = None;
+                    text.clear();
+                }
                 _ => {}
             },
-            Ok(Event::Text(ref e)) => {
-                let text = e.xml_content(XmlVersion::default()).trim().to_owned();
-                if in_loc {
-                    current_loc = text;
-                } else if in_lastmod {
-                    current_lastmod = Some(text);
-                } else if in_changefreq {
-                    current_changefreq = Some(text);
-                } else if in_priority {
-                    current_priority = Some(text);
-                }
+            Ok(Event::Text(ref e)) if current_field.is_some() => {
+                text.push_str(&e.xml_content(XmlVersion::default()));
             }
+            Ok(Event::GeneralRef(ref e)) if current_field.is_some() => push_entity_ref(&mut text, e),
             Ok(Event::Eof) => break,
             Err(_) => break,
             _ => {}
@@ -110,6 +151,7 @@ pub fn parse_sitemap_index(body: &str) -> Vec<String> {
     let mut buf = Vec::new();
     let mut in_sitemap = false;
     let mut in_loc = false;
+    let mut text = String::new();
     let mut current_loc = String::new();
 
     loop {
@@ -119,7 +161,10 @@ pub fn parse_sitemap_index(body: &str) -> Vec<String> {
                     in_sitemap = true;
                     current_loc.clear();
                 }
-                "loc" if in_sitemap => in_loc = true,
+                "loc" if in_sitemap => {
+                    in_loc = true;
+                    text.clear();
+                }
                 _ => {}
             },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
@@ -129,12 +174,19 @@ pub fn parse_sitemap_index(body: &str) -> Vec<String> {
                     }
                     in_sitemap = false;
                 }
-                "loc" => in_loc = false,
+                "loc" => {
+                    if in_loc {
+                        current_loc = text.trim().to_owned();
+                    }
+                    in_loc = false;
+                    text.clear();
+                }
                 _ => {}
             },
             Ok(Event::Text(ref e)) if in_loc => {
-                current_loc = e.xml_content(XmlVersion::default()).trim().to_owned();
+                text.push_str(&e.xml_content(XmlVersion::default()));
             }
+            Ok(Event::GeneralRef(ref e)) if in_loc => push_entity_ref(&mut text, e),
             Ok(Event::Eof) => break,
             Err(_) => break,
             _ => {}

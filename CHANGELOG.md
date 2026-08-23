@@ -34,6 +34,21 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Entity-escaped sitemap URLs were truncated to the text after the last entity.** quick-xml
+  reports an entity reference as its own `Event::GeneralRef` and splits the element's character
+  data around it, so `<loc>https://example.com/s1.xml?a=1&amp;b=2</loc>` arrived as three events.
+  The sitemap parsers assigned each text event to the current field instead of accumulating, so
+  every piece but the last was discarded and that `<loc>` parsed to `b=2`. Because `&` must be
+  entity-escaped in XML, every sitemap URL carrying more than one query parameter was silently
+  corrupted -- a truncated string still looks like a successful parse -- so the wrong URLs were
+  enqueued and the real ones were never crawled. Both `parse_sitemap_xml` and `parse_sitemap_index`
+  now buffer character data across events and commit it on the closing tag, and they resolve the
+  reference events themselves, so the escaped character survives rather than vanishing from the
+  middle of the value. This covers every text-bearing field -- `loc`, `lastmod`, `changefreq`,
+  `priority`, and the sitemap-index `loc` -- and applies to numeric character references
+  (`&#38;`, `&#x26;`) as well as the named XML entities. The defect predates the quick-xml 0.42
+  upgrade; a probe built against 0.41 truncates identically.
+
 - **The docs advertised musl artifacts that are not published.** The README claimed precompiled
   binaries "across every binding" and linked a platform matrix that did not exist, and
   `RELEASE.md` described the two Node musl packages as an OIDC misconfiguration with a
