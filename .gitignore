@@ -53,7 +53,10 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-crates/crawlberg-node/index.d.ts
+# ~keep index.d.ts is NOT ignored: alef generates it from the IR (it carries an alef:hash
+# marker) and `alef verify` fails the build when a generated file is missing AND gitignored
+# -- `alef generate` would write it and git would discard it again, so the loop never closes.
+# index.js stays ignored: napi emits it from the compiled addon, not from the IR.
 crates/crawlberg-node/index.js
 .wrangler/
 .pnpm-store/
