@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.67.2"
+alef_version = "0.67.5"
 languages = [
   "python",
   "node",
@@ -82,15 +82,17 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep `generated/` must stay committed: `alef verify --exit-code` reads
 # ~keep `generated/.alef-snippet-coverage.json` and fails the whole command if it is absent.
 dirs = ["docs-site/src/snippets"]
-# ~keep 38 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
+# ~keep 258 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
 # ~keep them. Each is an alef CODEGEN defect, not a crawlberg config gap, and NONE is suppressible
 # ~keep from here: `[workspace.docs.snippets] exclude` is read only by the audit and gap passes
 # ~keep (`src/snippets/audit.rs`, `src/snippets/gaps.rs`), never by validation, and the only other
 # ~keep lever -- a `snippet:syntax-only` annotation -- cannot be applied to a file alef overwrites
 # ~keep on every generate. So this list is documentation, not configuration; the CI `Alef snippets`
 # ~keep job stays red until these land upstream. Clusters 1-4 were reported upstream
-# ~keep 2026-08-23 against alef 0.67.1 and are UNCHANGED under the 0.67.2 pin; cluster 5 is a
-# ~keep 0.67.2 REGRESSION, measured locally 2026-08-23 with `alef snippets check --lang ...`:
+# ~keep 2026-08-23 against alef 0.67.1; clusters 1-5 are ALL UNCHANGED under the 0.67.5 pin,
+# ~keep re-measured 2026-08-24 with `alef snippets check --strict --cache off` (dart 22,
+# ~keep csharp 11, wasm 4, node 1 = the same 38). Cluster 5 was a 0.67.2 regression and 0.67.5
+# ~keep does NOT fix it. Cluster 6 is new to the MEASUREMENT, not to the output:
 # ~keep 1. dart/interaction/ (12) -- the snippet emitter calls `_parsePageAction(...)`, a private
 # ~keep    helper that exists only in the generated e2e harness. A snippet is a standalone
 # ~keep    program, so the helper is never emitted: "Error: Method not found: '_parsePageAction'".
@@ -120,9 +122,22 @@ dirs = ["docs-site/src/snippets"]
 # ~keep    snippet -- `result.Metadata.Headings[0].Level` unguarded beside
 # ~keep    `result.Metadata.Headings!.Count` -- tripping CS8602.
 # ~keep    Only statically typed targets surface this: python/php/ruby/elixir pass 1045/1045,
-# ~keep    because a bogus member access is not a compile error there. 38 is a FLOOR, not a
-# ~keep    total: rust, c, java, kotlin, go, swift and zig report every snippet `unavailable`
-# ~keep    locally (their packages are unbuilt), so CI may find the same shape in them too.
+# ~keep    because a bogus member access is not a compile error there.
+# ~keep 6. rust/ (220 of 264) -- the SAME root cause as cluster 5, in the Rust emitter, and it
+# ~keep    was always in the committed output: the snippet bytes are byte-identical across the
+# ~keep    0.67.2 -> 0.67.5 regen, so this is a surface that had never been measured rather than
+# ~keep    a new regression. It only became visible because `alef generate` builds the Rust
+# ~keep    crates, which flips rust from `unavailable` to actually validated. The call site
+# ~keep    discards its value -- `let _ = scrape(&engine, &url).await;` -- and the assertion
+# ~keep    tail then reads a binding that was never created: `println!("{:?}",
+# ~keep    result.auth_header_sent);` => "error[E0425]: cannot find value `result` in this
+# ~keep    scope". 9 of the 220 additionally miss a `tokio_stream` import (E0433). As in
+# ~keep    cluster 5 the member path is a fixture assertion NAMESPACE (`auth_header_sent`),
+# ~keep    not a real `ScrapeResult` field, so binding the result would not be enough on its own.
+# ~keep    258 is a FLOOR, not a total: c, kotlin, swift and zig still report every snippet
+# ~keep    `unavailable` locally (their packages are unbuilt) and java fails all 263 for the
+# ~keep    same environmental reason (`package io.xberg.crawlberg does not exist`), so CI may
+# ~keep    find the same shape in them too.
 validation_level = "compile"
 timeout_secs = 300
 # ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 7 of 14 languages are

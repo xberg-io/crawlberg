@@ -34,6 +34,19 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The Java binding no longer flattens a native error into a generic `CrawlbergRsException`.**
+  All eight synchronous FFI entry points in
+  `packages/java/src/main/java/io/xberg/crawlberg/CrawlbergRs.java` caught `Throwable` and rethrew
+  it as `new CrawlbergRsException("FFI call failed", e)`. `checkLastError()` reports the real
+  Rust-side failure by throwing `ConversionErrorException`, `CoreErrorException`, `PanicException`
+  or `CrawlbergRsException` — all of which are `CrawlbergRsException` subtypes, so every one was
+  caught by that generic handler one frame later and re-wrapped. Callers saw `"FFI call failed"`
+  with the real message demoted to a cause, and `catch (PanicException e)` could never match
+  because the concrete type had been erased. The regenerated code rethrows a
+  `CrawlbergRsException` unchanged and wraps only genuinely unexpected throwables. The six
+  `*Async` wrappers are unaffected: they wrap in `CompletionException`, which is the documented
+  `CompletableFuture` contract and already preserves the cause.
+
 - **A skipped `publish-crates` no longer reads as a passing gate, and a release that published
   nothing can no longer report success.** Six places in `.github/workflows/publish.yaml` gated
   downstream build, publish and release-promotion jobs on
