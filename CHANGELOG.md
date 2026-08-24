@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-24
+
 ### Added
 
 - **Bounded LLM extraction concurrency (`ai` feature).** `LlmExtractor` now builds a
@@ -33,6 +35,17 @@ All notable changes to crawlberg are documented here.
   Rust-level export only and is not part of the generated language bindings.
 
 ### Fixed
+
+- **The published Rust documentation snippets did not compile.** 220 of the 264 generated Rust
+  snippets read a `result` binding their own call site had discarded into `_`, so every one of
+  them failed to compile with `error[E0425]: cannot find value result`. Regenerating against
+  alef 0.67.5 emits `let result = scrape(&engine, &url).await.expect("call failed")` and takes
+  Rust snippet failures from 220 to 9; the remaining 9 are stream fixtures that miss a
+  `tokio_stream` import.
+  The same regeneration fixes the assertion-rendering defect in the Dart and C# snippets (dart
+  22 -> 12 failures, csharp 11 -> 9). The broken output had persisted across alef upgrades
+  because alef's generation cache is not keyed on the alef version, so `alef generate` replayed
+  stale bytes and `alef verify` reported them as fresh.
 
 - **The Java binding no longer flattens a native error into a generic `CrawlbergRsException`.**
   All eight synchronous FFI entry points in
