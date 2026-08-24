@@ -34,6 +34,31 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A skipped `publish-crates` no longer reads as a passing gate, and a release that published
+  nothing can no longer report success.** Six places in `.github/workflows/publish.yaml` gated
+  downstream build, publish and release-promotion jobs on
+  `needs.publish-crates.result != 'failure'`. That expression is TRUE when the dependency was
+  *skipped*, and `publish-crates` skips for two opposite reasons: the version is already on
+  crates.io (a re-run or a resumed release, where downstream must proceed) or an upstream gate
+  such as version validation or crate packaging failed (where downstream must not). `result`
+  alone cannot separate them, so every one of those conditions was gating on nothing --
+  tree-sitter-language-pack v1.15.5 promoted a GitHub release to `Latest` with 40+ failed jobs and
+  every registry publish skipped, and still reported success.
+
+  A new always-running `crates-gate` job resolves the ambiguity once, into an explicit
+  `outcome` (`published` / `already-present` / `not-required` / `dry-run` / `blocked`) and an
+  `ok` flag that every consumer now tests instead of `result`. Because the job always runs, its
+  outputs always exist; because it never fails, depending on it cannot skip a consumer. The
+  legitimate already-published path stays exactly as permissive as before, and only the
+  gate-failed path is newly blocked.
+
+  Nothing in the workflow failed a run whose publish jobs were skipped: `release-finalize` and
+  `announce-discord` gate on `!contains(needs.*.result, 'failure')`, which is blind to `skipped`,
+  so a release that reached zero registries would still be flipped out of draft and announced. Both
+  now also require the crates gate, and a new `release-report` job verifies every enabled publish
+  target individually, treating `skipped` as a failure unless the target is not enabled for this
+  release or its registry probe already found this exact version published.
+
 - **The Ruby gem published on a failed build and bypassed version validation.** `publish-rubygems`
   accepted `needs.ruby-gem.result == 'failure'` and carried `!cancelled()`, so a release in which
   the gem build failed still ran the publish step against whatever artifacts happened to exist.
