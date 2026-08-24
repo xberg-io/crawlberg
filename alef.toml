@@ -82,17 +82,30 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep `generated/` must stay committed: `alef verify --exit-code` reads
 # ~keep `generated/.alef-snippet-coverage.json` and fails the whole command if it is absent.
 dirs = ["docs-site/src/snippets"]
-# ~keep 258 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
+# ~keep 35 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
 # ~keep them. Each is an alef CODEGEN defect, not a crawlberg config gap, and NONE is suppressible
 # ~keep from here: `[workspace.docs.snippets] exclude` is read only by the audit and gap passes
 # ~keep (`src/snippets/audit.rs`, `src/snippets/gaps.rs`), never by validation, and the only other
 # ~keep lever -- a `snippet:syntax-only` annotation -- cannot be applied to a file alef overwrites
 # ~keep on every generate. So this list is documentation, not configuration; the CI `Alef snippets`
-# ~keep job stays red until these land upstream. Clusters 1-4 were reported upstream
-# ~keep 2026-08-23 against alef 0.67.1; clusters 1-5 are ALL UNCHANGED under the 0.67.5 pin,
-# ~keep re-measured 2026-08-24 with `alef snippets check --strict --cache off` (dart 22,
-# ~keep csharp 11, wasm 4, node 1 = the same 38). Cluster 5 was a 0.67.2 regression and 0.67.5
-# ~keep does NOT fix it. Cluster 6 is new to the MEASUREMENT, not to the output:
+# ~keep job stays red until these land upstream.
+# ~keep
+# ~keep READ THIS BEFORE TRUSTING ANY EARLIER VERSION OF THIS BLOCK. The counts recorded here
+# ~keep between 2026-08-23 and the 0.67.5 repin were measured against CACHE-REPLAYED OUTPUT and
+# ~keep were wrong. alef `compute_inputs_hash` deliberately excludes the alef crate version, and
+# ~keep its one manual invalidation lever, `CODEGEN_FORMAT_VERSION`, has been "2" since 0.34.0
+# ~keep (2026-07-07). So `alef generate` after an alef upgrade rewrites nothing, `alef verify`
+# ~keep goes green over the stale bytes, and the tree keeps whatever the previous alef emitted.
+# ~keep Here that hid the entire 0.67.2 -> 0.67.5 codegen delta behind a 4-file diff. What broke
+# ~keep the cache was an unrelated `Cargo.toml` version bump, not the repin.
+# ~keep MEASURE LIKE THIS, NOT WITH A BARE `alef generate`: change a real source input (or clear
+# ~keep `.alef/`), regenerate, and confirm `.alef/hashes` and `.alef/sources_hash.cache` actually
+# ~keep have a new mtime before believing any snippet count.
+# ~keep
+# ~keep Counts below are from a clean full validation over genuinely-0.67.5 output, 2026-08-24.
+# ~keep Clusters 1-4 were reported upstream 2026-08-23 against alef 0.67.1 and are UNCHANGED.
+# ~keep Cluster 5 (the 0.67.2 assertion-rendering regression) is FIXED in 0.67.5 -- all 12 gone.
+# ~keep Cluster 6 is a real, live defect that had simply never been validated here before.
 # ~keep 1. dart/interaction/ (12) -- the snippet emitter calls `_parsePageAction(...)`, a private
 # ~keep    helper that exists only in the generated e2e harness. A snippet is a standalone
 # ~keep    program, so the helper is never emitted: "Error: Method not found: '_parsePageAction'".
@@ -109,35 +122,24 @@ dirs = ["docs-site/src/snippets"]
 # ~keep 4. wasm/validation/validation-ssrf-*.md (3) -- the nested-struct initializer IIFE
 # ~keep    references `WasmSsrfPolicy.default()` but the import collector never adds
 # ~keep    `WasmSsrfPolicy` to the import list: "TS2304: Cannot find name 'WasmSsrfPolicy'".
-# ~keep 5. NEW IN 0.67.2 (12) -- dart/stream/ (8), dart/engine/engine-stream-basic.md (1),
-# ~keep    {dart,csharp}/rate-limit/rate-limit-basic-delay.md (2), and
-# ~keep    csharp/metadata/metadata-headings.md (1). 0.67.2 replaced the placeholder
-# ~keep    `writeln(result)` / `WriteLine(result)` tail with rendered assertion expressions,
-# ~keep    and that rendering is wrong in two ways. (a) A fixture's assertion NAMESPACE is
-# ~keep    emitted as a member path on the result object, but no such member exists:
-# ~keep    `result.rateLimit.minDurationMs` / `result.RateLimit.MinDurationMs` against a
-# ~keep    `CrawlResult` that carries no rate-limit member, and `result.stream.eventCountMin`
-# ~keep    against the `List` returned by `.toList()` ("The getter 'stream' isn't defined for
-# ~keep    the type 'List'"). (b) C# nullable access is guarded inconsistently inside a single
-# ~keep    snippet -- `result.Metadata.Headings[0].Level` unguarded beside
-# ~keep    `result.Metadata.Headings!.Count` -- tripping CS8602.
-# ~keep    Only statically typed targets surface this: python/php/ruby/elixir pass 1045/1045,
-# ~keep    because a bogus member access is not a compile error there.
-# ~keep 6. rust/ (220 of 264) -- the SAME root cause as cluster 5, in the Rust emitter, and it
-# ~keep    was always in the committed output: the snippet bytes are byte-identical across the
-# ~keep    0.67.2 -> 0.67.5 regen, so this is a surface that had never been measured rather than
-# ~keep    a new regression. It only became visible because `alef generate` builds the Rust
-# ~keep    crates, which flips rust from `unavailable` to actually validated. The call site
-# ~keep    discards its value -- `let _ = scrape(&engine, &url).await;` -- and the assertion
-# ~keep    tail then reads a binding that was never created: `println!("{:?}",
-# ~keep    result.auth_header_sent);` => "error[E0425]: cannot find value `result` in this
-# ~keep    scope". 9 of the 220 additionally miss a `tokio_stream` import (E0433). As in
-# ~keep    cluster 5 the member path is a fixture assertion NAMESPACE (`auth_header_sent`),
-# ~keep    not a real `ScrapeResult` field, so binding the result would not be enough on its own.
-# ~keep    258 is a FLOOR, not a total: c, kotlin, swift and zig still report every snippet
-# ~keep    `unavailable` locally (their packages are unbuilt) and java fails all 263 for the
-# ~keep    same environmental reason (`package io.xberg.crawlberg does not exist`), so CI may
-# ~keep    find the same shape in them too.
+# ~keep 5. FIXED IN 0.67.5, kept as history (was 12) -- dart/stream/ (8),
+# ~keep    dart/engine/engine-stream-basic.md (1), {dart,csharp}/rate-limit/ (2) and
+# ~keep    csharp/metadata/metadata-headings.md (1). 0.67.2 rendered a fixture assertion
+# ~keep    NAMESPACE as a member path on the result object; 0.67.5 resolves the path correctly.
+# ~keep 6. rust/ stream fixtures (9) -- engine-stream-basic, crawl-stream-events,
+# ~keep    batch-crawl-stream-{events,partial-failure}, stream-{depth-crawl,event-ordering,
+# ~keep    error-event-mid-crawl,large-crawl,with-error-event}. The emitted program calls
+# ~keep    `tokio_stream::StreamExt` without importing it: "error[E0433]: cannot find module or
+# ~keep    crate `tokio_stream` in this scope". An import-collector gap, the same shape as
+# ~keep    cluster 4. The other 255 of 264 rust snippets PASS under 0.67.5; against the
+# ~keep    cache-replayed 0.67.2 output 220 of them failed, which is the delta the stale cache
+# ~keep    was hiding.
+# ~keep 35 is a FLOOR, not a total: c, kotlin, swift and zig report every snippet `unavailable`
+# ~keep locally (their packages are unbuilt) and java fails all 264 for the same environmental
+# ~keep reason (`package io.xberg.crawlberg does not exist`, no jackson on the classpath), so CI
+# ~keep may find the same shape in them too. Dart also needs real disk headroom: its AOT step
+# ~keep writes a snapshot per snippet and will report every dart snippet as failed with
+# ~keep "OS Error: No space left on device, errno = 28" long before it reports a codegen fault.
 validation_level = "compile"
 timeout_secs = 300
 # ~keep `strict` is deliberately OFF: it fails the run on every DOWNGRADE, and 7 of 14 languages are
@@ -1849,60 +1851,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.3.3"
+version = ">=1.4.0"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.3.3"
+version = "^1.4.0"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.3.3"
+version = "v1.4.0"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.e2e.registry.packages.csharp]
 name = "Crawlberg"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.3.3"
+version = ">=1.4.0"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.3.3"
+version = ">= 1.4.0"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.3.3"
+version = "~> 1.4.0"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.3.3"
+version = "^1.4.0"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.3.3"
-hash = "crawlberg-1.3.3-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.4.0"
+hash = "crawlberg-1.4.0-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.3.3"
+version = "1.4.0"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"
