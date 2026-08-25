@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.67.5"
+alef_version = "0.67.6"
 languages = [
   "python",
   "node",
@@ -82,6 +82,32 @@ outputs = [".codex/skills", ".agents/skills", ".github/skills", ".claude/skills"
 # ~keep `generated/` must stay committed: `alef verify --exit-code` reads
 # ~keep `generated/.alef-snippet-coverage.json` and fails the whole command if it is absent.
 dirs = ["docs-site/src/snippets"]
+# ~keep Without `required_languages` the gap pass compares NOTHING and `alef snippets check
+# ~keep --strict` (the `alef-snippets` poly hook) fails outright: "a strict run must not pass on a
+# ~keep check that compared nothing". `docs_dirs` is the other lever and is deliberately left
+# ~keep unset -- it scans for MkDocs `--8<--` includes and docs-site is Astro, which has none
+# ~keep (`grep -rl -- "--8<--" docs-site/` returns 0 files), so pointing it here would report every
+# ~keep snippet as orphaned rather than measure anything.
+# ~keep This list is the 14 languages that ship a package README, i.e. exactly the languages with a
+# ~keep curated `<lang>/getting-started/basic_usage.md` feeding `[crates.readme...] basic_usage`.
+# ~keep `c` is deliberately NOT required: it has no package README and no curated snippet, and
+# ~keep adding it makes the parity check report a missing variant that nothing is supposed to fill.
+required_languages = [
+  "python",
+  "node",
+  "ruby",
+  "php",
+  "go",
+  "java",
+  "csharp",
+  "elixir",
+  "wasm",
+  "rust",
+  "kotlin_android",
+  "swift",
+  "dart",
+  "zig",
+]
 # ~keep 35 of the 3,894 generated snippets do not compile, and `alef snippets check` fails on
 # ~keep them. Each is an alef CODEGEN defect, not a crawlberg config gap, and NONE is suppressible
 # ~keep from here: `[workspace.docs.snippets] exclude` is read only by the audit and gap passes
@@ -585,7 +611,11 @@ types = [
   "BatchScrapeResults",
   "BatchCrawlResult",
   "BatchCrawlResults",
-  "CrawlError",
+  # ~keep `CrawlError` is deliberately absent: alef puts error enums in the IR's `errors` bucket,
+  # ~keep which `apply_filters` never prunes by the include allowlist (only `exclude` touches it).
+  # ~keep Listing it here was always inert, and alef 0.67.6's new include validator
+  # ~keep (`resolve_include_types`) scans only `types`/`enums`, so the inert entry became a hard
+  # ~keep extraction error. Verified: the extracted IR is byte-identical with and without it.
   "CrawlEvent",
   "CrawlStreamRequest",
   "BatchCrawlStreamRequest",
@@ -996,7 +1026,10 @@ result_fields = [
   "markdown",
   "extracted_data",
   "extraction_meta",
-  "screenshot",
+  # ~keep `screenshot` is intentionally absent: it is `#[alef(skip)]` on both ScrapeResult and
+  # ~keep InteractionResult, so no binding emits an accessor for it. Listing it here made alef warn
+  # ~keep that the IR overrides result_fields and the field is treated as unavailable. Same reason
+  # ~keep the `interact` call omits it (see its result_fields comment below).
   "downloaded_document",
   "browser",
   "final_url",
@@ -1004,6 +1037,35 @@ result_fields = [
 
 [crates.e2e.snippets]
 output = "docs-site/src/snippets/generated"
+# ~keep The 14 `<lang>/getting-started/basic_usage.md` files are hand-authored on purpose and have
+# ~keep no fixture behind them. They are the quick-start body of all 14 package READMEs, via
+# ~keep `[crates.readme] snippets_dir` + each `[crates.readme.languages.<lang>.snippets] basic_usage`.
+# ~keep They are NOT redundant with `generated/<lang>/getting-started/basic_usage.md`: that one is
+# ~keep the `engine_scrape_basic` fixture (scrape only, against the reserved `https://example.com`
+# ~keep placeholder), whereas these show scrape + a configured crawl against a URL that resolves.
+# ~keep Patterns resolve PROJECT-ROOT-relative (alef >= 0.67.6), not relative to `output` above.
+# ~keep Enumerated rather than globbed on purpose: alef matches these with the `glob` crate's
+# ~keep default options, where `require_literal_separator` is false, so a `*` crosses `/` and
+# ~keep `docs-site/src/snippets/*/getting-started/basic_usage.md` also swallows the 15
+# ~keep `generated/<lang>/getting-started/basic_usage.md` files alef writes itself. alef rejects
+# ~keep that outright ("a curated declaration must never claim a path alef writes"), so the
+# ~keep language list below is spelled out to keep the declaration off the generated tree.
+curated_snippets = [
+  "docs-site/src/snippets/csharp/getting-started/basic_usage.md",
+  "docs-site/src/snippets/dart/getting-started/basic_usage.md",
+  "docs-site/src/snippets/elixir/getting-started/basic_usage.md",
+  "docs-site/src/snippets/go/getting-started/basic_usage.md",
+  "docs-site/src/snippets/java/getting-started/basic_usage.md",
+  "docs-site/src/snippets/kotlin_android/getting-started/basic_usage.md",
+  "docs-site/src/snippets/php/getting-started/basic_usage.md",
+  "docs-site/src/snippets/python/getting-started/basic_usage.md",
+  "docs-site/src/snippets/ruby/getting-started/basic_usage.md",
+  "docs-site/src/snippets/rust/getting-started/basic_usage.md",
+  "docs-site/src/snippets/swift/getting-started/basic_usage.md",
+  "docs-site/src/snippets/typescript/getting-started/basic_usage.md",
+  "docs-site/src/snippets/wasm/getting-started/basic_usage.md",
+  "docs-site/src/snippets/zig/getting-started/basic_usage.md",
+]
 languages = [
   "python",
   "node",
@@ -1596,7 +1658,10 @@ function = "crawlStream"
 
 [crates.e2e.calls.crawl_stream.overrides.c]
 function = "crawl_stream"
-result_type = "char*"
+# ~keep No `result_type` here on purpose. It was `"char*"`, a C spelling rather than an IR
+# ~keep struct/enum name, which alef's call validator flags because it silently disables
+# ~keep nested-field verification. `raw_c_result_type` below already carries that C spelling,
+# ~keep which is the field the diagnostic asks for.
 raw_c_result_type = "char*"
 c_engine_factory = "CrawlConfig"
 
@@ -1662,7 +1727,7 @@ function = "batchCrawlStream"
 
 [crates.e2e.calls.batch_crawl_stream.overrides.c]
 function = "batch_crawl_stream"
-result_type = "char*"
+# ~keep No `result_type` here on purpose -- see the note on the `crawl_stream` c override.
 raw_c_result_type = "char*"
 c_engine_factory = "CrawlConfig"
 
