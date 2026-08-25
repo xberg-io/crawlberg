@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crawlberg_browser::adapter::SsrfValidator;
 use url::Url;
 
-use crate::net::ssrf::{SsrfPolicy, default_scheme_allowlist, validate_url};
+use crate::net::ssrf::{SsrfPolicy, validate_url};
 
 /// [`SsrfValidator`] backed by the crawl's configured [`SsrfPolicy`].
 #[derive(Debug)]
@@ -20,14 +20,7 @@ pub(crate) struct CoreSsrfValidator {
 
 impl CoreSsrfValidator {
     fn new(policy: &SsrfPolicy) -> Self {
-        let mut policy = policy.clone();
-        // ~keep `scheme_allowlist` is #[serde(skip)], so a policy built through a
-        // binding path can arrive empty — which would reject every URL rather than
-        // fall back to http/https.
-        if policy.scheme_allowlist.is_empty() {
-            policy.scheme_allowlist = default_scheme_allowlist();
-        }
-        Self { policy }
+        Self { policy: policy.clone() }
     }
 }
 
@@ -90,13 +83,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_empty_scheme_allowlist_falls_back_to_http_and_https() {
+    async fn an_empty_scheme_allowlist_denies_every_scheme() {
         let mut policy = SsrfPolicy::default();
         policy.scheme_allowlist.clear();
 
         validator_for(&policy)
             .validate(&"http://1.1.1.1/".parse::<Url>().expect("valid URL"))
             .await
-            .expect("an empty scheme allowlist must not reject every URL");
+            .expect_err("an empty scheme allowlist must reject every URL");
     }
 }

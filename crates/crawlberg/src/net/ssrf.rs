@@ -5,7 +5,7 @@
 
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{LazyLock, RwLock};
 
@@ -274,11 +274,14 @@ pub struct SsrfPolicy {
     #[serde(default = "default_max_redirects")]
     pub max_redirects: u8,
 
-    /// Allowed URI schemes. Default: `["http", "https"]`. Not serialized (set at runtime).
-    /// Skipped from language bindings — `HashSet<&'static str>` is FFI-hostile.
-    #[serde(skip, default = "default_scheme_allowlist")]
-    #[cfg_attr(alef, alef(skip))]
-    pub scheme_allowlist: HashSet<&'static str>,
+    /// Allowed URI schemes. Default: `["http", "https"]`.
+    ///
+    /// Only `http` and `https` are supported. An empty list denies every URL.
+    #[serde(
+        default = "default_scheme_allowlist",
+        skip_serializing_if = "is_default_scheme_allowlist"
+    )]
+    pub scheme_allowlist: Vec<String>,
 }
 
 fn default_deny_private() -> bool {
@@ -290,30 +293,25 @@ fn default_max_redirects() -> u8 {
     5
 }
 
-/// Default scheme allowlist used when `SsrfPolicy::scheme_allowlist` is omitted from JSON.
-/// Without this, `#[serde(skip)]` would populate the field with `HashSet::default()` (empty)
-/// on round-trip deserialize, causing every URL to fail with `disallowed scheme`.
-///
-/// Also called by `CrawlEngineBuilder::build` to normalize an empty allowlist that arrived
-/// through a binding construction path (e.g. `Default::default()` in generated FFI glue).
-pub(crate) fn default_scheme_allowlist() -> HashSet<&'static str> {
-    let mut set = HashSet::new();
-    set.insert("http");
-    set.insert("https");
-    set
+fn default_scheme_allowlist() -> Vec<String> {
+    vec!["http".to_owned(), "https".to_owned()]
+}
+
+fn is_default_scheme_allowlist(schemes: &[String]) -> bool {
+    schemes == default_scheme_allowlist()
+}
+
+fn is_supported_scheme(scheme: &str) -> bool {
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
 }
 
 impl Default for SsrfPolicy {
     fn default() -> Self {
-        let mut scheme_allowlist = HashSet::new();
-        scheme_allowlist.insert("http");
-        scheme_allowlist.insert("https");
-
         Self {
             deny_private: true,
             allowlist: Vec::new(),
             max_redirects: 5,
-            scheme_allowlist,
+            scheme_allowlist: default_scheme_allowlist(),
         }
     }
 }
@@ -356,16 +354,29 @@ impl SsrfPolicy {
             })
             .unwrap_or(false);
 
-        let mut scheme_allowlist = std::collections::HashSet::new();
-        scheme_allowlist.insert("http");
-        scheme_allowlist.insert("https");
-
         Self {
             deny_private: !allow_private,
             allowlist: Vec::new(),
             max_redirects: 5,
-            scheme_allowlist,
+            scheme_allowlist: default_scheme_allowlist(),
         }
+    }
+
+    pub(crate) fn validate_scheme_allowlist(&self) -> Result<(), String> {
+        for (index, scheme) in self.scheme_allowlist.iter().enumerate() {
+            if !is_supported_scheme(scheme) {
+                return Err(format!(
+                    "ssrf.scheme_allowlist contains unsupported scheme '{scheme}' (expected http or https)"
+                ));
+            }
+            if self.scheme_allowlist[..index]
+                .iter()
+                .any(|previous| previous.eq_ignore_ascii_case(scheme))
+            {
+                return Err(format!("ssrf.scheme_allowlist contains duplicate scheme '{scheme}'"));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -389,7 +400,12 @@ impl SsrfPolicy {
 /// `wasm32`-specific note on [`SsrfPolicy::from_env`] for why this matters under Node.js.
 pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), SsrfError> {
     let scheme = url.scheme();
-    if !policy.scheme_allowlist.contains(scheme) {
+    if !is_supported_scheme(scheme)
+        || !policy
+            .scheme_allowlist
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
+    {
         return Err(SsrfError::DisallowedScheme(scheme.to_string()));
     }
 
@@ -561,9 +577,7 @@ mod tests {
         assert!(policy.deny_private);
         assert!(policy.allowlist.is_empty());
         assert_eq!(policy.max_redirects, 5);
-        assert!(policy.scheme_allowlist.contains("http"));
-        assert!(policy.scheme_allowlist.contains("https"));
-        assert!(!policy.scheme_allowlist.contains("ftp"));
+        assert_eq!(policy.scheme_allowlist, vec!["http", "https"]);
     }
 
     #[test]
@@ -747,9 +761,7 @@ mod tests {
     #[test]
     fn test_default_policy_scheme_allowlist() {
         let policy = SsrfPolicy::default();
-        assert!(policy.scheme_allowlist.contains("http"));
-        assert!(policy.scheme_allowlist.contains("https"));
-        assert!(!policy.scheme_allowlist.contains("ftp"));
+        assert_eq!(policy.scheme_allowlist, vec!["http", "https"]);
     }
 
     #[test]
@@ -1003,6 +1015,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_url_rejects_unsupported_scheme_even_if_configured() {
+        let mut policy = SsrfPolicy::default();
+        policy.scheme_allowlist = vec!["ftp".to_owned()];
+        let url = "ftp://example.com/".parse::<url::Url>().unwrap();
+
+        let error = validate_url(&url, &policy).await.unwrap_err();
+        assert!(
+            matches!(error, SsrfError::DisallowedScheme(ref scheme) if scheme == "ftp"),
+            "unsupported transports must fail closed, got: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_url_honors_a_configured_supported_subset() {
+        let mut policy = SsrfPolicy::default();
+        policy.scheme_allowlist = vec!["https".to_owned()];
+        let url = "http://1.1.1.1/".parse::<url::Url>().unwrap();
+
+        let error = validate_url(&url, &policy).await.unwrap_err();
+        assert!(
+            matches!(error, SsrfError::DisallowedScheme(ref scheme) if scheme == "http"),
+            "an omitted supported scheme must be denied, got: {error:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn validate_url_rejects_disallowed_scheme_file() {
         let policy = SsrfPolicy::default();
         let url = "file:///etc/passwd".parse::<url::Url>().unwrap();
@@ -1116,13 +1154,8 @@ mod tests {
         );
     }
 
-    /// Regression test for rc.71: `CrawlConfig` JSON deserialization must honor
-    /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK`. Bindings that round-trip CrawlConfig
-    /// through `cberg_crawl_config_from_json` (Go/Java/C#/PHP/Ruby/Elixir/Dart/
-    /// Swift/Zig/WASM/C/brew) omit the alef-skipped `ssrf` field, so serde
-    /// applies the field-level default. Prior to this fix the attribute was
-    /// `#[serde(default)]` which called `<SsrfPolicy as Default>::default()`
-    /// (deny_private: true) and silently ignored the env var.
+    /// Regression test for rc.71: the field-level default for an omitted SSRF
+    /// policy must honor `CRAWLBERG_ALLOW_PRIVATE_NETWORK`.
     #[allow(unsafe_code)]
     #[test]
     #[serial_test::serial]
@@ -1158,7 +1191,7 @@ mod tests {
         assert_eq!(policy.max_redirects, 5, "max_redirects must default to 5");
         assert!(policy.allowlist.is_empty(), "allowlist must default to empty");
         assert!(
-            policy.scheme_allowlist.contains("http") && policy.scheme_allowlist.contains("https"),
+            policy.scheme_allowlist == vec!["http", "https"],
             "scheme_allowlist must default to http/https"
         );
     }
@@ -1180,27 +1213,26 @@ mod tests {
         assert_eq!(policy.max_redirects, 5, "max_redirects must default to 5");
     }
 
-    /// Regression test for the rolling rc.71 fix: `SsrfPolicy` JSON round-trip
-    /// (serialize → deserialize) must preserve a populated `scheme_allowlist`.
-    /// `#[serde(skip)]` alone would call `HashSet::default()` (empty) on
-    /// deserialize, producing a policy that rejects EVERY URL with
-    /// `DisallowedScheme(http)`. Reproduces the brew CLI failure mode where
-    /// `merge_json_config` round-trips the live CrawlConfig and silently
-    /// drops the scheme allowlist.
     #[test]
     fn ssrf_policy_json_round_trip_preserves_scheme_allowlist() {
-        let policy = SsrfPolicy::default();
+        let policy: SsrfPolicy = serde_json::from_str(r#"{"scheme_allowlist":["https"]}"#)
+            .expect("a custom supported subset must deserialize");
         let json = serde_json::to_string(&policy).expect("serialize");
         let restored: SsrfPolicy = serde_json::from_str(&json).expect("deserialize");
-        assert!(
-            restored.scheme_allowlist.contains("http"),
-            "http scheme must survive JSON round-trip; got {:?}",
-            restored.scheme_allowlist
+        assert_eq!(
+            restored.scheme_allowlist,
+            vec!["https".to_owned()],
+            "configured schemes must survive JSON round-trip"
         );
-        assert!(
-            restored.scheme_allowlist.contains("https"),
-            "https scheme must survive JSON round-trip; got {:?}",
-            restored.scheme_allowlist
+    }
+
+    #[test]
+    fn default_scheme_allowlist_keeps_the_legacy_json_shape() {
+        let json = serde_json::to_value(SsrfPolicy::default()).expect("serialize default policy");
+        assert_eq!(
+            json.get("scheme_allowlist"),
+            None,
+            "the default scheme allowlist must remain omitted from JSON"
         );
     }
 

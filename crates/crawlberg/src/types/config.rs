@@ -545,8 +545,7 @@ pub struct CrawlConfig {
     /// SSRF policy for outbound network requests. Default: deny private networks,
     /// allow http/https only, max 5 redirects.
     ///
-    /// `deny_private`, `allowlist` and `max_redirects` are exposed to all language
-    /// bindings. `scheme_allowlist` stays Rust-only — see `SsrfPolicy`.
+    /// All policy fields are exposed to language bindings.
     ///
     /// **wasm32 (including Node.js): `deny_private` does not stop hostname-based
     /// requests.** There is no DNS resolution on this target, so only a literal IP host is
@@ -714,6 +713,9 @@ impl CrawlConfig {
         if self.max_redirects > 100 {
             return Err(CrawlError::invalid_config("max_redirects must be <= 100"));
         }
+        self.ssrf
+            .validate_scheme_allowlist()
+            .map_err(CrawlError::invalid_config)?;
         if let Some(max_body_size) = self.max_body_size
             && max_body_size == 0
         {
@@ -837,6 +839,30 @@ mod tests {
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_ssrf_scheme_allowlist_entries() {
+        for scheme in ["ftp", "http://"] {
+            let mut config = CrawlConfig::default();
+            config.ssrf.scheme_allowlist = vec![scheme.to_owned()];
+
+            let error = config.validate().expect_err("only HTTP transports are supported");
+            assert!(
+                error.to_string().contains(scheme),
+                "validation error must identify the unsupported scheme, got: {error}"
+            );
+        }
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.scheme_allowlist = vec!["http".to_owned(), "HTTP".to_owned()];
+        let error = config
+            .validate()
+            .expect_err("scheme matching is case-insensitive, so case variants are duplicates");
+        assert!(
+            error.to_string().contains("duplicate scheme 'HTTP'"),
+            "validation error must identify the duplicate scheme, got: {error}"
+        );
     }
 
     #[test]

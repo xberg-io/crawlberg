@@ -235,12 +235,6 @@ impl CrawlEngineBuilder {
             config.ssrf.deny_private = false;
         }
 
-        // ~keep Empty `scheme_allowlist` cannot be binding caller intent because the field is serde/alef skipped.
-        // ~keep Treat empty as the default allowlist; otherwise HTTP/HTTPS requests fail as disallowed schemes.
-        if config.ssrf.scheme_allowlist.is_empty() {
-            config.ssrf.scheme_allowlist = crate::net::ssrf::default_scheme_allowlist();
-        }
-
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(200);
         #[cfg(not(target_arch = "wasm32"))]
         let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());

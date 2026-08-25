@@ -425,19 +425,8 @@ async fn disallowed_scheme_gopher_refused() {
     }
 }
 
-/// Regression test: when a binding constructs `SsrfPolicy` via `Default::default()`
-/// in generated FFI glue and does not set `scheme_allowlist` (because the field is
-/// `#[alef(skip)]`), the field arrives as an empty `HashSet`.  Without the
-/// normalization in `CrawlEngineBuilder::build`, every request then fails with
-/// `DisallowedScheme("http")`.
-///
-/// This test builds a `CrawlConfig` with an explicitly empty scheme_allowlist,
-/// runs it through `create_engine` (which uses `CrawlEngineBuilder::build`
-/// internally), and asserts the built engine can successfully scrape an HTTP
-/// URL — proving the allowlist was normalized to {http, https} rather than
-/// left empty.
 #[tokio::test]
-async fn engine_normalizes_empty_scheme_allowlist() {
+async fn engine_preserves_empty_scheme_allowlist_as_deny_all() {
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -468,10 +457,10 @@ async fn engine_normalizes_empty_scheme_allowlist() {
     let eng = create_engine(Some(config)).expect("engine build must not fail");
     let result = scrape(&eng, &mock.uri()).await;
 
+    let error = result.expect_err("an explicitly empty scheme allowlist must deny HTTP");
     assert!(
-        result.is_ok(),
-        "empty scheme_allowlist must be normalized to {{http, https}} by builder; got: {:?}",
-        result.err()
+        error.to_string().contains("disallowed scheme: http"),
+        "the rejection must identify the disallowed scheme, got: {error}"
     );
 }
 
