@@ -1080,8 +1080,7 @@ class CrawlConfig {
   /// SSRF policy for outbound network requests. Default: deny private networks,
   /// allow http/https only, max 5 redirects.
   ///
-  /// `deny_private`, `allowlist` and `max_redirects` are exposed to all language
-  /// bindings. `scheme_allowlist` stays Rust-only — see `SsrfPolicy`.
+  /// All policy fields are exposed to language bindings.
   ///
   /// **wasm32 (including Node.js): `deny_private` does not stop hostname-based
   /// requests.** There is no DNS resolution on this target, so only a literal IP host is
@@ -2934,15 +2933,24 @@ class SsrfPolicy {
   /// Maximum number of HTTP redirects to follow during validation.
   final PlatformInt64 maxRedirects;
 
+  /// Allowed URI schemes. Default: `["http", "https"]`.
+  ///
+  /// Only `http` and `https` are supported. An empty list denies every URL.
+  final List<String> schemeAllowlist;
+
   const SsrfPolicy({
     required this.denyPrivate,
     required this.allowlist,
     required this.maxRedirects,
+    required this.schemeAllowlist,
   });
 
   @override
   int get hashCode =>
-      denyPrivate.hashCode ^ allowlist.hashCode ^ maxRedirects.hashCode;
+      denyPrivate.hashCode ^
+      allowlist.hashCode ^
+      maxRedirects.hashCode ^
+      schemeAllowlist.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2951,5 +2959,6 @@ class SsrfPolicy {
           runtimeType == other.runtimeType &&
           denyPrivate == other.denyPrivate &&
           allowlist == other.allowlist &&
-          maxRedirects == other.maxRedirects;
+          maxRedirects == other.maxRedirects &&
+          schemeAllowlist == other.schemeAllowlist;
 }

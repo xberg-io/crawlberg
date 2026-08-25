@@ -3714,6 +3714,15 @@ char *cberg_ssrf_policy_allowlist(CBERGAlefHandle handle);
 uint8_t cberg_ssrf_policy_max_redirects(CBERGAlefHandle handle);
 
 /**
+ * Get the `scheme_allowlist` field from a `SsrfPolicy`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_ssrf_policy_scheme_allowlist(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */

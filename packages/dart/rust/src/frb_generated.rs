@@ -1944,6 +1944,7 @@ const _: fn() = || {
         let _: bool = SsrfPolicy.deny_private;
         let _: Vec<crate::HostMatcher> = SsrfPolicy.allowlist;
         let _: i64 = SsrfPolicy.max_redirects;
+        let _: Vec<String> = SsrfPolicy.scheme_allowlist;
     }
 };
 
@@ -3817,10 +3818,12 @@ impl SseDecode for crate::SsrfPolicy {
         let mut var_denyPrivate = <bool>::sse_decode(deserializer);
         let mut var_allowlist = <Vec<crate::HostMatcher>>::sse_decode(deserializer);
         let mut var_maxRedirects = <i64>::sse_decode(deserializer);
+        let mut var_schemeAllowlist = <Vec<String>>::sse_decode(deserializer);
         return crate::SsrfPolicy {
             deny_private: var_denyPrivate,
             allowlist: var_allowlist,
             max_redirects: var_maxRedirects,
+            scheme_allowlist: var_schemeAllowlist,
         };
     }
 }
@@ -5111,6 +5114,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::SsrfPolicy> {
             self.0.deny_private.into_into_dart().into_dart(),
             self.0.allowlist.into_into_dart().into_dart(),
             self.0.max_redirects.into_into_dart().into_dart(),
+            self.0.scheme_allowlist.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6581,6 +6585,7 @@ impl SseEncode for crate::SsrfPolicy {
         <bool>::sse_encode(self.deny_private, serializer);
         <Vec<crate::HostMatcher>>::sse_encode(self.allowlist, serializer);
         <i64>::sse_encode(self.max_redirects, serializer);
+        <Vec<String>>::sse_encode(self.scheme_allowlist, serializer);
     }
 }
 

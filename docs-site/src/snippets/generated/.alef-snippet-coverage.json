@@ -348,6 +348,7 @@
     "csharp/engine/engine-batch-basic.md",
     "csharp/engine/engine-crawl-basic.md",
     "csharp/engine/engine-map-basic.md",
+    "csharp/engine/engine-stream-basic.md",
     "csharp/error/error-401-unauthorized.md",
     "csharp/error/error-403-forbidden.md",
     "csharp/error/error-404-page.md",
@@ -491,6 +492,14 @@
     "csharp/strategy/strategy-best-first-seed.md",
     "csharp/strategy/strategy-bfs-default-order.md",
     "csharp/strategy/strategy-dfs-depth-first.md",
+    "csharp/stream/batch-crawl-stream-events.md",
+    "csharp/stream/batch-crawl-stream-partial-failure.md",
+    "csharp/stream/crawl-stream-events.md",
+    "csharp/stream/stream-depth-crawl.md",
+    "csharp/stream/stream-error-event-mid-crawl.md",
+    "csharp/stream/stream-event-ordering.md",
+    "csharp/stream/stream-large-crawl.md",
+    "csharp/stream/stream-with-error-event.md",
     "csharp/validation/validation-browser-endpoint-invalid.md",
     "csharp/validation/validation-invalid-auth-config.md",
     "csharp/validation/validation-invalid-exclude-regex.md",
@@ -602,6 +611,7 @@
     "dart/engine/engine-batch-basic.md",
     "dart/engine/engine-crawl-basic.md",
     "dart/engine/engine-map-basic.md",
+    "dart/engine/engine-stream-basic.md",
     "dart/error/error-401-unauthorized.md",
     "dart/error/error-403-forbidden.md",
     "dart/error/error-404-page.md",
@@ -745,6 +755,14 @@
     "dart/strategy/strategy-best-first-seed.md",
     "dart/strategy/strategy-bfs-default-order.md",
     "dart/strategy/strategy-dfs-depth-first.md",
+    "dart/stream/batch-crawl-stream-events.md",
+    "dart/stream/batch-crawl-stream-partial-failure.md",
+    "dart/stream/crawl-stream-events.md",
+    "dart/stream/stream-depth-crawl.md",
+    "dart/stream/stream-error-event-mid-crawl.md",
+    "dart/stream/stream-event-ordering.md",
+    "dart/stream/stream-large-crawl.md",
+    "dart/stream/stream-with-error-event.md",
     "dart/validation/validation-browser-endpoint-invalid.md",
     "dart/validation/validation-invalid-auth-config.md",
     "dart/validation/validation-invalid-exclude-regex.md",
@@ -847,6 +865,7 @@
     "elixir/encoding/encoding-unicode-url.md",
     "elixir/engine/engine-crawl-basic.md",
     "elixir/engine/engine-map-basic.md",
+    "elixir/engine/engine-stream-basic.md",
     "elixir/error/error-401-unauthorized.md",
     "elixir/error/error-403-forbidden.md",
     "elixir/error/error-404-page.md",
@@ -990,6 +1009,12 @@
     "elixir/strategy/strategy-best-first-seed.md",
     "elixir/strategy/strategy-bfs-default-order.md",
     "elixir/strategy/strategy-dfs-depth-first.md",
+    "elixir/stream/crawl-stream-events.md",
+    "elixir/stream/stream-depth-crawl.md",
+    "elixir/stream/stream-error-event-mid-crawl.md",
+    "elixir/stream/stream-event-ordering.md",
+    "elixir/stream/stream-large-crawl.md",
+    "elixir/stream/stream-with-error-event.md",
     "elixir/validation/validation-browser-endpoint-invalid.md",
     "elixir/validation/validation-invalid-auth-config.md",
     "elixir/validation/validation-invalid-exclude-regex.md",
@@ -1101,6 +1126,7 @@
     "go/engine/engine-batch-basic.md",
     "go/engine/engine-crawl-basic.md",
     "go/engine/engine-map-basic.md",
+    "go/engine/engine-stream-basic.md",
     "go/error/error-401-unauthorized.md",
     "go/error/error-403-forbidden.md",
     "go/error/error-404-page.md",
@@ -1244,6 +1270,14 @@
     "go/strategy/strategy-best-first-seed.md",
     "go/strategy/strategy-bfs-default-order.md",
     "go/strategy/strategy-dfs-depth-first.md",
+    "go/stream/batch-crawl-stream-events.md",
+    "go/stream/batch-crawl-stream-partial-failure.md",
+    "go/stream/crawl-stream-events.md",
+    "go/stream/stream-depth-crawl.md",
+    "go/stream/stream-error-event-mid-crawl.md",
+    "go/stream/stream-event-ordering.md",
+    "go/stream/stream-large-crawl.md",
+    "go/stream/stream-with-error-event.md",
     "go/validation/validation-browser-endpoint-invalid.md",
     "go/validation/validation-invalid-auth-config.md",
     "go/validation/validation-invalid-exclude-regex.md",
@@ -1355,6 +1389,7 @@
     "java/engine/engine-batch-basic.md",
     "java/engine/engine-crawl-basic.md",
     "java/engine/engine-map-basic.md",
+    "java/engine/engine-stream-basic.md",
     "java/error/error-401-unauthorized.md",
     "java/error/error-403-forbidden.md",
     "java/error/error-404-page.md",
@@ -1498,6 +1533,14 @@
     "java/strategy/strategy-best-first-seed.md",
     "java/strategy/strategy-bfs-default-order.md",
     "java/strategy/strategy-dfs-depth-first.md",
+    "java/stream/batch-crawl-stream-events.md",
+    "java/stream/batch-crawl-stream-partial-failure.md",
+    "java/stream/crawl-stream-events.md",
+    "java/stream/stream-depth-crawl.md",
+    "java/stream/stream-error-event-mid-crawl.md",
+    "java/stream/stream-event-ordering.md",
+    "java/stream/stream-large-crawl.md",
+    "java/stream/stream-with-error-event.md",
     "java/validation/validation-browser-endpoint-invalid.md",
     "java/validation/validation-invalid-auth-config.md",
     "java/validation/validation-invalid-exclude-regex.md",
@@ -1609,6 +1652,7 @@
     "kotlin-android/engine/engine-batch-basic.md",
     "kotlin-android/engine/engine-crawl-basic.md",
     "kotlin-android/engine/engine-map-basic.md",
+    "kotlin-android/engine/engine-stream-basic.md",
     "kotlin-android/error/error-401-unauthorized.md",
     "kotlin-android/error/error-403-forbidden.md",
     "kotlin-android/error/error-404-page.md",
@@ -1752,6 +1796,14 @@
     "kotlin-android/strategy/strategy-best-first-seed.md",
     "kotlin-android/strategy/strategy-bfs-default-order.md",
     "kotlin-android/strategy/strategy-dfs-depth-first.md",
+    "kotlin-android/stream/batch-crawl-stream-events.md",
+    "kotlin-android/stream/batch-crawl-stream-partial-failure.md",
+    "kotlin-android/stream/crawl-stream-events.md",
+    "kotlin-android/stream/stream-depth-crawl.md",
+    "kotlin-android/stream/stream-error-event-mid-crawl.md",
+    "kotlin-android/stream/stream-event-ordering.md",
+    "kotlin-android/stream/stream-large-crawl.md",
+    "kotlin-android/stream/stream-with-error-event.md",
     "kotlin-android/validation/validation-browser-endpoint-invalid.md",
     "kotlin-android/validation/validation-invalid-auth-config.md",
     "kotlin-android/validation/validation-invalid-exclude-regex.md",
@@ -1863,6 +1915,7 @@
     "php/engine/engine-batch-basic.md",
     "php/engine/engine-crawl-basic.md",
     "php/engine/engine-map-basic.md",
+    "php/engine/engine-stream-basic.md",
     "php/error/error-401-unauthorized.md",
     "php/error/error-403-forbidden.md",
     "php/error/error-404-page.md",
@@ -2006,6 +2059,14 @@
     "php/strategy/strategy-best-first-seed.md",
     "php/strategy/strategy-bfs-default-order.md",
     "php/strategy/strategy-dfs-depth-first.md",
+    "php/stream/batch-crawl-stream-events.md",
+    "php/stream/batch-crawl-stream-partial-failure.md",
+    "php/stream/crawl-stream-events.md",
+    "php/stream/stream-depth-crawl.md",
+    "php/stream/stream-error-event-mid-crawl.md",
+    "php/stream/stream-event-ordering.md",
+    "php/stream/stream-large-crawl.md",
+    "php/stream/stream-with-error-event.md",
     "php/validation/validation-browser-endpoint-invalid.md",
     "php/validation/validation-invalid-auth-config.md",
     "php/validation/validation-invalid-exclude-regex.md",
@@ -2117,6 +2178,7 @@
     "python/engine/engine-batch-basic.md",
     "python/engine/engine-crawl-basic.md",
     "python/engine/engine-map-basic.md",
+    "python/engine/engine-stream-basic.md",
     "python/error/error-401-unauthorized.md",
     "python/error/error-403-forbidden.md",
     "python/error/error-404-page.md",
@@ -2260,6 +2322,14 @@
     "python/strategy/strategy-best-first-seed.md",
     "python/strategy/strategy-bfs-default-order.md",
     "python/strategy/strategy-dfs-depth-first.md",
+    "python/stream/batch-crawl-stream-events.md",
+    "python/stream/batch-crawl-stream-partial-failure.md",
+    "python/stream/crawl-stream-events.md",
+    "python/stream/stream-depth-crawl.md",
+    "python/stream/stream-error-event-mid-crawl.md",
+    "python/stream/stream-event-ordering.md",
+    "python/stream/stream-large-crawl.md",
+    "python/stream/stream-with-error-event.md",
     "python/validation/validation-browser-endpoint-invalid.md",
     "python/validation/validation-invalid-auth-config.md",
     "python/validation/validation-invalid-exclude-regex.md",
@@ -2371,6 +2441,7 @@
     "ruby/engine/engine-batch-basic.md",
     "ruby/engine/engine-crawl-basic.md",
     "ruby/engine/engine-map-basic.md",
+    "ruby/engine/engine-stream-basic.md",
     "ruby/error/error-401-unauthorized.md",
     "ruby/error/error-403-forbidden.md",
     "ruby/error/error-404-page.md",
@@ -2514,6 +2585,14 @@
     "ruby/strategy/strategy-best-first-seed.md",
     "ruby/strategy/strategy-bfs-default-order.md",
     "ruby/strategy/strategy-dfs-depth-first.md",
+    "ruby/stream/batch-crawl-stream-events.md",
+    "ruby/stream/batch-crawl-stream-partial-failure.md",
+    "ruby/stream/crawl-stream-events.md",
+    "ruby/stream/stream-depth-crawl.md",
+    "ruby/stream/stream-error-event-mid-crawl.md",
+    "ruby/stream/stream-event-ordering.md",
+    "ruby/stream/stream-large-crawl.md",
+    "ruby/stream/stream-with-error-event.md",
     "ruby/validation/validation-browser-endpoint-invalid.md",
     "ruby/validation/validation-invalid-auth-config.md",
     "ruby/validation/validation-invalid-exclude-regex.md",
@@ -2879,6 +2958,7 @@
     "swift/encoding/encoding-unicode-url.md",
     "swift/engine/engine-crawl-basic.md",
     "swift/engine/engine-map-basic.md",
+    "swift/engine/engine-stream-basic.md",
     "swift/error/error-401-unauthorized.md",
     "swift/error/error-403-forbidden.md",
     "swift/error/error-404-page.md",
@@ -3022,6 +3102,12 @@
     "swift/strategy/strategy-best-first-seed.md",
     "swift/strategy/strategy-bfs-default-order.md",
     "swift/strategy/strategy-dfs-depth-first.md",
+    "swift/stream/crawl-stream-events.md",
+    "swift/stream/stream-depth-crawl.md",
+    "swift/stream/stream-error-event-mid-crawl.md",
+    "swift/stream/stream-event-ordering.md",
+    "swift/stream/stream-large-crawl.md",
+    "swift/stream/stream-with-error-event.md",
     "swift/validation/validation-browser-endpoint-invalid.md",
     "swift/validation/validation-invalid-auth-config.md",
     "swift/validation/validation-invalid-exclude-regex.md",
@@ -3133,6 +3219,7 @@
     "typescript/engine/engine-batch-basic.md",
     "typescript/engine/engine-crawl-basic.md",
     "typescript/engine/engine-map-basic.md",
+    "typescript/engine/engine-stream-basic.md",
     "typescript/error/error-401-unauthorized.md",
     "typescript/error/error-403-forbidden.md",
     "typescript/error/error-404-page.md",
@@ -3276,6 +3363,14 @@
     "typescript/strategy/strategy-best-first-seed.md",
     "typescript/strategy/strategy-bfs-default-order.md",
     "typescript/strategy/strategy-dfs-depth-first.md",
+    "typescript/stream/batch-crawl-stream-events.md",
+    "typescript/stream/batch-crawl-stream-partial-failure.md",
+    "typescript/stream/crawl-stream-events.md",
+    "typescript/stream/stream-depth-crawl.md",
+    "typescript/stream/stream-error-event-mid-crawl.md",
+    "typescript/stream/stream-event-ordering.md",
+    "typescript/stream/stream-large-crawl.md",
+    "typescript/stream/stream-with-error-event.md",
     "typescript/validation/validation-browser-endpoint-invalid.md",
     "typescript/validation/validation-invalid-auth-config.md",
     "typescript/validation/validation-invalid-exclude-regex.md",
@@ -3632,6 +3727,7 @@
     "zig/encoding/encoding-unicode-url.md",
     "zig/engine/engine-crawl-basic.md",
     "zig/engine/engine-map-basic.md",
+    "zig/engine/engine-stream-basic.md",
     "zig/error/error-401-unauthorized.md",
     "zig/error/error-403-forbidden.md",
     "zig/error/error-404-page.md",
@@ -3775,6 +3871,12 @@
     "zig/strategy/strategy-best-first-seed.md",
     "zig/strategy/strategy-bfs-default-order.md",
     "zig/strategy/strategy-dfs-depth-first.md",
+    "zig/stream/crawl-stream-events.md",
+    "zig/stream/stream-depth-crawl.md",
+    "zig/stream/stream-error-event-mid-crawl.md",
+    "zig/stream/stream-event-ordering.md",
+    "zig/stream/stream-large-crawl.md",
+    "zig/stream/stream-with-error-event.md",
     "zig/validation/validation-browser-endpoint-invalid.md",
     "zig/validation/validation-invalid-auth-config.md",
     "zig/validation/validation-invalid-exclude-regex.md",
@@ -7961,6 +8063,18 @@
     },
     {
       "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "csharp"
+      },
+      "path": "csharp/engine/engine-stream-basic.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_401_unauthorized",
         "language": "csharp"
       },
@@ -9677,6 +9791,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/batch-crawl-stream-events.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/batch-crawl-stream-partial-failure.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/crawl-stream-events.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/stream-depth-crawl.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/stream-error-event-mid-crawl.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/stream-event-ordering.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/stream-large-crawl.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "csharp"
+      },
+      "path": "csharp/stream/stream-with-error-event.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "csharp"
       },
@@ -11001,6 +11211,18 @@
         "language": "dart"
       },
       "path": "dart/engine/engine-map-basic.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "dart"
+      },
+      "path": "dart/engine/engine-stream-basic.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -12725,6 +12947,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "dart"
+      },
+      "path": "dart/stream/batch-crawl-stream-events.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "dart"
+      },
+      "path": "dart/stream/batch-crawl-stream-partial-failure.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "dart"
+      },
+      "path": "dart/stream/crawl-stream-events.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "dart"
+      },
+      "path": "dart/stream/stream-depth-crawl.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "dart"
+      },
+      "path": "dart/stream/stream-error-event-mid-crawl.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "dart"
+      },
+      "path": "dart/stream/stream-event-ordering.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "dart"
+      },
+      "path": "dart/stream/stream-large-crawl.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "dart"
+      },
+      "path": "dart/stream/stream-with-error-event.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "dart"
       },
@@ -13941,6 +14259,18 @@
         "language": "elixir"
       },
       "path": "elixir/engine/engine-map-basic.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "elixir"
+      },
+      "path": "elixir/engine/engine-stream-basic.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -15665,6 +15995,78 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/crawl-stream-events.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/stream-depth-crawl.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/stream-error-event-mid-crawl.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/stream-event-ordering.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/stream-large-crawl.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "elixir"
+      },
+      "path": "elixir/stream/stream-with-error-event.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "elixir"
       },
@@ -16989,6 +17391,18 @@
         "language": "go"
       },
       "path": "go/engine/engine-map-basic.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "go"
+      },
+      "path": "go/engine/engine-stream-basic.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -18713,6 +19127,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "go"
+      },
+      "path": "go/stream/batch-crawl-stream-events.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "go"
+      },
+      "path": "go/stream/batch-crawl-stream-partial-failure.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "go"
+      },
+      "path": "go/stream/crawl-stream-events.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "go"
+      },
+      "path": "go/stream/stream-depth-crawl.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "go"
+      },
+      "path": "go/stream/stream-error-event-mid-crawl.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "go"
+      },
+      "path": "go/stream/stream-event-ordering.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "go"
+      },
+      "path": "go/stream/stream-large-crawl.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "go"
+      },
+      "path": "go/stream/stream-with-error-event.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "go"
       },
@@ -20037,6 +20547,18 @@
         "language": "java"
       },
       "path": "java/engine/engine-map-basic.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "java"
+      },
+      "path": "java/engine/engine-stream-basic.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -21761,6 +22283,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "java"
+      },
+      "path": "java/stream/batch-crawl-stream-events.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "java"
+      },
+      "path": "java/stream/batch-crawl-stream-partial-failure.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "java"
+      },
+      "path": "java/stream/crawl-stream-events.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "java"
+      },
+      "path": "java/stream/stream-depth-crawl.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "java"
+      },
+      "path": "java/stream/stream-error-event-mid-crawl.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "java"
+      },
+      "path": "java/stream/stream-event-ordering.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "java"
+      },
+      "path": "java/stream/stream-large-crawl.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "java"
+      },
+      "path": "java/stream/stream-with-error-event.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "java"
       },
@@ -23085,6 +23703,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/engine/engine-map-basic.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/engine/engine-stream-basic.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -24809,6 +25439,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/batch-crawl-stream-events.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/batch-crawl-stream-partial-failure.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/crawl-stream-events.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/stream-depth-crawl.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/stream-error-event-mid-crawl.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/stream-event-ordering.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/stream-large-crawl.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/stream/stream-with-error-event.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "kotlin_android"
       },
@@ -26133,6 +26859,18 @@
         "language": "php"
       },
       "path": "php/engine/engine-map-basic.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "php"
+      },
+      "path": "php/engine/engine-stream-basic.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -27857,6 +28595,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "php"
+      },
+      "path": "php/stream/batch-crawl-stream-events.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "php"
+      },
+      "path": "php/stream/batch-crawl-stream-partial-failure.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "php"
+      },
+      "path": "php/stream/crawl-stream-events.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "php"
+      },
+      "path": "php/stream/stream-depth-crawl.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "php"
+      },
+      "path": "php/stream/stream-error-event-mid-crawl.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "php"
+      },
+      "path": "php/stream/stream-event-ordering.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "php"
+      },
+      "path": "php/stream/stream-large-crawl.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "php"
+      },
+      "path": "php/stream/stream-with-error-event.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "php"
       },
@@ -29181,6 +30015,18 @@
         "language": "python"
       },
       "path": "python/engine/engine-map-basic.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "python"
+      },
+      "path": "python/engine/engine-stream-basic.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -30905,6 +31751,102 @@
     },
     {
       "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "python"
+      },
+      "path": "python/stream/batch-crawl-stream-events.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "python"
+      },
+      "path": "python/stream/batch-crawl-stream-partial-failure.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "python"
+      },
+      "path": "python/stream/crawl-stream-events.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "python"
+      },
+      "path": "python/stream/stream-depth-crawl.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "python"
+      },
+      "path": "python/stream/stream-error-event-mid-crawl.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "python"
+      },
+      "path": "python/stream/stream-event-ordering.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "python"
+      },
+      "path": "python/stream/stream-large-crawl.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "python"
+      },
+      "path": "python/stream/stream-with-error-event.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "python"
       },
@@ -32229,6 +33171,18 @@
         "language": "ruby"
       },
       "path": "ruby/engine/engine-map-basic.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "ruby"
+      },
+      "path": "ruby/engine/engine-stream-basic.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -33945,6 +34899,102 @@
         "language": "ruby"
       },
       "path": "ruby/strategy/strategy-dfs-depth-first.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/batch-crawl-stream-events.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/batch-crawl-stream-partial-failure.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/crawl-stream-events.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/stream-depth-crawl.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/stream-error-event-mid-crawl.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/stream-event-ordering.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/stream-large-crawl.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "ruby"
+      },
+      "path": "ruby/stream/stream-with-error-event.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -39060,6 +40110,18 @@
     },
     {
       "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "swift"
+      },
+      "path": "swift/engine/engine-stream-basic.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_401_unauthorized",
         "language": "swift"
       },
@@ -40776,6 +41838,78 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "swift"
+      },
+      "path": "swift/stream/crawl-stream-events.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "swift"
+      },
+      "path": "swift/stream/stream-depth-crawl.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "swift"
+      },
+      "path": "swift/stream/stream-error-event-mid-crawl.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "swift"
+      },
+      "path": "swift/stream/stream-event-ordering.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "swift"
+      },
+      "path": "swift/stream/stream-large-crawl.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "swift"
+      },
+      "path": "swift/stream/stream-with-error-event.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "swift"
       },
@@ -42100,6 +43234,18 @@
         "language": "node"
       },
       "path": "typescript/engine/engine-map-basic.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "node"
+      },
+      "path": "typescript/engine/engine-stream-basic.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -43816,6 +44962,102 @@
         "language": "node"
       },
       "path": "typescript/strategy/strategy-dfs-depth-first.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_events",
+        "language": "node"
+      },
+      "path": "typescript/stream/batch-crawl-stream-events.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "batch_crawl_stream_partial_failure",
+        "language": "node"
+      },
+      "path": "typescript/stream/batch-crawl-stream-partial-failure.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "node"
+      },
+      "path": "typescript/stream/crawl-stream-events.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "node"
+      },
+      "path": "typescript/stream/stream-depth-crawl.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "node"
+      },
+      "path": "typescript/stream/stream-error-event-mid-crawl.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "node"
+      },
+      "path": "typescript/stream/stream-event-ordering.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "node"
+      },
+      "path": "typescript/stream/stream-large-crawl.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "node"
+      },
+      "path": "typescript/stream/stream-with-error-event.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48096,6 +49338,18 @@
     },
     {
       "key": {
+        "fixture_id": "engine_stream_basic",
+        "language": "zig"
+      },
+      "path": "zig/engine/engine-stream-basic.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "error_401_unauthorized",
         "language": "zig"
       },
@@ -49812,6 +51066,78 @@
     },
     {
       "key": {
+        "fixture_id": "crawl_stream_events",
+        "language": "zig"
+      },
+      "path": "zig/stream/crawl-stream-events.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_depth_crawl",
+        "language": "zig"
+      },
+      "path": "zig/stream/stream-depth-crawl.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_error_event_mid_crawl",
+        "language": "zig"
+      },
+      "path": "zig/stream/stream-error-event-mid-crawl.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_event_ordering",
+        "language": "zig"
+      },
+      "path": "zig/stream/stream-event-ordering.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_large_crawl",
+        "language": "zig"
+      },
+      "path": "zig/stream/stream-large-crawl.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "stream_with_error_event",
+        "language": "zig"
+      },
+      "path": "zig/stream/stream-with-error-event.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "validation_browser_endpoint_invalid",
         "language": "zig"
       },
@@ -50306,7 +51632,79 @@
     },
     {
       "fixture_id": "batch_crawl_stream_events",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "go"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "java"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "node"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "php"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "python"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
       "language": "rust"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "go"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "java"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "node"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "php"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "python"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "ruby"
     },
     {
       "fixture_id": "batch_crawl_stream_partial_failure",
@@ -54538,7 +55936,55 @@
     },
     {
       "fixture_id": "crawl_stream_events",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
       "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "zig"
     },
     {
       "fixture_id": "crawl_subdomain_exclusion",
@@ -55550,7 +56996,55 @@
     },
     {
       "fixture_id": "engine_stream_basic",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "go"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "java"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "node"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "php"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "python"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
       "language": "rust"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "zig"
     },
     {
       "fixture_id": "error_401_unauthorized",
@@ -64098,23 +65592,263 @@
     },
     {
       "fixture_id": "stream_depth_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "ruby"
     },
     {
       "fixture_id": "stream_error_event_mid_crawl",
       "language": "rust"
     },
     {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "ruby"
+    },
+    {
       "fixture_id": "stream_event_ordering",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "ruby"
     },
     {
       "fixture_id": "stream_large_crawl",
       "language": "rust"
     },
     {
+      "fixture_id": "stream_large_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "ruby"
+    },
+    {
       "fixture_id": "stream_with_error_event",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "zig"
     },
     {
       "fixture_id": "validation_browser_endpoint_invalid",
@@ -65476,7 +67210,79 @@
     },
     {
       "fixture_id": "batch_crawl_stream_events",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "go"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "java"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "node"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "php"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "python"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_events",
       "language": "rust"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "go"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "java"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "node"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "php"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "python"
+    },
+    {
+      "fixture_id": "batch_crawl_stream_partial_failure",
+      "language": "ruby"
     },
     {
       "fixture_id": "batch_crawl_stream_partial_failure",
@@ -69708,7 +71514,55 @@
     },
     {
       "fixture_id": "crawl_stream_events",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "go"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "java"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "node"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "php"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "python"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
       "language": "rust"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "crawl_stream_events",
+      "language": "zig"
     },
     {
       "fixture_id": "crawl_subdomain_exclusion",
@@ -70720,7 +72574,55 @@
     },
     {
       "fixture_id": "engine_stream_basic",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "go"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "java"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "node"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "php"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "python"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
       "language": "rust"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "engine_stream_basic",
+      "language": "zig"
     },
     {
       "fixture_id": "error_401_unauthorized",
@@ -79268,23 +81170,263 @@
     },
     {
       "fixture_id": "stream_depth_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_depth_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "ruby"
     },
     {
       "fixture_id": "stream_error_event_mid_crawl",
       "language": "rust"
     },
     {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_error_event_mid_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "ruby"
+    },
+    {
       "fixture_id": "stream_event_ordering",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_event_ordering",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "ruby"
     },
     {
       "fixture_id": "stream_large_crawl",
       "language": "rust"
     },
     {
+      "fixture_id": "stream_large_crawl",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_large_crawl",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "go"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "java"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "node"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "php"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "python"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "ruby"
+    },
+    {
       "fixture_id": "stream_with_error_event",
       "language": "rust"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "stream_with_error_event",
+      "language": "zig"
     },
     {
       "fixture_id": "validation_browser_endpoint_invalid",

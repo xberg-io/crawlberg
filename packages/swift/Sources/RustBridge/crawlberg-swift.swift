@@ -4301,8 +4301,8 @@ public class SsrfPolicy: SsrfPolicyRefMut {
     }
 }
 extension SsrfPolicy {
-    public convenience init(_ deny_private: Bool, _ allowlist: RustVec<HostMatcher>, _ max_redirects: UInt8) {
-        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, { let val = allowlist; val.isOwned = false; return val.ptr }(), max_redirects))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ deny_private: Bool, _ allowlist: RustVec<HostMatcher>, _ max_redirects: UInt8, _ scheme_allowlist: RustVec<GenericIntoRustString>) {
+        self.init(ptr: __swift_bridge__$SsrfPolicy$new(deny_private, { let val = allowlist; val.isOwned = false; return val.ptr }(), max_redirects, { let val = scheme_allowlist; val.isOwned = false; return val.ptr }()))
     }
 }
 public class SsrfPolicyRefMut: SsrfPolicyRef {
@@ -4328,6 +4328,10 @@ extension SsrfPolicyRef {
 
     public func maxRedirects() -> UInt8 {
         __swift_bridge__$SsrfPolicy$max_redirects(ptr)
+    }
+
+    public func schemeAllowlist() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$SsrfPolicy$scheme_allowlist(ptr))
     }
 }
 extension SsrfPolicy: Vectorizable {
