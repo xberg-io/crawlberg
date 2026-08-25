@@ -4,6 +4,12 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-25
+
+### Changed
+
+- Regenerated all language bindings on alef 0.68.0.
+
 ## [1.4.0] - 2026-08-24
 
 ### Added

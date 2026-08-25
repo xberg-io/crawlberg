@@ -40,7 +40,7 @@ otel = [
 
 [dependencies]
 clap = { workspace = true }
-crawlberg = { path = "../crawlberg", version = "1.4.0", features = ["native-runtime", "browser"] }
+crawlberg = { path = "../crawlberg", version = "1.4.1", features = ["native-runtime", "browser"] }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }

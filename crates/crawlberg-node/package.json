@@ -1,6 +1,6 @@
 {
   "name": "@xberg-io/crawlberg",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "High-performance web crawling engine",
   "license": "MIT",
   "repository": {
@@ -18,14 +18,14 @@
   },
   "files": ["index.js", "index.d.ts", "*.node"],
   "optionalDependencies": {
-    "@xberg-io/crawlberg-linux-x64-gnu": "1.4.0",
-    "@xberg-io/crawlberg-linux-arm64-gnu": "1.4.0",
-    "@xberg-io/crawlberg-linux-x64-musl": "1.4.0",
-    "@xberg-io/crawlberg-linux-arm64-musl": "1.4.0",
-    "@xberg-io/crawlberg-darwin-x64": "1.4.0",
-    "@xberg-io/crawlberg-darwin-arm64": "1.4.0",
-    "@xberg-io/crawlberg-win32-x64-msvc": "1.4.0",
-    "@xberg-io/crawlberg-win32-arm64-msvc": "1.4.0"
+    "@xberg-io/crawlberg-linux-x64-gnu": "1.4.1",
+    "@xberg-io/crawlberg-linux-arm64-gnu": "1.4.1",
+    "@xberg-io/crawlberg-linux-x64-musl": "1.4.1",
+    "@xberg-io/crawlberg-linux-arm64-musl": "1.4.1",
+    "@xberg-io/crawlberg-darwin-x64": "1.4.1",
+    "@xberg-io/crawlberg-darwin-arm64": "1.4.1",
+    "@xberg-io/crawlberg-win32-x64-msvc": "1.4.1",
+    "@xberg-io/crawlberg-win32-arm64-msvc": "1.4.1"
   },
   "napi": {
     "packageName": "@xberg-io/crawlberg",
