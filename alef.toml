@@ -213,6 +213,18 @@ before = ["dart pub get"]
 [workspace.docs.snippets.sessions.dart.env]
 PUB_CACHE = ".alef/pub-cache"
 
+# ~keep Every java snippet failed CI with "package io.xberg.crawlberg does not exist" because no
+# ~keep session was configured for java at all -- alef's `JavaValidator::class_path` builds the
+# ~keep classpath from `target/classes` + `target/dependency/*.jar` next to `manifest`, and neither
+# ~keep directory exists until Maven populates them. `dependency:copy-dependencies` is what puts
+# ~keep jackson-databind (a runtime dependency of the generated bindings) into `target/dependency`;
+# ~keep plain `mvn compile` alone leaves the classpath jackson-less. See alef.toml's own comment
+# ~keep above ("java fails all 264 ... no jackson on the classpath") -- this was the predicted gap.
+[workspace.docs.snippets.sessions.java]
+cwd = "packages/java"
+manifest = "packages/java/pom.xml"
+before = ["mvn -q -DskipTests compile dependency:copy-dependencies"]
+
 [workspace.sync]
 extra_paths = ["package.json", "crates/crawlberg-node/package.json"]
 
