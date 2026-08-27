@@ -2086,6 +2086,22 @@ jobs:
           output-path: packages/elixir/checksum-Elixir.Crawlberg.Native.exs
           token: ${{ steps.app-token.outputs.token }}
 
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.17"
+          otp-version: "27"
+
+      # ~keep generate-elixir-checksums writes this file directly from the GitHub release
+      # asset list, not through `mix format`, so its `=>` lines routinely exceed the
+      # 140-char line_length in packages/elixir/.formatter.exs and land unformatted on
+      # main. `poly fmt --check .` (CI Lint's Format check step) then fails on every
+      # release that touches this file. Format it before committing so it never drifts.
+      - name: Format generated checksum file
+        if: needs.prepare.outputs.dry_run != 'true'
+        run: mix format checksum-Elixir.Crawlberg.Native.exs
+        working-directory: packages/elixir
+        shell: bash
+
       - name: Commit updated checksum file to main
         if: needs.prepare.outputs.dry_run != 'true'
         run: |
@@ -2121,11 +2137,6 @@ jobs:
             sleep $((i * 2))
           done
         shell: bash
-
-      - uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.17"
-          otp-version: "27"
 
       - name: Install Mix dependencies
         run: mix local.hex --force && mix local.rebar --force && mix deps.get
