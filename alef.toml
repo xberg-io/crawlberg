@@ -1145,6 +1145,8 @@ handle_dict_types = ["auth"]
 browser = "BrowserConfig"
 proxy = "ProxyConfig"
 auth = "AuthConfig"
+content = "ContentConfig"
+ssrf = "SsrfPolicy"
 
 [crates.e2e.call.overrides.node]
 module = "@xberg-io/crawlberg"
