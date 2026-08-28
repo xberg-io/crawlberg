@@ -1670,15 +1670,6 @@ result_is_json_struct = true
 [crates.e2e.calls.crawl_stream.overrides.php]
 function = "crawlStream"
 
-[crates.e2e.calls.crawl_stream.overrides.c]
-function = "crawl_stream"
-# ~keep No `result_type` here on purpose. It was `"char*"`, a C spelling rather than an IR
-# ~keep struct/enum name, which alef's call validator flags because it silently disables
-# ~keep nested-field verification. `raw_c_result_type` below already carries that C spelling,
-# ~keep which is the field the diagnostic asks for.
-raw_c_result_type = "char*"
-c_engine_factory = "CrawlConfig"
-
 [crates.e2e.calls.crawl_stream.overrides.brew]
 function = "crawl"
 cli_args = ["--format", "json", "--stream"]
@@ -1738,12 +1729,6 @@ module = "crawlberg"
 
 [crates.e2e.calls.batch_crawl_stream.overrides.php]
 function = "batchCrawlStream"
-
-[crates.e2e.calls.batch_crawl_stream.overrides.c]
-function = "batch_crawl_stream"
-# ~keep No `result_type` here on purpose -- see the note on the `crawl_stream` c override.
-raw_c_result_type = "char*"
-c_engine_factory = "CrawlConfig"
 
 [crates.e2e.fields]
 title = "metadata.title"
