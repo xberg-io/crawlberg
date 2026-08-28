@@ -60,7 +60,7 @@ crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.4.1" }
 criterion = { version = "0.8", features = ["html_reports"] }
 cssparser = "0.37"
 dashmap = "6"
-deno_core = "0.410"
+deno_core = "0.411"
 deno_error = "0.7"
 dirs = "6"
 encoding_rs = "0.8"
@@ -131,7 +131,7 @@ tracing-opentelemetry = "0.33"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "5", features = ["axum_extras"] }
-uuid = { version = "1.25", features = ["v4"] }
+uuid = { version = "1.26", features = ["v4"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
