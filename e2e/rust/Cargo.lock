@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-e2e-rust"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "axum",
  "crawlberg",

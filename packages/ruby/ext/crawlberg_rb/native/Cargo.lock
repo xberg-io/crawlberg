@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-rb"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "crawlberg",
  "futures",

@@ -4,6 +4,24 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-28
+
+### Fixed
+
+- **Python e2e configs passed raw dicts where a binding type was required.** The
+  `handle_nested_types` map for the Python e2e generator declared `browser`, `proxy` and
+  `auth` but not `content` or `ssrf`, so generated tests emitted
+  `CrawlConfig(ssrf={...})` and `CrawlConfig(content={...})`. The generated pyclasses
+  only extract from real instances, so both raise
+  `TypeError: 'dict' object is not an instance of ...` at construction. Python now
+  declares the same nested types as its wasm sibling.
+
+### Changed
+
+- Upgraded `deno_core` 0.410 -> 0.411 and `uuid` 1.25 -> 1.26.
+- Removed the inert `[overrides.c]` blocks for `crawl_stream` and `batch_crawl_stream`;
+  both calls already list `c` in `skip_languages`.
+
 ## [1.4.1] - 2026-08-25
 
 ### Changed
