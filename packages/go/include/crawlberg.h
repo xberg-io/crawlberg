@@ -873,6 +873,19 @@ char *cberg_browser_config_wait_selector(CBERGAlefHandle handle);
 uint64_t cberg_browser_config_extra_wait(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `extra_wait` field on a `BrowserConfig` is `Some`.
+ *
+ * `cberg_browser_config_extra_wait` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_browser_config_has_extra_wait(CBERGAlefHandle handle);
+
+/**
  * Get the `proxy` field from a `BrowserConfig`.
  * A non-null returned handle is owned by the caller.
  * It must be freed with `cberg_proxy_config_free`.
@@ -1164,6 +1177,19 @@ int32_t cberg_content_config_skip_images(CBERGAlefHandle handle);
 uintptr_t cberg_content_config_max_depth(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `max_depth` field on a `ContentConfig` is `Some`.
+ *
+ * `cberg_content_config_max_depth` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_has_max_depth(CBERGAlefHandle handle);
+
+/**
  * Get the `wrap` field from a `ContentConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1280,11 +1306,37 @@ void cberg_crawl_config_free(CBERGAlefHandle handle);
 uintptr_t cberg_crawl_config_max_depth(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `max_depth` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_depth` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_depth(CBERGAlefHandle handle);
+
+/**
  * Get the `max_pages` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uintptr_t cberg_crawl_config_max_pages(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `max_pages` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_pages` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_pages(CBERGAlefHandle handle);
 
 /**
  * Get the `max_links_per_page` field from a `CrawlConfig`.
@@ -1294,11 +1346,37 @@ uintptr_t cberg_crawl_config_max_pages(CBERGAlefHandle handle);
 uintptr_t cberg_crawl_config_max_links_per_page(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `max_links_per_page` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_links_per_page` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_links_per_page(CBERGAlefHandle handle);
+
+/**
  * Get the `max_concurrent` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uintptr_t cberg_crawl_config_max_concurrent(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `max_concurrent` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_concurrent` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_concurrent(CBERGAlefHandle handle);
 
 /**
  * Get the `crawl_strategy` field from a `CrawlConfig`.
@@ -1333,6 +1411,19 @@ char *cberg_crawl_config_bm25_query(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 double cberg_crawl_config_bm25_threshold(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `bm25_threshold` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_bm25_threshold` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_bm25_threshold(CBERGAlefHandle handle);
 
 /**
  * Get the `respect_robots_txt` field from a `CrawlConfig`.
@@ -1413,6 +1504,19 @@ uint64_t cberg_crawl_config_request_timeout(CBERGAlefHandle handle);
 uint64_t cberg_crawl_config_rate_limit_ms(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `rate_limit_ms` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_rate_limit_ms` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_rate_limit_ms(CBERGAlefHandle handle);
+
+/**
  * Get the `max_redirects` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1459,6 +1563,19 @@ CBERGAlefHandle cberg_crawl_config_auth(CBERGAlefHandle handle);
 uintptr_t cberg_crawl_config_max_body_size(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `max_body_size` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_body_size` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_body_size(CBERGAlefHandle handle);
+
+/**
  * Get the `remove_tags` field from a `CrawlConfig`.
  * A non-null returned pointer is owned by the caller.
  * It must be freed with `cberg_free_string`.
@@ -1482,6 +1599,19 @@ CBERGAlefHandle cberg_crawl_config_content(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 uintptr_t cberg_crawl_config_map_limit(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `map_limit` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_map_limit` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_map_limit(CBERGAlefHandle handle);
 
 /**
  * Get the `map_search` field from a `CrawlConfig`.
@@ -1514,6 +1644,19 @@ char *cberg_crawl_config_asset_types(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 uintptr_t cberg_crawl_config_max_asset_size(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `max_asset_size` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_max_asset_size` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_max_asset_size(CBERGAlefHandle handle);
 
 /**
  * Get the `browser` field from a `CrawlConfig`.
@@ -1564,6 +1707,19 @@ int32_t cberg_crawl_config_follow_document_urls(CBERGAlefHandle handle);
 uint32_t cberg_crawl_config_document_url_depth(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `document_url_depth` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_document_url_depth` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_document_url_depth(CBERGAlefHandle handle);
+
+/**
  * Get the `download_documents` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -1576,6 +1732,19 @@ int32_t cberg_crawl_config_download_documents(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 uintptr_t cberg_crawl_config_document_max_size(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `document_max_size` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_document_max_size` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_document_max_size(CBERGAlefHandle handle);
 
 /**
  * Get the `document_mime_types` field from a `CrawlConfig`.
@@ -1644,6 +1813,19 @@ CBERGAlefHandle cberg_crawl_config_ssrf(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_crawl_config_ssrf_deny_private_explicit(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `ssrf_deny_private_explicit` field on a `CrawlConfig` is `Some`.
+ *
+ * `cberg_crawl_config_ssrf_deny_private_explicit` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_has_ssrf_deny_private_explicit(CBERGAlefHandle handle);
 
 /**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
@@ -2238,6 +2420,19 @@ void cberg_extraction_meta_free(CBERGAlefHandle handle);
 double cberg_extraction_meta_cost(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `cost` field on a `ExtractionMeta` is `Some`.
+ *
+ * `cberg_extraction_meta_cost` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_extraction_meta_has_cost(CBERGAlefHandle handle);
+
+/**
  * Get the `prompt_tokens` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
@@ -2245,11 +2440,37 @@ double cberg_extraction_meta_cost(CBERGAlefHandle handle);
 uint64_t cberg_extraction_meta_prompt_tokens(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `prompt_tokens` field on a `ExtractionMeta` is `Some`.
+ *
+ * `cberg_extraction_meta_prompt_tokens` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_extraction_meta_has_prompt_tokens(CBERGAlefHandle handle);
+
+/**
  * Get the `completion_tokens` field from a `ExtractionMeta`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uint64_t cberg_extraction_meta_completion_tokens(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `completion_tokens` field on a `ExtractionMeta` is `Some`.
+ *
+ * `cberg_extraction_meta_completion_tokens` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_extraction_meta_has_completion_tokens(CBERGAlefHandle handle);
 
 /**
  * Get the `model` field from a `ExtractionMeta`.
@@ -2505,11 +2726,37 @@ char *cberg_image_info_alt(CBERGAlefHandle handle);
 uint32_t cberg_image_info_width(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `width` field on a `ImageInfo` is `Some`.
+ *
+ * `cberg_image_info_width` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_image_info_has_width(CBERGAlefHandle handle);
+
+/**
  * Get the `height` field from a `ImageInfo`.
  * # Safety
  * Pointer must be a valid handle returned by this library.
  */
 uint32_t cberg_image_info_height(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `height` field on a `ImageInfo` is `Some`.
+ *
+ * `cberg_image_info_height` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_image_info_has_height(CBERGAlefHandle handle);
 
 /**
  * Get the `source` field from a `ImageInfo`.
@@ -3211,6 +3458,19 @@ char *cberg_page_metadata_headings(CBERGAlefHandle handle);
 uintptr_t cberg_page_metadata_word_count(CBERGAlefHandle handle);
 
 /**
+ * Report whether the `word_count` field on a `PageMetadata` is `Some`.
+ *
+ * `cberg_page_metadata_word_count` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_page_metadata_has_word_count(CBERGAlefHandle handle);
+
+/**
  * Create a `ProxyConfig` from a JSON string. Returns null on failure.
  * # Safety
  * JSON string must be valid UTF-8 and null-terminated.
@@ -3468,6 +3728,19 @@ int32_t cberg_scrape_result_is_allowed(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 uint64_t cberg_scrape_result_crawl_delay(CBERGAlefHandle handle);
+
+/**
+ * Report whether the `crawl_delay` field on a `ScrapeResult` is `Some`.
+ *
+ * `cberg_scrape_result_crawl_delay` cannot distinguish a `None` field from a
+ * legitimate zero-valued `Some` at the C ABI boundary -- there is no null representation for a
+ * numeric return, so both collapse to the same sentinel. Call this function first: `1` means
+ * the field getter's return value is meaningful, `0` means the field is absent and the getter's
+ * sentinel must be ignored, `-1` reports an invalid handle (see `cberg_last_error_code`).
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_scrape_result_has_crawl_delay(CBERGAlefHandle handle);
 
 /**
  * Get the `noindex_detected` field from a `ScrapeResult`.

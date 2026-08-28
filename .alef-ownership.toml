@@ -3950,6 +3950,7 @@ owned_paths = [
   "packages/java/README.md",
   "packages/java/pom.xml",
   "packages/kotlin-android/README.md",
+  "packages/kotlin-android/gradle.properties",
   "packages/kotlin-android/src/main/AndroidManifest.xml",
   "packages/php/README.md",
   "packages/python/crawlberg/_crawlberg.pyi",

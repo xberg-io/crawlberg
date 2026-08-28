@@ -352,6 +352,7 @@ fn wire__crate__create_batch_crawl_results_from_json_impl(
         },
     )
 }
+#[cfg(not(target_arch = "wasm32"))]
 fn wire__crate__create_batch_crawl_stream_request_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -688,6 +689,7 @@ fn wire__crate__create_crawl_result_from_json_impl(
         },
     )
 }
+#[cfg(not(target_arch = "wasm32"))]
 fn wire__crate__create_crawl_stream_request_from_json_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3865,6 +3867,7 @@ fn pde_ffi_dispatcher_primary_impl(
         7 => wire__crate__create_article_metadata_from_json_impl(port, ptr, rust_vec_len, data_len),
         8 => wire__crate__create_batch_crawl_result_from_json_impl(port, ptr, rust_vec_len, data_len),
         9 => wire__crate__create_batch_crawl_results_from_json_impl(port, ptr, rust_vec_len, data_len),
+        #[cfg(not(target_arch = "wasm32"))]
         10 => wire__crate__create_batch_crawl_stream_request_from_json_impl(port, ptr, rust_vec_len, data_len),
         11 => wire__crate__create_batch_scrape_result_from_json_impl(port, ptr, rust_vec_len, data_len),
         12 => wire__crate__create_batch_scrape_results_from_json_impl(port, ptr, rust_vec_len, data_len),
@@ -3877,6 +3880,7 @@ fn pde_ffi_dispatcher_primary_impl(
         19 => wire__crate__create_crawl_config_from_json_impl(port, ptr, rust_vec_len, data_len),
         20 => wire__crate__create_crawl_page_result_from_json_impl(port, ptr, rust_vec_len, data_len),
         21 => wire__crate__create_crawl_result_from_json_impl(port, ptr, rust_vec_len, data_len),
+        #[cfg(not(target_arch = "wasm32"))]
         22 => wire__crate__create_crawl_stream_request_from_json_impl(port, ptr, rust_vec_len, data_len),
         23 => wire__crate__create_downloaded_asset_from_json_impl(port, ptr, rust_vec_len, data_len),
         24 => wire__crate__create_downloaded_document_from_json_impl(port, ptr, rust_vec_len, data_len),
