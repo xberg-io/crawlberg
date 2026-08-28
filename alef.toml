@@ -419,7 +419,13 @@ traineddata = "traineddata"
 # alef-generated e2e test apps carry a "DO NOT EDIT" header and generator-emitted
 # comments; exempt them from the uncomment sweep (they're still ruff-linted via the
 # builtin "**/test_apps/**" defaults). Distinct glob to avoid a duplicate key. ~keep
-"test_apps/**" = ["comment", "doc-comment"]
+# UP034: alef's python e2e assertion renderer wraps an already-parenthesized optional-chain
+# accessor in a second pair of parens when it nests it in a call -- `len((x if y else None))`,
+# `_alef_e2e_text((...))`. The inner parens are the accessor's own, so ruff sees the outer pair
+# as extraneous. The files are hash-stamped generated output, so `poly lint --fix` skips them
+# and any hand fix is clobbered on the next regen; suppress here until alef stops double-
+# wrapping. ~keep
+"test_apps/**" = ["comment", "doc-comment", "UP034"]
 "docker/**" = ["DL3006", "DL3059"]
 "packages/python/**/api.py" = ["RET504"]
 # Test-code relaxations on top of the builtin "**/tests/**" defaults: tests
