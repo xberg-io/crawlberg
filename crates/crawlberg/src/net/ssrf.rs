@@ -1016,8 +1016,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_url_rejects_unsupported_scheme_even_if_configured() {
-        let mut policy = SsrfPolicy::default();
-        policy.scheme_allowlist = vec!["ftp".to_owned()];
+        let policy = SsrfPolicy {
+            scheme_allowlist: vec!["ftp".to_owned()],
+            ..Default::default()
+        };
         let url = "ftp://example.com/".parse::<url::Url>().unwrap();
 
         let error = validate_url(&url, &policy).await.unwrap_err();
@@ -1029,8 +1031,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_url_honors_a_configured_supported_subset() {
-        let mut policy = SsrfPolicy::default();
-        policy.scheme_allowlist = vec!["https".to_owned()];
+        let policy = SsrfPolicy {
+            scheme_allowlist: vec!["https".to_owned()],
+            ..Default::default()
+        };
         let url = "http://1.1.1.1/".parse::<url::Url>().unwrap();
 
         let error = validate_url(&url, &policy).await.unwrap_err();
