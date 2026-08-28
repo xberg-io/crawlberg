@@ -11,4 +11,4 @@
 # Do not hand-edit; it is rewritten by `alef generate`/`alef all` on every successful run.
 
 [crates]
-crawlberg = "fda67bd5122223d7f58110fa3cb1f49280d79047b780e825c72449c627eeb7e9"
+crawlberg = "8c3bfe2be2358f3c01e68af1c25494f8574504d0486c2069ad496dc0e07ebd37"
