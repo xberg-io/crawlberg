@@ -3944,6 +3944,7 @@ owned_paths = [
   "docs-site/src/snippets/generated/zig/warc/warc-basic-output.md",
   "docs-site/src/snippets/generated/zig/warc/warc-multi-page-crawl.md",
   "e2e/c/Makefile",
+  "e2e/node/.npmrc",
   "packages/csharp/README.md",
   "packages/elixir/README.md",
   "packages/go/README.md",
@@ -3959,5 +3960,6 @@ owned_paths = [
   "packages/swift/README.md",
   "test_apps/c/Makefile",
   "test_apps/java/.mvn/wrapper/maven-wrapper.properties",
+  "test_apps/node/.npmrc",
   "test_apps/php/phpunit.xml",
 ]
