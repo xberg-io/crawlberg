@@ -2098,6 +2098,15 @@ jobs:
           elixir-version: "1.17"
           otp-version: "27"
 
+      - name: Install Mix dependencies
+        run: mix local.hex --force && mix local.rebar --force && mix deps.get
+        working-directory: packages/elixir
+        shell: bash
+
+      # ~keep `mix format` must run AFTER `mix deps.get`: packages/elixir/.formatter.exs
+      # declares `import_deps: [:rustler]`, and import_deps resolves against FETCHED deps,
+      # not declared ones. With the install step later, format failed every release with
+      # "Unknown dependency :rustler given to :import_deps".
       # ~keep generate-elixir-checksums writes this file directly from the GitHub release
       # asset list, not through `mix format`, so its `=>` lines routinely exceed the
       # 140-char line_length in packages/elixir/.formatter.exs and land unformatted on
@@ -2143,11 +2152,6 @@ jobs:
             git commit -m "chore: update Elixir NIF checksums for v${{ needs.prepare.outputs.version }}"
             sleep $((i * 2))
           done
-        shell: bash
-
-      - name: Install Mix dependencies
-        run: mix local.hex --force && mix local.rebar --force && mix deps.get
-        working-directory: packages/elixir
         shell: bash
 
       - uses: xberg-io/actions/publish-hex@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
