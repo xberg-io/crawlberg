@@ -356,7 +356,12 @@ enum Commands {
     /// Scrape multiple URLs concurrently
     BatchScrape {
         /// URLs to scrape
-        #[arg(required = true)]
+        // ~keep Deliberately not `required = true`. Empty input must reach `batch_scrape`
+        // ~keep so the library owns the check and every language reports the same
+        // ~keep `invalid_config: batch_urls must not be empty`. Under clap's guard the CLI
+        // ~keep instead died at parse time with `<URLS>...`, which shares no text with the
+        // ~keep library message and made the CLI the one binding that failed the shared
+        // ~keep `batch_scrape_empty_urls_error` fixture.
         urls: Vec<String>,
         /// Maximum concurrent requests
         #[arg(long, short = 'c', default_value = "10")]
@@ -1086,7 +1091,11 @@ mod tests {
     }
 
     #[test]
-    fn batch_scrape_requires_at_least_one_url() {
-        assert!(Cli::try_parse_from(["crawlberg", "batch-scrape"]).is_err());
+    fn batch_scrape_defers_empty_urls_to_library_validation() {
+        let cli = Cli::try_parse_from(["crawlberg", "batch-scrape"]).expect("empty urls must parse");
+        match cli.command {
+            Commands::BatchScrape { urls, .. } => assert!(urls.is_empty(), "urls should reach the library empty"),
+            _ => panic!("expected BatchScrape"),
+        }
     }
 }
