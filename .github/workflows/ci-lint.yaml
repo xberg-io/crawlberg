@@ -21,7 +21,7 @@ jobs:
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
-    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
     with:
       setup-rust: true
       setup-python: true
@@ -59,14 +59,14 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install alef
-        uses: xberg-io/actions/install-alef@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/install-alef@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       # ~keep dart, elixir and zig are the only three toolchains `alef snippets check`
       # needs that ubuntu-latest does not preinstall. Without them those snippets report
       # Unavailable instead of being checked at all, so the three languages go silently
       # unvalidated rather than failing loudly. Install them so the check is real.
       - name: Setup Elixir
-        uses: xberg-io/actions/setup-elixir@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-elixir@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           elixir-version: "1.17"
           otp-version: "27"
@@ -82,7 +82,7 @@ jobs:
           sdk: "3.12.2"
 
       - name: Setup Zig
-        uses: xberg-io/actions/setup-zig@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-zig@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           version: "0.16.0"
 

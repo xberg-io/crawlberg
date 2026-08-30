@@ -26,6 +26,6 @@ concurrency:
 
 jobs:
   docs:
-    uses: xberg-io/actions/.github/workflows/reusable-docs-deploy.yml@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+    uses: xberg-io/actions/.github/workflows/reusable-docs-deploy.yml@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
     with:
       deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

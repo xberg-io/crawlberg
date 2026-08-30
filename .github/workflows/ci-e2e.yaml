@@ -67,18 +67,18 @@ jobs:
           submodules: recursive
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-rust@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           cache-key-prefix: build-ffi-${{ matrix.target }}
           target: ${{ matrix.target }}
 
       - name: Build FFI library
-        uses: xberg-io/actions/build-rust-ffi@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/build-rust-ffi@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           crate-name: crawlberg-ffi
 
       - name: Build CLI
-        uses: xberg-io/actions/build-rust-cli@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/build-rust-cli@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           package-name: crawlberg-cli
           binary-name: crawlberg
@@ -179,7 +179,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Rust
-        uses: xberg-io/actions/setup-rust@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-rust@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           cache-key-prefix: e2e-${{ matrix.lang }}
           use-sccache: ${{ matrix.lang == 'rust' || matrix.lang == 'wasm' }}
@@ -249,14 +249,14 @@ jobs:
 
       - name: Setup Python
         if: matrix.python-version
-        uses: xberg-io/actions/setup-python-env@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-python-env@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           python-version: ${{ matrix.python-version }}
           cache-prefix: e2e-py-${{ matrix.python-version }}
 
       - name: Setup Node
         if: matrix.node-version
-        uses: xberg-io/actions/setup-node-workspace@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-node-workspace@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       - name: Setup Go
         if: matrix.go-version
@@ -289,7 +289,7 @@ jobs:
 
       - name: Setup PHP
         if: matrix.php-version
-        uses: xberg-io/actions/setup-php@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-php@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           php-version: ${{ matrix.php-version }}
           tools: composer
@@ -297,7 +297,7 @@ jobs:
 
       - name: Setup Elixir
         if: matrix.elixir-version
-        uses: xberg-io/actions/setup-elixir@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-elixir@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           elixir-version: ${{ matrix.elixir-version }}
           otp-version: ${{ matrix.otp-version }}
@@ -310,7 +310,7 @@ jobs:
 
       - name: Setup Swift
         if: matrix.swift-version
-        uses: xberg-io/actions/setup-swift@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-swift@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           swift-version: ${{ matrix.swift-version }}
 
@@ -328,17 +328,17 @@ jobs:
 
       - name: Setup Zig
         if: matrix.zig-version
-        uses: xberg-io/actions/setup-zig@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-zig@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
         with:
           version: ${{ matrix.zig-version }}
 
       - name: Setup wasm-pack
         if: matrix.lang == 'wasm'
-        uses: xberg-io/actions/setup-wasm-pack@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-wasm-pack@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       - name: Setup Gradle
         if: matrix.gradle
-        uses: xberg-io/actions/setup-gradle@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-gradle@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       # gradle: true is exclusive to kotlin_android. No org action wraps
       # SDK-only setup (setup-android-emulator bundles a full AVD, which
@@ -359,7 +359,7 @@ jobs:
           packages: "platforms;android-35"
 
       - name: Setup Chrome
-        uses: xberg-io/actions/setup-chrome@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/setup-chrome@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       - name: Setup library paths for FFI bindings
         if: |
@@ -378,7 +378,7 @@ jobs:
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Install Task
-        uses: xberg-io/actions/install-task@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/install-task@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       # ~keep This drift check is only sound when the formatting alef applies
       # here is byte-identical to the formatting already in the committed tree.
@@ -415,7 +415,7 @@ jobs:
       # tracked separately, and the silent WARN-and-skip is an alef defect.
       - name: Install alef (pinned)
         if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
-        uses: xberg-io/actions/install-alef@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+        uses: xberg-io/actions/install-alef@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
 
       - name: Check e2e/${{ matrix.lang }} freshness against fixtures/
         if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
