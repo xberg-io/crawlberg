@@ -5,7 +5,11 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.76.0"
+# ~keep PREPARED, NOT YET VALID: 0.79.3 is unpublished (crates.io sparse index tops out
+# ~keep at 0.79.2 as of this commit), so every `install-alef` step will fail until it ships.
+# ~keep The tree has NOT been regenerated against it — expect `alef verify` and the e2e
+# ~keep freshness checks to report drift until a regeneration commit follows the release.
+alef_version = "0.79.3"
 languages = [
   "python",
   "node",
