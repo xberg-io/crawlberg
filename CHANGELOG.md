@@ -4,6 +4,15 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`batch-scrape` with no URLs reported a different error than every other binding.**
+  The positional was `required = true`, so clap aborted at parse time with
+  `the following required arguments were not provided: <URLS>...`. Empty input now
+  reaches the library, which returns the same
+  `invalid_config: batch_urls must not be empty` the Python, Node, Go and other
+  bindings already return. `batch-crawl` is unchanged.
+
 ## [1.4.2] - 2026-08-28
 
 ### Fixed
