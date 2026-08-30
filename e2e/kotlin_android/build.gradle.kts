@@ -145,7 +145,17 @@ tasks.withType<Test> {
     systemProperty("jna.library.path", libPath)
 
     // Resolve fixture paths (e.g. "docx/fake.docx") against test_documents/
-    workingDir = file("${rootDir}/../../test_documents")
+    // ~keep Guard on existence. Gradle test workers fail to fork when workingDir points at a
+    // ~keep directory that does not exist, and the spawn IOException is masked by cleanup's
+    // ~keep "Cannot abort process 'Gradle Test Executor N' ... not in started or detached
+    // ~keep state" — 383 forks, no assertion text, no stack pointing here. crawlberg tracks
+    // ~keep no test_documents/, so this fired on every run. Alef emits this guard itself as
+    // ~keep of 0.64.0, but this file predates its ownership marker (siblings carry
+    // ~keep `alef:hash:`, this one does not), so alef's write guard refuses to refresh it.
+    val testDocuments = file("${rootDir}/../../test_documents")
+    if (testDocuments.isDirectory) {
+        workingDir = testDocuments
+    }
 
     if (project.properties["alef.skipHostJni"] != "true") {
         val hostPlatform = if (System.getProperty("os.name").lowercase().contains("mac")) {
