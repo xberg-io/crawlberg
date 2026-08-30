@@ -187,6 +187,13 @@ jobs:
           name: dart-package
           path: packages/dart
 
-      - uses: xberg-io/actions/publish-pub@8dd8c168edb57e4606b4840b1143855149390261 # v1.8.141
+      # ~keep Pinned ahead of the repo-wide v1.8.141 SHA on purpose. v1.8.141's publish-pub
+      # ~keep nests dart-lang/setup-dart, which registers its problem matcher at
+      # ~keep `$GITHUB_ACTION_PATH/dart-analyzer.json`; nested in a composite action that path
+      # ~keep resolves to publish-pub's own directory, which has no such file, so the step dies
+      # ~keep and every later step — including Publish to pub.dev — is skipped. That is why
+      # ~keep v1.4.2 tagged and released but never reached pub.dev (run 33233527927). v1.9.1
+      # ~keep passes `problem-matcher: "false"`. Keep this pin ahead until the repo-wide bump.
+      - uses: xberg-io/actions/publish-pub@f19d3e94941e6bee5156c80fc35483bf4df3f976 # v1.9.1
         with:
           package-dir: packages/dart
