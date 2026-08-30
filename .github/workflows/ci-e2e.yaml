@@ -150,7 +150,17 @@ jobs:
           - lang: c
             test-cmd: "task c:e2e:test"
           - lang: dart
-            dart-version: "3.11.6"
+            # ~keep This SDK version is a formatter pin, not just a runtime pin. `alef e2e
+            # ~keep generate` runs `dart format` in-process (it cannot be disabled), so the
+            # ~keep freshness check below compares this runner's formatter output against a
+            # ~keep tree formatted by whichever SDK the committer had. 3.11.6 and 3.13.x
+            # ~keep disagree on two things present in every generated file: 3.13 inserts
+            # ~keep blank lines between import groups and keeps a long `json:` named
+            # ~keep argument on one line, while 3.11.6 does neither. The committed e2e/dart
+            # ~keep tree is a fixed point of 3.13.2 (29/29 files, `dart format
+            # ~keep --set-exit-if-changed` clean), so pin the runner to it. Bumping this
+            # ~keep requires reformatting e2e/dart in the same commit.
+            dart-version: "3.13.2"
             test-cmd: "task dart:e2e:test"
           - lang: swift
             swift-version: "6.0"
@@ -393,6 +403,11 @@ jobs:
       #   run. c is gated on require_tool("clang-format") and formats in both
       #   places, but clang-format output is version-dependent and the runner's
       #   version differs from the one used locally.
+      #
+      # dart hits the same "formatter PRESENT but not equivalent" skew, but is
+      # handled by pinning rather than exclusion: its SDK version in the matrix
+      # above is chosen so the runner's `dart format` is a fixed point of the
+      # committed tree. See the ~keep note on the dart matrix entry.
       #
       # Excluding these keeps the check meaningful for the 8 remaining langs
       # rather than shipping one that fails for toolchain reasons. The real
