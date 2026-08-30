@@ -201,6 +201,13 @@ cargo binstall crawlberg-cli
 brew install xberg-io/tap/crawlberg
 ```
 
+Windows users can install the same binary through [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add xberg https://github.com/xberg-io/scoop-bucket
+scoop install crawlberg
+```
+
 See [CLI README](https://github.com/xberg-io/crawlberg/tree/main/crates/crawlberg-cli) for full documentation.
 
 </details>

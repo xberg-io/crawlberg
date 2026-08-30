@@ -25,6 +25,7 @@ owned_paths = [
   ".github/skills/api/SKILL.md",
   ".github/skills/cli/SKILL.md",
   ".github/skills/mcp/SKILL.md",
+  "README.md",
   "crates/crawlberg-ffi/cmake/crawlberg-ffi-config.cmake",
   "crates/crawlberg-node/.gitignore",
   "crates/crawlberg-wasm/README.md",
