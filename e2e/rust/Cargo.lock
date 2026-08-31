@@ -80,6 +80,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "astral-tl"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d4bb5df351abb6758a04240b0193794ddaf34a7c0b9452fab3c25dcce39e88"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "async-compression"
 version = "0.4.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,12 +572,12 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "ahash",
  "aho-corasick",
  "arc-swap",
- "astral-tl",
+ "astral-tl 0.8.0",
  "async-trait",
  "base64 0.23.1",
  "blake3",
@@ -605,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-e2e-rust"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "axum",
  "crawlberg",
@@ -1048,7 +1057,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5fe2583aad3e87439e40d841fed327a60892bb9946da1e3a5788ee7f0f4fe3c"
 dependencies = [
  "ahash",
- "astral-tl",
+ "astral-tl 0.7.11",
  "base64 0.23.1",
  "bitflags",
  "html-escape",

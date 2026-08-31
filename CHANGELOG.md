@@ -4,6 +4,13 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-31
+
+### Added
+
+- Scoop is now a release channel alongside Homebrew: a release publishes a Scoop manifest for the
+  CLI, and the install instructions cover it.
+
 ### Fixed
 
 - **`batch-scrape` with no URLs reported a different error than every other binding.**
