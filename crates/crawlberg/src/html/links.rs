@@ -145,6 +145,30 @@ mod tests {
     }
 
     #[test]
+    fn should_extract_link_when_href_attribute_is_uppercase() {
+        let html = r#"<a HREF="/docs/guide.html">guide</a>"#;
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(links.len(), 1, "uppercase HREF should still match, got {links:?}");
+        assert_eq!(
+            links[0].url, "https://example.com/docs/guide.html",
+            "uppercase HREF should resolve like a lowercase one, got {}",
+            links[0].url
+        );
+    }
+
+    #[test]
+    fn should_read_rel_when_attribute_name_is_mixed_case() {
+        let html = r#"<a href="https://other.example/" ReL="nofollow">out</a>"#;
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");
+        assert!(
+            links[0].nofollow,
+            "mixed-case ReL=\"nofollow\" should be honoured, got rel={:?}",
+            links[0].rel
+        );
+    }
+
+    #[test]
     fn absolute_base_href_still_resolves_correctly() {
         let html = r#"<base href="https://cdn.example/assets/"><a href="img.png">img</a>"#;
         let links = extract(html, "https://example.com/page");

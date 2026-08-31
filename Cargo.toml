@@ -112,7 +112,7 @@ servo_arc = "0.4"
 sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
-tl = { package = "astral-tl", version = "0.7" }
+tl = { package = "astral-tl", version = "0.8" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 toml = "1.1"

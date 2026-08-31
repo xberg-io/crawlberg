@@ -12,6 +12,12 @@ All notable changes to crawlberg are documented here.
   reaches the library, which returns the same
   `invalid_config: batch_urls must not be empty` the Python, Node, Go and other
   bindings already return. `batch-crawl` is unchanged.
+- **Links with uppercase or mixed-case attribute names were silently dropped.**
+  HTML attribute names are case-insensitive, but the parser matched them byte-for-byte
+  as written, so `<a HREF="/docs/guide.html">` yielded no link at all and
+  `ReL="nofollow"` was not honoured -- the link was lost, not merely mis-resolved. The
+  `astral-tl` 0.8.0 upgrade lowercases attribute keys at parse time. Verified against a
+  control build: both cases fail on 0.7.11 and pass on 0.8.0.
 
 ## [1.4.2] - 2026-08-28
 
