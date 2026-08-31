@@ -53,6 +53,6 @@
     "access": "public"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.7.3"
+    "@napi-rs/cli": "^3.8.6"
   }
 }
