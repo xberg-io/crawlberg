@@ -80,6 +80,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "astral-tl"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d4bb5df351abb6758a04240b0193794ddaf34a7c0b9452fab3c25dcce39e88"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "async-compression"
 version = "0.4.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -554,7 +563,7 @@ dependencies = [
  "ahash",
  "aho-corasick",
  "arc-swap",
- "astral-tl",
+ "astral-tl 0.8.0",
  "async-trait",
  "base64 0.23.1",
  "blake3",
@@ -1040,7 +1049,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5fe2583aad3e87439e40d841fed327a60892bb9946da1e3a5788ee7f0f4fe3c"
 dependencies = [
  "ahash",
- "astral-tl",
+ "astral-tl 0.7.11",
  "base64 0.23.1",
  "bitflags",
  "html-escape",
@@ -2073,9 +2082,9 @@ dependencies = [
 
 [[package]]
 name = "rb-sys"
-version = "0.9.127"
+version = "0.9.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d7c9560fe42dcffa576941394075f18a17dce89fcf718a2fa90b7dc2134d12"
+checksum = "02faf625bb10ba893e3ae620f19c9fb1b5f8fcae0fe4eb86bb3f2230fad75edb"
 dependencies = [
  "rb-sys-build",
 ]

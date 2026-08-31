@@ -8,6 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'lib.freezed.dart';
 
+// These functions are ignored because they are not marked as `pub`: `try_convert_asset_category_from_core`, `try_convert_auth_config_from_core`, `try_convert_browser_backend_from_core`, `try_convert_browser_mode_from_core`, `try_convert_browser_wait_from_core`, `try_convert_content_filter_kind_from_core`, `try_convert_crawl_event_from_core`, `try_convert_crawl_strategy_kind_from_core`, `try_convert_document_content_encoding_from_core`, `try_convert_feed_type_from_core`, `try_convert_host_matcher_from_core`, `try_convert_image_source_from_core`, `try_convert_link_type_from_core`, `try_convert_page_action_from_core`, `try_convert_scroll_direction_from_core`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// Convert markdown links to numbered citations.
@@ -183,6 +184,55 @@ Future<BatchCrawlResults> createBatchCrawlResultsFromJson({
 
 Future<SsrfPolicy> createSsrfPolicyFromJson({required String json}) =>
     RustLib.instance.api.crateCreateSsrfPolicyFromJson(json: json);
+
+Future<BrowserMode> createBrowserModeFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateBrowserModeFromJson(json: json);
+
+Future<BrowserWait> createBrowserWaitFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateBrowserWaitFromJson(json: json);
+
+Future<BrowserBackend> createBrowserBackendFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateBrowserBackendFromJson(json: json);
+
+Future<DocumentContentEncoding> createDocumentContentEncodingFromJson({
+  required String json,
+}) =>
+    RustLib.instance.api.crateCreateDocumentContentEncodingFromJson(json: json);
+
+Future<CrawlStrategyKind> createCrawlStrategyKindFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateCrawlStrategyKindFromJson(json: json);
+
+Future<ContentFilterKind> createContentFilterKindFromJson({
+  required String json,
+}) => RustLib.instance.api.crateCreateContentFilterKindFromJson(json: json);
+
+Future<AuthConfig> createAuthConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateAuthConfigFromJson(json: json);
+
+Future<LinkType> createLinkTypeFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateLinkTypeFromJson(json: json);
+
+Future<ImageSource> createImageSourceFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateImageSourceFromJson(json: json);
+
+Future<FeedType> createFeedTypeFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateFeedTypeFromJson(json: json);
+
+Future<AssetCategory> createAssetCategoryFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateAssetCategoryFromJson(json: json);
+
+Future<CrawlEvent> createCrawlEventFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlEventFromJson(json: json);
+
+Future<PageAction> createPageActionFromJson({required String json}) =>
+    RustLib.instance.api.crateCreatePageActionFromJson(json: json);
+
+Future<ScrollDirection> createScrollDirectionFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateScrollDirectionFromJson(json: json);
+
+Future<HostMatcher> createHostMatcherFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateHostMatcherFromJson(json: json);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CrawlEngineHandle>>
 abstract class CrawlEngineHandle implements RustOpaqueInterface {

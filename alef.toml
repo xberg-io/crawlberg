@@ -9,7 +9,7 @@
 # ~keep at 0.79.2 as of this commit), so every `install-alef` step will fail until it ships.
 # ~keep The tree has NOT been regenerated against it — expect `alef verify` and the e2e
 # ~keep freshness checks to report drift until a regeneration commit follows the release.
-alef_version = "0.79.3"
+alef_version = "0.79.5"
 languages = [
   "python",
   "node",

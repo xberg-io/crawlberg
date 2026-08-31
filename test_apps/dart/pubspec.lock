@@ -81,6 +81,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.15.0"
+  crawlberg:
+    dependency: "direct main"
+    description:
+      name: crawlberg
+      sha256: "0ea7b16ad595e8e460f8a3f5ecb4b2a7c16289f23adbd188a4cc179dc93c4b92"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.1"
   crypto:
     dependency: transitive
     description:
@@ -177,14 +185,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.12.0"
-  crawlberg:
-    dependency: "direct main"
-    description:
-      name: crawlberg
-      sha256: "333026ebc08e2f6c63e0125f9d68a51e255ea1da1ce7b4f933f7b23282a711da"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.3.0-rc.85"
   logging:
     dependency: transitive
     description:

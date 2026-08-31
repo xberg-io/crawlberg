@@ -3956,6 +3956,8 @@ owned_paths = [
   "packages/kotlin-android/src/main/AndroidManifest.xml",
   "packages/php/README.md",
   "packages/python/crawlberg/_crawlberg.pyi",
+  "packages/ruby/Gemfile",
+  "packages/ruby/Rakefile",
   "packages/ruby/crawlberg.gemspec",
   "packages/ruby/sig/types.rbs",
   "packages/swift/README.md",
