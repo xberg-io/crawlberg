@@ -1620,7 +1620,14 @@ jobs:
   upload-elixir-release:
     name: Upload Elixir NIF archives to GitHub Release
     needs: [prepare, validate-versions, elixir-natives, elixir-natives-musl]
-    if: ${{ needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.elixir-natives.result == 'success' || needs.elixir-natives-musl.result == 'success') }}
+    # ~keep `!cancelled()` is load-bearing. On a partial-target dispatch the crates-chain jobs
+    # skip; the build job upstream survives only via its own `!cancelled()`, and GitHub's
+    # skipped-state propagation then resumes at the first dependent that declares no opt-out --
+    # skipping it before this `if:` is ever evaluated, with every build leg green. Diagnosed on
+    # html-to-markdown runs 33491693123/33494806766/33495781759 and fixed there in 98d4537c41.
+    # Opting out of propagation also disables the implicit needs gate, so every need that must
+    # have succeeded is named explicitly below.
+    if: ${{ !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.elixir-natives.result == 'success' || needs.elixir-natives-musl.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -1647,7 +1654,14 @@ jobs:
   upload-php-pie-release:
     name: Upload PHP PIE archives to GitHub Release
     needs: [prepare, validate-versions, php-extension]
-    if: ${{ needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.php-extension.result == 'success' }}
+    # ~keep `!cancelled()` is load-bearing. On a partial-target dispatch the crates-chain jobs
+    # skip; the build job upstream survives only via its own `!cancelled()`, and GitHub's
+    # skipped-state propagation then resumes at the first dependent that declares no opt-out --
+    # skipping it before this `if:` is ever evaluated, with every build leg green. Diagnosed on
+    # html-to-markdown runs 33491693123/33494806766/33495781759 and fixed there in 98d4537c41.
+    # Opting out of propagation also disables the implicit needs gate, so every need that must
+    # have succeeded is named explicitly below.
+    if: ${{ !cancelled() && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.php-extension.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -1813,7 +1827,14 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: [prepare, validate-versions, python-wheels, python-sdist, check-pypi]
-    if: ${{ needs.prepare.outputs.release_python == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.check-pypi.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    # ~keep `!cancelled()` is load-bearing. On a partial-target dispatch the crates-chain jobs
+    # skip; the build job upstream survives only via its own `!cancelled()`, and GitHub's
+    # skipped-state propagation then resumes at the first dependent that declares no opt-out --
+    # skipping it before this `if:` is ever evaluated, with every build leg green. Diagnosed on
+    # html-to-markdown runs 33491693123/33494806766/33495781759 and fixed there in 98d4537c41.
+    # Opting out of propagation also disables the implicit needs gate, so every need that must
+    # have succeeded is named explicitly below.
+    if: ${{ !cancelled() && needs.prepare.outputs.release_python == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.python-wheels.result == 'success' && needs.python-sdist.result == 'success' && (needs.check-pypi.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -1839,7 +1860,14 @@ jobs:
   publish-rubygems:
     name: Publish Ruby gems
     needs: [prepare, validate-versions, ruby-gem, check-rubygems]
-    if: ${{ needs.prepare.outputs.release_ruby == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.check-rubygems.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    # ~keep `!cancelled()` is load-bearing. On a partial-target dispatch the crates-chain jobs
+    # skip; the build job upstream survives only via its own `!cancelled()`, and GitHub's
+    # skipped-state propagation then resumes at the first dependent that declares no opt-out --
+    # skipping it before this `if:` is ever evaluated, with every build leg green. Diagnosed on
+    # html-to-markdown runs 33491693123/33494806766/33495781759 and fixed there in 98d4537c41.
+    # Opting out of propagation also disables the implicit needs gate, so every need that must
+    # have succeeded is named explicitly below.
+    if: ${{ !cancelled() && needs.prepare.outputs.release_ruby == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.ruby-gem.result == 'success' && (needs.check-rubygems.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1998,7 +2026,14 @@ jobs:
   publish-packagist:
     name: Trigger Packagist update
     needs: [prepare, validate-versions, upload-php-pie-release, check-packagist]
-    if: ${{ needs.prepare.outputs.release_php == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    # ~keep `!cancelled()` is load-bearing. On a partial-target dispatch the crates-chain jobs
+    # skip; the build job upstream survives only via its own `!cancelled()`, and GitHub's
+    # skipped-state propagation then resumes at the first dependent that declares no opt-out --
+    # skipping it before this `if:` is ever evaluated, with every build leg green. Diagnosed on
+    # html-to-markdown runs 33491693123/33494806766/33495781759 and fixed there in 98d4537c41.
+    # Opting out of propagation also disables the implicit needs gate, so every need that must
+    # have succeeded is named explicitly below.
+    if: ${{ !cancelled() && needs.prepare.outputs.release_php == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && needs.upload-php-pie-release.result == 'success' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: xberg-io/actions/publish-packagist@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
