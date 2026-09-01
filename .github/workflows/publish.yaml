@@ -2729,6 +2729,12 @@ jobs:
     name: Finalize GitHub Release
     needs:
       - prepare
+      # ~keep `!contains(needs.*.result, 'failure')` below does not see a failed
+      # validate-versions: every publish job it blocks resolves to `skipped`, not `failure`,
+      # so on a resumed release (crates already on crates.io, so crates-gate still reports
+      # ok) this job would un-draft a release whose manifests never validated. Gate on it
+      # directly.
+      - validate-versions
       - verify-assets
       - crates-gate
       # ~keep A promotion that failed must sink the release verdict, not be papered over by
@@ -2772,6 +2778,7 @@ jobs:
       !cancelled() &&
       needs.prepare.outputs.is_tag == 'true' &&
       needs.prepare.outputs.dry_run != 'true' &&
+      needs.validate-versions.result == 'success' &&
       needs.crates-gate.outputs.ok == 'true' &&
       !contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
@@ -2793,6 +2800,9 @@ jobs:
     name: Announce release on Discord
     needs:
       - prepare
+      # ~keep Same reason as release-finalize: a skipped release-finalize is not a `failure`,
+      # so without this edge the announcement can go out for a release that never finalized.
+      - validate-versions
       - crates-gate
       - publish-crates
       - publish-pypi
@@ -2824,6 +2834,7 @@ jobs:
       needs.prepare.outputs.is_tag == 'true' &&
       needs.prepare.outputs.dry_run != 'true' &&
       needs.prepare.outputs.is_prerelease != 'true' &&
+      needs.validate-versions.result == 'success' &&
       needs.crates-gate.outputs.ok == 'true' &&
       !contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
