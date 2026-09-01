@@ -31,7 +31,7 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        uses: xberg-io/actions/prepare-release-metadata@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+        uses: xberg-io/actions/prepare-release-metadata@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
 
   check-pub:
     name: Check pub.dev for existing version
@@ -41,7 +41,7 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - id: check
-        uses: xberg-io/actions/check-registry@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+        uses: xberg-io/actions/check-registry@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
         with:
           registry: pub
           package: crawlberg
@@ -87,7 +87,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+      - uses: xberg-io/actions/setup-rust@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
         with:
           cache-key-prefix: dart-native-${{ matrix.rid }}
 
@@ -138,10 +138,10 @@ jobs:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
 
-      - uses: xberg-io/actions/setup-rust@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+      - uses: xberg-io/actions/setup-rust@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
 
       - name: Rebuild Dart bindings and codegen on primary platform
-        uses: xberg-io/actions/build-dart-package@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+        uses: xberg-io/actions/build-dart-package@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
         id: build
         with:
           package-dir: packages/dart/rust
@@ -194,6 +194,6 @@ jobs:
       # ~keep and every later step — including Publish to pub.dev — is skipped. That is why
       # ~keep v1.4.2 tagged and released but never reached pub.dev (run 33233527927). v1.9.1
       # ~keep passes `problem-matcher: "false"`. Keep this pin ahead until the repo-wide bump.
-      - uses: xberg-io/actions/publish-pub@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
+      - uses: xberg-io/actions/publish-pub@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
         with:
           package-dir: packages/dart
