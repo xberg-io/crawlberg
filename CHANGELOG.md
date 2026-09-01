@@ -4,7 +4,12 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.5.0] - 2026-08-31
+## [1.5.0] - 2026-09-01
+
+### Changed
+
+- Upgraded `html-to-markdown-rs` to 3.12, picking up its Tier-1/Tier-2 GFM autolink parity fix
+  and the case-insensitive HTML attribute matching behind the link fix below.
 
 ### Added
 
