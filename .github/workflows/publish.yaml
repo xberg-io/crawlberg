@@ -1563,8 +1563,8 @@ jobs:
 
   upload-elixir-release:
     name: Upload Elixir NIF archives to GitHub Release
-    needs: [prepare, elixir-natives, elixir-natives-musl]
-    if: ${{ needs.prepare.outputs.is_tag == 'true' && (needs.elixir-natives.result == 'success' || needs.elixir-natives-musl.result == 'success') }}
+    needs: [prepare, validate-versions, elixir-natives, elixir-natives-musl]
+    if: ${{ needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.elixir-natives.result == 'success' || needs.elixir-natives-musl.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -1756,8 +1756,8 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [prepare, python-wheels, python-sdist, check-pypi]
-    if: ${{ needs.prepare.outputs.release_python == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-pypi.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    needs: [prepare, validate-versions, python-wheels, python-sdist, check-pypi]
+    if: ${{ needs.prepare.outputs.release_python == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.check-pypi.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -1936,8 +1936,8 @@ jobs:
 
   publish-packagist:
     name: Trigger Packagist update
-    needs: [prepare, upload-php-pie-release, check-packagist]
-    if: ${{ needs.prepare.outputs.release_php == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    needs: [prepare, validate-versions, upload-php-pie-release, check-packagist]
+    if: ${{ needs.prepare.outputs.release_php == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.check-packagist.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: xberg-io/actions/publish-packagist@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
@@ -2062,8 +2062,8 @@ jobs:
 
   publish-hex:
     name: Publish Elixir Hex package
-    needs: [prepare, upload-elixir-release, check-hex, crates-gate]
-    if: ${{ !cancelled() && needs.crates-gate.outputs.ok == 'true' && needs.upload-elixir-release.result == 'success' && needs.prepare.outputs.release_elixir == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-hex.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
+    needs: [prepare, validate-versions, upload-elixir-release, check-hex, crates-gate]
+    if: ${{ !cancelled() && needs.validate-versions.result == 'success' && needs.crates-gate.outputs.ok == 'true' && needs.upload-elixir-release.result == 'success' && needs.prepare.outputs.release_elixir == 'true' && needs.prepare.outputs.is_tag == 'true' && (needs.check-hex.outputs.exists != 'true' || needs.prepare.outputs.force_republish == 'true') }}
     runs-on: ubuntu-latest
     environment: hex
     permissions:
@@ -2766,16 +2766,26 @@ jobs:
   # Additive best-effort like the language jobs above: intentionally NOT part of
   # finalize-release / announce `needs`, so a plugin hiccup never blocks the core
   # release. Both publish the same content every tagged release (version tracks core), so
-  # each guards against an already-published version. `needs: [prepare]` only — the plugin
-  # has no build- or runtime-dependency on the core packages (mcp-launch.sh resolves the CLI
-  # at runtime), so it publishes in parallel with the core jobs. ~keep
+  # each guards against an already-published version. Neither has a build- or
+  # runtime-dependency on the core packages (mcp-launch.sh resolves the CLI at runtime), so
+  # they still run in parallel with every core build job.
+  #
+  # They do gate on `validate-versions`, which is the only job that asserts
+  # plugin/.ai-rulez/config.toml carries the version being released (its "Validate plugin
+  # version matches the release" step). With `needs: [prepare]` alone these two publishes
+  # stayed reachable while that assertion was failing, and npm and PyPI are both
+  # append-only: liter-llm v1.19.0 permanently published @xberg-io/opencode-liter-llm
+  # carrying the previous release's manifests exactly that way. `!cancelled()` opts out of
+  # the implicit skip-on-upstream-failure, so the validate-versions result has to be tested
+  # explicitly rather than relying on the `needs:` edge alone. ~keep
 
   publish-plugin-opencode:
     name: Publish OpenCode plugin to npm
-    needs: [prepare]
+    needs: [prepare, validate-versions]
     if: >-
       ${{ !cancelled() && needs.prepare.outputs.release_any == 'true'
-      && needs.prepare.outputs.is_tag == 'true' }}
+      && needs.prepare.outputs.is_tag == 'true'
+      && needs.validate-versions.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2815,10 +2825,11 @@ jobs:
 
   publish-plugin-hermes:
     name: Publish Hermes plugin to PyPI
-    needs: [prepare]
+    needs: [prepare, validate-versions]
     if: >-
       ${{ !cancelled() && needs.prepare.outputs.release_any == 'true'
-      && needs.prepare.outputs.is_tag == 'true' }}
+      && needs.prepare.outputs.is_tag == 'true'
+      && needs.validate-versions.result == 'success' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
