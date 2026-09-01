@@ -1,4 +1,6 @@
 // swift-tools-version: 6.0
+// The first-party dependency pin below is managed by alef (sync.text_replacements); do not edit it by hand.
+// alef:hash:1d4f95f7991b96f285ef3f78c3814e3b3fe6648dc4839584809773d7025570b7
 import PackageDescription
 
 let package = Package(
@@ -8,7 +10,7 @@ let package = Package(
     .iOS(.v16),
   ],
   dependencies: [
-    .package(url: "https://github.com/xberg-io/crawlberg", branch: "release/swift/1.2.1"),
+    .package(url: "https://github.com/xberg-io/crawlberg", branch: "release/swift/1.5.0"),
   ],
   targets: [
     .testTarget(

@@ -254,8 +254,16 @@ name = "Kreuzberg, Inc."
 
 [[workspace.sync.text_replacements]]
 path = "crates/crawlberg-cli/Cargo.toml"
-search = 'crawlberg = \{ path = "../crawlberg", version = "=[^"]*"'
+search = 'crawlberg = \{ path = "../crawlberg", version = "=?[^"]*"'
 replace = 'crawlberg = { path = "../crawlberg", version = "={version}"'
+
+[[workspace.sync.text_replacements]]
+# The swift e2e app consumes the release/swift/<version> branch the release workflow
+# publishes, not a `from:` semver bound, so alef's built-in `from:` sync never reaches it.
+# Without this entry the pin silently stayed three releases behind. ~keep
+path = "test_apps/swift_e2e/Package.swift"
+search = 'release/swift/[^"]*'
+replace = 'release/swift/{version}'
 
 [workspace.poly]
 exclude = [
