@@ -36,12 +36,28 @@ import sys
 path, url, sha, version = sys.argv[1:5]
 content = open(path).read()
 
+
+def substitute_once(text, pattern, replacement, what):
+    # A `re.sub` that matches nothing returns the input unchanged, which is
+    # indistinguishable from a successful rewrite once the file is written back: the
+    # formula would keep the PREVIOUS release's url or sha256 and this script would still
+    # exit 0, leaving the tap installing the old version (or failing every user's checksum
+    # check) with nothing in the release logs. Assert the pattern matched instead. The
+    # mirror-image check — grepping afterwards for the value we just wrote — is not a
+    # substitute: it passes both when the rewrite worked and when the formula already
+    # happened to contain it.
+    updated, count = re.subn(pattern, replacement, text, count=1)
+    if count != 1:
+        sys.exit(f"{path}: no {what} line matched; refusing to publish a formula that still points at the previous release")
+    return updated
+
+
 # `url '...'` or `url "..."`
-content = re.sub(r'''url\s+['"][^'"]*['"]''', f'url \'{url}\'', content, count=1)
+content = substitute_once(content, r'''url\s+['"][^'"]*['"]''', f'url \'{url}\'', 'url')
 # First `sha256 '...'` — formula source SHA appears before the bottle block,
 # so the first match is the source SHA; bottle SHAs (cellar: …, tag: "...")
 # have a different shape and don't match the bare `sha256 'hex'` regex.
-content = re.sub(r'''sha256\s+['"][0-9a-f]+['"]''', f'sha256 \'{sha}\'', content, count=1)
+content = substitute_once(content, r'''sha256\s+['"][0-9a-f]+['"]''', f'sha256 \'{sha}\'', 'source sha256')
 
 # Strip the existing bottle block. Bumping the url without touching the bottle
 # block leaves root_url pinned to the PREVIOUS release while the version moved
@@ -50,8 +66,12 @@ content = re.sub(r'''sha256\s+['"][0-9a-f]+['"]''', f'sha256 \'{sha}\'', content
 # or is skipped, the formula stays broken). Removing the block here makes the
 # committed intermediate formula always installable — it just builds from source
 # until the merge re-adds a fresh block matching this release.
+# Unlike the two rewrites above this one legitimately matches nothing: a formula that has
+# never been bottled, or a re-run after the block was already stripped, has no block to
+# remove. Report the count rather than asserting it.
 bottle_re = re.compile(r"^[ \t]*bottle do\b.*?^[ \t]*end(?:\n|\Z)", re.MULTILINE | re.DOTALL)
-content = bottle_re.sub("", content)
+content, bottles_stripped = bottle_re.subn("", content)
+print(f"Stripped {bottles_stripped} bottle block(s)", file=sys.stderr)
 content = re.sub(r"\n{3,}", "\n\n", content)
 
 open(path, 'w').write(content)

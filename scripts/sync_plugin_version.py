@@ -58,7 +58,20 @@ def transform(version: str) -> tuple[str, str]:
     Hermes wheel.
     """
     original = PLUGIN_CONFIG.read_text(encoding="utf-8")
-    updated = PLUGIN_VERSION_RE.sub(rf"\g<1>{version}\g<3>", original, count=1)
+    # ~keep Assert the pattern matched something. ``main`` reads an unchanged file as
+    # "already in sync", and a substitution that matched nothing produces exactly the same
+    # unchanged file -- so if the ``[plugin]`` table is ever reshaped, ``--check`` would keep
+    # passing while the plugin version silently stopped tracking core, and the release would
+    # ship a plugin bundle pinned to whatever version was last written by hand. Fail here
+    # instead. Do not replace this with an after-the-fact check that the file contains the
+    # expected version: that is satisfied both by a successful rewrite and by a file that was
+    # already correct for the wrong reason.
+    updated, count = PLUGIN_VERSION_RE.subn(rf"\g<1>{version}\g<3>", original, count=1)
+    if count != 1:
+        sys.exit(
+            f"{PLUGIN_CONFIG.relative_to(ROOT)}: no [plugin].version key matched — the config "
+            f"shape changed and the plugin version is no longer being synced. {SYNC_HINT}"
+        )
     return original, updated
 
 
