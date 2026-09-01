@@ -849,10 +849,15 @@ jobs:
       extra-cargo-args: --features all
       extra-targets: '[{"os": "macos-15-intel", "target": "x86_64-apple-darwin"}]'
 
+  # ~keep Must run AFTER `promote-release`: cargo-binstall downloads the release asset over
+  # the public `.../releases/download/<tag>/...` URL, which 404s while the release is a
+  # draft. Gates on `promote-release.outputs.promoted` rather than its `.result`, because a
+  # failure elsewhere in that job's `needs` ancestry poisons the value of `.result` even when
+  # the promotion itself succeeded. ~keep
   verify-binstall:
     name: Verify cargo-binstall install
-    needs: [prepare, cli-release]
-    if: ${{ needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.cli-release.result == 'success' }}
+    needs: [prepare, cli-release, promote-release]
+    if: ${{ !cancelled() && needs.prepare.outputs.release_cli == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.dry_run != 'true' && needs.cli-release.result == 'success' && needs.promote-release.outputs.promoted == 'true' }}
     uses: xberg-io/actions/.github/workflows/reusable-binstall-verify.yml@fc21dc868b7ec7f2b29a75c16312a818f7feb6f6 # v1.10.2
     with:
       package-name: crawlberg-cli
@@ -2634,12 +2639,85 @@ jobs:
           echo "::error::could not push to the tap after 5 attempts"
           exit 1
 
+  # --- Release spine: promote -> finalize -> announce -------------------------------------
+  # ~keep `promote-release` exists to break a dependency cycle. `verify-binstall` needs a
+  # PUBLISHED release: cargo-binstall resolves `[package.metadata.binstall] pkg-url` to
+  # `.../releases/download/<tag>/...`, which 404s while the release is still the draft
+  # `prepare` created. `release-finalize` is what un-drafts it, but it will not run until
+  # binstall has passed, so the two waited on each other. Promotion is its own job now: it
+  # gates only on the release-blocking work -- versions, crates.io, and the CLI + C FFI
+  # assets the release page, Homebrew and cargo-binstall are built around -- flips the
+  # draft, and `release-finalize` still judges every target afterwards, with
+  # `release-report` returning the release to a draft if anything did not ship.
+  #
+  # Sibling repos escaped the same cycle by passing `draft: "false"` on a CLI upload, which
+  # un-drafts the release before any registry publish. crawlberg must not adopt that: the
+  # only `draft:` input in this workflow is `prepare`'s `"true"`.
+  #
+  # A run that does not produce those two assets (a targeted `workflow_dispatch`, or a
+  # re-run whose CLI job skipped because the version already exists) simply does not promote
+  # early; `finalize-release` still un-drafts at the end, as it did before this job existed.
+  #
+  # Downstream must read `outputs.promoted`, never `needs.promote-release.result`: a failure
+  # anywhere in a job's `needs` ancestry poisons the VALUE of `needs.<job>.result` even when
+  # the job itself concluded `success`. Job outputs carry no such poison. ~keep
+  promote-release:
+    name: Publish GitHub Release from draft
+    needs:
+      - prepare
+      - validate-versions
+      - crates-gate
+      - cli-release
+      - upload-c-ffi-release
+      # ~keep Ordering only: the draft flips once the asset inventory check and every
+      # per-language upload have settled, so a published release is never missing assets that
+      # are still uploading. Their results are deliberately absent from the `if` below --
+      # one language's artifact must not block the release.
+      - verify-assets
+      - upload-go-release
+      - upload-elixir-release
+      - upload-php-pie-release
+      - upload-swift-release
+    if: |
+      !cancelled() &&
+      needs.prepare.outputs.is_tag == 'true' &&
+      needs.prepare.outputs.dry_run != 'true' &&
+      needs.validate-versions.result == 'success' &&
+      needs.crates-gate.outputs.ok == 'true' &&
+      needs.cli-release.result == 'success' &&
+      needs.upload-c-ffi-release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      promoted: ${{ steps.flip.outputs.promoted }}
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          owner: xberg-io
+      - name: Flip release out of draft
+        id: flip
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" --draft=false
+          echo "promoted=true" >>"$GITHUB_OUTPUT"
+
   release-finalize:
     name: Finalize GitHub Release
     needs:
       - prepare
       - verify-assets
       - crates-gate
+      # ~keep A promotion that failed must sink the release verdict, not be papered over by
+      # this job un-drafting the release itself.
+      - promote-release
       - publish-crates
       - publish-pypi
       - publish-rubygems
@@ -2906,6 +2984,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          owner: xberg-io
+
       - name: Verify every enabled publish target succeeded
         if: always()
         shell: bash
@@ -3042,3 +3127,23 @@ jobs:
             exit 1
           fi
           echo "Every enabled publish target for ${TAG} succeeded."
+
+      # ~keep Re-drafts rather than only reporting, because the release may already be
+      # public by the time this runs: `promote-release` publishes it early so
+      # `verify-binstall` has real assets to install from. Before that job existed an
+      # incomplete release simply never left the draft state; this step preserves that
+      # invariant. It never masks the verdict -- the step above has already failed the job,
+      # and a failed re-draft only warns.
+      - name: Hold release as draft
+        if: failure()
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release edit "${TAG}" --draft=true; then
+            echo "::warning::${TAG} did not reach every enabled publish target; reverted it to a draft release."
+          else
+            echo "::warning::could not revert ${TAG} to a draft; check the release page manually."
+          fi
