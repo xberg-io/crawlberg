@@ -1535,10 +1535,22 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p "Crawlberg-rs.artifactbundle.zip" -D dist-swift
           CHECKSUM=$(swift package compute-checksum dist-swift/Crawlberg-rs.artifactbundle.zip)
           echo "Computed Swift checksum: $CHECKSUM"
-          if ! grep -q "__ALEF_SWIFT_CHECKSUM__" Package.swift; then
-            echo "Package.swift has no placeholder — nothing to inject"
-            exit 0
+          # ~keep Assert the placeholder is PRESENT before substituting, and fail when it is
+          # not. This used to `exit 0` on a missing placeholder, which reads as tolerant but
+          # is the opposite: Package.swift has carried a literal checksum with no placeholder
+          # ever since the v1.4.0 injection commit landed on main, so every release since has
+          # silently skipped both this sed and the retag below. `release/swift/*` branches
+          # stop at 1.4.0, and v1.5.0 advertises a v1.5.0 artifactbundle URL beside a checksum
+          # that no release since v1.4.0 has recomputed. Never invert this into an
+          # after-the-fact check that the placeholder is gone: that assertion is satisfied
+          # both by a successful substitution and by the generator renaming the token, which
+          # is precisely the case it has to catch.
+          PLACEHOLDERS=$(grep -c "__ALEF_SWIFT_CHECKSUM__" Package.swift || true)
+          if [ "${PLACEHOLDERS}" -eq 0 ]; then
+            echo "::error::Package.swift carries no __ALEF_SWIFT_CHECKSUM__ placeholder, so the computed checksum has nowhere to go and the manifest keeps whatever checksum is committed. Regenerate the Swift package so the placeholder is present."
+            exit 1
           fi
+          echo "Injecting the checksum into ${PLACEHOLDERS} placeholder occurrence(s)"
           sed -i '' "s/__ALEF_SWIFT_CHECKSUM__/$CHECKSUM/g" Package.swift
 
       - name: Commit and move the release tag onto the checksummed Package.swift
@@ -1546,9 +1558,13 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
+          # ~keep The step above proved the placeholder was present and then substituted it,
+          # so an unchanged Package.swift means the sed did not take. Fail instead of skipping
+          # the retag: the alef-generated Swift e2e app resolves `release/swift/<version>`,
+          # which exists only if the push below runs.
           if git diff --quiet -- Package.swift; then
-            echo "Package.swift unchanged — skipping retag"
-            exit 0
+            echo "::error::Package.swift is unchanged after injecting the checksum — refusing to leave the release tag on a manifest without the real checksum."
+            exit 1
           fi
           git config user.name "xberg-dev-publisher[bot]"
           git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
