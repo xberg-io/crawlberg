@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Free disk space
-        uses: xberg-io/actions/free-disk-space-linux@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
+        uses: xberg-io/actions/free-disk-space-linux@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -51,7 +51,7 @@ jobs:
           ls -lh /tmp/crawlberg-${{ matrix.variant }}.tar.gz
 
       - name: Check image size
-        uses: xberg-io/actions/check-docker-image-size@c0ba6ab12fd1bff702d928e555e089d5ba4ba21c # v1.11.0
+        uses: xberg-io/actions/check-docker-image-size@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
         with:
           image: crawlberg:${{ matrix.variant }}
           warn-mb: ${{ matrix.variant == 'cli' && '200' || '' }}
