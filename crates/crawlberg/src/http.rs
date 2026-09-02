@@ -512,7 +512,7 @@ pub(crate) async fn http_fetch(
 /// stable identity. ~keep
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ClientCacheKey {
-    runtime: String,
+    runtime: Option<tokio::runtime::Id>,
     timeout_micros: u128,
     cookies_enabled: bool,
     proxy: String,
@@ -523,9 +523,7 @@ struct ClientCacheKey {
 impl ClientCacheKey {
     fn from_config(config: &CrawlConfig) -> Self {
         Self {
-            runtime: tokio::runtime::Handle::try_current()
-                .map(|handle| format!("{:?}", handle.id()))
-                .unwrap_or_else(|_| "none".to_owned()),
+            runtime: tokio::runtime::Handle::try_current().map(|handle| handle.id()).ok(),
             timeout_micros: config.request_timeout.as_micros(),
             cookies_enabled: config.cookies_enabled,
             proxy: proxy_identity(config),
@@ -1625,6 +1623,13 @@ mod tests {
     /// `should_retry_status` only matches status-derived variants. Measured in a standalone
     /// harness at ~8.5% of requests across 28 short-lived runtimes; 0% once the cache key
     /// carries runtime identity. Every consumer's `#[tokio::test]` suite is this shape.
+    ///
+    /// SCOPE: this asserts cache-key differentiation, which is the mechanism, and it fails
+    /// 100% of the time without the fix. It deliberately does NOT reproduce the mid-flight
+    /// request failure -- that reproduction is statistical (~8.5%), and a test that passes
+    /// 91% of the time on broken code is worse than no test, because it reads as a pass.
+    /// A deterministic version would have to block a pooled connection's task until after
+    /// its runtime is dropped, which reqwest exposes no hook for.
     #[test]
     fn build_client_uses_distinct_cache_entries_across_tokio_runtimes() {
         let config = CrawlConfig {
