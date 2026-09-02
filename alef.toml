@@ -756,7 +756,7 @@ e2e = "bash scripts/e2e/swift/test.sh"
 
 [crates.test.dart]
 precondition = "command -v dart >/dev/null 2>&1"
-before = "{ command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.12.0; } && cd packages/dart && dart pub get && cd rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml && cd ../../.. && cargo build --release -p crawlberg-dart"
+before = "bash scripts/task/frb-codegen-ensure.sh && cd packages/dart && dart pub get && cd ../.. && cargo build --release -p crawlberg-dart"
 command = "cd packages/dart && DYLD_FALLBACK_LIBRARY_PATH=$PWD/../../target/release LD_LIBRARY_PATH=$PWD/../../target/release FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR=$PWD/../../target/release dart pub get && DYLD_FALLBACK_LIBRARY_PATH=$PWD/../../target/release LD_LIBRARY_PATH=$PWD/../../target/release FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR=$PWD/../../target/release dart test"
 e2e = "cd e2e/dart && DYLD_FALLBACK_LIBRARY_PATH=$PWD/../../target/release LD_LIBRARY_PATH=$PWD/../../target/release FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR=$PWD/../../target/release dart pub get && DYLD_FALLBACK_LIBRARY_PATH=$PWD/../../target/release LD_LIBRARY_PATH=$PWD/../../target/release FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR=$PWD/../../target/release dart test"
 

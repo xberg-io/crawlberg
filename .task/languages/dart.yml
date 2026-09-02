@@ -17,9 +17,8 @@ tasks:
     dir: packages/dart
     precondition: "command -v dart >/dev/null 2>&1"
     cmds:
-      - command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.12.0
+      - bash {{.ROOT_DIR}}/scripts/task/frb-codegen-ensure.sh
       - dart pub get
-      - cd rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
       - cargo build --release -p crawlberg-dart
       - dart pub get
 
@@ -28,9 +27,8 @@ tasks:
     dir: packages/dart
     precondition: "command -v dart >/dev/null 2>&1"
     cmds:
-      - command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.12.0
+      - bash {{.ROOT_DIR}}/scripts/task/frb-codegen-ensure.sh
       - dart pub get
-      - cd rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
       - cargo build -p crawlberg-dart
       - dart pub get
 
@@ -39,9 +37,8 @@ tasks:
     dir: packages/dart
     precondition: "command -v dart >/dev/null 2>&1"
     cmds:
-      - command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.12.0
+      - bash {{.ROOT_DIR}}/scripts/task/frb-codegen-ensure.sh
       - dart pub get
-      - cd rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
       - cargo build --release -p crawlberg-dart
       - dart pub get
 
@@ -50,9 +47,8 @@ tasks:
     dir: packages/dart
     precondition: "command -v dart >/dev/null 2>&1"
     cmds:
-      - command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || cargo install flutter_rust_bridge_codegen --version 2.12.0
+      - bash {{.ROOT_DIR}}/scripts/task/frb-codegen-ensure.sh
       - dart pub get
-      - cd rust && flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
       - cargo build --release -p crawlberg-dart
       - dart pub get
 
