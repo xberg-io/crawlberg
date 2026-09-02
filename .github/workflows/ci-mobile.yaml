@@ -44,10 +44,10 @@ jobs:
         abi: [arm64-v8a, x86_64]
     steps:
       - uses: actions/checkout@v7
-      - uses: xberg-io/actions/setup-rust@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-rust@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           cache-key-prefix: ci-mobile-android-${{ matrix.abi }}
-      - uses: xberg-io/actions/setup-android-ndk@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-android-ndk@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
       - name: cargo ndk check crawlberg-dart
         run: cargo ndk --target ${{ matrix.abi }} --platform 21 -- check -p crawlberg-dart
       - name: cargo ndk check crawlberg-ffi
@@ -68,12 +68,12 @@ jobs:
             target: x86_64-linux-android
     steps:
       - uses: actions/checkout@v7
-      - uses: xberg-io/actions/setup-rust@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-rust@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-kotlin-android-${{ matrix.abi }}
-      - uses: xberg-io/actions/setup-android-ndk@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
-      - uses: xberg-io/actions/build-android-natives@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-android-ndk@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+      - uses: xberg-io/actions/build-android-natives@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           crate-name: crawlberg-ffi
           lib-name: crawlberg_ffi
@@ -85,7 +85,7 @@ jobs:
           cp -v "dist/android-natives/${{ matrix.abi }}/libcrawlberg_ffi.so" \
                 "packages/kotlin-android/src/main/jniLibs/${{ matrix.abi }}/"
         shell: bash
-      - uses: xberg-io/actions/setup-gradle@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-gradle@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
       - name: Assemble AAR
         working-directory: packages/kotlin-android
         run: gradle assembleDebug --no-daemon
@@ -107,7 +107,7 @@ jobs:
         target: [aarch64-apple-ios, aarch64-apple-ios-sim]
     steps:
       - uses: actions/checkout@v7
-      - uses: xberg-io/actions/setup-rust@ef43fbd5c9fd6afc46aa1bac15feece8ba94183c # v1.11.2
+      - uses: xberg-io/actions/setup-rust@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           target: ${{ matrix.target }}
           cache-key-prefix: ci-mobile-ios-${{ matrix.target }}
