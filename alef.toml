@@ -9,7 +9,7 @@
 # ~keep at 0.79.2 as of this commit), so every `install-alef` step will fail until it ships.
 # ~keep The tree has NOT been regenerated against it — expect `alef verify` and the e2e
 # ~keep freshness checks to report drift until a regeneration commit follows the release.
-alef_version = "0.81.0"
+alef_version = "0.82.0"
 languages = [
   "python",
   "node",
@@ -695,103 +695,6 @@ skip_languages = ["wasm"]
 [[crates.adapters.params]]
 name = "req"
 type = "BatchCrawlStreamRequest"
-
-[crates.lint.python]
-precondition = "command -v ruff >/dev/null 2>&1"
-before = "cd packages/python && uv sync --no-install-project --no-install-workspace"
-typecheck = "cd packages/python && uv run --no-sync mypy ."
-
-[crates.lint.node]
-precondition = "command -v oxfmt >/dev/null 2>&1"
-format = "git ls-files -z '*.ts' '*.mts' '*.cts' '*.js' '*.mjs' '*.cjs' '*.json' '*.jsonc' '*.css' | xargs -0 oxfmt --config .oxfmtrc.json --write"
-check = "git ls-files -z '*.ts' '*.mts' '*.cts' '*.js' '*.mjs' '*.cjs' '*.json' '*.jsonc' '*.css' | xargs -0 oxfmt --config .oxfmtrc.json --check"
-
-[crates.lint.ruby]
-precondition = "command -v bundle >/dev/null 2>&1"
-before = "cd packages/ruby && bundle install"
-format = "cd packages/ruby && bundle exec rubocop -a ."
-
-[crates.lint.php]
-# ~keep There is ONE PHP package and its manifest is the repo-root composer.json — that is what
-# ~keep Packagist reads and what `[crates.output] php` autoloads (Crawlberg\ -> crates/crawlberg-php/src).
-# ~keep These hooks used to `cd packages/php`, which has had no composer.json since f76aa7c31, so every
-# ~keep one of them was broken: composer cannot run without a manifest, and packages/php/vendor exists
-# ~keep only on machines that installed it before the migration. The phpstan `check` line is dropped
-# ~keep rather than repointed — it referenced phpstan.neon, which exists nowhere in the repo, so it has
-# ~keep not run since the migration either. Restore it alongside a real config, not before.
-precondition = "command -v php >/dev/null 2>&1"
-before = "composer install"
-format = "vendor/bin/php-cs-fixer fix crates/crawlberg-php/src"
-
-[crates.lint.go]
-precondition = "command -v golangci-lint >/dev/null 2>&1"
-before = "cargo build --release -p crawlberg-ffi"
-
-[crates.lint.elixir]
-precondition = "command -v mix >/dev/null 2>&1"
-before = "cd packages/elixir && mix deps.get"
-check = "cd packages/elixir && mix credo"
-
-[crates.lint.java]
-precondition = "command -v mvn >/dev/null 2>&1"
-check = "mvn -f packages/java/pom.xml spotless:check -q"
-
-[crates.lint.csharp]
-precondition = "command -v dotnet >/dev/null 2>&1"
-format = "dotnet format packages/csharp/Crawlberg.slnx"
-check = "dotnet format packages/csharp/Crawlberg.slnx --verify-no-changes"
-
-[crates.lint.ffi]
-precondition = "test -d crates/crawlberg-ffi/tests"
-format = "find crates/crawlberg-ffi/tests -name '*.c' -o -name '*.h' | xargs clang-format -i"
-check = "cppcheck --std=c11 --enable=warning,style,performance --suppress=missingIncludeSystem --suppress=unusedStructMember crates/crawlberg-ffi/tests/"
-
-[crates.lint.dart]
-precondition = "command -v dart >/dev/null 2>&1"
-format = "cd packages/dart && dart format ."
-check = "cd packages/dart && dart analyze"
-
-[crates.lint.kotlin_android]
-precondition = "command -v ktfmt >/dev/null 2>&1"
-format = "find packages/kotlin-android \\( -name build -o -name .gradle \\) -prune -o \\( -name '*.kt' -o -name '*.kts' \\) -type f -print0 | xargs -0 ktfmt --kotlinlang-style"
-check = "find packages/kotlin-android \\( -name build -o -name .gradle \\) -prune -o \\( -name '*.kt' -o -name '*.kts' \\) -type f -print0 | xargs -0 ktfmt --kotlinlang-style --dry-run --set-exit-if-changed"
-
-[crates.lint.swift]
-precondition = "command -v swift >/dev/null 2>&1"
-format = "swift format --in-place --recursive packages/swift/Sources"
-check = "swift format lint --recursive packages/swift/Sources"
-
-[crates.lint.zig]
-precondition = "command -v zig >/dev/null 2>&1"
-format = "cd packages/zig && zig fmt src build.zig"
-check = "cd packages/zig && zig fmt --check src build.zig"
-
-
-[crates.update.python]
-precondition = "command -v uv >/dev/null 2>&1"
-update = "cd packages/python && uv sync --all-extras --no-install-workspace --no-install-project"
-upgrade = "cd packages/python && uv sync --all-extras --upgrade --no-install-workspace --no-install-project"
-
-[crates.update.ruby]
-precondition = "command -v bundle >/dev/null 2>&1"
-update = "cd packages/ruby && bundle update --conservative"
-upgrade = "cd packages/ruby && bundle update --all --conservative=false"
-
-[crates.update.elixir]
-precondition = "command -v mix >/dev/null 2>&1"
-update = "cd packages/elixir && mix deps.update --all"
-upgrade = "cd packages/elixir && mix deps.update --all"
-
-[crates.update.php]
-# ~keep Same repo-root-manifest fact as [crates.lint.php]: there is ONE PHP package, its
-# ~keep manifest is composer.json at the repo root, and `cd packages/php` here was broken the same
-# ~keep way since f76aa7c31 — no manifest to update against.
-precondition = "command -v composer >/dev/null 2>&1"
-update = "composer update --no-interaction"
-upgrade = "composer update --with-all-dependencies --no-interaction"
-
-[crates.update.kotlin_android]
-precondition = "false"
 
 [crates.test.python]
 precondition = "command -v python3 >/dev/null 2>&1"
