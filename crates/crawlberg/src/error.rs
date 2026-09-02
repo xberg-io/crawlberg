@@ -528,7 +528,7 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
             CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
         }
         NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
-        NetworkErrorKind::Other => CrawlError::other_with_source(format!("other: {e}"), e),
+        NetworkErrorKind::Other => CrawlError::other_with_source(format!("[network:{tag}] {e}"), e),
     }
 }
 
@@ -582,7 +582,7 @@ pub(crate) fn classify_reqwest_error(e: reqwest::Error) -> CrawlError {
             CrawlError::data_loss_with_source(format!("data_loss: {e}"), e)
         }
         NetworkErrorKind::Connection => CrawlError::connection_with_source(format!("[network:{tag}] {e}"), e),
-        NetworkErrorKind::Other => CrawlError::other_with_source(format!("other: {e}"), e),
+        NetworkErrorKind::Other => CrawlError::other_with_source(format!("[network:{tag}] {e}"), e),
     }
 }
 
@@ -898,6 +898,56 @@ mod tests {
             assert!(
                 msg.contains("[network:connection]"),
                 "expected [network:connection] in '{msg}'"
+            );
+        }
+
+        /// A response that reqwest cannot classify as timeout, DNS, SSL, proxy, or
+        /// connection falls to `NetworkErrorKind::Other`, whose rendered message must not
+        /// double the `Other` variant's own `"other: {message}"` prefix.
+        ///
+        /// ~keep Regression test for the `other: other: ...` bug: `classify_reqwest_error`
+        /// built the `Other` arm's message as `format!("other: {e}")` and handed it to
+        /// `CrawlError::other_with_source`, whose `Display` is itself `"other: {message}"` —
+        /// doubling the prefix and, unlike every sibling arm, omitting the `[network:{tag}]`
+        /// marker the e2e fixtures match on. An invalid HTTP response (garbled status line)
+        /// is a reliable way to reach this arm: it trips none of the DNS/SSL/proxy/connect/
+        /// timeout keywords and `is_connect()`/`is_timeout()`/`is_body()` are all false.
+        #[tokio::test]
+        async fn unclassifiable_response_has_single_other_prefix_and_network_tag() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind failed");
+            let addr = listener.local_addr().expect("addr");
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt as _;
+                if let Ok((mut socket, _)) = listener.accept().await {
+                    let _ = socket.write_all(b"not even close to http\r\n\r\n").await;
+                    let _ = socket.flush().await;
+                    let _ = socket.shutdown().await;
+                }
+            });
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("client build must not fail");
+            let raw_err = client
+                .get(format!("http://{addr}/"))
+                .send()
+                .await
+                .expect_err("garbage response must fail");
+            assert!(!raw_err.is_connect() && !raw_err.is_timeout() && !raw_err.is_body());
+
+            let classified = classify_reqwest_error(raw_err);
+            assert!(
+                matches!(classified, CrawlError::Other { .. }),
+                "expected an unclassifiable response to fall to CrawlError::Other, got {classified:?}"
+            );
+            let msg = classified.to_string();
+            assert!(
+                msg.starts_with("other: [network:network] "),
+                "expected a single 'other: ' prefix followed by the [network:network] tag, got '{msg}'"
+            );
+            assert!(
+                !msg.contains("other: other:"),
+                "the 'other: {{message}}' Display must not be doubled, got '{msg}'"
             );
         }
     }

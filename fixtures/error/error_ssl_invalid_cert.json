@@ -7,6 +7,10 @@
 		"title": "Handles SSL certificate validation error"
 	},
 	"tags": ["error", "ssl"],
+	"skip": {
+		"languages": ["wasm"],
+		"reason": "wasm32/Node fetch (undici) does not propagate the underlying cause into reqwest's error Display on this target, so network-error classification cannot distinguish connection/dns/ssl failures here"
+	},
 	"assertions": [
 		{
 			"type": "error"
