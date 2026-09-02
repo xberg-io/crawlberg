@@ -1,7 +1,7 @@
 PATH
   remote: ../../packages/ruby
   specs:
-    crawlberg (1.5.0)
+    crawlberg (1.5.1)
       rb_sys (>= 0.9.130, < 0.10)
       sorbet-runtime (~> 0.5)
 
@@ -83,7 +83,7 @@ DEPENDENCIES
 
 CHECKSUMS
   ast (2.4.3) sha256=954615157c1d6a382bc27d690d973195e79db7f55e9765ac7c481c60bdb4d383
-  crawlberg (1.5.0)
+  crawlberg (1.5.1)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   faraday (2.14.2) sha256=73ccb9994a9e8648f010e32eca2ae82e41c57860aa10932cda29418b9e0223ad
   faraday-net_http (3.4.3) sha256=9db13becec9312f345a769eeeecf9049c9287d54c0ae053d7235228993a4eec1
