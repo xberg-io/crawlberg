@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::CrawlPageResult;
 
 /// The classification of a link.
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum LinkType {
@@ -28,12 +28,6 @@ impl std::fmt::Display for LinkType {
             Self::Anchor => write!(f, "anchor"),
             Self::Document => write!(f, "document"),
         }
-    }
-}
-
-impl std::fmt::Debug for LinkType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
     }
 }
 
@@ -175,7 +169,7 @@ pub struct DownloadedAsset {
 }
 
 /// The category of a downloaded asset.
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AssetCategory {
@@ -219,12 +213,6 @@ impl std::fmt::Display for AssetCategory {
     }
 }
 
-impl std::fmt::Debug for AssetCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-}
-
 /// An event emitted during a streaming crawl operation.
 ///
 /// Not available on `wasm32` targets — streaming requires native concurrency
@@ -258,5 +246,29 @@ pub enum CrawlEvent {
 impl Default for CrawlEvent {
     fn default() -> Self {
         Self::Complete { pages_crawled: 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ~keep LinkType and AssetCategory must use the plain derived Debug (matching sibling
+    // enums like ImageSource and FeedType), not a Display-delegating one. Generated e2e
+    // assertions across every binding format the value and check for the exact Rust variant
+    // identifier (e.g. "Anchor", "Document"); a Debug impl that lowercases via Display breaks
+    // that contract even though `PartialEq` comparisons in production code never notice.
+    #[test]
+    fn link_type_debug_matches_variant_identifier() {
+        assert_eq!(format!("{:?}", LinkType::Anchor), "Anchor");
+        assert_eq!(format!("{:?}", LinkType::Document), "Document");
+        assert_eq!(format!("{:?}", LinkType::Internal), "Internal");
+        assert_eq!(format!("{:?}", LinkType::External), "External");
+    }
+
+    #[test]
+    fn asset_category_debug_matches_variant_identifier() {
+        assert_eq!(format!("{:?}", AssetCategory::Image), "Image");
+        assert_eq!(format!("{:?}", AssetCategory::Document), "Document");
     }
 }

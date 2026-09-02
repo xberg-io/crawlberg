@@ -169,6 +169,26 @@ mod tests {
     }
 
     #[test]
+    fn classifies_fragment_only_href_as_anchor() {
+        let base_url = Url::parse("https://example.com/page").expect("valid base URL");
+        assert_eq!(
+            classify_link("#section-1", &base_url),
+            LinkType::Anchor,
+            "a fragment-only href should classify as Anchor"
+        );
+    }
+
+    #[test]
+    fn classifies_pdf_extension_as_document() {
+        let base_url = Url::parse("https://example.com/page").expect("valid base URL");
+        assert_eq!(
+            classify_link("/files/report.pdf", &base_url),
+            LinkType::Document,
+            "a PDF href should classify as Document"
+        );
+    }
+
+    #[test]
     fn absolute_base_href_still_resolves_correctly() {
         let html = r#"<base href="https://cdn.example/assets/"><a href="img.png">img</a>"#;
         let links = extract(html, "https://example.com/page");
