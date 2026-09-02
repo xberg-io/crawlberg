@@ -229,6 +229,51 @@ cwd = "packages/java"
 manifest = "packages/java/pom.xml"
 before = ["mvn -q -DskipTests compile dependency:copy-dependencies"]
 
+# ~keep c needs no build, for the same reason zig above needs none: crawlberg.h is a
+# ~keep checked-in generated header and alef's C validator compiles to an object (`cc -c`)
+# ~keep without linking, so a built libcrawlberg_ffi need not exist. This moved 254 c
+# ~keep snippets off "no session configured" -- where they validated in an isolated scratch
+# ~keep directory with no access to the package, and passed vacuously -- to really compiled.
+[workspace.docs.snippets.sessions.c]
+cwd = "crates/crawlberg-ffi"
+include_paths = ["crates/crawlberg-ffi/include"]
+
+# ~keep node type-checks against the checked-in crates/crawlberg-node/index.d.ts and resolves
+# ~keep `@xberg-io/crawlberg` through the pnpm workspace link the root package.json declares
+# ~keep (`"@xberg-io/crawlberg": "workspace:*"`), so no napi build is needed. alef's TypeScript
+# ~keep validator shells out to `tsc` found on PATH (`which::which("tsc")`) and reports every
+# ~keep snippet Unavailable when it is absent, so this session only does real work in a job
+# ~keep that has installed the workspace -- ci-lint's alef-snippets job now runs
+# ~keep setup-node-workspace, which pnpm-installs and appends `pnpm bin` to PATH.
+[workspace.docs.snippets.sessions.node]
+cwd = "crates/crawlberg-node"
+manifest = "crates/crawlberg-node/package.json"
+
+# ~keep NAMED GAPS -- go, swift, kotlin_android and wasm still have no session, deliberately.
+# ~keep A session for each is possible (the sibling repos configure all four) but every one
+# ~keep needs a real build that the lint-only alef-snippets job does not do, and configuring
+# ~keep one without its toolchain is worse than leaving it unset: the summary stops saying
+# ~keep "no session configured" and starts saying "toolchain ran but reported a missing
+# ~keep dependency", which reads like a broken session rather than an absent one.
+# ~keep   go (1 snippet)          -- GoValidator links cgo against a real libcrawlberg_ffi
+# ~keep                              (`missing_go_library_directories`), so it needs
+# ~keep                              `cargo build --release -p crawlberg-ffi` plus the
+# ~keep                              CGO_LDFLAGS staging scripts/lib/library-paths.sh does.
+# ~keep   swift (252 snippets)    -- SwiftValidator resolves module search paths from
+# ~keep                              `swift build --show-bin-path`, so .build/debug/Modules
+# ~keep                              must exist; also needs a Swift toolchain, and the job
+# ~keep                              runs on ubuntu-latest.
+# ~keep   kotlin_android (263)    -- KotlinValidator resolves the classpath via a real Gradle
+# ~keep                              task, so it needs the Android SDK and an assembleDebug.
+# ~keep   wasm (254 snippets)     -- crates/crawlberg-wasm/package.json points `types` at
+# ~keep                              pkg/nodejs/crawlberg_wasm.d.ts, which only `wasm-pack
+# ~keep                              build` produces and which is gitignored. A second
+# ~keep                              typescript session would also make plain `typescript`
+# ~keep                              snippets ambiguous ("2 configured sessions validate
+# ~keep                              `typescript` snippets (node, wasm) and no explicit
+# ~keep                              `target:` names one of them"), so wasm needs `target:`
+# ~keep                              annotations landing first.
+
 [workspace.sync]
 extra_paths = ["package.json", "crates/crawlberg-node/package.json"]
 

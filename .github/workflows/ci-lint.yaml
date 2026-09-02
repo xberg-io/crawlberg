@@ -109,6 +109,22 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
+      # ~keep alef's TypeScript validator shells out to `tsc` found on PATH
+      # (`which::which("tsc")`) and reports every node snippet Unavailable when it is absent,
+      # which is half of why 1287 of 3908 snippets were never really validated. This action
+      # pnpm-installs the workspace -- giving both typescript and the
+      # `node_modules/@xberg-io/crawlberg` workspace link the snippets import -- and appends
+      # `pnpm bin` to $GITHUB_PATH, which is what puts tsc where alef looks for it.
+      # ~keep frozen-lockfile must be false: crates/crawlberg-node/package.json pins its napi
+      # platform packages in optionalDependencies at the unpublished release version, which
+      # can never be recorded in pnpm-lock.yaml, so a frozen install fails outright with
+      # ERR_PNPM_OUTDATED_LOCKFILE. build-node-napi passes --no-frozen-lockfile for exactly
+      # this reason.
+      - uses: xberg-io/actions/setup-node-workspace@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+        with:
+          node-version: "22"
+          frozen-lockfile: false
+
       # ~keep No `--strict`. `--strict` fails the run on every Skip, Unavailable AND Downgraded
       # (alef `cli::commands::snippets::has_incomplete_coverage`), and six languages are still
       # annotated `snippet:syntax-only` pending a session — exactly the state `alef.toml`'s
