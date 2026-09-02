@@ -61,10 +61,11 @@ jobs:
       - name: Install alef
         uses: xberg-io/actions/install-alef@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
 
-      # ~keep dart, elixir and zig are the only three toolchains `alef snippets check`
-      # needs that ubuntu-latest does not preinstall. Without them those snippets report
+      # ~keep dart, elixir and zig are the three toolchains `alef snippets check` needs
+      # that ubuntu-latest does not preinstall at all. Without them those snippets report
       # Unavailable instead of being checked at all, so the three languages go silently
-      # unvalidated rather than failing loudly. Install them so the check is real.
+      # unvalidated rather than failing loudly. Install them so the check is real. Java is
+      # preinstalled but at the wrong version — see the Setup Java step below.
       - name: Setup Elixir
         uses: xberg-io/actions/setup-elixir@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
@@ -75,16 +76,38 @@ jobs:
       # crashes on shutdown with "No state location, so plugin could not be copied"
       # (https://github.com/dart-lang/sdk/issues/62420), failing every snippet check
       # even though the snippet itself is valid. Fixed upstream in commit 3ece23ddc,
-      # first in a stable release with 3.12.0. Pin to 3.12.2 to pick up the fix.
+      # first in a stable release with 3.12.0. 3.12.2 then became too old for the dart
+      # session's own `before = ["dart pub get"]`: packages/dart/pubspec.yaml takes
+      # `freezed: ^4.0.1`, and freezed 4.x now requires SDK >=3.13.0, so resolution died
+      # with "Because crawlberg depends on freezed >=4.0.0 which requires SDK version
+      # >=3.13.0 <4.0.0, version solving failed" — 264 of the job's 528 session-prep
+      # Errors. 3.13.3 keeps the analysis-server fix and clears freezed's floor. ~keep
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:
-          sdk: "3.12.2"
+          sdk: "3.13.3"
 
       - name: Setup Zig
         uses: xberg-io/actions/setup-zig@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           version: "0.16.0"
+
+      # ~keep ubuntu-latest preinstalls JDK 17, which is too old twice over for the java
+      # session `alef.toml` runs (`mvn -q -DskipTests compile dependency:copy-dependencies`
+      # in packages/java). maven-checkstyle-plugin is bound to the `validate` phase, which
+      # Maven runs before `compile`, and checkstyle 14.1.0 is compiled for JDK 21 — it
+      # aborted with "UnsupportedClassVersionError: ... class file version 65.0 ... only
+      # recognizes class file versions up to 61.0" before compile was ever reached, the
+      # other 264 of the job's 528 session-prep Errors. packages/java/pom.xml then compiles
+      # with `<release>25</release>`, which javac only accepts on JDK 25+, so clearing
+      # checkstyle at 21 would only move the failure one phase later. Pin 25 to satisfy
+      # both. The sibling `validate` job above passes `setup-java: true` for the checkstyle
+      # half; this job installs no JDK of its own, which is how the gap survived the split.
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: "temurin"
+          java-version: "25"
 
       # ~keep No `--strict`. `--strict` fails the run on every Skip, Unavailable AND Downgraded
       # (alef `cli::commands::snippets::has_incomplete_coverage`), and six languages are still
