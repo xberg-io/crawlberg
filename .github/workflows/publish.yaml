@@ -1562,6 +1562,7 @@ jobs:
           persist-credentials: true
 
       - name: Compute artifactbundle checksum and rewrite Package.swift
+        id: inject
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -1580,15 +1581,38 @@ jobs:
           # after-the-fact check that the placeholder is gone: that assertion is satisfied
           # both by a successful substitution and by the generator renaming the token, which
           # is precisely the case it has to catch.
+          # ~keep A third state, not a weakening of the two above. This job rewrites Package.swift
+          # and then force-moves the release tag onto the rewritten commit, so re-running a tag
+          # whose first run got this far checks out a manifest that legitimately has no
+          # placeholder left -- v1.5.0 run 33520701648 injected b4595f6b and moved the tag to
+          # 548121b06, and the re-run 33551706031 then failed here, which alone re-drafted the
+          # release via release-report. A partial failure is exactly when someone re-runs, so the
+          # two-state check turned one recoverable problem into a stuck one. Distinguish
+          # "already done" from "token missing" by recomputing: if the committed checksum equals
+          # the one just computed from this tag's artifactbundle, a previous run of THIS job did
+          # the work and there is nothing left to do. This does not re-admit the case the comment
+          # above forbids -- a renamed or dropped token leaves whatever literal was committed,
+          # which will not equal the freshly computed checksum, so it still fails loudly below.
           PLACEHOLDERS=$(grep -c "__ALEF_SWIFT_CHECKSUM__" Package.swift || true)
           if [ "${PLACEHOLDERS}" -eq 0 ]; then
-            echo "::error::Package.swift carries no __ALEF_SWIFT_CHECKSUM__ placeholder, so the computed checksum has nowhere to go and the manifest keeps whatever checksum is committed. Regenerate the Swift package so the placeholder is present."
+            if grep -qF "checksum: \"${CHECKSUM}\"" Package.swift; then
+              echo "already_done=true" >> "${GITHUB_OUTPUT}"
+              echo "Package.swift already carries the computed checksum ${CHECKSUM}: a previous run of this job injected it and moved ${TAG} onto the result. Nothing to do."
+              exit 0
+            fi
+            echo "::error::Package.swift carries no __ALEF_SWIFT_CHECKSUM__ placeholder, and the checksum it does carry is not the one computed from ${TAG}'s artifactbundle (${CHECKSUM}), so the computed checksum has nowhere to go and the manifest keeps a checksum nothing recomputed. Regenerate the Swift package so the placeholder is present."
             exit 1
           fi
+          echo "already_done=false" >> "${GITHUB_OUTPUT}"
           echo "Injecting the checksum into ${PLACEHOLDERS} placeholder occurrence(s)"
           sed -i '' "s/__ALEF_SWIFT_CHECKSUM__/$CHECKSUM/g" Package.swift
 
       - name: Commit and move the release tag onto the checksummed Package.swift
+        # ~keep Skipped only on the already-done path proven above (committed checksum ==
+        # freshly computed), where the tag already points at the checksummed commit and
+        # release/swift/<version> already exists. Every other path either injected the
+        # checksum or failed the step before this one.
+        if: ${{ steps.inject.outputs.already_done != 'true' }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
