@@ -4,6 +4,22 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A cached HTTP client was reused across tokio runtimes, so requests failed intermittently
+  in any process that creates and drops runtimes.** `reqwest::Client` instances are cached
+  process-wide, but the cache key carried no runtime identity. hyper drives each pooled
+  connection with a task spawned on the runtime that built the client, so when that runtime
+  is dropped the connection dies while the client stays cached -- and the next caller, on a
+  new runtime, checks out a dead connection and fails mid-request. The failure surfaced as
+  `error sending request for url ...` when the connection died during send, or
+  `error decoding response body` (classified `data_loss`) when it died while reading the
+  body, and neither is retried, since `retry_count` defaults to 0 and only status-derived
+  errors are retryable. The cache key now carries the runtime's identity. Measured at ~8.5%
+  of requests across 28 short-lived runtimes before the fix and 0% after. This affects
+  embedders that create and destroy runtimes -- most visibly every consumer's
+  `#[tokio::test]` suite, where it reads as flaky integration tests.
+
 ## [1.5.0] - 2026-09-01
 
 ### Changed

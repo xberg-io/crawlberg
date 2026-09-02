@@ -502,8 +502,17 @@ pub(crate) async fn http_fetch(
 /// `cookies_enabled`) must not be reused across distinct credentials — otherwise two
 /// concurrent sessions to the same host with different auth would leak session cookies
 /// between them.
+///
+/// Runtime identity is included because hyper drives each pooled connection with a task
+/// spawned on the runtime that built the client. When that runtime is dropped the
+/// connection task dies, but the client stays in this process-global cache, so a caller
+/// on a new runtime would check out a dead connection and fail mid-request. Keying on the
+/// runtime keeps each one's pool to itself; a cold entry costs a handshake, not
+/// correctness. `Handle::try_current()` is `Err` outside a runtime, which is its own
+/// stable identity. ~keep
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ClientCacheKey {
+    runtime: String,
     timeout_micros: u128,
     cookies_enabled: bool,
     proxy: String,
@@ -514,6 +523,9 @@ struct ClientCacheKey {
 impl ClientCacheKey {
     fn from_config(config: &CrawlConfig) -> Self {
         Self {
+            runtime: tokio::runtime::Handle::try_current()
+                .map(|handle| format!("{:?}", handle.id()))
+                .unwrap_or_else(|_| "none".to_owned()),
             timeout_micros: config.request_timeout.as_micros(),
             cookies_enabled: config.cookies_enabled,
             proxy: proxy_identity(config),
@@ -1600,6 +1612,54 @@ mod tests {
             client_cache_contains(&permissive) && client_cache_contains(&restrictive),
             "both policies must hold their own cache entry"
         );
+    }
+
+    /// A `reqwest::Client` cached on one tokio runtime must not be handed to another.
+    ///
+    /// ~keep hyper drives each pooled connection with a task spawned on the runtime that
+    /// created it, so when that runtime is dropped the connection dies while the client
+    /// stays in this process-global cache. A later caller on a new runtime then checks out
+    /// a corpse and fails mid-request -- as `error sending request` if it dies during send,
+    /// or `error decoding response body` (classified `DataLoss`) if it dies during
+    /// `resp.chunk()`. Neither is retryable, since `retry_count` defaults to 0 and
+    /// `should_retry_status` only matches status-derived variants. Measured in a standalone
+    /// harness at ~8.5% of requests across 28 short-lived runtimes; 0% once the cache key
+    /// carries runtime identity. Every consumer's `#[tokio::test]` suite is this shape.
+    #[test]
+    fn build_client_uses_distinct_cache_entries_across_tokio_runtimes() {
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_276),
+            ..CrawlConfig::default()
+        };
+        assert!(
+            !client_cache_contains(&config),
+            "precondition failed: another test already cached this exact config identity"
+        );
+
+        let runtime_a = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime a must build");
+        runtime_a.block_on(async {
+            let _client = build_client(&config).expect("client must build on runtime a");
+            assert!(
+                client_cache_contains(&config),
+                "building on runtime a must cache that runtime's identity"
+            );
+        });
+        drop(runtime_a);
+
+        let runtime_b = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime b must build");
+        runtime_b.block_on(async {
+            assert!(
+                !client_cache_contains(&config),
+                "a client cached on a since-dropped runtime must not be reused on a new one: \
+                 its pooled connections are driven by tasks that died with that runtime"
+            );
+        });
     }
 
     #[test]
