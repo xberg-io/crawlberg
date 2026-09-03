@@ -4,6 +4,8 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-09-03
+
 ### Fixed
 
 - **A cached HTTP client was reused across tokio runtimes, so requests failed intermittently
