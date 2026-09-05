@@ -3133,6 +3133,7 @@ jobs:
       - publish-hex
       - publish-kotlin-android
       - publish-zig
+      - publish-homebrew-formula
       - publish-homebrew-bottles
       - publish-scoop-manifest
       - publish-swift-checksums
@@ -3297,16 +3298,22 @@ jobs:
       # incomplete release simply never left the draft state; this step preserves that
       # invariant. It never masks the verdict -- the step above has already failed the job,
       # and a failed re-draft only warns.
+      #
+      # The retraction is CONDITIONAL, which is the whole point of the action. By the time
+      # this runs the Homebrew formula and Scoop manifest jobs may already have pushed to
+      # the public tap and bucket, both of which pin `.../releases/download/<tag>/...`.
+      # Re-drafting there does not undo a partial release, it 404s every `brew upgrade` and
+      # `scoop update` resolving through those channels -- v1.5.0 sat exactly that way for
+      # two days (#41). So the action retracts only while no channel advertises the release,
+      # and otherwise reports it loudly and leaves it published to be rolled forward by the
+      # next patch release. ~keep
       - name: Hold release as draft
         if: failure()
-        shell: bash
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if gh release edit "${TAG}" --draft=true; then
-            echo "::warning::${TAG} did not reach every enabled publish target; reverted it to a draft release."
-          else
-            echo "::warning::could not revert ${TAG} to a draft; check the release page manually."
-          fi
+        uses: xberg-io/actions/retract-incomplete-release@0650bf373f2d1ec58b69fd3c5d9098b40ada69ed # v1.11.7
+        with:
+          tag: ${{ needs.prepare.outputs.tag }}
+          consumer-results: |
+            homebrew-formula=${{ needs.publish-homebrew-formula.result }}
+            homebrew-bottles=${{ needs.publish-homebrew-bottles.result }}
+            scoop=${{ needs.publish-scoop-manifest.result }}
+          token: ${{ steps.app-token.outputs.token }}
