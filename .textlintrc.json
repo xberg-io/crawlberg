@@ -1,4 +1,7 @@
 {
+  "plugins": {
+    "mdx": true
+  },
   "filters": {
     "comments": true,
     "node-types": {
