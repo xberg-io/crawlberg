@@ -276,7 +276,6 @@ class MessageChannel {
 }
 globalThis.MessageChannel = MessageChannel;
 globalThis.MessagePort = class MessagePort {
-  constructor() {}
   postMessage() {}
   close() {}
   addEventListener() {}
@@ -384,7 +383,7 @@ class Node {
   }
   get childNodes() {
     const ids = _domParse("child_nodes", this._nid) || [];
-    const list = ids.map(_wrap).filter(Boolean);
+    const list = ids.map((nid) => _wrap(nid)).filter(Boolean);
     list.item = (i) => list[i] || null;
     return list;
   }
@@ -607,6 +606,33 @@ class Comment extends CharacterData {
   }
 }
 
+function _encodeFormComponent(value) {
+  return encodeURIComponent(value).replace(/%20/g, "+").replace(/!/g, "%21");
+}
+
+function _isSubmittableField(field, submitter) {
+  if (field.getAttribute("disabled") !== null) return false;
+  const tag = field.localName;
+  const type = (field.getAttribute("type") || "").toLowerCase();
+  if ((type === "checkbox" || type === "radio") && !field.checked) return false;
+  if (type === "file" || type === "reset" || type === "button") return false;
+  // ~keep A submit button or <button> contributes its name/value only when it is the
+  // ~keep element that triggered the submission; every other one is skipped.
+  if (type === "submit" || tag === "button") return Boolean(submitter) && field === submitter;
+  return true;
+}
+
+function _submittedFieldValue(field) {
+  const tag = field.localName;
+  if (tag === "select") {
+    const opt = field.querySelector("option[selected]") || field.querySelector("option");
+    if (!opt) return "";
+    return opt.getAttribute("value") !== null ? opt.getAttribute("value") : opt.textContent;
+  }
+  if (tag === "textarea") return field.value || field.textContent || "";
+  return field.value !== undefined ? field.value : field.getAttribute("value") || "";
+}
+
 class Element extends Node {
   constructor(nid) {
     super(nid);
@@ -656,7 +682,7 @@ class Element extends Node {
   }
   get children() {
     const ids = _domParse("element_children", this._nid) || [];
-    return ids.map(_wrapEl).filter(Boolean);
+    return ids.map((nid) => _wrapEl(nid)).filter(Boolean);
   }
   get content() {
     if (this.localName !== "template") return undefined;
@@ -710,7 +736,10 @@ class Element extends Node {
         return (el.className || "").split(/\s+/).filter(Boolean).length;
       },
       item: (i) => (el.className || "").split(/\s+/).filter(Boolean)[i] || null,
-      forEach: (cb) => (el.className || "").split(/\s+/).filter(Boolean).forEach(cb),
+      forEach: (cb, thisArg) => {
+        const tokens = (el.className || "").split(/\s+/).filter(Boolean);
+        for (let i = 0; i < tokens.length; i++) cb.call(thisArg, tokens[i], i, obj);
+      },
       toString: () => el.className || "",
     };
     return obj;
@@ -751,7 +780,7 @@ class Element extends Node {
   }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
-    const list = ids.map(_wrapEl).filter(Boolean);
+    const list = ids.map((nid) => _wrapEl(nid)).filter(Boolean);
     list.item = (i) => list[i] || null;
     list.forEach = Array.prototype.forEach.bind(list);
     return list;
@@ -949,24 +978,21 @@ class Element extends Node {
         fullUrl = new URL(url, _domParse("document_url") || "about:blank").href;
       } catch (e) {}
     }
-    const el = this;
     fetch(fullUrl, { mode: "no-cors" })
       .then(async (resp) => {
-        if (resp.ok || resp.type === "opaque") {
-          const html = await resp.text();
-          el._iframeDoc = new _IframeDocument(html, fullUrl, el);
-          el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-        } else {
-          el._iframeDoc = new _IframeDocument("<!DOCTYPE html><html><head></head><body></body></html>", fullUrl, el);
-          el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-        }
-        _registerIframe(el);
-        if (typeof el.onload === "function") {
+        const html =
+          resp.ok || resp.type === "opaque"
+            ? await resp.text()
+            : "<!DOCTYPE html><html><head></head><body></body></html>";
+        this._iframeDoc = new _IframeDocument(html, fullUrl, this);
+        this._iframeWin = new _IframeWindow(this._iframeDoc, fullUrl);
+        _registerIframe(this);
+        if (typeof this.onload === "function") {
           try {
-            el.onload();
+            this.onload();
           } catch (e) {}
         } else {
-          var onloadAttr = el.getAttribute("onload");
+          const onloadAttr = this.getAttribute("onload");
           if (onloadAttr)
             try {
               (0, eval)(onloadAttr);
@@ -974,12 +1000,16 @@ class Element extends Node {
         }
       })
       .catch(() => {
-        el._iframeDoc = new _IframeDocument("<!DOCTYPE html><html><head></head><body></body></html>", fullUrl, el);
-        el._iframeWin = new _IframeWindow(el._iframeDoc, fullUrl);
-        _registerIframe(el);
-        if (typeof el.onload === "function")
+        this._iframeDoc = new _IframeDocument(
+          "<!DOCTYPE html><html><head></head><body></body></html>",
+          fullUrl,
+          this,
+        );
+        this._iframeWin = new _IframeWindow(this._iframeDoc, fullUrl);
+        _registerIframe(this);
+        if (typeof this.onload === "function")
           try {
-            el.onload();
+            this.onload();
           } catch (e) {}
       });
   }
@@ -1068,31 +1098,11 @@ class Element extends Node {
     const pairs = [];
     const fields = this.querySelectorAll("input, select, textarea");
     for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      const name = f.getAttribute("name");
+      const field = fields[i];
+      const name = field.getAttribute("name");
       if (!name) continue;
-      if (f.getAttribute("disabled") !== null) continue;
-      const tag = f.localName;
-      const type = (f.getAttribute("type") || "").toLowerCase();
-      if ((type === "checkbox" || type === "radio") && !f.checked) continue;
-      if (type === "file" || type === "reset") continue;
-      if (type === "button") continue;
-      if (type === "submit" || tag === "button") {
-        if (submitter && f !== submitter) continue;
-        if (!submitter) continue;
-      }
-
-      let val;
-      if (tag === "select") {
-        const opt = f.querySelector("option[selected]") || f.querySelector("option");
-        val = opt ? (opt.getAttribute("value") !== null ? opt.getAttribute("value") : opt.textContent) : "";
-      } else if (tag === "textarea") {
-        val = f.value || f.textContent || "";
-      } else {
-        val = f.value !== undefined ? f.value : f.getAttribute("value") || "";
-      }
-      const enc = (s) => encodeURIComponent(s).replace(/%20/g, "+").replace(/!/g, "%21");
-      pairs.push(enc(name) + "=" + enc(val));
+      if (!_isSubmittableField(field, submitter)) continue;
+      pairs.push(_encodeFormComponent(name) + "=" + _encodeFormComponent(_submittedFieldValue(field)));
     }
 
     const action = this.getAttribute("action") || "";
@@ -1302,7 +1312,7 @@ class Document extends Node {
   }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
-    const list = ids.map(_wrapEl).filter(Boolean);
+    const list = ids.map((nid) => _wrapEl(nid)).filter(Boolean);
     list.item = (i) => list[i] || null;
     list.forEach = Array.prototype.forEach.bind(list);
     return list;
@@ -1389,9 +1399,10 @@ class Document extends Node {
         const nodeType = node.nodeType;
         const show = (whatToShow >> (nodeType - 1)) & 1;
         if (!show) return false;
-        if (this.filter) {
-          if (typeof this.filter === "function") return this.filter(node) === 1;
-          if (this.filter.acceptNode) return this.filter.acceptNode(node) === 1;
+        const nodeFilter = this.filter;
+        if (nodeFilter) {
+          if (typeof nodeFilter === "function") return nodeFilter.call(this, node) === 1;
+          if (nodeFilter.acceptNode) return nodeFilter.acceptNode(node) === 1;
         }
         return true;
       },
@@ -1560,9 +1571,7 @@ class Document extends Node {
     if (body) body.innerHTML = "";
     return this;
   }
-  close() {
-    return;
-  }
+  close() {}
   hasFocus() {
     return true;
   }
@@ -1589,13 +1598,13 @@ class DocumentFragment extends Node {
   }
   querySelectorAll(s) {
     const ids = _domParse("query_selector_all", s) || [];
-    const list = ids.map(_wrapEl).filter(Boolean);
+    const list = ids.map((nid) => _wrapEl(nid)).filter(Boolean);
     list.item = (i) => list[i] || null;
     return list;
   }
   get children() {
     const ids = _domParse("element_children", this._nid) || [];
-    return ids.map(_wrapEl).filter(Boolean);
+    return ids.map((nid) => _wrapEl(nid)).filter(Boolean);
   }
   get firstElementChild() {
     return this.children[0] || null;
@@ -2025,7 +2034,6 @@ globalThis.Notification = class Notification {
   static requestPermission() {
     return Promise.resolve("default");
   }
-  constructor() {}
 };
 
 globalThis.WebGLRenderingContext = class WebGLRenderingContext {};
@@ -2123,15 +2131,35 @@ function _installWasmStreamingFallback() {
 }
 _installWasmStreamingFallback();
 
+function _fetchInputUrl(input) {
+  if (typeof input === "string") return input;
+  if (input instanceof Request) return input.url;
+  if (typeof URL === "function" && input instanceof URL) return input.href;
+  return input?.url || input?.href || String(input || "");
+}
+
+function _fetchPageOrigin() {
+  try {
+    return new URL(_domParse("document_url") || "about:blank").origin;
+  } catch (e) {
+    return "";
+  }
+}
+
+function _fetchThrowIfBlocked(parsed) {
+  if (parsed.blocked) {
+    const err = new TypeError("net::ERR_FAILED");
+    err.name = "AbortError";
+    err.__aborted = true;
+    throw err;
+  }
+  if (parsed.corsBlocked) {
+    throw new TypeError("Failed to fetch: " + (parsed.corsError || "CORS error"));
+  }
+}
+
 globalThis.fetch = async (input, init = {}) => {
-  let url =
-    typeof input === "string"
-      ? input
-      : input instanceof Request
-        ? input.url
-        : typeof URL === "function" && input instanceof URL
-          ? input.href
-          : input?.url || input?.href || String(input || "");
+  let url = _fetchInputUrl(input);
   if (url && !url.includes("://")) {
     try {
       const base = _domParse("document_url") || "about:blank";
@@ -2144,26 +2172,10 @@ globalThis.fetch = async (input, init = {}) => {
   );
   const body = init.body ? String(init.body) : "";
   const fetchMode = init.mode || (input instanceof Request ? input.mode : "cors");
-  const pageOrigin = (function () {
-    try {
-      const u = new URL(_domParse("document_url") || "about:blank");
-      return u.origin;
-    } catch (e) {
-      return "";
-    }
-  })();
-  const raw = await Deno.core.ops.op_fetch_url(url, method, hdrs, body, pageOrigin, fetchMode);
+  const raw = await Deno.core.ops.op_fetch_url(url, method, hdrs, body, _fetchPageOrigin(), fetchMode);
   const parsed = JSON.parse(raw);
-  if (parsed.blocked) {
-    const err = new TypeError("net::ERR_FAILED");
-    err.name = "AbortError";
-    err.__aborted = true;
-    throw err;
-  }
-  if (parsed.corsBlocked) {
-    throw new TypeError("Failed to fetch: " + (parsed.corsError || "CORS error"));
-  }
-  const respType = parsed.status === 0 ? "opaque" : fetchMode === "no-cors" ? "opaque" : "basic";
+  _fetchThrowIfBlocked(parsed);
+  const respType = parsed.status === 0 || fetchMode === "no-cors" ? "opaque" : "basic";
   const responseBody = parsed.bodyBase64 ? _base64ToUint8Array(parsed.bodyBase64) : parsed.body || "";
   return new Response(responseBody, {
     status: parsed.status,
@@ -2733,8 +2745,8 @@ if (typeof TextDecoder === "undefined") {
       const bytes = ArrayBuffer.isView(buf)
         ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
         : new Uint8Array(buf);
-      let str = "",
-        i = 0;
+      let str = "";
+      let i = 0;
       while (i < bytes.length) {
         const c = bytes[i++];
         if (c < 0x80) str += String.fromCharCode(c);
@@ -3004,7 +3016,6 @@ globalThis.NodeFilter = {
   SHOW_ALL: 0xffffffff,
 };
 globalThis.ResizeObserver = class {
-  constructor() {}
   observe() {}
   unobserve() {}
   disconnect() {}
@@ -3038,7 +3049,6 @@ globalThis.IntersectionObserver = class {
   disconnect() {}
 };
 globalThis.PerformanceObserver = class {
-  constructor() {}
   observe() {}
   disconnect() {}
 };
@@ -3982,11 +3992,19 @@ class _Canvas2D {
       }
     }
   }
+  _fillScaledPixel(px, py, scale, color) {
+    for (let sy = 0; sy < scale; sy++) {
+      for (let sx = 0; sx < scale; sx++) {
+        this._setPixel(px + sx, py + sy, color[0], color[1], color[2], color[3]);
+      }
+    }
+  }
   fillText(text, x, y) {
-    const [r, g, b, a] = this._parseColor(this.fillStyle);
-    const fontSize = parseInt(this.font) || 10;
+    const color = this._parseColor(this.fillStyle);
+    const fontSize = parseInt(this.font, 10) || 10;
     const scale = Math.max(1, Math.round(fontSize / 10));
     const str = String(text);
+    const baseline = Math.round(y) - 7 * scale;
     let cx = Math.round(x);
     for (let i = 0; i < str.length; i++) {
       const code = str.charCodeAt(i);
@@ -3995,13 +4013,7 @@ class _Canvas2D {
           const on =
             (_fpRand(code * 100 + row * 10 + col) > 0.45 && row > 0 && row < 6 && col > 0 && col < 4) ||
             _fpRand(code * 200 + row * 7 + col) > 0.7;
-          if (on) {
-            for (let sy = 0; sy < scale; sy++) {
-              for (let sx = 0; sx < scale; sx++) {
-                this._setPixel(cx + col * scale + sx, Math.round(y) - 7 * scale + row * scale + sy, r, g, b, a);
-              }
-            }
-          }
+          if (on) this._fillScaledPixel(cx + col * scale, baseline + row * scale, scale, color);
         }
       }
       cx += 6 * scale;
@@ -4011,7 +4023,7 @@ class _Canvas2D {
     this.fillText(text, x, y);
   }
   measureText(t) {
-    const fontSize = parseInt(this.font) || 10;
+    const fontSize = parseInt(this.font, 10) || 10;
     const scale = Math.max(1, Math.round(fontSize / 10));
     return {
       width: String(t).length * 6 * scale,
@@ -4261,9 +4273,7 @@ Element.prototype.getContext = function getContext(type) {
 Element.prototype.toDataURL = function (type) {
   if (this._ctx && this._ctx._buf) {
     const ctx = this._ctx;
-    const w = ctx._w,
-      h = ctx._h,
-      buf = ctx._buf;
+    const buf = ctx._buf;
     let hash = _fpSeed;
     for (let i = 0; i < buf.length; i += 37) {
       hash = ((hash << 5) - hash + buf[i]) | 0;
@@ -5384,7 +5394,6 @@ if (typeof OffscreenCanvas === "undefined") {
 
 if (typeof Path2D === "undefined") {
   globalThis.Path2D = class Path2D {
-    constructor() {}
     moveTo() {}
     lineTo() {}
     arc() {}
@@ -5597,8 +5606,8 @@ globalThis.__crawlberg_init = function () {
   globalThis.document = new Document(+_dom("document_node_id"));
 
   const scr = _fp("screen");
-  const sw = scr[0],
-    sh = scr[1];
+  const sw = scr[0];
+  const sh = scr[1];
   globalThis.screen = {
     width: sw,
     height: sh,

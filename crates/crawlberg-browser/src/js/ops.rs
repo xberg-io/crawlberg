@@ -492,7 +492,14 @@ async fn op_fetch_url(
                 }) => {
                     tracing::debug!("Interception: continue request {}", url);
                 }
-                Err(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Interception: resolver for {} dropped without a decision ({}); \
+                         falling back to a direct fetch",
+                        url,
+                        error
+                    );
+                }
             }
         }
     }

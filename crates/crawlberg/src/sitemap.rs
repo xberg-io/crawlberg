@@ -57,6 +57,8 @@ fn push_entity_ref(buffer: &mut String, entity: &BytesRef<'_>) {
                 buffer.push_str(text);
             }
         }
+        // ~keep A character reference quick-xml cannot decode contributes nothing, as
+        // ~keep documented above; there is no partial character to salvage.
         Err(_) => {}
     }
 }

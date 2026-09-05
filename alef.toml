@@ -515,6 +515,29 @@ WebUI = "WebUI"
 traineddata = "traineddata"
 
 [workspace.poly.per-file-ignores]
+# Quality metrics do not apply to test code. A test function's length is its assertion
+# count and a table-driven test's arity mirrors its cases; splitting either to satisfy a
+# production-code maintainability metric makes the test harder to read, not easier. Only
+# `file-too-long` and `type-too-long` still apply here -- an oversized test FILE is a real
+# organisational problem, unlike an oversized test function. ~keep
+"**/tests/**/*" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/test/**/*" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/benches/**/*" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_test.rs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_tests.rs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/test_*.py" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_test.py" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/conftest.py" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*.test.ts" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*.test.js" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*.test.mjs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*.spec.ts" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*.spec.js" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_test.go" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*Test.java" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*Tests.cs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_test.dart" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+"**/*_spec.rb" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 # Alef-generated agent skill docs, emitted once per assistant directory. The rumdl list
 # rules below are formatting preferences on generated markdown: poly reports on generated
 # files by design, so regeneration would revert any hand-fix. Emitting tidier list indent
@@ -561,6 +584,41 @@ traineddata = "traineddata"
   "unicorn/prefer-type-error",
   "unicorn/require-module-specifiers",
 ]
+# crates/crawlberg-browser/js/bootstrap.js is a web-platform emulation layer: build.rs snapshots
+# it into a bare V8 isolate so a scraped page finds the browser globals it expects. Each rule
+# below collides with that job rather than describing a defect in it, and "fixing" the last two
+# would introduce real bugs.
+#   no-console       `console` IS the output surface inside the isolate -- there is no tracing
+#                    subscriber there. Seven of the sites only hand `console.*` to
+#                    `_markNative()` so `Function.prototype.toString` reports native code.
+#   no-eval          Executing a page's inline and dynamically inserted <script> text is the
+#                    file's purpose; `(0, eval)` is the indirect-global form that needs.
+#   no-extend-native The `Function.prototype.toString` and `Error.prototype.stack` overrides
+#                    are the anti-fingerprinting layer, not accidental prototype pollution.
+#   require-await    `Response.text()`, `Blob.arrayBuffer()` and every `crypto.subtle` method
+#                    MUST return a Promise -- page code calls `.then()` on them. Dropping the
+#                    `async` would hand back a bare value and break real pages.
+#   typescript/no-extraneous-class  `WebGLRenderingContext`, `ShadowRoot`, `ImageData` and
+#                    friends exist so `instanceof` and `new` behave; a const object cannot
+#                    stand in for a constructor identity.
+#   unicorn/prefer-math-trunc  `| 0` here is a 32-bit wrap, not a truncation. The canvas and
+#                    screen fingerprint hashes (`hash = ((hash << 5) - hash + b) | 0`) depend on
+#                    the wrap; `Math.trunc` would change every value they produce.
+#   unicorn/no-this-assignment  The shim returns spec-shaped literals (DOMTokenList, the
+#                    `dataset` Proxy handler, shadow roots, stream readers/writers) whose own
+#                    methods rebind `this`, so the element has to be captured first.
+# Rules that DO catch real defects here stay on and were fixed in code instead of listed:
+# radix, no-useless-return, no-useless-constructor, sort-vars, max-depth, complexity,
+# oxc/branches-sharing-code, unicorn/no-array-callback-reference. ~keep
+"crates/crawlberg-browser/js/bootstrap.js" = [
+  "no-console",
+  "no-eval",
+  "no-extend-native",
+  "require-await",
+  "typescript/no-extraneous-class",
+  "unicorn/no-this-assignment",
+  "unicorn/prefer-math-trunc",
+]
 # The `quality` rules below are suppressed on these generated paths for a reason distinct
 # from the uncomment exemption: poly's quality tier measures function length, parameter count,
 # file length, nesting depth and cyclomatic complexity -- metrics written for hand-maintained
@@ -593,7 +651,12 @@ traineddata = "traineddata"
 # as extraneous. The files are hash-stamped generated output, so `poly lint --fix` skips them
 # and any hand fix is clobbered on the next regen; suppress here until alef stops double-
 # wrapping. ~keep
-"test_apps/**" = ["comment", "doc-comment", "UP034", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
+# The three oxc rules are alef-side too: `require-await` fires on the generated HTTP-client
+# wrapper (`async request()` that returns `fetch(...)` with no await), `no-console` on the
+# generated wasm init-fallback warning, and `complexity` on a generated assertion block whose
+# branch count just mirrors the fixture's field count. Hash-stamped output reverts any hand
+# fix, so they belong here until alef emits differently. ~keep
+"test_apps/**" = ["comment", "doc-comment", "UP034", "complexity", "no-console", "require-await", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
 "docker/**" = ["DL3006", "DL3059"]
 "packages/python/**/api.py" = ["RET504"]
 # Test-code relaxations on top of the builtin "**/tests/**" defaults: tests

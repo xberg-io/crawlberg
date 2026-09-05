@@ -33,7 +33,7 @@ function validateJson(value, name) {
   try {
     JSON.parse(value);
   } catch (error) {
-    throw new Error(`${name} must be valid JSON: ${error.message}`);
+    throw new Error(`${name} must be valid JSON: ${error.message}`, { cause: error });
   }
 }
 
@@ -95,7 +95,7 @@ function pushSharedCrawlOptions(cliArgs, args) {
   pushOption(cliArgs, "--config", args.config);
 }
 
-export const CrawlbergPlugin = async () => ({
+export const CrawlbergPlugin = () => ({
   tool: {
     crawlberg_scrape: tool({
       description: "Scrape one URL to JSON or Markdown with the crawlberg CLI.",
@@ -115,7 +115,7 @@ export const CrawlbergPlugin = async () => ({
 
         const cliArgs = ["scrape", args.url];
         pushSharedCrawlOptions(cliArgs, args);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
     crawlberg_crawl: tool({
@@ -144,7 +144,7 @@ export const CrawlbergPlugin = async () => ({
         pushOption(cliArgs, "--rate-limit", args.rate_limit);
         pushFlag(cliArgs, "--stay-on-domain", args.stay_on_domain);
         pushSharedCrawlOptions(cliArgs, args);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
     crawlberg_map: tool({
@@ -172,7 +172,7 @@ export const CrawlbergPlugin = async () => ({
         pushOption(cliArgs, "--browser-endpoint", args.browser_endpoint);
         pushFlag(cliArgs, "--respect-robots-txt", args.respect_robots_txt);
         pushOption(cliArgs, "--config", args.config);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
   },

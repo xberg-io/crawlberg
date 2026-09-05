@@ -393,6 +393,71 @@ values = ["A002", "F401", "I001", "PYI033", "TC006", "UP035"]
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*.spec.js"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*.spec.ts"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*.test.js"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*.test.mjs"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*.test.ts"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*Test.java"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*Tests.cs"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_spec.rb"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_test.dart"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_test.go"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_test.py"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_test.rs"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/*_tests.rs"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores.**/__init__.py"
 values = ["I001"]
 
@@ -400,6 +465,16 @@ values = ["I001"]
 relative_path = "poly.toml"
 key_path = "per-file-ignores.**/api.py"
 values = ["F401", "I001", "TC006", "UP035"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/benches/**/*"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/conftest.py"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -460,6 +535,16 @@ values = ["F401", "I001", "RUF100"]
 relative_path = "poly.toml"
 key_path = "per-file-ignores.**/skills/**/*.md"
 values = ["MD004", "MD005", "MD007", "MD022", "MD026", "MD029", "MD030", "MD032"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/test/**/*"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.**/test_*.py"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -553,6 +638,11 @@ values = [
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores.**/tests/**/*"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores.**/tests/**/*.py"
 values = ["PT019", "PLC0415", "SLF001"]
 
@@ -575,6 +665,19 @@ values = ["ANN", "PLR0917", "S310", "T201"]
 relative_path = "poly.toml"
 key_path = "per-file-ignores.crates/crawlberg-browser/js/**"
 values = ["no-unused-vars", "no-unused-expressions"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/js/bootstrap.js"
+values = [
+  "no-console",
+  "no-eval",
+  "no-extend-native",
+  "require-await",
+  "typescript/no-extraneous-class",
+  "unicorn/no-this-assignment",
+  "unicorn/prefer-math-trunc",
+]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -742,6 +845,9 @@ values = [
   "comment",
   "doc-comment",
   "UP034",
+  "complexity",
+  "no-console",
+  "require-await",
   "cyclomatic-complexity",
   "file-too-long",
   "function-too-long",
