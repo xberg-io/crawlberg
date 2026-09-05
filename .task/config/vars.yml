@@ -1,8 +1,16 @@
 version: "3"
 
 vars:
-  # Version from Cargo.toml (cross-platform compatible)
-  VERSION:
+  # Version from Cargo.toml (cross-platform compatible).
+  # ~keep Deliberately NOT named `VERSION`. Task 3.x resolves `{{.VERSION}}` inside an
+  # *included* taskfile from this shared vars file in preference to a CLI-passed
+  # `VERSION=...`, so a `VERSION` here silently shadows the argument to `version:set`
+  # and `alef:bump` -- both live in included taskfiles. That made `task version:set
+  # VERSION=1.5.2` re-set the version to whatever Cargo.toml already held, and would
+  # have made `task alef:bump VERSION=0.84.1` write the *crate* version into
+  # alef.toml's `alef_version` pin. Root-level tasks are unaffected, which is why the
+  # shadowing is easy to miss.
+  CARGO_VERSION:
     sh: |
       if command -v grep &>/dev/null && command -v sed &>/dev/null; then
         grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\([^"]*\)"/\1/'

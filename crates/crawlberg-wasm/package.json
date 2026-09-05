@@ -1,6 +1,6 @@
 {
   "name": "@xberg-io/crawlberg-wasm",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": false,
   "description": "High-performance web crawling engine",
   "license": "MIT",
@@ -43,7 +43,7 @@
     "clean": "rm -rf pkg dist"
   },
   "devDependencies": {
-    "vitest": "^4.1.11",
-    "@vitest/coverage-v8": "^4.1.11"
+    "vitest": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.0"
   }
 }

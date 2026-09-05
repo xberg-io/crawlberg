@@ -5,11 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-# ~keep PREPARED, NOT YET VALID: 0.79.3 is unpublished (crates.io sparse index tops out
-# ~keep at 0.79.2 as of this commit), so every `install-alef` step will fail until it ships.
-# ~keep The tree has NOT been regenerated against it — expect `alef verify` and the e2e
-# ~keep freshness checks to report drift until a regeneration commit follows the release.
-alef_version = "0.82.2"
+alef_version = "0.84.2"
 languages = [
   "python",
   "node",
@@ -286,7 +282,7 @@ license = "MIT"
 # ~keep Bump this on each release: sync-versions copies it verbatim into CITATION.cff and
 # ~keep only rewrites `version`, so it silently stayed at the 1.1.3 date through 1.1.4,
 # ~keep 1.2.0 and 1.2.1, claiming every release shipped in May.
-date-released = "2026-08-13"
+date-released = "2026-09-05"
 
 [[workspace.citation.authors]]
 family-names = "Hirschfeld"
@@ -309,6 +305,65 @@ replace = 'crawlberg = { path = "../crawlberg", version = "={version}"'
 path = "test_apps/swift_e2e/Package.swift"
 search = 'release/swift/[^"]*'
 replace = 'release/swift/{version}'
+
+# ~keep The six entries below stamp the release version into test-app and e2e manifests that
+# ~keep alef classifies as CREATE-ONCE SEEDS: it writes each only when the path is absent and
+# ~keep never re-renders it, so `alef verify` lists them under `frozen path(s) DRIFTED` on every
+# ~keep run and no amount of regeneration updates them. Adoption is NOT the fix. These files
+# ~keep carry hand-grown content -- e2e/zig/build.zig alone is 903 lines of FFI path, rpath and
+# ~keep mock-server wiring, and test_apps/kotlin_android/build.gradle.kts downloads and unpacks
+# ~keep an artifact -- and `alef adopt --clobber-create-once-seeds` consents to alef REPLACING
+# ~keep all of that with a placeholder seed on the next overwriting regen, which is what
+# ~keep `task version:sync` is. Only the version-bearing line in each needs to track the
+# ~keep release, and a text replacement is the one mechanism that touches just that line.
+# ~keep Without these the pins sat at 1.2.1 through NINE releases -- 1.3.0, 1.3.1, 1.3.2,
+# ~keep 1.3.3, 1.4.0, 1.4.1, 1.4.2, 1.5.0 and 1.5.1 -- so every "does the published package
+# ~keep work" test app was in fact exercising a package from 2026-08-11.
+# ~keep These paths are all distinctively named. alef's ownership guard refuses a catch-all
+# ~keep rewrite on a stampable file with no alef marker (that is why the
+# ~keep crates/crawlberg-cli/Cargo.toml entry above warns twice per sync and never lands), so
+# ~keep if a `go.mod`/`package.json` entry here ever starts warping the same way, check that
+# ~keep warning before assuming the pin is fresh.
+
+[[workspace.sync.text_replacements]]
+# ~keep URL only. `.hash` deliberately keeps its STALE_PLACEHOLDER value: zig fetch resolves
+# ~keep the real hash after the release publishes, so stamping it here would invent a digest
+# ~keep for a tarball that does not exist yet.
+path = "test_apps/zig/build.zig.zon"
+search = 'releases/download/v[^/"]*/crawlberg-zig-v[^"]*\.tar\.gz'
+replace = 'releases/download/v{version}/crawlberg-zig-v{version}.tar.gz'
+
+[[workspace.sync.text_replacements]]
+# ~keep Anchored on groupId+artifactId: the pom carries eleven other <version> tags (junit,
+# ~keep jackson, the project's own 0.1.0, plugin versions) that must not be touched.
+path = "test_apps/java/pom.xml"
+search = '<groupId>io\.xberg\.crawlberg</groupId>\s*<artifactId>crawlberg</artifactId>\s*<version>[^<]*</version>'
+replace = '''<groupId>io.xberg.crawlberg</groupId>
+      <artifactId>crawlberg</artifactId>
+      <version>{version}</version>'''
+
+[[workspace.sync.text_replacements]]
+path = "test_apps/node/package.json"
+search = '"@xberg-io/crawlberg": "\^[^"]*"'
+replace = '"@xberg-io/crawlberg": "^{version}"'
+
+[[workspace.sync.text_replacements]]
+path = "test_apps/wasm/package.json"
+search = '"@xberg-io/crawlberg-wasm": "\^[^"]*"'
+replace = '"@xberg-io/crawlberg-wasm": "^{version}"'
+
+[[workspace.sync.text_replacements]]
+# ~keep The ` v<digit>` tail is load-bearing: it keeps the pattern off the `module
+# ~keep github.com/xberg-io/crawlberg/packages/go-e2e` line and off e2e/go/go.mod's
+# ~keep `replace ... => ../../packages/go` directive, neither of which carries a version.
+path = "test_apps/go/go.mod"
+search = 'github\.com/xberg-io/crawlberg/packages/go v[0-9][^\s]*'
+replace = 'github.com/xberg-io/crawlberg/packages/go v{version}'
+
+[[workspace.sync.text_replacements]]
+path = "e2e/go/go.mod"
+search = 'github\.com/xberg-io/crawlberg/packages/go v[0-9][^\s]*'
+replace = 'github.com/xberg-io/crawlberg/packages/go v{version}'
 
 [workspace.poly]
 exclude = [
@@ -1881,60 +1936,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.5.1"
+version = ">=1.5.2"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.5.1"
+version = "^1.5.2"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.5.1"
+version = "v1.5.2"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.e2e.registry.packages.csharp]
 name = "Crawlberg"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.5.1"
+version = ">=1.5.2"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.5.1"
+version = ">= 1.5.2"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.5.1"
+version = "~> 1.5.2"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.5.1"
+version = "^1.5.2"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.5.1"
-hash = "crawlberg-1.5.1-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.5.2"
+hash = "crawlberg-1.5.2-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.5.1"
+version = "1.5.2"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

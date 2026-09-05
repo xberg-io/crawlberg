@@ -1,5 +1,17 @@
 version: "3"
 
+vars:
+  # ~keep `{{.ALEF}}` below was introduced by b10ee8670 ("regenerate everything the bump
+  # derives, not just manifests") but never defined anywhere in .task/ or Taskfile.yml, so
+  # every templated step rendered as a bare `generate`/`stubs`/`verify` and the task died
+  # with exit 127 ("executable file not found in $PATH") on the FIRST one. Only the literal
+  # `alef sync-versions` on the line below it ever ran. Everything after that point --
+  # including scripts/sync_plugin_version.py and the `alef verify` gate -- was unreachable,
+  # which is how v1.5.1 was tagged with the plugin still pinned to 1.5.0 and failed
+  # `validate-versions` in CI. Keep this defined; the template exists so the binary can be
+  # pointed at a local build.
+  ALEF: alef
+
 tasks:
   sync:
     desc: Sync version from Cargo.toml to all package manifests

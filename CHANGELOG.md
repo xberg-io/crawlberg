@@ -4,6 +4,77 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-05
+
+### Fixed
+
+- **The v1.5.1 release published nothing: the plugin version pin was left at 1.5.0 while the
+  crate moved to 1.5.1, so `validate-versions` failed and took the whole workflow with it.**
+  The bump chain behind `task version:sync` runs `alef sync-versions` and then seven further
+  steps that regenerate everything derived from the version -- stubs, scaffolding, README
+  install snippets, test-app installers, e2e download scripts, and
+  `scripts/sync_plugin_version.py`, which re-pins the coding-agent plugin. Those seven were
+  written as `{{.ALEF}} <subcommand>`, but `ALEF` was never defined in `.task/` or
+  `Taskfile.yml`, so each one rendered as a bare `generate`/`stubs`/`verify` and the chain
+  aborted with exit 127 on the first of them. Only the literal `alef sync-versions` ahead of
+  them ever ran. That is why the alef-managed binding manifests tracked the crate while
+  `plugin/.ai-rulez/config.toml` -- and the `plugin/package.json`,
+  `plugin/gemini-extension.json` and `plugin/kimi.plugin.json` bundles rendered from it --
+  stayed behind on 1.5.0. `validate-versions` gates nearly every publish job, so its failure
+  skipped 36 of them and no artifact reached any registry. `ALEF` is now defined, so the full
+  chain runs and the `alef verify` gate at the end of it is reachable for the first time
+  since it was added. Because the release shipped nothing, v1.5.0 and v1.5.1 never reached
+  npm; the latest npm release remained 1.4.2, and this is the first 1.5.x to land there.
+
+- **`task version:set VERSION=X` could not set any version other than the one already in
+  `Cargo.toml`.** `.task/config/vars.yml` defined a `VERSION` variable computed from
+  `Cargo.toml`, and Task resolves `{{.VERSION}}` inside an *included* taskfile from that
+  shared file in preference to a CLI-passed `VERSION=...`. Both `version:set` and
+  `alef:bump` live in included taskfiles, so both read the computed value instead of the
+  argument: `version:set` re-set the version it already had, and `alef:bump` would have
+  written the crate version into alef.toml's `alef_version` pin. The `requires: vars:
+  [VERSION]` guard never caught it, because the variable was always defined. Root-level
+  tasks resolve the argument correctly, which is what made the shadowing easy to miss. The
+  computed variable is renamed `CARGO_VERSION`; it had no other readers.
+
+- **Every test app and e2e harness installed crawlberg 1.2.1 -- nine releases behind -- and the
+  Zig test app downloaded a `v1.2.1` release asset.** `test_apps/node`, `test_apps/wasm`,
+  `test_apps/go`, `test_apps/java` and `test_apps/zig` each pin the published package they exist
+  to validate, and every one of those pins had sat at 1.2.1 since 2026-08-11, across 1.3.0,
+  1.3.1, 1.3.2, 1.3.3, 1.4.0, 1.4.1, 1.4.2, 1.5.0 and 1.5.1 -- so the suite that answers "does
+  the released artifact work" was answering it about a package from three weeks and nine releases
+  earlier. `test_apps/zig/build.zig.zon` is the worst case, because its `.url` pointed at
+  `releases/download/v1.2.1/crawlberg-zig-v1.2.1.tar.gz` and that asset still returns 200: the
+  fetch succeeded, so the staleness never surfaced as an error. (`e2e/go/go.mod` carried the same
+  stale pin, though a `replace` directive redirects it to the local tree, so there it was
+  cosmetic.) Nothing kept these lines in step because alef classifies all of them as create-once
+  seeds -- it writes each only when the path is absent and never re-renders it -- so no
+  regeneration step has ever touched them. Adopting the files is not the fix: the same paths hold
+  hand-grown build logic (`e2e/zig/build.zig` alone is 903 lines of FFI, rpath and mock-server
+  wiring), and adopting a create-once seed consents to alef replacing that content with a
+  placeholder on the next overwriting regen. Six `[[workspace.sync.text_replacements]]` entries
+  now stamp only the version-bearing line in each file on every `task version:sync`, leaving
+  everything around it untouched. The Zig `.hash` deliberately keeps its placeholder value, which
+  `zig fetch` resolves once the release publishes.
+
+- **The published TypeScript interaction examples did not type-check.** Every generated
+  `interact` snippet and the Node e2e interaction suite read `result.actionResults[0].success`
+  directly, but `actionResults` is optional on `InteractionResult`, so all eleven failed `strict`
+  type-checking with `TS18048: 'result.actionResults' is possibly 'undefined'` -- a reader who
+  copied one out of the docs got a compile error rather than a working example. Regenerating on
+  alef 0.84.2 emits `result.actionResults?.[0]?.success` instead. The effect is confined to
+  TypeScript and Node: alef gates the fix on the target language at the accessor's entry point,
+  and regenerating every backend against 0.84.2 changed no other language's output.
+
+### Changed
+
+- Regenerated all language bindings on alef 0.84.2 (from 0.82.2), picking up its
+  reproducible-generation fix.
+
+- Upgraded `vitest` 4 -> 5 across all six Node and WASM suites, and `@vitest/coverage-v8` to the
+  matching major, since it is version-locked to vitest. Dev-dependency only -- no published
+  package carries vitest, and no shipped code changed.
+
 ## [1.5.1] - 2026-09-03
 
 ### Fixed

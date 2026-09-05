@@ -567,6 +567,12 @@ fmt = { exclude = [
   "schemas/**",
 ] }
 file_safety = { exclude = [
+  # ~keep The alef-generated C FFI surface is 559 KiB and was already that size at HEAD.
+  # `check-added-large-files` only fires when a file is part of a commit, so it never tripped
+  # until a regen touched it. The size is a property of the exported API surface, not of
+  # anything editable here -- liter-llm's equivalent is 1.1 MiB, xberg's is 3.1 MiB. Excluding
+  # it keeps the 500 KiB guard meaningful for the hand-written files it exists to protect.
+  "crates/*-ffi/src/lib.rs",
   "**/*.freezed.dart",
   "**/*.g.dart",
   "**/*.jinja",
