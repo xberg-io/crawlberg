@@ -643,13 +643,38 @@ values = ["PT019", "PLC0415", "SLF001"]
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores..alef-ownership.toml"
+values = ["file-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores..alef-toml-merge-provenance.toml"
+values = ["file-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores..cargo/config.toml"
 values = ["comment", "doc-comment"]
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores..github/workflows/publish.yaml"
+values = ["file-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.CHANGELOG.md"
+values = ["file-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores.Package.swift"
 values = ["comment", "doc-comment"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.alef.toml"
+values = ["file-too-long"]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -665,14 +690,54 @@ values = ["no-unused-vars", "no-unused-expressions"]
 relative_path = "poly.toml"
 key_path = "per-file-ignores.crates/crawlberg-browser/js/bootstrap.js"
 values = [
+  "file-too-long",
+  "function-too-long",
   "no-console",
   "no-eval",
   "no-extend-native",
   "require-await",
+  "too-many-parameters",
+  "type-too-long",
   "typescript/no-extraneous-class",
+  "unicorn/no-static-only-class",
   "unicorn/no-this-assignment",
   "unicorn/prefer-math-trunc",
 ]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/adapter.rs"
+values = ["file-too-long", "function-too-long", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/js/ops.rs"
+values = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/js/runtime.rs"
+values = ["file-too-long", "function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/net/client.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/net/cookies.rs"
+values = ["function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-browser/src/page.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg-cli/src/main.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -780,6 +845,136 @@ values = [
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/browser.rs"
+values = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/defaults/rate_limiter.rs"
+values = ["nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/document.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/engine/builder.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/engine/crawl_loop.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/engine/mod.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/html/detection.rs"
+values = ["cyclomatic-complexity"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/html/images.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/html/json_ld.rs"
+values = ["nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/html/metadata.rs"
+values = ["function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/http.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/interact/chromiumoxide.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/interact/validation.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/map.rs"
+values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/mcp/server.rs"
+values = ["file-too-long", "function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/native_browser.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/net/ssrf.rs"
+values = ["file-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/research/agent.rs"
+values = ["function-too-long", "nesting-too-deep"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/robots.rs"
+values = ["cyclomatic-complexity", "function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/scrape.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/sitemap.rs"
+values = ["function-too-long", "nesting-too-deep", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/stealth.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/tower/service.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/types/config.rs"
+values = ["cyclomatic-complexity", "file-too-long", "function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/types/results.rs"
+values = ["too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.crates/crawlberg/src/waf/rules.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores.docker/**"
 values = ["DL3006", "DL3059"]
 
@@ -801,6 +996,16 @@ values = [
 relative_path = "poly.toml"
 key_path = "per-file-ignores.packages/python/**/api.py"
 values = ["RET504"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.plugin/.ai-rulez/opencode/index.js"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.poly.toml"
+values = ["file-too-long"]
 
 [[entries]]
 relative_path = "poly.toml"
@@ -835,6 +1040,11 @@ values = [
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "per-file-ignores.scripts/ci/ruby/vendor-crawlberg-core.py"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "per-file-ignores.test_apps/**"
 values = [
   "comment",
@@ -855,3 +1065,23 @@ values = [
 relative_path = "poly.toml"
 key_path = "per-file-ignores.tests/**/*.py"
 values = ["PERF203", "PLC0415", "S607"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.tools/benchmark-harness/src/dataset.rs"
+values = ["function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.tools/benchmark-harness/src/main.rs"
+values = ["function-too-long", "too-many-parameters"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.tools/benchmark-harness/src/output.rs"
+values = ["file-too-long", "function-too-long"]
+
+[[entries]]
+relative_path = "poly.toml"
+key_path = "per-file-ignores.tools/benchmark-harness/src/runner.rs"
+values = ["function-too-long", "too-many-parameters"]

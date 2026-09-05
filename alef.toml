@@ -515,6 +515,62 @@ WebUI = "WebUI"
 traineddata = "traineddata"
 
 [workspace.poly.per-file-ignores]
+# Alef-generated config files. Both grow with the size of the surface alef manages and
+# with the quality-debt baseline below; a line count on generated config is not a
+# maintainability signal. ~keep
+"poly.toml" = ["file-too-long"]
+".alef-toml-merge-provenance.toml" = ["file-too-long"]
+# --- quality-debt baseline (generated) ---
+# 83 size/complexity findings across 44 files that predate these
+# metrics. Listed per file rather than switching the rules off, so the metrics still
+# fire on every file NOT listed here -- new code stays covered, and each path below is
+# one discrete unit of work.
+# TODO(crawlberg-quality-debt): pay this down file by file and delete each entry as it goes green.
+# Do not add new paths here without a very good reason. ~keep
+".alef-ownership.toml" = ["file-too-long"]
+".github/workflows/publish.yaml" = ["file-too-long"]
+"CHANGELOG.md" = ["file-too-long"]
+"alef.toml" = ["file-too-long"]
+"crates/crawlberg-browser/src/adapter.rs" = ["file-too-long", "function-too-long", "too-many-parameters"]
+"crates/crawlberg-browser/src/js/ops.rs" = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
+"crates/crawlberg-browser/src/js/runtime.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg-browser/src/net/client.rs" = ["function-too-long"]
+"crates/crawlberg-browser/src/net/cookies.rs" = ["function-too-long", "nesting-too-deep"]
+"crates/crawlberg-browser/src/page.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg-cli/src/main.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/browser.rs" = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
+"crates/crawlberg/src/defaults/rate_limiter.rs" = ["nesting-too-deep"]
+"crates/crawlberg/src/document.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/builder.rs" = ["function-too-long"]
+"crates/crawlberg/src/engine/crawl_loop.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "too-many-parameters"]
+"crates/crawlberg/src/engine/mod.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/html/detection.rs" = ["cyclomatic-complexity"]
+"crates/crawlberg/src/html/images.rs" = ["function-too-long"]
+"crates/crawlberg/src/html/json_ld.rs" = ["nesting-too-deep"]
+"crates/crawlberg/src/html/metadata.rs" = ["function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/http.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/interact/chromiumoxide.rs" = ["function-too-long"]
+"crates/crawlberg/src/interact/validation.rs" = ["function-too-long"]
+"crates/crawlberg/src/map.rs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/mcp/server.rs" = ["file-too-long", "function-too-long"]
+"crates/crawlberg/src/native_browser.rs" = ["function-too-long"]
+"crates/crawlberg/src/net/ssrf.rs" = ["file-too-long"]
+"crates/crawlberg/src/research/agent.rs" = ["function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/robots.rs" = ["cyclomatic-complexity", "function-too-long"]
+"crates/crawlberg/src/scrape.rs" = ["function-too-long"]
+"crates/crawlberg/src/sitemap.rs" = ["function-too-long", "nesting-too-deep", "too-many-parameters"]
+"crates/crawlberg/src/stealth.rs" = ["function-too-long"]
+"crates/crawlberg/src/tower/service.rs" = ["function-too-long"]
+"crates/crawlberg/src/types/config.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long"]
+"crates/crawlberg/src/types/results.rs" = ["too-many-parameters"]
+"crates/crawlberg/src/waf/rules.rs" = ["function-too-long"]
+"plugin/.ai-rulez/opencode/index.js" = ["function-too-long"]
+"scripts/ci/ruby/vendor-crawlberg-core.py" = ["function-too-long"]
+"tools/benchmark-harness/src/dataset.rs" = ["function-too-long"]
+"tools/benchmark-harness/src/main.rs" = ["function-too-long", "too-many-parameters"]
+"tools/benchmark-harness/src/output.rs" = ["file-too-long", "function-too-long"]
+"tools/benchmark-harness/src/runner.rs" = ["function-too-long", "too-many-parameters"]
+# --- end quality-debt baseline ---
 # Quality metrics do not apply to test code. A test function's length is its assertion
 # count and a table-driven test's arity mirrors its cases; splitting either to satisfy a
 # production-code maintainability metric makes the test harder to read, not easier. Only
@@ -596,6 +652,11 @@ traineddata = "traineddata"
 #   typescript/no-extraneous-class  `WebGLRenderingContext`, `ShadowRoot`, `ImageData` and
 #                    friends exist so `instanceof` and `new` behave; a const object cannot
 #                    stand in for a constructor identity.
+#   unicorn/no-static-only-class  Same cause, different rule: `Notification` carries only
+#                    `permission` and `requestPermission()`, but it is handed to
+#                    `_markNative()`, which skips anything failing `typeof fn === "function"`,
+#                    and pages feature-detect it with `typeof Notification`/`new Notification`.
+#                    A const object would fail both.
 #   unicorn/prefer-math-trunc  `| 0` here is a 32-bit wrap, not a truncation. The canvas and
 #                    screen fingerprint hashes (`hash = ((hash << 5) - hash + b) | 0`) depend on
 #                    the wrap; `Math.trunc` would change every value they produce.
@@ -605,15 +666,7 @@ traineddata = "traineddata"
 # Rules that DO catch real defects here stay on and were fixed in code instead of listed:
 # radix, no-useless-return, no-useless-constructor, sort-vars, max-depth, complexity,
 # oxc/branches-sharing-code, unicorn/no-array-callback-reference. ~keep
-"crates/crawlberg-browser/js/bootstrap.js" = [
-  "no-console",
-  "no-eval",
-  "no-extend-native",
-  "require-await",
-  "typescript/no-extraneous-class",
-  "unicorn/no-this-assignment",
-  "unicorn/prefer-math-trunc",
-]
+"crates/crawlberg-browser/js/bootstrap.js" = ["file-too-long", "function-too-long", "no-console", "no-eval", "no-extend-native", "require-await", "too-many-parameters", "type-too-long", "typescript/no-extraneous-class", "unicorn/no-static-only-class", "unicorn/no-this-assignment", "unicorn/prefer-math-trunc"]
 # The `quality` rules below are suppressed on these generated paths for a reason distinct
 # from the uncomment exemption: poly's quality tier measures function length, parameter count,
 # file length, nesting depth and cyclomatic complexity -- metrics written for hand-maintained
