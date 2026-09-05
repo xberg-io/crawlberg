@@ -731,6 +731,16 @@ jobs:
           - { os: ubuntu-24.04-arm, label: linux-aarch64 }
           - { os: macos-latest, label: macos-arm64 }
           - { os: macos-15-intel, label: macos-x86_64 }
+          # ~keep windows-x64 was dropped when rb-sys 0.9.127 could not resolve Ruby's
+          # mingw headers (`ruby/defines.h:63:11: fatal error: 'sys/select.h' file not
+          # found`) and the tracking issue oxidize-rb/rb-sys#268 sat open with no fix
+          # (#27). Both halves of that have since changed: rb-sys shipped 0.9.129 and
+          # 0.9.130 on 2026-08-21, #268 is closed, and the crate now requires
+          # `rb-sys = ">=0.9.130, <0.10"`. This builds natively on a Windows runner
+          # rather than cross-compiling from rb-sys-dock, so the header search path the
+          # old failure turned on is the toolchain's own. `fail-fast: false` keeps a
+          # regression here from taking the other four platform gems down with it.
+          - { os: windows-latest, label: windows-x64 }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -783,7 +793,7 @@ jobs:
           for f in packages/ruby/pkg/*.gem; do
             base="$(basename "$f")"
             case "$base" in
-              *-x86_64-linux.gem|*-aarch64-linux.gem|*-arm64-darwin.gem|*-x86_64-darwin.gem) ;;
+              *-x86_64-linux.gem|*-aarch64-linux.gem|*-arm64-darwin.gem|*-x86_64-darwin.gem|*-x64-mingw-ucrt.gem) ;;
               *) echo "Removing non-canonical source gem $base"; rm -f "$f" ;;
             esac
           done
