@@ -538,11 +538,6 @@ traineddata = "traineddata"
 "**/*Tests.cs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 "**/*_test.dart" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 "**/*_spec.rb" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
-# Alef-generated agent skill docs, emitted once per assistant directory. The rumdl list
-# rules below are formatting preferences on generated markdown: poly reports on generated
-# files by design, so regeneration would revert any hand-fix. Emitting tidier list indent
-# is an alef-side improvement, not something editable here. ~keep
-"**/skills/**/*.md" = ["MD004", "MD005", "MD007", "MD022", "MD026", "MD029", "MD030", "MD032"]
 # Stylistic rules disabled repo-wide. Each is a formatting or idiom preference with no
 # correctness or security consequence, and each fires in volumes no one can hand-maintain
 # (`require-unicode-regexp` alone was 724 across the polyrepo, `no-inline-comments` 200).

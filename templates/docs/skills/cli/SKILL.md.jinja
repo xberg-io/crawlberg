@@ -1,5 +1,6 @@
-# {{ krate.name }} CLI Reference Use this skill when invoking, documenting, or changing the {{ krate.name }}
-command-line interface.
+# {{ krate.name }} CLI Reference
+
+Use this skill when invoking, documenting, or changing the {{ krate.name }} command-line interface.
 
 {% for command in cli.commands %}
   - `{{ command.path }}`{{ ": " ~ command.about if command.about else "" }}

@@ -533,11 +533,6 @@ values = ["F401", "I001", "RUF100"]
 
 [[entries]]
 relative_path = "poly.toml"
-key_path = "per-file-ignores.**/skills/**/*.md"
-values = ["MD004", "MD005", "MD007", "MD022", "MD026", "MD029", "MD030", "MD032"]
-
-[[entries]]
-relative_path = "poly.toml"
 key_path = "per-file-ignores.**/test/**/*"
 values = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep", "too-many-parameters"]
 
