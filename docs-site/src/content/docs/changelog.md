@@ -9,12 +9,15 @@ title: "Changelog"
 ### Changed
 
 - Update Rust dependencies, including dirs 7 and liter-llm 2.0; retain cssparser 0.37 for selectors 0.40 compatibility.
-- Regenerate language bindings, test harnesses, and package metadata with Alef 0.85.12.
+- Regenerate language bindings, test harnesses, and package metadata with Alef 0.85.14 to correct Java defaults, collection and enum assertions, and truncated mock responses.
 - Synchronize package versions and consumer manifests to 1.6.0.
 - Preserve custom test harnesses under explicit ownership and check their release pins during version sync.
 
 ### Fixed
 
+- Enforce configured HTTP request timeouts on WebAssembly, including redirected requests.
+- Resolve native Node packages from the workspace so frozen documentation installs work before publication.
+- Export matching canonical and vendored C headers through `task c:headers`.
 - Run documentation prose linting correctly and track the shared docs workflow's v1 tag.
 - Publish separate NuGet runtime packages and native downloader archives with checksums for Dart and Go.
 - Refresh PHP consumer development dependencies to resolve known security advisories.
