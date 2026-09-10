@@ -4,6 +4,10 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Enforce configured HTTP request timeouts on WebAssembly, including redirected requests.
+
 ## [1.6.0] - 2026-09-10
 
 ### Changed

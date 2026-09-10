@@ -246,7 +246,8 @@ pub(crate) async fn http_fetch(
     let mut redirects_followed: usize = 0;
 
     loop {
-        let mut req = client.get(current_url.to_string());
+        // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
+        let mut req = client.get(current_url.to_string()).timeout(config.request_timeout);
 
         if let Some(ref ua) = config.user_agent {
             req = req.header(USER_AGENT, ua.as_str());
@@ -1007,6 +1008,47 @@ mod tests {
     use crate::types::ProxyConfig;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn http_fetch_enforces_config_timeout_without_client_default() {
+        const REQUEST_TIMEOUT: Duration = Duration::from_millis(50);
+        const RESPONSE_DELAY: Duration = Duration::from_millis(500);
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(ResponseTemplate::new(302).append_header("location", "/slow"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/slow"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(RESPONSE_DELAY)
+                    .set_body_string("late"),
+            )
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig {
+            request_timeout: REQUEST_TIMEOUT,
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        // ~keep WASM has no client-level timeout; a bare native client reproduces that condition.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client must build");
+        for endpoint in ["/slow", "/start"] {
+            let result = http_fetch(&format!("{}{endpoint}", mock.uri()), &config, &HashMap::new(), &client).await;
+            assert!(
+                matches!(result, Err(CrawlError::Timeout { .. })),
+                "expected timeout for {endpoint}"
+            );
+        }
+    }
 
     /// `http_fetch` must populate `final_url` from the reqwest response URL.
     ///
