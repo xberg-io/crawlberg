@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@xberg-io/crawlberg-wasm": "file:../../crates/crawlberg-wasm/pkg/nodejs",
-    "rollup": "^4.53.3",
+    "rollup": "^4.63.1",
     "vitest": "^5.0.0"
   }
 }

@@ -18,12 +18,12 @@
   },
   "files": ["index.js", "index.d.ts", "*.node"],
   "optionalDependencies": {
-    "@xberg-io/crawlberg-linux-x64-gnu": "1.6.0",
-    "@xberg-io/crawlberg-linux-arm64-gnu": "1.6.0",
-    "@xberg-io/crawlberg-darwin-x64": "1.6.0",
     "@xberg-io/crawlberg-darwin-arm64": "1.6.0",
-    "@xberg-io/crawlberg-win32-x64-msvc": "1.6.0",
-    "@xberg-io/crawlberg-win32-arm64-msvc": "1.6.0"
+    "@xberg-io/crawlberg-darwin-x64": "1.6.0",
+    "@xberg-io/crawlberg-linux-arm64-gnu": "1.6.0",
+    "@xberg-io/crawlberg-linux-x64-gnu": "1.6.0",
+    "@xberg-io/crawlberg-win32-arm64-msvc": "1.6.0",
+    "@xberg-io/crawlberg-win32-x64-msvc": "1.6.0"
   },
   "napi": {
     "packageName": "@xberg-io/crawlberg",
@@ -49,6 +49,6 @@
     "access": "public"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.8.6"
+    "@napi-rs/cli": "^3.9.0"
   }
 }
