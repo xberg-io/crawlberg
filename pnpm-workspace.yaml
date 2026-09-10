@@ -1,5 +1,6 @@
 packages:
   - "crates/crawlberg-node"
+  - "crates/crawlberg-node/npm/*"
   - "crates/crawlberg-wasm"
   - "e2e/node"
   - "!e2e/wasm"
@@ -8,6 +9,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - "@xberg-io/*"
 
+linkWorkspacePackages: true
 sharedWorkspaceLockfile: true
 autoInstallPeers: true
 hoist: true
