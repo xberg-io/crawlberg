@@ -43,6 +43,13 @@ tasks:
     cmds:
       - cargo build -p crawlberg-ffi
 
+  headers:
+    desc: Regenerate canonical and vendored C headers from the FFI source
+    env:
+      ALEF_EXPORT_GENERATED_HEADERS: "1"
+    cmds:
+      - cargo build --locked -p crawlberg-ffi
+
   build:release:
     desc: Build crawlberg-ffi C library in release mode
     cmds:

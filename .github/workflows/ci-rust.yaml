@@ -195,7 +195,7 @@ jobs:
               echo "::error::vendored header $VENDORED is missing — restore it or update VENDORED_HEADERS in this workflow"
               FAIL=1
             elif ! diff -q "$CANONICAL" "$VENDORED" > /dev/null 2>&1; then
-              echo "::error::$VENDORED is out of sync with $CANONICAL — run 'alef sync-versions'"
+              echo "::error::$VENDORED is out of sync with $CANONICAL — run 'task c:headers'"
               diff "$CANONICAL" "$VENDORED" | head -20
               FAIL=1
             else
