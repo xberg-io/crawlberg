@@ -4,6 +4,10 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Regenerate bindings and test harnesses with Alef 0.85.14 to correct Java defaults, collection and enum assertions, and truncated mock responses.
+
 ### Fixed
 
 - Enforce configured HTTP request timeouts on WebAssembly, including redirected requests.
