@@ -1,6 +1,6 @@
 // AI-RULEZ :: GENERATED FILE — DO NOT EDIT
-// Content-Hash: blake3:f0a46514c1a4ac82725016922850e09c2671e701c3c38236b02b2d88db0c36e8
-// Source-Hash: blake3:0d2377f5b62acffb6c95f9bb6c38a225f3c13665bd68a08362a369a9f04405eb
+// Content-Hash: blake3:8f0ccc210ae75840b66cff6eed124cdd130868a3dc11785d443362c6817f447a
+// Source-Hash: blake3:00e223f544976a61da8338109d27d9a2685481242bfeeee64d5d42db0fb1c5d3
 // Schema-Version: v1
 
 import { tool } from "@opencode-ai/plugin";
@@ -38,7 +38,7 @@ function validateJson(value, name) {
   try {
     JSON.parse(value);
   } catch (error) {
-    throw new Error(`${name} must be valid JSON: ${error.message}`);
+    throw new Error(`${name} must be valid JSON: ${error.message}`, { cause: error });
   }
 }
 
@@ -100,7 +100,7 @@ function pushSharedCrawlOptions(cliArgs, args) {
   pushOption(cliArgs, "--config", args.config);
 }
 
-export const CrawlbergPlugin = async () => ({
+export const CrawlbergPlugin = () => ({
   tool: {
     crawlberg_scrape: tool({
       description: "Scrape one URL to JSON or Markdown with the crawlberg CLI.",
@@ -120,7 +120,7 @@ export const CrawlbergPlugin = async () => ({
 
         const cliArgs = ["scrape", args.url];
         pushSharedCrawlOptions(cliArgs, args);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
     crawlberg_crawl: tool({
@@ -149,7 +149,7 @@ export const CrawlbergPlugin = async () => ({
         pushOption(cliArgs, "--rate-limit", args.rate_limit);
         pushFlag(cliArgs, "--stay-on-domain", args.stay_on_domain);
         pushSharedCrawlOptions(cliArgs, args);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
     crawlberg_map: tool({
@@ -177,7 +177,7 @@ export const CrawlbergPlugin = async () => ({
         pushOption(cliArgs, "--browser-endpoint", args.browser_endpoint);
         pushFlag(cliArgs, "--respect-robots-txt", args.respect_robots_txt);
         pushOption(cliArgs, "--config", args.config);
-        return runCli(cliArgs, context);
+        return await runCli(cliArgs, context);
       },
     }),
   },

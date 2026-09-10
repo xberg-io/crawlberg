@@ -266,6 +266,11 @@ values = [
 
 [[entries]]
 relative_path = "poly.toml"
+key_path = "hooks.snapshot_include"
+values = ["rust-toolchain.toml"]
+
+[[entries]]
+relative_path = "poly.toml"
 key_path = "hooks.stages"
 values = ["pre-commit"]
 

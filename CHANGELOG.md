@@ -4,6 +4,21 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-10
+
+### Changed
+
+- Update Rust dependencies, including dirs 7 and liter-llm 2.0; retain cssparser 0.37 for selectors 0.40 compatibility.
+- Regenerate language bindings, test harnesses, and package metadata with Alef 0.85.12.
+- Synchronize package versions and consumer manifests to 1.6.0.
+- Preserve custom test harnesses under explicit ownership and check their release pins during version sync.
+
+### Fixed
+
+- Run documentation prose linting correctly and track the shared docs workflow's v1 tag.
+- Publish separate NuGet runtime packages and native downloader archives with checksums for Dart and Go.
+- Refresh PHP consumer development dependencies to resolve known security advisories.
+
 ## [1.5.2] - 2026-09-05
 
 ### Fixed

@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.84.2"
+alef_version = "0.85.12"
 languages = [
   "python",
   "node",
@@ -22,6 +22,33 @@ languages = [
   "jni",
   "swift",
   "zig",
+]
+
+[workspace.ownership]
+# ~keep These reviewed harnesses contain native setup and test configuration beyond Alef seeds.
+# ~keep scripts/sync_consumer_versions.py maintains and checks their release pins.
+user_owned = [
+  "e2e/csharp/Crawlberg.E2eTests.csproj",
+  "e2e/dart/pubspec.yaml",
+  "e2e/go/go.mod",
+  "e2e/java/pom.xml",
+  "e2e/kotlin_android/build.gradle.kts",
+  "e2e/node/package.json",
+  "e2e/ruby/Gemfile",
+  "e2e/wasm/package.json",
+  "e2e/zig/build.zig",
+  "test_apps/dart/pubspec.yaml",
+  "test_apps/elixir/mix.exs",
+  "test_apps/go/go.mod",
+  "test_apps/java/pom.xml",
+  "test_apps/kotlin_android/build.gradle.kts",
+  "test_apps/kotlin_android/gradle/wrapper/gradle-wrapper.properties",
+  "test_apps/node/package.json",
+  "test_apps/ruby/Gemfile",
+  "test_apps/wasm/package.json",
+  "test_apps/zig/build.zig",
+  "test_apps/zig/build.zig.zon",
+  "test_apps/swift_e2e/Package.swift",
 ]
 
 [workspace.tools]
@@ -536,14 +563,29 @@ traineddata = "traineddata"
 "crates/crawlberg-browser/src/js/runtime.rs" = ["file-too-long", "function-too-long"]
 "crates/crawlberg-browser/src/net/client.rs" = ["function-too-long"]
 "crates/crawlberg-browser/src/net/cookies.rs" = ["function-too-long", "nesting-too-deep"]
-"crates/crawlberg-browser/src/page.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg-browser/src/page.rs" = [
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+]
 "crates/crawlberg-cli/src/main.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
 "crates/crawlberg/src/browser.rs" = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
 "crates/crawlberg/src/defaults/rate_limiter.rs" = ["nesting-too-deep"]
 "crates/crawlberg/src/document.rs" = ["function-too-long"]
 "crates/crawlberg/src/engine/builder.rs" = ["function-too-long"]
-"crates/crawlberg/src/engine/crawl_loop.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "too-many-parameters"]
-"crates/crawlberg/src/engine/mod.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
+"crates/crawlberg/src/engine/crawl_loop.rs" = [
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "too-many-parameters",
+]
+"crates/crawlberg/src/engine/mod.rs" = [
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+]
 "crates/crawlberg/src/html/detection.rs" = ["cyclomatic-complexity"]
 "crates/crawlberg/src/html/images.rs" = ["function-too-long"]
 "crates/crawlberg/src/html/json_ld.rs" = ["nesting-too-deep"]
@@ -666,7 +708,20 @@ traineddata = "traineddata"
 # Rules that DO catch real defects here stay on and were fixed in code instead of listed:
 # radix, no-useless-return, no-useless-constructor, sort-vars, max-depth, complexity,
 # oxc/branches-sharing-code, unicorn/no-array-callback-reference. ~keep
-"crates/crawlberg-browser/js/bootstrap.js" = ["file-too-long", "function-too-long", "no-console", "no-eval", "no-extend-native", "require-await", "too-many-parameters", "type-too-long", "typescript/no-extraneous-class", "unicorn/no-static-only-class", "unicorn/no-this-assignment", "unicorn/prefer-math-trunc"]
+"crates/crawlberg-browser/js/bootstrap.js" = [
+  "file-too-long",
+  "function-too-long",
+  "no-console",
+  "no-eval",
+  "no-extend-native",
+  "require-await",
+  "too-many-parameters",
+  "type-too-long",
+  "typescript/no-extraneous-class",
+  "unicorn/no-static-only-class",
+  "unicorn/no-this-assignment",
+  "unicorn/prefer-math-trunc",
+]
 # The `quality` rules below are suppressed on these generated paths for a reason distinct
 # from the uncomment exemption: poly's quality tier measures function length, parameter count,
 # file length, nesting depth and cyclomatic complexity -- metrics written for hand-maintained
@@ -677,18 +732,81 @@ traineddata = "traineddata"
 # Alef-generated binding output — never hand-clean comments; regeneration owns them. ~keep
 ".cargo/config.toml" = ["comment", "doc-comment"]
 "Package.swift" = ["comment", "doc-comment"]
-"packages/**" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
-"crates/crawlberg-node/**" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
-"crates/crawlberg-php/**" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
-"crates/crawlberg-jni/**" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
+"packages/**" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
+"crates/crawlberg-node/**" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
+"crates/crawlberg-php/**" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
+"crates/crawlberg-jni/**" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
 # crawlberg-ffi/py/wasm are MIXED: only src/lib.rs (+ ffi build.rs/cbindgen.toml) is
 # alef-generated; the other modules are hand-written and get the uncomment sweep. ~keep
-"crates/crawlberg-ffi/src/lib.rs" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
+"crates/crawlberg-ffi/src/lib.rs" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
 "crates/crawlberg-ffi/build.rs" = ["comment", "doc-comment"]
 "crates/crawlberg-ffi/cbindgen.toml" = ["comment", "doc-comment"]
 "crates/crawlberg-ffi/include/crawlberg.h" = ["comment", "doc-comment"]
-"crates/crawlberg-py/src/lib.rs" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
-"crates/crawlberg-wasm/src/lib.rs" = ["comment", "doc-comment", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
+"crates/crawlberg-py/src/lib.rs" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
+"crates/crawlberg-wasm/src/lib.rs" = [
+  "comment",
+  "doc-comment",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
 "crates/crawlberg-node/index.js" = ["no-unused-vars"]
 # alef-generated e2e test apps carry a "DO NOT EDIT" header and generator-emitted
 # comments; exempt them from the uncomment sweep (they're still ruff-linted via the
@@ -704,7 +822,20 @@ traineddata = "traineddata"
 # generated wasm init-fallback warning, and `complexity` on a generated assertion block whose
 # branch count just mirrors the fixture's field count. Hash-stamped output reverts any hand
 # fix, so they belong here until alef emits differently. ~keep
-"test_apps/**" = ["comment", "doc-comment", "UP034", "complexity", "no-console", "require-await", "cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep", "too-many-parameters", "type-too-long"]
+"test_apps/**" = [
+  "comment",
+  "doc-comment",
+  "UP034",
+  "complexity",
+  "no-console",
+  "require-await",
+  "cyclomatic-complexity",
+  "file-too-long",
+  "function-too-long",
+  "nesting-too-deep",
+  "too-many-parameters",
+  "type-too-long",
+]
 "docker/**" = ["DL3006", "DL3059"]
 "packages/python/**/api.py" = ["RET504"]
 # Test-code relaxations on top of the builtin "**/tests/**" defaults: tests
@@ -1291,7 +1422,7 @@ CRAWLBERG_ALLOW_PRIVATE_NETWORK = "true"
 rust = "(cd {dir} && cargo fmt --all)"
 python = "ruff check --fix {dir} && ruff format {dir}"
 go = "gofmt -w {dir}"
-ruby = "(cd {dir} && bundle exec rubocop --config .rubocop.yaml --autocorrect-all .)"
+ruby = "poly fmt --fix {dir}"
 # ~keep vendor/ is gitignored, so a fresh checkout (every CI runner) has no php-cs-fixer until
 # ~keep `composer install` runs. alef has no `before` hook for e2e formatters and silently no-ops
 # ~keep when the command is missing, so the install is inlined here and the tool is invoked through
@@ -2103,60 +2234,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.5.2"
+version = ">=1.6.0"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.5.2"
+version = "^1.6.0"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.5.2"
+version = "1.6.0"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.5.2"
+version = "v1.6.0"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.5.2"
+version = "1.6.0"
 
 [crates.e2e.registry.packages.csharp]
-name = "Crawlberg"
-version = "1.5.2"
+name = "XbergIo.Crawlberg"
+version = "1.6.0"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.5.2"
+version = ">=1.6.0"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.5.2"
+version = ">= 1.6.0"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.5.2"
+version = "~> 1.6.0"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.5.2"
+version = "^1.6.0"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.5.2"
+version = "1.6.0"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.5.2"
+version = "1.6.0"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.5.2"
-hash = "crawlberg-1.5.2-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.6.0"
+hash = "crawlberg-1.6.0-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.5.2"
+version = "1.6.0"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

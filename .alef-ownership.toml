@@ -3962,6 +3962,7 @@ owned_paths = [
   "packages/ruby/sig/types.rbs",
   "packages/swift/README.md",
   "test_apps/c/Makefile",
+  "test_apps/csharp/XbergIo.Crawlberg.E2eTests.csproj",
   "test_apps/java/.mvn/wrapper/maven-wrapper.properties",
   "test_apps/node/.npmrc",
   "test_apps/php/phpunit.xml",

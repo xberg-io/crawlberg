@@ -287,7 +287,7 @@ jobs:
         uses: xberg-io/actions/check-registry@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:
           registry: nuget
-          package: Crawlberg
+          package: XbergIo.Crawlberg
           version: ${{ needs.prepare.outputs.version }}
 
   check-packagist:
@@ -998,10 +998,23 @@ jobs:
           archive-name: crawlberg-go-${{ matrix.platform }}.tar.gz
           output-dir: dist/go-ffi
 
+      - name: Write native archive checksum
+        shell: bash
+        working-directory: dist/go-ffi
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+          for archive in Path(".").glob("*.tar.gz"):
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n")
+          PYTHON
+
       - uses: actions/upload-artifact@v7
         with:
           name: go-ffi-${{ matrix.platform }}
-          path: dist/go-ffi/*.tar.gz
+          path: dist/go-ffi/*.tar.gz*
           if-no-files-found: error
           retention-days: 14
 
@@ -1466,7 +1479,9 @@ jobs:
           tag: ${{ needs.prepare.outputs.tag }}
           working-directory: dist/go-ffi
           dry-run: ${{ needs.prepare.outputs.dry_run }}
-          assets: crawlberg-go-*.tar.gz
+          assets: |
+            crawlberg-go-*.tar.gz
+            crawlberg-go-*.tar.gz.sha256
           token: ${{ steps.app-token.outputs.token }}
 
   push-go-subdir-tag:
@@ -2159,16 +2174,17 @@ jobs:
       - name: Stage runtimes/<rid>/native into NuGet project
         shell: bash
         run: |
-          mkdir -p packages/csharp/runtimes
+          set -euo pipefail
+          mkdir -p packages/csharp/Crawlberg/runtimes
           for dir in csharp-natives/runtimes/*/; do
             rid="$(basename "$dir")"
-            mkdir -p "packages/csharp/runtimes/${rid}/native"
-            cp -v "${dir}native/"* "packages/csharp/runtimes/${rid}/native/"
+            mkdir -p "packages/csharp/Crawlberg/runtimes/${rid}/native"
+            cp -v "${dir}native/"* "packages/csharp/Crawlberg/runtimes/${rid}/native/"
           done
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Render runtime.json from template
         uses: xberg-io/actions/render-runtime-json@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
@@ -2178,11 +2194,15 @@ jobs:
 
       - name: Pack NuGet package
         shell: bash
+        working-directory: packages/csharp/Crawlberg
         run: |
-          dotnet pack packages/csharp/Crawlberg.slnx \
-            -c Release \
-            -p:Version=${{ needs.prepare.outputs.version }} \
-            -o dist/nuget
+          set -euo pipefail
+          rids=$(jq -er '.runtimes | to_entries[] | select(.value["XbergIo.Crawlberg"] != null) | .key' runtime.json)
+          while IFS= read -r rid; do
+            dotnet pack ../Crawlberg.Runtime/Crawlberg.Runtime.csproj -c Release \
+              -p:PublishedRID="$rid" --output ../../../dist/nuget
+          done <<< "$rids"
+          dotnet pack Crawlberg.csproj -c Release --output ../../../dist/nuget
 
       - uses: xberg-io/actions/publish-nuget@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
         with:

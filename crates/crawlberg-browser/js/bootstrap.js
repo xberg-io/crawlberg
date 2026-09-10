@@ -1000,11 +1000,7 @@ class Element extends Node {
         }
       })
       .catch(() => {
-        this._iframeDoc = new _IframeDocument(
-          "<!DOCTYPE html><html><head></head><body></body></html>",
-          fullUrl,
-          this,
-        );
+        this._iframeDoc = new _IframeDocument("<!DOCTYPE html><html><head></head><body></body></html>", fullUrl, this);
         this._iframeWin = new _IframeWindow(this._iframeDoc, fullUrl);
         _registerIframe(this);
         if (typeof this.onload === "function")

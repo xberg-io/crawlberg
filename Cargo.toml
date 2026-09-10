@@ -17,7 +17,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.2"
+version = "1.6.0"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -55,14 +55,15 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.5.2" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.5.2" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.6.0" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.6.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
+# ~keep selectors 0.40 exposes cssparser 0.37 types in its parser traits.
 cssparser = "0.37"
 dashmap = "6"
 deno_core = "0.411"
 deno_error = "0.7"
-dirs = "6"
+dirs = "7"
 encoding_rs = "0.8"
 
 # Binding framework dependencies
@@ -74,7 +75,7 @@ html5ever = "0.39"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
-liter-llm = { version = "1.19", features = ["native-http"] }
+liter-llm = { version = "2.0", features = ["native-http"] }
 markup5ever = "0.39"
 memchr = "2"
 minijinja = "2"

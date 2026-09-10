@@ -1,6 +1,6 @@
 # AI-RULEZ :: GENERATED FILE — DO NOT EDIT
 # Content-Hash: blake3:24c219d28842d306ab1a4dea4970228462ed80a0965bb56f03101c2e82de1b1e
-# Source-Hash: blake3:0d2377f5b62acffb6c95f9bb6c38a225f3c13665bd68a08362a369a9f04405eb
+# Source-Hash: blake3:00e223f544976a61da8338109d27d9a2685481242bfeeee64d5d42db0fb1c5d3
 # Schema-Version: v1
 
 """Hermes adapter for crawlberg.

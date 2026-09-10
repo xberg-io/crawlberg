@@ -5,6 +5,11 @@ version: "3"
 #   currently-published version of the binding.
 
 tasks:
+  check-pins:
+    desc: Check consumer manifests against the workspace version
+    cmds:
+      - python3 scripts/sync_consumer_versions.py --check
+
   run:
     desc: Run alef test-apps for every registry-mode language + brew
     cmds:

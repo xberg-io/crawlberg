@@ -130,6 +130,8 @@ jobs:
 
   dart-package:
     name: Assemble Dart package
+    permissions:
+      contents: write
     needs: [prepare, dart-natives]
     runs-on: ubuntu-latest
     steps:
@@ -137,15 +139,6 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.checkout_ref }}
           fetch-depth: 0
-
-      - uses: xberg-io/actions/setup-rust@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
-
-      - name: Rebuild Dart bindings and codegen on primary platform
-        uses: xberg-io/actions/build-dart-package@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
-        id: build
-        with:
-          package-dir: packages/dart/rust
-          crate-name: crawlberg-dart
 
       - name: Download all native artifacts
         uses: actions/download-artifact@v8
@@ -169,6 +162,23 @@ jobs:
             echo "Staged native library for $rid: $native_dir/"
           done
           echo "All 5 platform natives staged successfully."
+
+      - name: Package downloader release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python3 scripts/publish/pack-dart-natives.py "$RELEASE_VERSION" \
+            packages/dart/lib/src/native dist/dart-natives
+
+      - name: Upload downloader release assets
+        uses: xberg-io/actions/upload-release-assets@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+        with:
+          tag: v${{ needs.prepare.outputs.version }}
+          working-directory: dist/dart-natives
+          assets: |
+            crawlberg-dart-*.tar.gz
+            crawlberg-dart-*.tar.gz.sha256
 
       - uses: actions/upload-artifact@v7
         with:

@@ -2,6 +2,598 @@
 title: "Changelog"
 ---
 
+## [Unreleased]
+
+## [1.6.0] - 2026-09-10
+
+### Changed
+
+- Update Rust dependencies, including dirs 7 and liter-llm 2.0; retain cssparser 0.37 for selectors 0.40 compatibility.
+- Regenerate language bindings, test harnesses, and package metadata with Alef 0.85.12.
+- Synchronize package versions and consumer manifests to 1.6.0.
+- Preserve custom test harnesses under explicit ownership and check their release pins during version sync.
+
+### Fixed
+
+- Run documentation prose linting correctly and track the shared docs workflow's v1 tag.
+- Publish separate NuGet runtime packages and native downloader archives with checksums for Dart and Go.
+- Refresh PHP consumer development dependencies to resolve known security advisories.
+
+## [1.5.2] - 2026-09-05
+
+### Fixed
+
+- **The v1.5.1 release published nothing: the plugin version pin was left at 1.5.0 while the
+  crate moved to 1.5.1, so `validate-versions` failed and took the whole workflow with it.**
+  The bump chain behind `task version:sync` runs `alef sync-versions` and then seven further
+  steps that regenerate everything derived from the version -- stubs, scaffolding, README
+  install snippets, test-app installers, e2e download scripts, and
+  `scripts/sync_plugin_version.py`, which re-pins the coding-agent plugin. Those seven were
+  written as `{{.ALEF}} <subcommand>`, but `ALEF` was never defined in `.task/` or
+  `Taskfile.yml`, so each one rendered as a bare `generate`/`stubs`/`verify` and the chain
+  aborted with exit 127 on the first of them. Only the literal `alef sync-versions` ahead of
+  them ever ran. That is why the alef-managed binding manifests tracked the crate while
+  `plugin/.ai-rulez/config.toml` -- and the `plugin/package.json`,
+  `plugin/gemini-extension.json` and `plugin/kimi.plugin.json` bundles rendered from it --
+  stayed behind on 1.5.0. `validate-versions` gates nearly every publish job, so its failure
+  skipped 36 of them and no artifact reached any registry. `ALEF` is now defined, so the full
+  chain runs and the `alef verify` gate at the end of it is reachable for the first time
+  since it was added. Because the release shipped nothing, v1.5.0 and v1.5.1 never reached
+  npm; the latest npm release remained 1.4.2, and this is the first 1.5.x to land there.
+
+- **`task version:set VERSION=X` could not set any version other than the one already in
+  `Cargo.toml`.** `.task/config/vars.yml` defined a `VERSION` variable computed from
+  `Cargo.toml`, and Task resolves `{{.VERSION}}` inside an *included* taskfile from that
+  shared file in preference to a CLI-passed `VERSION=...`. Both `version:set` and
+  `alef:bump` live in included taskfiles, so both read the computed value instead of the
+  argument: `version:set` re-set the version it already had, and `alef:bump` would have
+  written the crate version into alef.toml's `alef_version` pin. The `requires: vars:
+  [VERSION]` guard never caught it, because the variable was always defined. Root-level
+  tasks resolve the argument correctly, which is what made the shadowing easy to miss. The
+  computed variable is renamed `CARGO_VERSION`; it had no other readers.
+
+- **Every test app and e2e harness installed crawlberg 1.2.1 -- nine releases behind -- and the
+  Zig test app downloaded a `v1.2.1` release asset.** `test_apps/node`, `test_apps/wasm`,
+  `test_apps/go`, `test_apps/java` and `test_apps/zig` each pin the published package they exist
+  to validate, and every one of those pins had sat at 1.2.1 since 2026-08-11, across 1.3.0,
+  1.3.1, 1.3.2, 1.3.3, 1.4.0, 1.4.1, 1.4.2, 1.5.0 and 1.5.1 -- so the suite that answers "does
+  the released artifact work" was answering it about a package from three weeks and nine releases
+  earlier. `test_apps/zig/build.zig.zon` is the worst case, because its `.url` pointed at
+  `releases/download/v1.2.1/crawlberg-zig-v1.2.1.tar.gz` and that asset still returns 200: the
+  fetch succeeded, so the staleness never surfaced as an error. (`e2e/go/go.mod` carried the same
+  stale pin, though a `replace` directive redirects it to the local tree, so there it was
+  cosmetic.) Nothing kept these lines in step because alef classifies all of them as create-once
+  seeds -- it writes each only when the path is absent and never re-renders it -- so no
+  regeneration step has ever touched them. Adopting the files is not the fix: the same paths hold
+  hand-grown build logic (`e2e/zig/build.zig` alone is 903 lines of FFI, rpath and mock-server
+  wiring), and adopting a create-once seed consents to alef replacing that content with a
+  placeholder on the next overwriting regen. Six `[[workspace.sync.text_replacements]]` entries
+  now stamp only the version-bearing line in each file on every `task version:sync`, leaving
+  everything around it untouched. The Zig `.hash` deliberately keeps its placeholder value, which
+  `zig fetch` resolves once the release publishes.
+
+- **The published TypeScript interaction examples did not type-check.** Every generated
+  `interact` snippet and the Node e2e interaction suite read `result.actionResults[0].success`
+  directly, but `actionResults` is optional on `InteractionResult`, so all eleven failed `strict`
+  type-checking with `TS18048: 'result.actionResults' is possibly 'undefined'` -- a reader who
+  copied one out of the docs got a compile error rather than a working example. Regenerating on
+  alef 0.84.2 emits `result.actionResults?.[0]?.success` instead. The effect is confined to
+  TypeScript and Node: alef gates the fix on the target language at the accessor's entry point,
+  and regenerating every backend against 0.84.2 changed no other language's output.
+
+### Changed
+
+- Regenerated all language bindings on alef 0.84.2 (from 0.82.2), picking up its
+  reproducible-generation fix.
+
+- Upgraded `vitest` 4 -> 5 across all six Node and WASM suites, and `@vitest/coverage-v8` to the
+  matching major, since it is version-locked to vitest. Dev-dependency only -- no published
+  package carries vitest, and no shipped code changed.
+
+## [1.5.1] - 2026-09-03
+
+### Fixed
+
+- **A cached HTTP client was reused across tokio runtimes, so requests failed intermittently
+  in any process that creates and drops runtimes.** `reqwest::Client` instances are cached
+  process-wide, but the cache key carried no runtime identity. hyper drives each pooled
+  connection with a task spawned on the runtime that built the client, so when that runtime
+  is dropped the connection dies while the client stays cached -- and the next caller, on a
+  new runtime, checks out a dead connection and fails mid-request. The failure surfaced as
+  `error sending request for url ...` when the connection died during send, or
+  `error decoding response body` (classified `data_loss`) when it died while reading the
+  body, and neither is retried, since `retry_count` defaults to 0 and only status-derived
+  errors are retryable. The cache key now carries the runtime's identity. Measured at ~8.5%
+  of requests across 28 short-lived runtimes before the fix and 0% after. This affects
+  embedders that create and destroy runtimes -- most visibly every consumer's
+  `#[tokio::test]` suite, where it reads as flaky integration tests.
+
+## [1.5.0] - 2026-09-01
+
+### Changed
+
+- Upgraded `html-to-markdown-rs` to 3.12, picking up its Tier-1/Tier-2 GFM autolink parity fix
+  and the case-insensitive HTML attribute matching behind the link fix below.
+
+### Added
+
+- Scoop is now a release channel alongside Homebrew: a release publishes a Scoop manifest for the
+  CLI, and the install instructions cover it.
+
+### Fixed
+
+- **`batch-scrape` with no URLs reported a different error than every other binding.**
+  The positional was `required = true`, so clap aborted at parse time with
+  `the following required arguments were not provided: <URLS>...`. Empty input now
+  reaches the library, which returns the same
+  `invalid_config: batch_urls must not be empty` the Python, Node, Go and other
+  bindings already return. `batch-crawl` is unchanged.
+- **Links with uppercase or mixed-case attribute names were silently dropped.**
+  HTML attribute names are case-insensitive, but the parser matched them byte-for-byte
+  as written, so `<a HREF="/docs/guide.html">` yielded no link at all and
+  `ReL="nofollow"` was not honoured -- the link was lost, not merely mis-resolved. The
+  `astral-tl` 0.8.0 upgrade lowercases attribute keys at parse time. Verified against a
+  control build: both cases fail on 0.7.11 and pass on 0.8.0.
+
+## [1.4.2] - 2026-08-28
+
+### Fixed
+
+- **Python e2e configs passed raw dicts where a binding type was required.** The
+  `handle_nested_types` map for the Python e2e generator declared `browser`, `proxy` and
+  `auth` but not `content` or `ssrf`, so generated tests emitted
+  `CrawlConfig(ssrf={...})` and `CrawlConfig(content={...})`. The generated pyclasses
+  only extract from real instances, so both raise
+  `TypeError: 'dict' object is not an instance of ...` at construction. Python now
+  declares the same nested types as its wasm sibling.
+
+### Changed
+
+- Upgraded `deno_core` 0.410 -> 0.411 and `uuid` 1.25 -> 1.26.
+- Removed the inert `[overrides.c]` blocks for `crawl_stream` and `batch_crawl_stream`;
+  both calls already list `c` in `skip_languages`.
+
+## [1.4.1] - 2026-08-25
+
+### Changed
+
+- Regenerated all language bindings on alef 0.68.0.
+
+## [1.4.0] - 2026-08-24
+
+### Added
+
+- **Bounded LLM extraction concurrency (`ai` feature).** `LlmExtractor` now builds a
+  `liter_llm::ManagedClient` instead of a bare `DefaultClient`, with liter-llm 1.18.0's queueing
+  `InFlightLimitLayer` wired in. The new `LlmExtractorConfig::max_in_flight` caps simultaneously
+  outstanding provider requests globally for the extractor's client rather than per call site, so
+  a wide crawl fan-out cannot burst past a provider's per-key concurrency allowance. The bound is a
+  dedicated `InFlightBound` enum -- `Limited(NonZeroUsize)` or `Unlimited` -- rather than an
+  `Option<usize>`, so neither unsafe state is reachable by accident: the default is
+  `Limited(8)`, lifting the bound requires naming `InFlightBound::Unlimited` at the call site, and
+  a zero bound (which admits no request at all and would deadlock every extraction) is a compile
+  error rather than a runtime `CrawlError::InvalidConfig`. `LlmExtractorConfig` implements
+  `Default`, so `..Default::default()` picks up the bounded default instead of silently disabling
+  the limiter. `InFlightBound` is exported from the crate root.
+  `LlmExtractorConfig::response_cache` optionally puts liter-llm's in-memory response cache in
+  front of the provider; cache hits are served without consuming an in-flight permit, so repeat
+  pages still answer immediately while the bound is saturated. `LlmExtractor::new` keeps its
+  existing signature and picks up the default bound. Enabling `ai` now also enables
+  `liter-llm/tower`, which supplies `ManagedClient` and the limiter.
+
+- **`LlmExtractor` is now public API (`ai` feature).** `crawlberg::{LlmExtractor,
+  LlmExtractorConfig, LlmResponseCacheConfig}` are exported from the crate root. The extractor had
+  been declared as a private `mod llm_extractor;` inside a `pub(crate)` module with no re-export
+  and a file-level `#![allow(dead_code)]`, so it and its `ContentFilter` implementation were
+  unreachable from outside the crate -- including the in-flight bound above. The `allow(dead_code)`
+  is removed; the type is reachable and used. Like the other `defaults` implementations it is a
+  Rust-level export only and is not part of the generated language bindings.
+
+### Fixed
+
+- **The published Rust documentation snippets did not compile.** 220 of the 264 generated Rust
+  snippets read a `result` binding their own call site had discarded into `_`, so every one of
+  them failed to compile with `error[E0425]: cannot find value result`. Regenerating against
+  alef 0.67.5 emits `let result = scrape(&engine, &url).await.expect("call failed")` and takes
+  Rust snippet failures from 220 to 9; the remaining 9 are stream fixtures that miss a
+  `tokio_stream` import.
+  The same regeneration fixes the assertion-rendering defect in the Dart and C# snippets (dart
+  22 -> 12 failures, csharp 11 -> 9). The broken output had persisted across alef upgrades
+  because alef's generation cache is not keyed on the alef version, so `alef generate` replayed
+  stale bytes and `alef verify` reported them as fresh.
+
+- **The Java binding no longer flattens a native error into a generic `CrawlbergRsException`.**
+  All eight synchronous FFI entry points in
+  `packages/java/src/main/java/io/xberg/crawlberg/CrawlbergRs.java` caught `Throwable` and rethrew
+  it as `new CrawlbergRsException("FFI call failed", e)`. `checkLastError()` reports the real
+  Rust-side failure by throwing `ConversionErrorException`, `CoreErrorException`, `PanicException`
+  or `CrawlbergRsException` — all of which are `CrawlbergRsException` subtypes, so every one was
+  caught by that generic handler one frame later and re-wrapped. Callers saw `"FFI call failed"`
+  with the real message demoted to a cause, and `catch (PanicException e)` could never match
+  because the concrete type had been erased. The regenerated code rethrows a
+  `CrawlbergRsException` unchanged and wraps only genuinely unexpected throwables. The six
+  `*Async` wrappers are unaffected: they wrap in `CompletionException`, which is the documented
+  `CompletableFuture` contract and already preserves the cause.
+
+- **A skipped `publish-crates` no longer reads as a passing gate, and a release that published
+  nothing can no longer report success.** Six places in `.github/workflows/publish.yaml` gated
+  downstream build, publish and release-promotion jobs on
+  `needs.publish-crates.result != 'failure'`. That expression is TRUE when the dependency was
+  *skipped*, and `publish-crates` skips for two opposite reasons: the version is already on
+  crates.io (a re-run or a resumed release, where downstream must proceed) or an upstream gate
+  such as version validation or crate packaging failed (where downstream must not). `result`
+  alone cannot separate them, so every one of those conditions was gating on nothing --
+  tree-sitter-language-pack v1.15.5 promoted a GitHub release to `Latest` with 40+ failed jobs and
+  every registry publish skipped, and still reported success.
+
+  A new always-running `crates-gate` job resolves the ambiguity once, into an explicit
+  `outcome` (`published` / `already-present` / `not-required` / `dry-run` / `blocked`) and an
+  `ok` flag that every consumer now tests instead of `result`. Because the job always runs, its
+  outputs always exist; because it never fails, depending on it cannot skip a consumer. The
+  legitimate already-published path stays exactly as permissive as before, and only the
+  gate-failed path is newly blocked.
+
+  Nothing in the workflow failed a run whose publish jobs were skipped: `release-finalize` and
+  `announce-discord` gate on `!contains(needs.*.result, 'failure')`, which is blind to `skipped`,
+  so a release that reached zero registries would still be flipped out of draft and announced. Both
+  now also require the crates gate, and a new `release-report` job verifies every enabled publish
+  target individually, treating `skipped` as a failure unless the target is not enabled for this
+  release or its registry probe already found this exact version published.
+
+- **The Ruby gem published on a failed build and bypassed version validation.** `publish-rubygems`
+  accepted `needs.ruby-gem.result == 'failure'` and carried `!cancelled()`, so a release in which
+  the gem build failed still ran the publish step against whatever artifacts happened to exist.
+  Only the `linux` matrix leg keeps the source gem -- the other three legs delete it -- and that
+  source gem is the only artifact crawlberg has ever shipped: all 23 versions on RubyGems are
+  platform `ruby`, with no per-platform gem in the registry's history. So the accepted `failure`
+  never preserved a partial-platform publish; it only allowed a release with no source gem at all.
+  The disjunction was not a deliberate choice either -- it entered in a bulk regeneration commit,
+  replacing an explicit `== 'success'`. The job now requires `ruby-gem` to succeed. Separately, it
+  was reached without `validate-versions` in `needs:` at all. The other publish jobs that omit it
+  still inherit the gate, either through a `needs` chain carrying no skip override (`publish-pypi`,
+  `publish-packagist`) or through an explicit success check on a job that does carry it
+  (`publish-hex`, `publish-homebrew-bottles`); the `!cancelled()` here removed both routes, so the
+  version gate could not block a Ruby publish. `validate-versions` is now a dependency and its
+  success is required. Dropping `!cancelled()` also restores the default dependency skip, so a
+  failed `check-rubygems` no longer lets the publish proceed on an unanswered
+  already-published check. The gate now matches `publish-node`, `publish-maven`, and
+  `publish-nuget` exactly.
+
+- **Entity-escaped sitemap URLs were truncated to the text after the last entity.** quick-xml
+  reports an entity reference as its own `Event::GeneralRef` and splits the element's character
+  data around it, so `<loc>https://example.com/s1.xml?a=1&amp;b=2</loc>` arrived as three events.
+  The sitemap parsers assigned each text event to the current field instead of accumulating, so
+  every piece but the last was discarded and that `<loc>` parsed to `b=2`. Because `&` must be
+  entity-escaped in XML, every sitemap URL carrying more than one query parameter was silently
+  corrupted -- a truncated string still looks like a successful parse -- so the wrong URLs were
+  enqueued and the real ones were never crawled. Both `parse_sitemap_xml` and `parse_sitemap_index`
+  now buffer character data across events and commit it on the closing tag, and they resolve the
+  reference events themselves, so the escaped character survives rather than vanishing from the
+  middle of the value. This covers every text-bearing field -- `loc`, `lastmod`, `changefreq`,
+  `priority`, and the sitemap-index `loc` -- and applies to numeric character references
+  (`&#38;`, `&#x26;`) as well as the named XML entities. The defect predates the quick-xml 0.42
+  upgrade; a probe built against 0.41 truncates identically.
+
+- **The docs advertised musl artifacts that are not published.** The README claimed precompiled
+  binaries "across every binding" and linked a platform matrix that did not exist, and
+  `RELEASE.md` described the two Node musl packages as an OIDC misconfiguration with a
+  trusted-publisher fix. Neither held up against the registries: `@xberg-io/crawlberg-linux-x64-musl`
+  and `@xberg-io/crawlberg-linux-arm64-musl` are name-reservation placeholders at `0.0.1` and have
+  never carried a release, PyPI has no `musllinux` wheels, and the Go and PHP release assets are
+  glibc-only. The cause is not credentials — the `node-bindings` matrix in `publish.yaml` has no
+  musl target, so no artifact is built, and the publish step skips platform directories with no
+  binary rather than failing. Installation now carries a per-ecosystem musl support matrix stating
+  which bindings work on Alpine (CLI, Docker, Rust, Ruby, Java, C#, Elixir) and which do not (Node,
+  Python, Go, PHP), why the omission is deliberate, and the Alpine workarounds. It also records the
+  two silent failure modes: `npm install` on Alpine exits 0 while installing no native binary,
+  because npm skips the unresolvable optional dependency, and `pip` falls back to an sdist build.
+  `RELEASE.md` now documents the decision instead of a fix that would publish nothing, and the two
+  placeholder package READMEs say they are unpublished rather than describing a binary that does
+  not exist.
+
+- **The coding-agent plugin version gate never ran on the commits that cause drift.**
+  `plugin/` sat at 1.3.1 while core shipped 1.3.2 and 1.3.3, so every runtime bundle —
+  OpenCode, Hermes, Claude Code, Cursor, Codex, Gemini, Kimi, Factory — declared a version
+  two releases stale. The checker for this already existed
+  (`scripts/sync_plugin_version.py --check`, run by `CI Plugin`), but `ci-plugin.yaml`'s
+  `paths:` filter did not list `Cargo.toml`. A release commit bumps `Cargo.toml` and nothing
+  under `plugin/`, so the workflow was never triggered and the gate reported nothing rather
+  than failing — `CI Plugin` last ran on the 1.3.1 release. `Cargo.toml` and
+  `.task/tools/version-sync.yml` are now in the filter, so any core bump re-runs the gate.
+  `sync_plugin_version.py` also grew `--expect <version>`, which asserts that core *and* the
+  plugin both equal the version being released; `publish.yaml`'s `validate-versions` job runs
+  it against the tag, so a drifted plugin now fails the release instead of publishing a bundle
+  that lags the version it claims to be. The 13 stale version declarations are re-synced to
+  1.3.3.
+
+- **Two e2e assertions were tautologies rather than URL leaks, and tested nothing.**
+  `links_protocol_relative` exists to prove that `<a href="//cdn.example.com/resource">` inherits
+  the page's scheme, but asserted only that some link URL contains `//` — true of every absolute
+  URL, and satisfied by the fixture's one ordinary `https://example.com/normal` link without the
+  protocol-relative pair being resolved at all. It now asserts both resolved forms,
+  `http://cdn.example.com/resource` and `http://images.example.com/photo.jpg`, which a passthrough
+  of the raw href cannot produce. `strategy_best_first_seed` asserted that `pages[0].url` contains
+  `/` — true of every URL, including the `/page1` and `/page2` results the fixture exists to rule
+  out. Its seed is the mock origin root and carries no path, so it now asserts `not_contains`
+  `/page`, which fails if any non-seed page is crawled first. Both were confirmed to fail under
+  mutation before being accepted.
+
+- **The URL being scraped decided its own network error classification.** `network_error_kind`
+  keyword-scanned a string built from `reqwest::Error`'s `Display`, which embeds the request URL,
+  so every keyword the scan looks for — `dns`, `ssl`, `tls`, `certificate`, `handshake`, `resolve`,
+  `lookup`, `timeout`, `proxy`, `connect` — could be supplied by the path or hostname being fetched
+  rather than by the failure. Measured against a refused TCP connection: `/blog/dns-explained`
+  reported `dns:`, `/blog/ssl-explained` and `/blog/certificate-pinning` reported `ssl:`, and
+  `/blog/timeout-tuning` reported `timeout:` — all four were `connection refused (os error 61)`.
+  The scan now runs over `chain_without_request_url`, which `3afbde890` had applied only inside the
+  data-loss predicate. The one classification this changes in the fixture suite is
+  `error_invalid_proxy`: it was tagged `[network:proxy]` purely because its path spells "proxy",
+  while its actual chain is `tcp connect error ... connection refused`, and it is now tagged
+  `[network:connection]`. The `CrawlError` variant is `Connection` either way — `NetworkErrorKind::Proxy`
+  has always mapped to `connection_with_source` — so the fixture's `connection` assertion is
+  unchanged and still correct.
+
+  A refused proxy CONNECT names no proxy anywhere in its chain, so `[network:proxy]` was in practice
+  reachable only through the request URL. The unit test that accepted either tag is replaced by one
+  that pins `[network:connection]`, alongside a table-driven test that walks every scanned keyword.
+
+- **Two more e2e assertions matched a substring of their own request URL.** Same defect class as
+  `error_unsupported_scheme`: every classified network error embeds the URL, and the URL embeds the
+  fixture id, so an assertion whose expected substring also occurs in the id passes on the address
+  rather than the behaviour. `error_data_loss_truncated` asserted `data_loss` while actually
+  returning `connection: [network:connection] ... /fixtures/error_data_loss_truncated` — its mock
+  route declares a `content-length` its body does not satisfy, which panics hyper 1.9.0 in the
+  generated mock server, and the test passed 5/5 anyway. It now asserts `data_loss:`, a prefix no
+  URL path segment can carry. `error_empty_batch_urls` asserted `urls`, which its own id supplies;
+  the fixture was long ago repurposed to a 404 case (`mock_responses` is empty and the description
+  says so), so it now asserts `not_found`, matching what it actually exercises.
+
+  `error_data_loss_truncated` is consequently red, and stays red: like its sibling
+  `error_partial_response` it needs a mock server that can emit an unknown-length or truncated
+  body, and both alef-generated harnesses build every response as a known-length `Body::from`.
+  A red test that names a real gap is the correct state; loosening the assertion would only
+  restore the false pass.
+
+- **`CrawlError::DataLoss` was unreachable for the case it names, and network classification
+  keyed off the request URL.** `classify_reqwest_error` only reached its data-loss branch under
+  `NetworkErrorKind::Other`, but hyper renders a truncated body's `IncompleteMessage` as
+  "connection closed before message completed", so `network_error_kind`'s generic
+  `contains("connection")` arm claimed every truncated body first — a response cut short against
+  its declared `content-length` came back as a plain connection failure. Worse, the string those
+  heuristics scan is built from `reqwest::Error`'s `Display`, which embeds the request URL, so a
+  path such as `/blog/dns-explained` or `/fixtures/error_data_loss_truncated` decided its own
+  classification. The data-loss predicate now runs for `Connection` as well as `Other`, and it
+  matches against the chain with the request URL removed. Covered by
+  `truncated_body_produces_data_loss_prefix` (a raw socket that under-delivers its
+  `content-length`) and `a_url_spelling_truncated_is_not_a_data_loss` (a refused connection whose
+  path spells the keyword).
+
+- **The PHP e2e format hook pointed at a php-cs-fixer that no checkout has.**
+  `[crates.e2e.format].php` invoked `../../vendor/bin/php-cs-fixer`, but `vendor/` is gitignored and
+  the repo-root `composer.json` never declared `friendsofphp/php-cs-fixer` — only the lock file did.
+  So no fresh checkout (every CI runner, and this one) could resolve the binary, and alef's format
+  hook silently no-ops on a missing command: regeneration rewrote all 31 generated PHP files with
+  alef's raw, over-indented template output and reported nothing. Declared
+  `friendsofphp/php-cs-fixer` in `require-dev` (pinning to the v3.95.1 the lock already carried, so
+  no dependency churn) and rewrote the hook to `composer install` first and invoke the tool through
+  `composer exec`, which resolves from the repo-root manifest regardless of cwd. The php e2e job
+  already installs `composer`, so this now resolves in CI rather than only on a developer machine.
+
+- **Four SSRF/scheme fixtures asserted against the mock server address instead of the address under
+  test.** `validation_ssrf_loopback_denied`, `validation_ssrf_ipv4_mapped_ipv6_denied`,
+  `validation_ssrf_nat64_loopback_denied` and `error_unsupported_scheme` each declare an `input.url`
+  that *is* the subject of the assertion, but every backend's `mock_url` argument discarded it and
+  substituted the per-fixture mock server address. All three SSRF fixtures therefore exercised the
+  same trivial IPv4-loopback case, and the IPv4-mapped-IPv6 (`::ffff:127.0.0.1`) and NAT64
+  (`64:ff9b::7f00:1`) normalization paths in `crates/crawlberg/src/net/ssrf.rs` had no e2e coverage
+  in any of the 16 generated language suites. Set `preserve_input_urls: true` on those four fixtures
+  so the declared addresses reach the call verbatim.
+- **`error_unsupported_scheme` asserted on a substring of its own fixture id.** With the mock server
+  URL substituted, the error text contained `.../fixtures/error_unsupported_scheme`, so
+  `contains("unsupported")` matched regardless of what actually failed. With the real
+  `gopher://invalid.example.com/` URL, crawlberg returns
+  `ssrf_policy_violation: gopher://invalid.example.com/ - disallowed scheme: gopher`, not an
+  `Unsupported` error — the old assertion does not hold. Tightened the assertion to
+  `disallowed scheme: gopher`, which names the rejection the fixture exists to cover.
+- **`cargo test -p crawlberg` could not compile.** `crates/crawlberg/tests/test_interact.rs` matched
+  on `CrawlError::unsupported(message)` — the macro-generated constructor function, not the enum
+  variant — which is E0164 (`fn` calls are not allowed in patterns). Since `browser-chromiumoxide`
+  is off by default, the `#[cfg(not(feature = ...))]` test was always compiled and always failed the
+  build. Replaced with the `matches!(..., Err(CrawlError::Unsupported { message, .. }) if ...)` idiom
+  used elsewhere in the file.
+- **Redirect-cycle detection missed the first return to a bare-origin seed URL.** In
+  `follow_redirects` (`crates/crawlberg/src/engine/crawl_loop.rs`), the cycle-detection `seen` set
+  was seeded with the caller's raw URL string, while every subsequent hop key came from
+  `resolve_redirect`'s WHATWG-serialized `Url::join` output. A chain seeded at a bare origin (e.g.
+  `http://host:port`, no trailing slash) that redirects back to `/` produced a hop key of
+  `http://host:port/` — never equal to the raw seed — so the cycle was missed on its first return
+  and only caught one hop later (`redirect_count == 2` instead of `1`). Added
+  `canonical_redirect_key`, used for the seed and for every hop's `contains`/`insert` pair across
+  all three redirect mechanisms (3xx `Location`, `Refresh` header, `<meta http-equiv="refresh">`).
+- Skipped `redirect_loop` and `redirect_max_exceeded` for the wasm binding
+  (`fixtures/redirect/redirect_loop.json`, `fixtures/redirect/redirect_max_exceeded.json`): wasm's
+  `fetch` follows redirects transparently with no manual hop tracking, so `max_redirects` is never
+  enforced there and a genuine cycle exhausts the browser's own redirect budget and errors instead
+  of stopping at one hop.
+
+### Changed
+
+- Upgraded workspace dependencies across semver-incompatible boundaries (`cargo upgrade
+  --incompatible`): `quick-xml` 0.41 -> 0.42 and `uuid` 1.24 -> 1.25. quick-xml 0.42 is a breaking
+  change — element names now read as `&str` instead of `&[u8]`, and `BytesText::xml_content` is
+  infallible rather than returning a `Result` — so `sitemap.rs` matches on string literals and
+  consumes the decoded text directly. The `flutter_rust_bridge` (`=2.12.0`) and renamed `getrandom`
+  (0.2/0.3) requirements were deliberately left behind; both are pinned on purpose, the latter to
+  force the JS backend features into the older getrandom lines pulled in transitively.
+
+- Bumped the declared `liter-llm` minimum from `1.17` to `1.18` (resolved: 1.18.0) now that the
+  in-flight limiter is used, and refreshed `html-to-markdown-rs` to 3.11.4 in the lockfile.
+  liter-llm 1.18.0 is a breaking change shipped as a minor — `EmbeddingProvider::embed` takes
+  `&EmbeddingInput` rather than `&str`, and `VectorMetadata` gained an `image_url` field — but
+  crawlberg references none of those three surfaces, so the upgrade is source-compatible here.
+
+- Added `[crates.e2e.snippets]` (`output = "docs-site/src/snippets/generated"`) to `alef.toml`,
+  matching the config shape tree-sitter-language-pack and html-to-markdown use for the alef
+  doc-snippet migration. `[workspace.docs.snippets].dirs` still points at the flat, hand-written
+  `docs-site/src/snippets` tree, deliberately not yet repointed at `generated/`: `alef e2e generate`
+  cannot write any snippet today because 263 of 264 `docs`-tagged fixtures leak `MOCK_SERVER_URL`
+  mock-harness scaffolding into their would-be snippet body and alef's mock-harness guard aborts
+  the whole batch before writing anything. Unlike tslp/h2m, nearly every crawlberg e2e call takes
+  a URL, so this needs `preserve_input_urls` + a `$mock_url` placeholder added across the fixture
+  set — verified correct in isolation against `fixtures/engine/engine_scrape_basic.json`, but not
+  applied repo-wide pending its own review. The 14 hand-written `getting-started/basic_usage.md`
+  snippets are unchanged.
+
+## [1.3.3] - 2026-08-22
+
+### Fixed
+
+- **CI Lint's `Validate (poly)` job runs again.** `poly lint .` never reached a crawlberg finding:
+  golangci-lint v2.12.2 (the reusable workflow's default) vendors `honnef.co/go/tools` v0.7.0,
+  whose IR builder panics building the Go 1.27 stdlib with
+  `buildir: package "poll": unexpected expr: *ast.KeyValueExpr`. Pin v2.13.1, which handles 1.27.
+
+- **CI Lint's `Alef snippets` job can pass.** It ran `alef snippets check --strict`, and `--strict`
+  fails the run on every Skip, Unavailable *and* Downgraded result — the exact state `alef.toml`
+  documents `strict = false` for while six languages are still annotated `snippet:syntax-only`.
+  The command-line flag force-enabled what the config deliberately disables, so the job was
+  unpassable. Dropped from the workflow.
+
+- **The Dart snippet validates at `compile` again.** It reported
+  `Target of URI doesn't exist: 'package:crawlberg/crawlberg.dart'` because no session resolved the
+  local package. A `[workspace.docs.snippets.sessions.dart]` session (cwd `packages/dart`, manifest
+  `pubspec.yaml`, `dart pub get` before, explicit `PUB_CACHE`) fixes it; the `snippet:skip`
+  annotation added while the session was deferred is gone. It was deferred because any semantic
+  `alef.toml` edit rotates the global inputs hash, so it had to land with a full regeneration.
+
+- **CI Rust's `alef verify --exit-code` gate passes.** Unmasked once `deps:check` stopped killing
+  the job, it failed on drift that had accumulated unseen: 39 alef-owned files carried no
+  provenance marker (`frozen`), and five carried one but are no longer emitted (`orphaned`).
+
+- **alef no longer claims the three hand-written SSRF e2e suites.** Their self-label read
+  "These are NOT generated by alef", and alef's ownership predicate
+  (`core::hash::content_has_alef_marker`) is a case-insensitive substring match for
+  `generated by alef` over the first 10 lines, with no negation handling. All three were therefore
+  claimed and reported permanently stale *and* orphaned, while alef could never stamp them.
+  Reworded the label; the tests themselves are untouched.
+
+- **Removed two orphaned generated files.** `InvalidInputException.java` survived the deletion of
+  its Rust error variant and exists in no other binding, and `crates/crawlberg-py/src/pyproject.toml`
+  is a stale copy of `packages/python/pyproject.toml` whose `manifest-path` does not even resolve
+  from its own directory. The latter's dead `[workspace.sync].extra_paths` entry is gone too.
+
+- **CI Rust's `Validate Rust` job gets past its first command.** `task rust:lint:check` runs
+  `deps:check` first, which hard-fails when `cargo-machete` is missing; nothing installed it, so
+  the job died before `cargo fmt`, `clippy` or the fuzz/config checks ever ran.
+
+- **`e2e/dart/test/metadata_test.dart` compiles again.** `favicons` and `hreflangs` on
+  `PageMetadata` are `Option<Vec<_>>` in the Rust core, so the generated Dart bindings expose them
+  as nullable `List<FaviconInfo>?` / `List<HreflangEntry>?`. The test called `.any(...)` on them
+  directly instead of the already-established `?.length`/`!` pattern used elsewhere in the same
+  file, which Dart's null safety rejects at compile time. Changed both call sites to `!.any(...)`.
+
+## [1.3.2] - 2026-08-21
+
+### Fixed
+
+- **The release actually publishes.** v1.3.1 was tagged and released but published nothing to any
+  registry: the `Validate versions` gate failed on stale `Cargo.lock` files under `e2e/rust`,
+  `fuzz` and `packages/ruby/ext/crawlberg_rb/native`, which skipped the crates.io publish job.
+  Every language-package build behind it then failed with
+  `failed to select a version for the requirement ^1.3.1`, because the publish preparation was
+  retrying against a registry version that had never been pushed. Use this version instead of
+  v1.3.1, which carries no artifacts anywhere.
+
+- **`pnpm install` succeeds in the WASM and Node test suites again.** The last dependency upgrade
+  moved `vitest` to ^4.1.10 (and `@types/node` to ^26) in package.json without regenerating
+  `pnpm-lock.yaml`, so CI — where `frozen-lockfile` is on by default — refused to install:
+  `specifiers in the lockfile don't match specifiers in package.json`. The lockfiles under
+  `e2e/wasm`, `test_apps/wasm` and `test_apps/node` are regenerated.
+
+## [1.3.1] - 2026-08-21
+
+### Changed
+
+- **The engine now drives the crawl through the configured `Frontier`.** `CrawlEngineBuilder::frontier` previously
+  accepted any implementation and then ignored the queue half of it: URLs lived in a `Vec` local to the crawl loop,
+  so `push`, `pop`, `pop_batch`, `len`, and `is_empty` never ran and a persistent or distributed frontier had no
+  effect on the crawl. Discovered links are now pushed to the frontier, and the loop refills a bounded local window
+  from `pop_batch`.
+- **Global traversal order is now a property of the frontier, not the strategy.** The engine passes its selection
+  window — at most `max_concurrent` entries — to `CrawlStrategy::select_next`, so a strategy reorders only what has
+  already been popped. `InMemoryFrontier` is FIFO and yields a breadth-first crawl; the new `LifoFrontier` yields a
+  depth-first one. `DfsStrategy` alone no longer produces a globally depth-first crawl, and `BestFirstStrategy`
+  now picks the highest priority within the window rather than the global maximum. With the default
+  `score_url` (inverse depth) that is not an observable difference; with a custom one, visit order changes.
+- `crawl.frontier_size` counts the selection window plus the entries pushed to the frontier and not yet popped.
+  The meaning — URLs known to be pending — and the value in the default configuration are unchanged.
+- A panic inside SSRF validation now fails the crawl instead of being downgraded to a warning and skipping the link.
+- Generated bindings regenerated on alef 0.62.8, and alef pinned to 0.62.8.
+
+- All Rust dependencies taken to their latest versions (`cargo upgrade --incompatible` followed by
+  `cargo update`): 87 packages changed, two added, six removed, none downgraded. Notable major
+  bumps: `ctor` 0.10 to 1.0, `napi` 3.8 to 3.12, `minijinja` 2.19 to 2.24, `diplomat` 0.15 to 0.16,
+  `rmcp` 3.0 to 3.1. `cbindgen` 0.29.2 to 0.29.4 changes generated C enum emission to guard on C23.
+
+### Added
+
+- `CrawlConfig::crawl_strategy` (`bfs`, `dfs`, `best_first`, `adaptive`). The strategy
+  implementations have always existed but no binding could select one, so every crawl ran the
+  breadth-first default. Selecting `dfs` pairs `DfsStrategy` with a LIFO frontier, because
+  traversal order is a property of the queue and `DfsStrategy` over a FIFO frontier is not
+  depth-first.
+- `CrawlConfig::content_filter` (`bm25`) with `bm25_query` and `bm25_threshold`, and a
+  `Bm25Filter` export. The filter existed but was not re-exported and no config could reach it,
+  so every crawl ran unfiltered. A `bm25` filter without a query is now a config error rather
+  than a filter that silently keeps every page.
+- `LifoFrontier`, an in-memory frontier that pops the most recently pushed entry, for depth-first crawls.
+- `Serialize`/`Deserialize` on `FrontierEntry`, so a frontier backed by a database, a file, or a message queue can
+  encode the entry `push` receives instead of maintaining a mirror struct that silently drops newly added fields
+  (#40).
+
+### Fixed
+
+- The default crawl is genuinely breadth-first. The engine removed the strategy-selected entry with
+  `Vec::swap_remove`, which moves the last element into the vacated slot; since `BfsStrategy` always selects index 0,
+  index 0 held the newest URL after the first removal. A seed linking to `a`, `b`, and `c` was crawled as seed, `a`,
+  `c`, and `b` was never fetched under a `max_pages` budget (#39).
+- Discovered links reach the queue in document order. They were enqueued from a `JoinSet` drained in SSRF-validation
+  completion order, leaving sibling order nondeterministic and breadth-first traversal unreproducible (#39).
+- A URL selected immediately before the page budget was exhausted is returned to the frontier instead of being
+  silently dropped.
+
+- Four e2e fixtures asserted fields that do not exist on the result type, so alef refused to
+  generate the suite. `redirect_loop`, `redirect_max_exceeded` and `redirect_to_404` asserted
+  `is_error`, and `rate_limit_basic_delay` asserted `rate_limit.min_duration_ms`; both are
+  call-level properties rather than response fields. The redirect fixtures now assert real fields
+  (`redirect_count`, `pages[0].status_code`, and `error` for the 404 case), and the rate-limit
+  fixture carries an explicit `not_representable` marker alongside a real `pages_crawled` check.
+  `redirect_loop`'s mock was also wrong: its start URL returned an unrelated 200 while the actual
+  redirect cycle sat on unreachable paths, so the fixture never exercised loop detection at all.
+
+- `packages/ruby/ext/crawlberg_rb/native/Cargo.toml` and `e2e/rust/Cargo.toml` now follow the
+  project version. Both are alef-owned but were never reached by the version sync, so each release
+  left them pinned to the previous version.
+
+### Security
+
+- `h2` advanced to 0.4.18, resolving RUSTSEC-2026-0258 (unbounded empty DATA frames: a peer could
+  queue empty frames without limit, risking unbounded memory use or a panic on length overflow).
+  Low severity.
+- The wasm crawl loop deduplicates through the frontier rather than a loop-local `HashSet`, so a persistent frontier
+  no longer re-enqueues URLs it had already crawled. It also no longer discards `mark_seen` failures.
+- URLs still being fetched when a crawl stops early are returned to the frontier. They are marked seen at discovery,
+  so a persistent frontier that never got them back would blacklist them permanently — never crawled, with no error
+  raised and no failure counted.
+- A crawl no longer ends on a single short `pop_batch` when the frontier still reports work. Queue-backed frontiers
+  legitimately under-deliver (SQS short polling returns 0-N messages from a non-empty queue); the loop now confirms
+  with `Frontier::is_empty` before finishing, at most once per completed fetch.
+- The `strategy` and `filter` e2e fixtures assert something again. Their `crawl_strategy`/`content_filter` inputs
+  named no real config field, so both bfs and dfs fixtures ran the same default strategy and every bm25 fixture ran
+  unfiltered; the ordering assertions on top of that were emitted as skipped comments in all 16 languages. The
+  `metadata` suite additionally failed to compile once its `article.*`/`response_headers.*` mappings went live,
+  because those fields are `Option` and were not declared as such.
+
 ## [1.3.0] - 2026-08-13
 
 This release contains a source-breaking change to `CrawlError`. It is a minor bump rather than a major one, so

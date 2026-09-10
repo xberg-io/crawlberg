@@ -18,6 +18,21 @@ permissions:
   contents: read
 
 jobs:
+  release-contracts:
+    name: Release package contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install workflow parser
+        run: python3 -m pip install PyYAML==6.0.3
+      - name: Test native package publication
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Check consumer release pins
+        run: python3 scripts/sync_consumer_versions.py --check
+
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
