@@ -348,6 +348,20 @@ impl CrawlState {
         }
     }
 
+    /// Pages completed so far, read from whichever counter this crawl is actually filling.
+    ///
+    /// ~keep A streaming crawl moves every page into a `CrawlEvent` and never pushes to
+    /// `pages`, so `pages.len()` is permanently 0 there. Reading that field directly is what
+    /// made the `crawl.pages_completed` span report 0 for every iteration of every streaming
+    /// crawl; the three budget/stats callers already branched correctly and the span did not.
+    fn pages_processed(&self) -> usize {
+        if self.is_streaming {
+            self.pages_count
+        } else {
+            self.pages.len()
+        }
+    }
+
     fn into_result(self, final_url: String) -> CrawlResult {
         let (pages_to_return, stayed_on_domain) = if self.is_streaming {
             (Vec::new(), true)
@@ -539,11 +553,7 @@ impl CrawlEngine {
             state.pages.truncate(max_pages);
         }
 
-        let pages_processed = if state.is_streaming {
-            state.pages_count
-        } else {
-            state.pages.len()
-        };
+        let pages_processed = state.pages_processed();
         let stats = CrawlStats {
             pages_crawled: pages_processed,
             pages_failed: state.pages_failed,
@@ -837,11 +847,7 @@ impl CrawlEngine {
                     break;
                 }
 
-                let pages_processed = if state.is_streaming {
-                    state.pages_count
-                } else {
-                    state.pages.len()
-                };
+                let pages_processed = state.pages_processed();
                 if pages_processed + join_set.len() >= max_pages {
                     break;
                 }
@@ -867,7 +873,7 @@ impl CrawlEngine {
                         "crawl.loop.iteration",
                         { CRAWL_DEPTH } = entry.depth as i64,
                         { CRAWL_FRONTIER_SIZE } = (window.len() + state.frontier_pending) as i64,
-                        { CRAWL_PAGES_COMPLETED } = state.pages.len() as i64,
+                        { CRAWL_PAGES_COMPLETED } = state.pages_processed() as i64,
                     )
                     .entered();
                 }
@@ -1056,11 +1062,7 @@ impl CrawlEngine {
             frontier_may_have_entries = true;
             drain_confirmed = false;
 
-            let pages_processed = if state.is_streaming {
-                state.pages_count
-            } else {
-                state.pages.len()
-            };
+            let pages_processed = state.pages_processed();
             let stats = CrawlStats {
                 pages_crawled: pages_processed,
                 pages_failed: state.pages_failed,
