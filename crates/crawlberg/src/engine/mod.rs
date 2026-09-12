@@ -878,10 +878,17 @@ impl CrawlEngine {
 
         #[cfg(not(target_arch = "wasm32"))]
         let (final_url, response, browser_used_for_fetch) = {
-            use crawl_loop::follow_redirects;
+            use crawl_loop::{RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            let outcome = follow_redirects(self, url, max_redirects).await?;
+            let outcome = match follow_redirects(self, url, max_redirects, None).await? {
+                RedirectResolution::Fetched(outcome) => outcome,
+                // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
+                // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
+                // ~keep Reporting the refusal keeps this arm correct for a caller that does pass
+                // ~keep one, where a panic or a discarded refusal would not be.
+                RedirectResolution::Refused(refusal) => return Err(refusal.into_error()),
+            };
 
             // ~keep Synthesized empty 4xx responses return minimal results instead of parsing an empty body as HTML.
             let status = outcome.final_response.status;

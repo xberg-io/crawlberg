@@ -112,11 +112,144 @@ fn url_host(url: &str) -> String {
 /// ~keep on its first return and only caught one hop later. Falls back to the original
 /// ~keep string when it fails to parse, so an unparsable URL still participates in
 /// ~keep cycle detection via literal string equality.
-/// Whether two URLs share one robots.txt scope: scheme, host and port (RFC 9309 section 2.3).
-fn same_robots_origin(left: &Url, right: &Url) -> bool {
-    left.scheme() == right.scheme()
-        && left.host_str() == right.host_str()
-        && left.port_or_known_default() == right.port_or_known_default()
+/// The key a robots.txt file is cached under: one file covers exactly one origin.
+fn robots_origin_key(parsed: &Url) -> String {
+    format!(
+        "{}://{}:{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or(""),
+        parsed.port_or_known_default().unwrap_or(0)
+    )
+}
+
+/// What a [`follow_redirects`] call produced.
+pub(crate) enum RedirectResolution {
+    /// The chain ended on a response.
+    Fetched(RedirectOutcome),
+    /// The policy refused a URL in the chain, so it was never requested.
+    Refused(PolicyRefusal),
+}
+
+/// Why [`RedirectPolicy`] refused a URL.
+pub(crate) enum PolicyRefusal {
+    /// robots.txt forbids it, with the reason the crawl reports.
+    Blocked {
+        /// The refused URL, which the result reports as the crawl's final URL.
+        url: String,
+        /// The reason, from [`robots_block_reason`].
+        reason: String,
+    },
+    /// A path filter rejects it. The crawl reports no error, matching the loop's filter.
+    Filtered {
+        /// The refused URL, which the result reports as the crawl's final URL.
+        url: String,
+    },
+}
+
+impl PolicyRefusal {
+    /// The URL to report as the crawl's final URL, and the error to report with it.
+    fn into_parts(self) -> (String, Option<String>) {
+        match self {
+            Self::Blocked { url, reason } => (url, Some(reason)),
+            Self::Filtered { url } => (url, None),
+        }
+    }
+
+    /// The refusal as an error, for a caller with no place to report a URL it skipped.
+    pub(crate) fn into_error(self) -> CrawlError {
+        match self {
+            Self::Blocked { reason, .. } => CrawlError::other(reason),
+            Self::Filtered { url } => CrawlError::other(format!("{url} is excluded from this crawl")),
+        }
+    }
+}
+
+/// The crawl's per-URL policy: the path filters, then robots.txt for the URL's own origin.
+///
+/// ~keep [`follow_redirects`] consults this immediately before every request it makes, so a
+/// ~keep redirect target is judged by the rules of the origin it belongs to and is refused
+/// ~keep before the request goes out. Judging the chain at its call site instead reads the
+/// ~keep seed's file, fetches the whole chain, and only then asks whether the target allowed
+/// ~keep it, which is one request too late.
+pub(crate) struct RedirectPolicy<'a> {
+    engine: &'a CrawlEngine,
+    client: &'a reqwest::Client,
+    /// ~keep Only the exclude patterns: `include_paths` is scoped to depth above 0 by
+    /// ~keep `should_fetch_url`, and every URL in the seed's redirect chain is depth 0.
+    exclude_regexes: &'a [Regex],
+    /// What robots.txt established per origin, so one origin's file is read once per crawl.
+    outcomes: HashMap<String, RobotsOutcome>,
+    /// The origin of the last URL admitted, whose rules the crawl loop keeps applying.
+    last_origin: Option<String>,
+    /// URLs this policy rejected, folded into `CrawlState::urls_filtered`.
+    urls_filtered: usize,
+}
+
+impl<'a> RedirectPolicy<'a> {
+    fn new(engine: &'a CrawlEngine, client: &'a reqwest::Client, exclude_regexes: &'a [Regex]) -> Self {
+        Self {
+            engine,
+            client,
+            exclude_regexes,
+            outcomes: HashMap::new(),
+            last_origin: None,
+            urls_filtered: 0,
+        }
+    }
+
+    /// Decide whether the crawl may request `url`.
+    async fn admits(&mut self, url: &str) -> Result<(), PolicyRefusal> {
+        // ~keep A URL that does not parse cannot be judged, and cannot be fetched either: the
+        // ~keep fetch validates it and fails with the error the caller already reports.
+        let Ok(parsed) = Url::parse(url) else {
+            return Ok(());
+        };
+
+        // ~keep The path filters first: they are local, and an excluded URL should not cost
+        // ~keep its origin a robots.txt request either.
+        let path = parsed.path();
+        let excluded = !self.exclude_regexes.is_empty() && self.exclude_regexes.iter().any(|re| re.is_match(path));
+        if excluded {
+            self.urls_filtered += 1;
+            return Err(PolicyRefusal::Filtered { url: url.to_owned() });
+        }
+
+        let origin = robots_origin_key(&parsed);
+        if !self.outcomes.contains_key(&origin) {
+            let outcome = if self.engine.config.respect_robots_txt {
+                fetch_robots_outcome(
+                    url,
+                    &self.engine.config,
+                    self.client,
+                    default_robots_user_agent(&self.engine.config),
+                )
+                .await
+            } else {
+                RobotsOutcome::AllowAll
+            };
+            self.outcomes.insert(origin.clone(), outcome);
+        }
+        let outcome = self
+            .outcomes
+            .get(&origin)
+            .expect("the origin's robots.txt outcome was just read");
+        if let Some(reason) = robots_block_reason(outcome, &parsed) {
+            return Err(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason,
+            });
+        }
+        self.last_origin = Some(origin);
+        Ok(())
+    }
+
+    /// What robots.txt established for the origin the chain ended on, which the crawl loop
+    /// applies to every page it fetches from there.
+    fn into_outcome(mut self) -> RobotsOutcome {
+        self.last_origin
+            .and_then(|origin| self.outcomes.remove(&origin))
+            .unwrap_or(RobotsOutcome::AllowAll)
+    }
 }
 
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.
@@ -152,11 +285,14 @@ fn canonical_redirect_key(url: &str) -> String {
 /// is returned to the caller. This matches the historical behavior of
 /// [`CrawlEngine::resolve_initial_redirects`], where the crawl would stop and
 /// surface a soft `state.error` rather than aborting the request.
+/// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
+/// cannot reach a URL the configuration forbids, whatever order it does its own work in.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
     max_redirects: usize,
-) -> Result<RedirectOutcome, CrawlError> {
+    mut policy: Option<&mut RedirectPolicy<'_>>,
+) -> Result<RedirectResolution, CrawlError> {
     let mut current_url = initial_url.to_owned();
     let mut seen: HashSet<String> = HashSet::with_capacity(max_redirects + 1);
     seen.insert(canonical_redirect_key(&current_url));
@@ -171,6 +307,12 @@ pub(crate) async fn follow_redirects(
 
     let mut browser_used = false;
     loop {
+        if let Some(policy) = policy.as_deref_mut()
+            && let Err(refusal) = policy.admits(&current_url).await
+        {
+            return Ok(RedirectResolution::Refused(refusal));
+        }
+
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&current_url);
@@ -186,13 +328,13 @@ pub(crate) async fn follow_redirects(
                     body_bytes: Vec::new(),
                     headers: HashMap::new(),
                 };
-                return Ok(RedirectOutcome {
+                return Ok(RedirectResolution::Fetched(RedirectOutcome {
                     final_url: current_url,
                     final_response: synthetic,
                     redirect_count,
                     intermediate_headers,
                     browser_used,
-                });
+                }));
             }
             Err(e) => return Err(e),
         };
@@ -265,13 +407,13 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        return Ok(RedirectOutcome {
+        return Ok(RedirectResolution::Fetched(RedirectOutcome {
             final_url: current_url,
             final_response: resp,
             redirect_count,
             intermediate_headers,
             browser_used,
-        });
+        }));
     }
 }
 
@@ -467,24 +609,26 @@ impl CrawlEngine {
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
-        // ~keep robots.txt is read before anything goes on the wire. It used to be read after
-        // `resolve_initial_redirects` had already fetched the seed, so a seed the site
-        // disallows still cost that site one request for the very page it had forbidden.
-        let mut robots = if self.config.respect_robots_txt {
-            fetch_robots_outcome(url, &self.config, &client, default_robots_user_agent(&self.config)).await
-        } else {
-            RobotsOutcome::AllowAll
-        };
-        if let Some(reason) = robots_block_reason(&robots, &parsed_url) {
-            state.was_skipped = true;
-            state.error = Some(reason);
-            return Ok(self.finish_without_crawling(state, url.to_owned(), &tx).await);
-        }
-        self.apply_crawl_delay(&robots, &parsed_url).await?;
+        // ~keep robots.txt is read before anything goes on the wire, and the policy travels
+        // into the redirect resolution below rather than bracketing it. A redirect can leave
+        // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
+        // file after the chain has already been fetched asks the question one request late.
+        let mut policy = RedirectPolicy::new(self, &client, &exclude_regexes);
+        let seed = self
+            .resolve_initial_redirects(url, max_redirects, &mut state, &mut policy)
+            .await;
+        state.urls_filtered += policy.urls_filtered;
 
-        // ~keep The one and only fetch of the seed: the response is carried into the loop
-        // below instead of being dropped and re-requested.
-        let seed = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
+        let seed = match seed {
+            Ok(seed) => seed,
+            Err(refusal) => {
+                let (refused_url, reason) = refusal.into_parts();
+                state.was_skipped = reason.is_some();
+                state.error = reason;
+                return Ok(self.finish_without_crawling(state, refused_url, &tx).await);
+            }
+        };
+        let robots = policy.into_outcome();
         let final_url = seed
             .as_ref()
             .map(|outcome| outcome.final_url.clone())
@@ -497,24 +641,8 @@ impl CrawlEngine {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         };
 
-        // ~keep A redirect can leave the seed's robots.txt scope (scheme + host + port), and
-        // the new origin's policy is the one that governs everything fetched from it.
         let final_parsed = Url::parse(&final_url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
-        if self.config.respect_robots_txt && !same_robots_origin(&parsed_url, &final_parsed) {
-            robots = fetch_robots_outcome(
-                &final_url,
-                &self.config,
-                &client,
-                default_robots_user_agent(&self.config),
-            )
-            .await;
-            if let Some(reason) = robots_block_reason(&robots, &final_parsed) {
-                state.was_skipped = true;
-                state.error = Some(reason);
-                return Ok(self.finish_without_crawling(state, final_url, &tx).await);
-            }
-            self.apply_crawl_delay(&robots, &final_parsed).await?;
-        }
+        self.apply_crawl_delay(&robots, &final_parsed).await?;
 
         let dedup_key = normalize_url_for_dedup(&final_url);
         self.frontier.mark_seen(&dedup_key).await?;
@@ -673,13 +801,21 @@ impl CrawlEngine {
     /// ~keep Returns the whole [`RedirectOutcome`], including `final_response`. It used to
     /// return only the final URL and drop the response, which is what made the crawl loop
     /// fetch the seed a second time.
+    /// `Ok(None)` is a chain that failed, with `state.error` carrying the reason. `Err` is the
+    /// policy refusing a URL, which stops the crawl before that URL is requested.
     async fn resolve_initial_redirects(
         &self,
         url: &str,
         max_redirects: usize,
         state: &mut CrawlState,
-    ) -> Option<RedirectOutcome> {
-        match follow_redirects(self, url, max_redirects).await {
+        policy: &mut RedirectPolicy<'_>,
+    ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
+        let resolution = match follow_redirects(self, url, max_redirects, Some(policy)).await {
+            Ok(RedirectResolution::Refused(refusal)) => return Err(refusal),
+            Ok(RedirectResolution::Fetched(outcome)) => Ok(outcome),
+            Err(e) => Err(e),
+        };
+        Ok(match resolution {
             Ok(outcome) => {
                 if self.config.cookies_enabled {
                     for (host, headers) in &outcome.intermediate_headers {
@@ -701,7 +837,7 @@ impl CrawlEngine {
                 state.error = Some(format!("{e}"));
                 None
             }
-        }
+        })
     }
 
     /// Push one entry onto the frontier, wrapping any backend failure with the URL.
