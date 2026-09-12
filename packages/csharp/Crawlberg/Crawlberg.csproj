@@ -3,10 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Crawlberg</RootNamespace>
     <PackageId>XbergIo.Crawlberg</PackageId>
-    <Version>1.6.1</Version>
-    <AssemblyVersion>1.6.1.0</AssemblyVersion>
-    <FileVersion>1.6.1.0</FileVersion>
-    <InformationalVersion>1.6.1</InformationalVersion>
+    <Version>1.6.2</Version>
+    <AssemblyVersion>1.6.2.0</AssemblyVersion>
+    <FileVersion>1.6.2.0</FileVersion>
+    <InformationalVersion>1.6.2</InformationalVersion>
     <Description>High-performance web crawling engine</Description>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <RepositoryUrl>https://github.com/xberg-io/crawlberg</RepositoryUrl>
@@ -22,7 +22,12 @@
          single `<RuntimeIdentifier>` on the package author's side, which would
          force runtime-specific output and break AnyCPU packaging. -->
     <PlatformTarget>AnyCPU</PlatformTarget>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <!-- win-arm64 is intentionally absent: nothing builds an aarch64 Windows native, so
+         runtime.json carries no mapping for it and a win-arm64 consumer would resolve the
+         meta-package and then find no native payload. Declaring the RID here while the
+         pack loop iterates runtime.json is what failed `dotnet pack` for v1.6.1
+         ("No native assets under runtimes/win-arm64/native/"). Re-add both together. -->
+    <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
