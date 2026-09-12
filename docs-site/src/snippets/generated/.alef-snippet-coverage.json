@@ -196,6 +196,8 @@
     "c/robots/robots-allow-override.md",
     "c/robots/robots-comments-handling.md",
     "c/robots/robots-crawl-delay.md",
+    "c/robots/robots-crawl-disallow-blocks-child.md",
+    "c/robots/robots-crawl-unreachable-5xx.md",
     "c/robots/robots-disallow-path.md",
     "c/robots/robots-meta-nofollow.md",
     "c/robots/robots-meta-noindex.md",
@@ -203,6 +205,7 @@
     "c/robots/robots-multiple-user-agents.md",
     "c/robots/robots-request-rate.md",
     "c/robots/robots-sitemap-directive.md",
+    "c/robots/robots-unreachable-5xx.md",
     "c/robots/robots-user-agent-specific.md",
     "c/robots/robots-wildcard-paths.md",
     "c/robots/robots-x-robots-tag.md",
@@ -451,6 +454,8 @@
     "csharp/robots/robots-allow-override.md",
     "csharp/robots/robots-comments-handling.md",
     "csharp/robots/robots-crawl-delay.md",
+    "csharp/robots/robots-crawl-disallow-blocks-child.md",
+    "csharp/robots/robots-crawl-unreachable-5xx.md",
     "csharp/robots/robots-disallow-path.md",
     "csharp/robots/robots-meta-nofollow.md",
     "csharp/robots/robots-meta-noindex.md",
@@ -458,6 +463,7 @@
     "csharp/robots/robots-multiple-user-agents.md",
     "csharp/robots/robots-request-rate.md",
     "csharp/robots/robots-sitemap-directive.md",
+    "csharp/robots/robots-unreachable-5xx.md",
     "csharp/robots/robots-user-agent-specific.md",
     "csharp/robots/robots-wildcard-paths.md",
     "csharp/robots/robots-x-robots-tag.md",
@@ -714,6 +720,8 @@
     "dart/robots/robots-allow-override.md",
     "dart/robots/robots-comments-handling.md",
     "dart/robots/robots-crawl-delay.md",
+    "dart/robots/robots-crawl-disallow-blocks-child.md",
+    "dart/robots/robots-crawl-unreachable-5xx.md",
     "dart/robots/robots-disallow-path.md",
     "dart/robots/robots-meta-nofollow.md",
     "dart/robots/robots-meta-noindex.md",
@@ -721,6 +729,7 @@
     "dart/robots/robots-multiple-user-agents.md",
     "dart/robots/robots-request-rate.md",
     "dart/robots/robots-sitemap-directive.md",
+    "dart/robots/robots-unreachable-5xx.md",
     "dart/robots/robots-user-agent-specific.md",
     "dart/robots/robots-wildcard-paths.md",
     "dart/robots/robots-x-robots-tag.md",
@@ -968,6 +977,8 @@
     "elixir/robots/robots-allow-override.md",
     "elixir/robots/robots-comments-handling.md",
     "elixir/robots/robots-crawl-delay.md",
+    "elixir/robots/robots-crawl-disallow-blocks-child.md",
+    "elixir/robots/robots-crawl-unreachable-5xx.md",
     "elixir/robots/robots-disallow-path.md",
     "elixir/robots/robots-meta-nofollow.md",
     "elixir/robots/robots-meta-noindex.md",
@@ -975,6 +986,7 @@
     "elixir/robots/robots-multiple-user-agents.md",
     "elixir/robots/robots-request-rate.md",
     "elixir/robots/robots-sitemap-directive.md",
+    "elixir/robots/robots-unreachable-5xx.md",
     "elixir/robots/robots-user-agent-specific.md",
     "elixir/robots/robots-wildcard-paths.md",
     "elixir/robots/robots-x-robots-tag.md",
@@ -1229,6 +1241,8 @@
     "go/robots/robots-allow-override.md",
     "go/robots/robots-comments-handling.md",
     "go/robots/robots-crawl-delay.md",
+    "go/robots/robots-crawl-disallow-blocks-child.md",
+    "go/robots/robots-crawl-unreachable-5xx.md",
     "go/robots/robots-disallow-path.md",
     "go/robots/robots-meta-nofollow.md",
     "go/robots/robots-meta-noindex.md",
@@ -1236,6 +1250,7 @@
     "go/robots/robots-multiple-user-agents.md",
     "go/robots/robots-request-rate.md",
     "go/robots/robots-sitemap-directive.md",
+    "go/robots/robots-unreachable-5xx.md",
     "go/robots/robots-user-agent-specific.md",
     "go/robots/robots-wildcard-paths.md",
     "go/robots/robots-x-robots-tag.md",
@@ -1492,6 +1507,8 @@
     "java/robots/robots-allow-override.md",
     "java/robots/robots-comments-handling.md",
     "java/robots/robots-crawl-delay.md",
+    "java/robots/robots-crawl-disallow-blocks-child.md",
+    "java/robots/robots-crawl-unreachable-5xx.md",
     "java/robots/robots-disallow-path.md",
     "java/robots/robots-meta-nofollow.md",
     "java/robots/robots-meta-noindex.md",
@@ -1499,6 +1516,7 @@
     "java/robots/robots-multiple-user-agents.md",
     "java/robots/robots-request-rate.md",
     "java/robots/robots-sitemap-directive.md",
+    "java/robots/robots-unreachable-5xx.md",
     "java/robots/robots-user-agent-specific.md",
     "java/robots/robots-wildcard-paths.md",
     "java/robots/robots-x-robots-tag.md",
@@ -1755,6 +1773,8 @@
     "kotlin-android/robots/robots-allow-override.md",
     "kotlin-android/robots/robots-comments-handling.md",
     "kotlin-android/robots/robots-crawl-delay.md",
+    "kotlin-android/robots/robots-crawl-disallow-blocks-child.md",
+    "kotlin-android/robots/robots-crawl-unreachable-5xx.md",
     "kotlin-android/robots/robots-disallow-path.md",
     "kotlin-android/robots/robots-meta-nofollow.md",
     "kotlin-android/robots/robots-meta-noindex.md",
@@ -1762,6 +1782,7 @@
     "kotlin-android/robots/robots-multiple-user-agents.md",
     "kotlin-android/robots/robots-request-rate.md",
     "kotlin-android/robots/robots-sitemap-directive.md",
+    "kotlin-android/robots/robots-unreachable-5xx.md",
     "kotlin-android/robots/robots-user-agent-specific.md",
     "kotlin-android/robots/robots-wildcard-paths.md",
     "kotlin-android/robots/robots-x-robots-tag.md",
@@ -2018,6 +2039,8 @@
     "php/robots/robots-allow-override.md",
     "php/robots/robots-comments-handling.md",
     "php/robots/robots-crawl-delay.md",
+    "php/robots/robots-crawl-disallow-blocks-child.md",
+    "php/robots/robots-crawl-unreachable-5xx.md",
     "php/robots/robots-disallow-path.md",
     "php/robots/robots-meta-nofollow.md",
     "php/robots/robots-meta-noindex.md",
@@ -2025,6 +2048,7 @@
     "php/robots/robots-multiple-user-agents.md",
     "php/robots/robots-request-rate.md",
     "php/robots/robots-sitemap-directive.md",
+    "php/robots/robots-unreachable-5xx.md",
     "php/robots/robots-user-agent-specific.md",
     "php/robots/robots-wildcard-paths.md",
     "php/robots/robots-x-robots-tag.md",
@@ -2281,6 +2305,8 @@
     "python/robots/robots-allow-override.md",
     "python/robots/robots-comments-handling.md",
     "python/robots/robots-crawl-delay.md",
+    "python/robots/robots-crawl-disallow-blocks-child.md",
+    "python/robots/robots-crawl-unreachable-5xx.md",
     "python/robots/robots-disallow-path.md",
     "python/robots/robots-meta-nofollow.md",
     "python/robots/robots-meta-noindex.md",
@@ -2288,6 +2314,7 @@
     "python/robots/robots-multiple-user-agents.md",
     "python/robots/robots-request-rate.md",
     "python/robots/robots-sitemap-directive.md",
+    "python/robots/robots-unreachable-5xx.md",
     "python/robots/robots-user-agent-specific.md",
     "python/robots/robots-wildcard-paths.md",
     "python/robots/robots-x-robots-tag.md",
@@ -2544,6 +2571,8 @@
     "ruby/robots/robots-allow-override.md",
     "ruby/robots/robots-comments-handling.md",
     "ruby/robots/robots-crawl-delay.md",
+    "ruby/robots/robots-crawl-disallow-blocks-child.md",
+    "ruby/robots/robots-crawl-unreachable-5xx.md",
     "ruby/robots/robots-disallow-path.md",
     "ruby/robots/robots-meta-nofollow.md",
     "ruby/robots/robots-meta-noindex.md",
@@ -2551,6 +2580,7 @@
     "ruby/robots/robots-multiple-user-agents.md",
     "ruby/robots/robots-request-rate.md",
     "ruby/robots/robots-sitemap-directive.md",
+    "ruby/robots/robots-unreachable-5xx.md",
     "ruby/robots/robots-user-agent-specific.md",
     "ruby/robots/robots-wildcard-paths.md",
     "ruby/robots/robots-x-robots-tag.md",
@@ -2807,6 +2837,8 @@
     "rust/robots/robots-allow-override.md",
     "rust/robots/robots-comments-handling.md",
     "rust/robots/robots-crawl-delay.md",
+    "rust/robots/robots-crawl-disallow-blocks-child.md",
+    "rust/robots/robots-crawl-unreachable-5xx.md",
     "rust/robots/robots-disallow-path.md",
     "rust/robots/robots-meta-nofollow.md",
     "rust/robots/robots-meta-noindex.md",
@@ -2814,6 +2846,7 @@
     "rust/robots/robots-multiple-user-agents.md",
     "rust/robots/robots-request-rate.md",
     "rust/robots/robots-sitemap-directive.md",
+    "rust/robots/robots-unreachable-5xx.md",
     "rust/robots/robots-user-agent-specific.md",
     "rust/robots/robots-wildcard-paths.md",
     "rust/robots/robots-x-robots-tag.md",
@@ -3061,6 +3094,8 @@
     "swift/robots/robots-allow-override.md",
     "swift/robots/robots-comments-handling.md",
     "swift/robots/robots-crawl-delay.md",
+    "swift/robots/robots-crawl-disallow-blocks-child.md",
+    "swift/robots/robots-crawl-unreachable-5xx.md",
     "swift/robots/robots-disallow-path.md",
     "swift/robots/robots-meta-nofollow.md",
     "swift/robots/robots-meta-noindex.md",
@@ -3068,6 +3103,7 @@
     "swift/robots/robots-multiple-user-agents.md",
     "swift/robots/robots-request-rate.md",
     "swift/robots/robots-sitemap-directive.md",
+    "swift/robots/robots-unreachable-5xx.md",
     "swift/robots/robots-user-agent-specific.md",
     "swift/robots/robots-wildcard-paths.md",
     "swift/robots/robots-x-robots-tag.md",
@@ -3322,6 +3358,8 @@
     "typescript/robots/robots-allow-override.md",
     "typescript/robots/robots-comments-handling.md",
     "typescript/robots/robots-crawl-delay.md",
+    "typescript/robots/robots-crawl-disallow-blocks-child.md",
+    "typescript/robots/robots-crawl-unreachable-5xx.md",
     "typescript/robots/robots-disallow-path.md",
     "typescript/robots/robots-meta-nofollow.md",
     "typescript/robots/robots-meta-noindex.md",
@@ -3329,6 +3367,7 @@
     "typescript/robots/robots-multiple-user-agents.md",
     "typescript/robots/robots-request-rate.md",
     "typescript/robots/robots-sitemap-directive.md",
+    "typescript/robots/robots-unreachable-5xx.md",
     "typescript/robots/robots-user-agent-specific.md",
     "typescript/robots/robots-wildcard-paths.md",
     "typescript/robots/robots-x-robots-tag.md",
@@ -3584,6 +3623,8 @@
     "wasm/robots/robots-allow-override.md",
     "wasm/robots/robots-comments-handling.md",
     "wasm/robots/robots-crawl-delay.md",
+    "wasm/robots/robots-crawl-disallow-blocks-child.md",
+    "wasm/robots/robots-crawl-unreachable-5xx.md",
     "wasm/robots/robots-disallow-path.md",
     "wasm/robots/robots-meta-nofollow.md",
     "wasm/robots/robots-meta-noindex.md",
@@ -3591,6 +3632,7 @@
     "wasm/robots/robots-multiple-user-agents.md",
     "wasm/robots/robots-request-rate.md",
     "wasm/robots/robots-sitemap-directive.md",
+    "wasm/robots/robots-unreachable-5xx.md",
     "wasm/robots/robots-user-agent-specific.md",
     "wasm/robots/robots-wildcard-paths.md",
     "wasm/robots/robots-x-robots-tag.md",
@@ -3830,6 +3872,8 @@
     "zig/robots/robots-allow-override.md",
     "zig/robots/robots-comments-handling.md",
     "zig/robots/robots-crawl-delay.md",
+    "zig/robots/robots-crawl-disallow-blocks-child.md",
+    "zig/robots/robots-crawl-unreachable-5xx.md",
     "zig/robots/robots-disallow-path.md",
     "zig/robots/robots-meta-nofollow.md",
     "zig/robots/robots-meta-noindex.md",
@@ -3837,6 +3881,7 @@
     "zig/robots/robots-multiple-user-agents.md",
     "zig/robots/robots-request-rate.md",
     "zig/robots/robots-sitemap-directive.md",
+    "zig/robots/robots-unreachable-5xx.md",
     "zig/robots/robots-user-agent-specific.md",
     "zig/robots/robots-wildcard-paths.md",
     "zig/robots/robots-x-robots-tag.md",
@@ -6239,6 +6284,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "c"
+      },
+      "path": "c/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "c"
+      },
+      "path": "c/robots/robots-crawl-unreachable-5xx.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "c"
       },
@@ -6315,6 +6384,18 @@
         "language": "c"
       },
       "path": "c/robots/robots-sitemap-directive.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "c"
+      },
+      "path": "c/robots/robots-unreachable-5xx.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -9299,6 +9380,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/robots-crawl-unreachable-5xx.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "csharp"
       },
@@ -9375,6 +9480,18 @@
         "language": "csharp"
       },
       "path": "csharp/robots/robots-sitemap-directive.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "csharp"
+      },
+      "path": "csharp/robots/robots-unreachable-5xx.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -12455,6 +12572,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "dart"
+      },
+      "path": "dart/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "dart"
+      },
+      "path": "dart/robots/robots-crawl-unreachable-5xx.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "dart"
       },
@@ -12531,6 +12672,18 @@
         "language": "dart"
       },
       "path": "dart/robots/robots-sitemap-directive.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "dart"
+      },
+      "path": "dart/robots/robots-unreachable-5xx.md",
       "language": "dart",
       "target": "dart",
       "session": "dart",
@@ -15503,6 +15656,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/robots-crawl-unreachable-5xx.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "elixir"
       },
@@ -15579,6 +15756,18 @@
         "language": "elixir"
       },
       "path": "elixir/robots/robots-sitemap-directive.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "elixir"
+      },
+      "path": "elixir/robots/robots-unreachable-5xx.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18635,6 +18824,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "go"
+      },
+      "path": "go/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "go"
+      },
+      "path": "go/robots/robots-crawl-unreachable-5xx.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "go"
       },
@@ -18711,6 +18924,18 @@
         "language": "go"
       },
       "path": "go/robots/robots-sitemap-directive.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "go"
+      },
+      "path": "go/robots/robots-unreachable-5xx.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21791,6 +22016,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "java"
+      },
+      "path": "java/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "java"
+      },
+      "path": "java/robots/robots-crawl-unreachable-5xx.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "java"
       },
@@ -21867,6 +22116,18 @@
         "language": "java"
       },
       "path": "java/robots/robots-sitemap-directive.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "java"
+      },
+      "path": "java/robots/robots-unreachable-5xx.md",
       "language": "java",
       "target": "java",
       "session": "java",
@@ -24947,6 +25208,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/robots-crawl-unreachable-5xx.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "kotlin_android"
       },
@@ -25023,6 +25308,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/robots/robots-sitemap-directive.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/robots/robots-unreachable-5xx.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28103,6 +28400,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "php"
+      },
+      "path": "php/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "php"
+      },
+      "path": "php/robots/robots-crawl-unreachable-5xx.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "php"
       },
@@ -28179,6 +28500,18 @@
         "language": "php"
       },
       "path": "php/robots/robots-sitemap-directive.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "php"
+      },
+      "path": "php/robots/robots-unreachable-5xx.md",
       "language": "php",
       "target": "php",
       "session": "php",
@@ -31259,6 +31592,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "python"
+      },
+      "path": "python/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "python"
+      },
+      "path": "python/robots/robots-crawl-unreachable-5xx.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "python"
       },
@@ -31335,6 +31692,18 @@
         "language": "python"
       },
       "path": "python/robots/robots-sitemap-directive.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "python"
+      },
+      "path": "python/robots/robots-unreachable-5xx.md",
       "language": "python",
       "target": "python",
       "session": "python",
@@ -34415,6 +34784,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/robots-crawl-unreachable-5xx.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "ruby"
       },
@@ -34491,6 +34884,18 @@
         "language": "ruby"
       },
       "path": "ruby/robots/robots-sitemap-directive.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "ruby"
+      },
+      "path": "ruby/robots/robots-unreachable-5xx.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38102,6 +38507,36 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "rust"
+      },
+      "path": "rust/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "rust"
+      },
+      "path": "rust/robots/robots-crawl-unreachable-5xx.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "rust"
       },
@@ -38196,6 +38631,21 @@
         "language": "rust"
       },
       "path": "rust/robots/robots-sitemap-directive.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "rust"
+      },
+      "path": "rust/robots/robots-unreachable-5xx.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -41346,6 +41796,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "swift"
+      },
+      "path": "swift/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "swift"
+      },
+      "path": "swift/robots/robots-crawl-unreachable-5xx.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "swift"
       },
@@ -41422,6 +41896,18 @@
         "language": "swift"
       },
       "path": "swift/robots/robots-sitemap-directive.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "swift"
+      },
+      "path": "swift/robots/robots-unreachable-5xx.md",
       "language": "swift",
       "target": "swift",
       "session": "swift",
@@ -44478,6 +44964,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "node"
+      },
+      "path": "typescript/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "node"
+      },
+      "path": "typescript/robots/robots-crawl-unreachable-5xx.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "node"
       },
@@ -44554,6 +45064,18 @@
         "language": "node"
       },
       "path": "typescript/robots/robots-sitemap-directive.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "node"
+      },
+      "path": "typescript/robots/robots-unreachable-5xx.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -47622,6 +48144,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/robots-crawl-unreachable-5xx.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "wasm"
       },
@@ -47698,6 +48244,18 @@
         "language": "wasm"
       },
       "path": "wasm/robots/robots-sitemap-directive.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "wasm"
+      },
+      "path": "wasm/robots/robots-unreachable-5xx.md",
       "language": "typescript",
       "target": "wasm",
       "session": "wasm",
@@ -50574,6 +51132,30 @@
     },
     {
       "key": {
+        "fixture_id": "robots_crawl_disallow_blocks_child",
+        "language": "zig"
+      },
+      "path": "zig/robots/robots-crawl-disallow-blocks-child.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_crawl_unreachable_5xx",
+        "language": "zig"
+      },
+      "path": "zig/robots/robots-crawl-unreachable-5xx.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "robots_disallow_path",
         "language": "zig"
       },
@@ -50650,6 +51232,18 @@
         "language": "zig"
       },
       "path": "zig/robots/robots-sitemap-directive.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "robots_unreachable_5xx",
+        "language": "zig"
+      },
+      "path": "zig/robots/robots-unreachable-5xx.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -62987,6 +63581,126 @@
       "language": "zig"
     },
     {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "zig"
+    },
+    {
       "fixture_id": "robots_disallow_path",
       "language": "c"
     },
@@ -63404,6 +64118,66 @@
     },
     {
       "fixture_id": "robots_sitemap_directive",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
       "language": "zig"
     },
     {
@@ -78565,6 +79339,126 @@
       "language": "zig"
     },
     {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_crawl_disallow_blocks_child",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_crawl_unreachable_5xx",
+      "language": "zig"
+    },
+    {
       "fixture_id": "robots_disallow_path",
       "language": "c"
     },
@@ -78982,6 +79876,66 @@
     },
     {
       "fixture_id": "robots_sitemap_directive",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "c"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "go"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "java"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "node"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "php"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "python"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "robots_unreachable_5xx",
       "language": "zig"
     },
     {

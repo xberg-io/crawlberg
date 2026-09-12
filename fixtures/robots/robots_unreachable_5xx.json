@@ -1,0 +1,40 @@
+{
+	"id": "robots_unreachable_5xx",
+	"description": "Unreachable robots.txt (503) reports is_allowed false",
+	"docs": {
+		"topic": "robots",
+		"stem": "robots-unreachable-5xx",
+		"title": "Unreachable robots.txt (503) reports is_allowed false"
+	},
+	"tags": ["robots"],
+	"input": {
+		"mock_responses": [
+			{
+				"path": "/robots.txt",
+				"status_code": 503,
+				"headers": {
+					"content-type": "text/plain"
+				},
+				"body_inline": "Service Unavailable"
+			},
+			{
+				"path": "/",
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><body><h1>robots_unreachable_5xx</h1></body></html>"
+			}
+		],
+		"config": {
+			"respect_robots_txt": true
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "robots.is_allowed",
+			"value": false
+		}
+	]
+}
