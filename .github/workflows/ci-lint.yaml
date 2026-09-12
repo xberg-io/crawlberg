@@ -36,7 +36,7 @@ jobs:
   validate:
     name: Validate
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
-    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+    uses: xberg-io/actions/.github/workflows/reusable-validate.yml@3aaf68669e0eeafc98a57e720d0ceef70dce5bbf # v1.11.5
     with:
       setup-rust: true
       setup-python: true
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install alef
-        uses: xberg-io/actions/install-alef@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+        uses: xberg-io/actions/install-alef@3aaf68669e0eeafc98a57e720d0ceef70dce5bbf # v1.11.5
 
       # ~keep dart, elixir and zig are the three toolchains `alef snippets check` needs
       # that ubuntu-latest does not preinstall at all. Without them those snippets report
@@ -82,7 +82,7 @@ jobs:
       # unvalidated rather than failing loudly. Install them so the check is real. Java is
       # preinstalled but at the wrong version — see the Setup Java step below.
       - name: Setup Elixir
-        uses: xberg-io/actions/setup-elixir@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+        uses: xberg-io/actions/setup-elixir@3aaf68669e0eeafc98a57e720d0ceef70dce5bbf # v1.11.5
         with:
           elixir-version: "1.17"
           otp-version: "27"
@@ -103,7 +103,7 @@ jobs:
           sdk: "3.13.3"
 
       - name: Setup Zig
-        uses: xberg-io/actions/setup-zig@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+        uses: xberg-io/actions/setup-zig@3aaf68669e0eeafc98a57e720d0ceef70dce5bbf # v1.11.5
         with:
           version: "0.16.0"
 
@@ -135,7 +135,7 @@ jobs:
       # can never be recorded in pnpm-lock.yaml, so a frozen install fails outright with
       # ERR_PNPM_OUTDATED_LOCKFILE. build-node-napi passes --no-frozen-lockfile for exactly
       # this reason.
-      - uses: xberg-io/actions/setup-node-workspace@b95610bd6a981b7788b9e25ec9a29332f46e7297 # v1.11.5
+      - uses: xberg-io/actions/setup-node-workspace@3aaf68669e0eeafc98a57e720d0ceef70dce5bbf # v1.11.5
         with:
           node-version: "22"
           frozen-lockfile: false
