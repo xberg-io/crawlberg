@@ -64,6 +64,12 @@ impl RobotsOutcome {
     }
 
     /// The parsed rules, if robots.txt was actually read.
+    ///
+    /// ~keep Native-only because its sole caller applies `Crawl-delay` to the rate limiter.
+    /// The wasm crawl loop never calls `RateLimiter::acquire`, and `DefaultRateLimiter`
+    /// sleeps on `tokio::time`, which has no timer driver under `wasm-bindgen-futures`, so
+    /// publishing a crawl delay there would be inert.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn rules(&self) -> Option<&RobotsRules> {
         match self {
             Self::Rules(rules) => Some(rules),

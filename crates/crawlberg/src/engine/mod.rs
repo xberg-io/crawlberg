@@ -1059,16 +1059,6 @@ impl CrawlEngine {
         }
     }
 
-    /// Compile regex patterns for path filtering, returning an error on invalid patterns.
-    fn compile_path_regexes(patterns: &[String]) -> Result<Vec<regex::Regex>, CrawlError> {
-        patterns
-            .iter()
-            .map(|pat| {
-                regex::Regex::new(pat).map_err(|e| CrawlError::other(format!("invalid regex pattern \"{pat}\": {e}")))
-            })
-            .collect()
-    }
-
     /// Crawl a website starting from `url`.
     ///
     /// Implements a sequential BFS/strategy-driven crawl loop. Follows links discovered
@@ -1089,8 +1079,59 @@ impl CrawlEngine {
         let max_depth = self.config.max_depth.unwrap_or(usize::MAX);
         let max_pages = self.config.max_pages.unwrap_or(usize::MAX);
 
-        let exclude_regexes = Self::compile_path_regexes(&self.config.exclude_paths)?;
-        let include_regexes = Self::compile_path_regexes(&self.config.include_paths)?;
+        let exclude_regexes = crate::helpers::compile_regexes(&self.config.exclude_paths)?;
+        let include_regexes = crate::helpers::compile_regexes(&self.config.include_paths)?;
+
+        // ~keep robots.txt is read before the seed is pushed, so nothing is fetched before the
+        // site's policy is known. This loop previously never read `respect_robots_txt` at all:
+        // on wasm the setting was silently ignored and every URL was fetched.
+        let robots = if self.config.respect_robots_txt {
+            let client = crate::http::build_client(&self.config)?;
+            crate::helpers::fetch_robots_outcome(
+                url,
+                &self.config,
+                &client,
+                crate::helpers::default_robots_user_agent(&self.config),
+            )
+            .await
+        } else {
+            crate::helpers::RobotsOutcome::AllowAll
+        };
+
+        if let Some(reason) = robots.disallow_all_reason() {
+            let error = format!("robots_unreachable: {reason}");
+            self.event_emitter
+                .on_error(&crate::traits::ErrorEvent {
+                    url: url.to_owned(),
+                    error: error.clone(),
+                })
+                .await;
+            let _ = self
+                .store
+                .on_complete(&CrawlStats {
+                    pages_crawled: 0,
+                    pages_failed: 0,
+                    urls_discovered: 0,
+                    urls_filtered: 0,
+                    elapsed: std::time::Duration::ZERO,
+                })
+                .await;
+            self.event_emitter
+                .on_complete(&crate::traits::CompleteEvent { pages_crawled: 0 })
+                .await;
+            // ~keep `was_skipped` + `error` rather than a new field: `CrawlResult` is generated
+            // into every language binding and is not `#[non_exhaustive]`.
+            return Ok(CrawlResult::new(
+                Vec::new(),
+                url.to_owned(),
+                0,
+                true,
+                Some(error),
+                Vec::new(),
+                true,
+                Vec::new(),
+            ));
+        }
 
         let seed_dedup = crate::normalize::normalize_url_for_dedup(url);
         self.frontier.mark_seen(&seed_dedup).await?;
@@ -1152,6 +1193,10 @@ impl CrawlEngine {
                 }
                 if !include_regexes.is_empty() && entry.depth > 0 && !include_regexes.iter().any(|re| re.is_match(path))
                 {
+                    urls_filtered += 1;
+                    continue;
+                }
+                if !robots.allows(path) {
                     urls_filtered += 1;
                     continue;
                 }
