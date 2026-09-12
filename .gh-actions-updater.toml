@@ -16,10 +16,15 @@ ttl = "6h"
 
 [update]
 mode = "latest-tag"
+# Major floating tags only (actions/checkout@v7, xberg-io/actions/*@v1). SHA pins drifted
+# from the comments that named them: 153 xberg-io refs sat on the v1.14.1 commit while
+# still labelled v1.11.5, which no reader could catch. `fallback` keeps a full version for
+# the actions that publish no moving major tag (setup-uv stopped at v8). ~keep
+pin_style = "major"
 exclude = ["erlef/setup-beam", "rubygems/configure-rubygems-credentials"]
 include_prereleases = false
 preserve_major = false
-missing_ref = "warn"
+missing_ref = "fallback"
 
 [output]
 format = "human"
