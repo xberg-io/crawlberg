@@ -779,11 +779,26 @@ jobs:
           package-dir: packages/ruby
 
       - name: Build platform gem
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd packages/ruby
           bundle exec rake compile
           bundle exec rake build
+
+      # ~keep Windows needs the mingw environment that `build-ruby-gem@v1` already uses for the
+      # same compile, and this step previously ran in a plain bash shell without it. Cargo then
+      # fell back to the msvc host target while RubyInstaller's Ruby is mingw32, and rb-sys
+      # refused: `Ruby was built for target_os="mingw32", but Cargo is compiling for
+      # "x86_64-pc-windows-msvc"`. That failure took the WHOLE RubyGems target down in v1.6.1 --
+      # `publish-rubygems` needs the entire matrix green, so four already-built platform gems
+      # were discarded with it. Keep this invocation identical to the action's.
+      - name: Build platform gem (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $unixPath = ridk exec bash -lc "cygpath -au '$env:GITHUB_WORKSPACE/packages/ruby'"
+          ridk exec bash -lc "cd '$unixPath' && export CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ CARGO_BUILD_TARGET=x86_64-pc-windows-gnu && bundle exec rake compile && bundle exec rake build"
 
       - name: Drop source gem on non-canonical builders
         if: ${{ matrix.label != 'linux' }}
@@ -818,7 +833,14 @@ jobs:
           - { os: ubuntu-latest, label: linux-x86_64, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, label: linux-arm64, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest, label: macos-arm64, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, label: macos-x86_64, target: x86_64-apple-darwin }
+          # ~keep macos-x86_64 is deliberately absent. `setup-php` provisions PHP through
+          # Homebrew, and from 2026-09-01 Homebrew serves no x86_64 macOS bottles after Apple
+          # dropped Intel in macOS 27 -- the same cause that retired the Intel Homebrew bottle
+          # in 1ab804458. It worked as recently as v1.5.2 (2026-09-05); by v1.6.1 (2026-09-12)
+          # all THREE versions (8.2/8.3/8.4) failed identically at `setup-php` after ~25 minutes,
+          # before setup-rust and before any compile, while all 12 non-Intel-macOS legs passed.
+          # One failed leg skips `upload-php-pie-release` and therefore the whole Packagist
+          # target, so leaving it in costs the entire PHP release. No change here can fix it.
           - { os: windows-latest, label: windows-x86_64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v7
