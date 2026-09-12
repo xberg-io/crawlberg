@@ -1,15 +1,15 @@
 {
   "schema_version": "v1",
-  "source_hash": "blake3:5347de6de77eb0bf3791cdb67e2ffc69cf136f8e3e2ffd2af8176309e54ca8f3",
+  "source_hash": "blake3:e99dafda22d1fbda9226afec4ec1257d177ed85e42495c9d7c986bbe1d2cb877",
   "outputs": {
     ".claude-plugin/plugin.json": {
-      "content_hash": "blake3:2658d5cee8fecfff05a5c943d3fae009fc3b7e9570a4cf5c0817b6fff593ed97"
+      "content_hash": "blake3:32758df872e76c2da92fdac8aa31233d5f0930aa3ff6dfa47ea6f0062dc3870b"
     },
     ".codex-plugin/plugin.json": {
-      "content_hash": "blake3:2b27e0c81bcf64301a6062d89ad01c730ece4314b5818e480a826472d849e479"
+      "content_hash": "blake3:b5d785d206dfb2937d669ac08ed523acc1f5b30bf3cde70d9f8211f136b2bf27"
     },
     ".cursor-plugin/plugin.json": {
-      "content_hash": "blake3:24e8b77d5b142f363b83649899bd6cd6efeffa5e1284faf1eeff0f834664eb50"
+      "content_hash": "blake3:a7115f7b0b9d57cd655754c824053212e13b588b6655c8a6b8055dea26d2009b"
     },
     ".cursor-plugin/skills/automating-the-browser/SKILL.md": {
       "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
@@ -33,19 +33,19 @@
       "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
     },
     ".factory-plugin/plugin.json": {
-      "content_hash": "blake3:0f6a011eed8fcba311cd05bddcd6fa1be9f760523720c00c44e495452122dc9c"
+      "content_hash": "blake3:102bfeee707288a1361ced4a0a61721658457c35484510945850c869f176e1d7"
     },
     ".hermes/package/pyproject.toml": {
-      "content_hash": "blake3:f14f010dd04c2a6f14571a309d95b8f6b9b00dffaff378e4141c53f5b1abf36b"
+      "content_hash": "blake3:4a929bb9e656936ab48eb854a9192ce28b3b3bd00a37864aae30bb7475309cff"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/__init__.py": {
-      "content_hash": "blake3:a8fd036ec4b0d21a219b710e79524c8a846c16beab223633706a363a0c55c579"
+      "content_hash": "blake3:15b016bc7761594139aefce5cf7366c2f2ff869d47ffc17da635cc08dafab140"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/hermes.py": {
       "content_hash": "blake3:24c219d28842d306ab1a4dea4970228462ed80a0965bb56f03101c2e82de1b1e"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/plugin.yaml": {
-      "content_hash": "blake3:5e119f8a69d0fbbb5877694b60f530ca0b69c5c5c57f37750ea1d9e059895c24"
+      "content_hash": "blake3:26b72972561199daa35b5528baae0f7704e4aeeb8ea079dde3fbfe5825576ff0"
     },
     ".hermes/package/src/crawlberg_hermes_plugin/skills/automating-the-browser/SKILL.md": {
       "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
@@ -69,13 +69,13 @@
       "content_hash": "blake3:a011fca3e4de3a4e6442e1779c4425d884cafb3369765d37e52d2f01dd8671bb"
     },
     ".hermes/plugins/crawlberg/__init__.py": {
-      "content_hash": "blake3:a8fd036ec4b0d21a219b710e79524c8a846c16beab223633706a363a0c55c579"
+      "content_hash": "blake3:15b016bc7761594139aefce5cf7366c2f2ff869d47ffc17da635cc08dafab140"
     },
     ".hermes/plugins/crawlberg/hermes.py": {
       "content_hash": "blake3:24c219d28842d306ab1a4dea4970228462ed80a0965bb56f03101c2e82de1b1e"
     },
     ".hermes/plugins/crawlberg/plugin.yaml": {
-      "content_hash": "blake3:5e119f8a69d0fbbb5877694b60f530ca0b69c5c5c57f37750ea1d9e059895c24"
+      "content_hash": "blake3:26b72972561199daa35b5528baae0f7704e4aeeb8ea079dde3fbfe5825576ff0"
     },
     ".hermes/plugins/crawlberg/skills/automating-the-browser/SKILL.md": {
       "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"
@@ -111,13 +111,13 @@
       "content_hash": "blake3:dc62498695d3905dcec06f7efdbdecf346fac66daf775b4d60de2c6e7c833dd7"
     },
     "gemini-extension.json": {
-      "content_hash": "blake3:666ca87914dda595d82a390c1079818b6404d944f9ecea5597a89990f6add2cd"
+      "content_hash": "blake3:99d907a1fc74f4ad2d16211258a1f5e78b65352dff4ed4fd7e193905fc0560f9"
     },
     "kimi.plugin.json": {
-      "content_hash": "blake3:1ba4c0a0909db2e078a7185e65e117a5e5b9410b69eda9bdee05a7fa3ce9d711"
+      "content_hash": "blake3:076225086ef27f7b2f1a6baa12d04f2dc789da1baeaced3ca0a8d1d83ee887f9"
     },
     "package.json": {
-      "content_hash": "blake3:7799134dd10a8b5c5b997005b7967eab55dd1eb52cc97b0b21a45e3227b579db"
+      "content_hash": "blake3:18e3470530c8cc111bd4c5a39e34e7652e47611c3a08a49d495d25d73355b1bd"
     },
     "skills/automating-the-browser/SKILL.md": {
       "content_hash": "blake3:c099a207dd4d659bcbd8000afd8d104f51644c894a2073d064b670ad7e7dee10"

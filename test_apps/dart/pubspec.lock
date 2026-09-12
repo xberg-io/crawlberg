@@ -85,10 +85,10 @@ packages:
     dependency: "direct main"
     description:
       name: crawlberg
-      sha256: "0ea7b16ad595e8e460f8a3f5ecb4b2a7c16289f23adbd188a4cc179dc93c4b92"
+      sha256: b8024fab17ad09ede03dd230035c20f79c47ee19d0ad65791cc643dc2af967e8
       url: "https://pub.dev"
     source: hosted
-    version: "1.4.1"
+    version: "1.6.1"
   crypto:
     dependency: transitive
     description:
@@ -117,10 +117,10 @@ packages:
     dependency: transitive
     description:
       name: flutter_rust_bridge
-      sha256: e87d6b9ee934dcd24a128ccb2bd91905d2d5fe5c06245d6a8f5477d4907a437a
+      sha256: ec69331e2335ab4d456c0a9fc700892c2c85b72b9c0cb39df3ecfe8833d5d5c8
       url: "https://pub.dev"
     source: hosted
-    version: "2.12.0"
+    version: "2.13.0"
   freezed_annotation:
     dependency: transitive
     description:

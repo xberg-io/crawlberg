@@ -4,6 +4,18 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-09-12
+
+Repairs the v1.6.1 release pipeline, which shipped to crates.io, npm, pub.dev, Maven and Hex but missed RubyGems, NuGet and Packagist.
+
+### Fixed
+
+- Report real progress in the `crawl.pages_completed` field of the `crawl.loop.iteration` span during a streaming crawl; it read a buffer that streaming never fills and so was pinned at 0 for every iteration.
+- Size the single-seed `crawl_stream` channel from the same default concurrency as every other caller, instead of a hardcoded 4 that matched neither the engine default nor the batch stream beside it.
+- Build the Ruby Windows gem against the mingw target the RubyInstaller toolchain actually uses, so rb-sys can generate bindings; the msvc host target made it refuse and took the entire RubyGems release down with it.
+- Pack the NuGet package against the runtime identifiers that are actually built. `win-arm64` was declared but never produced, so packing failed on its missing native assets.
+- Stop building the PHP extension for Intel macOS, where `setup-php` can no longer provision PHP; one failed leg skipped the whole Packagist target.
+
 ## [1.6.1] - 2026-09-12
 
 Robots.txt handling now fails closed. `respect_robots_txt` still defaults to `false`, so only callers that opted in are affected.
