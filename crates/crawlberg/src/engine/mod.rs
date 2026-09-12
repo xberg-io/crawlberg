@@ -885,7 +885,6 @@ impl CrawlEngine {
                 RedirectResolution::Fetched(outcome) => outcome,
                 // ~keep A scrape passes no policy, so nothing refuses a hop here: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
-                // ~keep Reporting the refusal keeps the arm correct for a caller that passes one.
                 RedirectResolution::Refused(refusal) => return Err(refusal.into_error()),
             };
 

@@ -1,9 +1,4 @@
 //! Every URL the seed's redirect chain reaches is judged before it is requested.
-//!
-//! The seed is fetched once, by resolving its redirects. The path filters and robots.txt
-//! were applied to the URL the chain lands on only after the whole chain had been fetched,
-//! so a disallowed or excluded target still received its request, and its `Crawl-delay`
-//! reached the rate limiter after the requests it governs.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

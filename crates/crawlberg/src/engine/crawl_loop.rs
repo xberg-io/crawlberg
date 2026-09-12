@@ -112,28 +112,17 @@ fn robots_origin_key(parsed: &Url) -> String {
     )
 }
 
-/// What a [`follow_redirects`] call produced.
 pub(crate) enum RedirectResolution {
-    /// The chain ended on a response.
     Fetched(RedirectOutcome),
     /// The policy refused a URL in the chain, so it was never requested.
     Refused(PolicyRefusal),
 }
 
-/// Why [`RedirectPolicy`] refused a URL.
 pub(crate) enum PolicyRefusal {
     /// robots.txt forbids it, with the reason the crawl reports.
-    Blocked {
-        /// The refused URL, which the result reports as the crawl's final URL.
-        url: String,
-        /// The reason, from [`robots_block_reason`].
-        reason: String,
-    },
+    Blocked { url: String, reason: String },
     /// A path filter rejects it. The crawl reports no error, matching the loop's filter.
-    Filtered {
-        /// The refused URL, which the result reports as the crawl's final URL.
-        url: String,
-    },
+    Filtered { url: String },
 }
 
 impl PolicyRefusal {
@@ -158,8 +147,7 @@ impl PolicyRefusal {
 ///
 /// ~keep [`follow_redirects`] consults this immediately before every request it makes, so a
 /// ~keep redirect target is judged by its own origin's rules and refused before the request
-/// ~keep goes out. Judging the chain from its call site reads the seed's file and fetches
-/// ~keep every hop first, which is one request too late for each of them.
+/// ~keep goes out. Judging the chain from its call site is one request too late for each hop.
 pub(crate) struct RedirectPolicy<'a> {
     engine: &'a CrawlEngine,
     client: &'a reqwest::Client,
@@ -186,8 +174,7 @@ impl<'a> RedirectPolicy<'a> {
         }
     }
 
-    /// Decide whether the crawl may request `url`, and publish its origin's `Crawl-delay`
-    /// to the rate limiter before the request that delay governs.
+    /// Publishes the origin's `Crawl-delay` to the rate limiter before the request it governs.
     ///
     /// `Ok(None)` admits the URL. `Err` is the rate limiter's, not a refusal.
     async fn admits(&mut self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
@@ -618,9 +605,7 @@ impl CrawlEngine {
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
-        // ~keep The policy goes into the redirect resolution below rather than bracketing it.
-        // ~keep A redirect can leave the seed's robots.txt scope of scheme, host and port, so
-        // ~keep each URL the chain requests is judged against its own origin's file first.
+        // ~keep `RedirectPolicy` goes into the redirect resolution below rather than around it.
         let mut policy = RedirectPolicy::new(self, &client, &exclude_regexes);
         let seed = self
             .resolve_initial_redirects(url, max_redirects, &mut state, &mut policy)
