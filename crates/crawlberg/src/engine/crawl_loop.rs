@@ -777,6 +777,18 @@ impl CrawlEngine {
             if let Some(ref sink) = self.event_sink {
                 sink.emit(error_event).await;
             }
+            // ~keep `EventSink` and `EventEmitter` are separate traits on separate engine
+            // ~keep fields; emitting to the sink does not reach an emitter. Every bail-out
+            // ~keep routed through here skipped the emitter entirely, so a consumer built on
+            // ~keep callbacks saw nothing at all for a seed failure -- and since 1.6.1 this
+            // ~keep path also serves "robots.txt unreachable" and "seed disallowed", so an
+            // ~keep origin with a 5xx robots.txt went completely silent on that channel.
+            self.event_emitter
+                .on_error(&ErrorEvent {
+                    url: final_url.clone(),
+                    error: error_msg.clone(),
+                })
+                .await;
         }
         let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
         if let Some(sender) = tx {
@@ -785,6 +797,11 @@ impl CrawlEngine {
         if let Some(ref sink) = self.event_sink {
             sink.emit(complete_event).await;
         }
+        // ~keep Missing alongside `on_error`: without it a callback consumer sees neither a
+        // ~keep failure nor a completion, which reads as a hung crawl rather than a failed one.
+        self.event_emitter
+            .on_complete(&CompleteEvent { pages_crawled: 0 })
+            .await;
         state.into_result(final_url)
     }
 
