@@ -242,7 +242,8 @@ impl<'a> RedirectPolicy<'a> {
         }
 
         let origin = robots_origin_key(&parsed);
-        if !self.outcomes.contains_key(&origin) {
+        let first_visit = !self.outcomes.contains_key(&origin);
+        if first_visit {
             let outcome = if self.engine.config.respect_robots_txt {
                 fetch_robots_outcome(
                     url,
@@ -254,12 +255,6 @@ impl<'a> RedirectPolicy<'a> {
             } else {
                 RobotsOutcome::AllowAll
             };
-            // ~keep Publish this origin's `Crawl-delay` the moment its file is first read,
-            // ~keep which is before any request to it goes out. The call this replaces ran
-            // ~keep once for the seed before the chain and once for a changed final origin;
-            // ~keep doing it here covers every origin in the chain instead, and keeps the
-            // ~keep delay ahead of the request rather than behind it.
-            self.engine.apply_crawl_delay(&outcome, &parsed).await?;
             self.outcomes.insert(origin.clone(), outcome);
         }
         let outcome = self
@@ -271,6 +266,15 @@ impl<'a> RedirectPolicy<'a> {
                 url: url.to_owned(),
                 reason,
             }));
+        }
+        // ~keep Published once per origin, after the origin is admitted and before the
+        // ~keep request this call precedes. The call this replaces ran once for the seed
+        // ~keep before the chain and once for a changed final origin; doing it here covers
+        // ~keep every origin in the chain instead, and keeps the delay ahead of the request
+        // ~keep rather than behind it. Publishing it before the block check above would make
+        // ~keep a refused URL wait out a delay for a request that is never sent.
+        if first_visit {
+            self.engine.apply_crawl_delay(outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
         Ok(None)
@@ -677,9 +681,6 @@ impl CrawlEngine {
         let Some(seed) = seed else {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         };
-
-        let final_parsed = Url::parse(&final_url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
-        self.apply_crawl_delay(&robots, &final_parsed).await?;
 
         let dedup_key = normalize_url_for_dedup(&final_url);
         self.frontier.mark_seen(&dedup_key).await?;

@@ -147,18 +147,37 @@ use crawlberg::{CrawlEngine, CrawlError};
 
 const DISALLOW_PRIVATE: &str = "User-agent: *\nDisallow: /private\n";
 
-/// Records the `Crawl-delay` values published to the limiter, per domain.
+/// The ordered log of every call the crawl made to the rate limiter.
 ///
-/// ~keep The log is shared through an `Arc` because `rate_limiter()` takes the limiter by
-/// ~keep value and wraps it itself, so the test cannot hold the limiter to read it back.
-#[derive(Debug, Clone, Default)]
-struct RecordingRateLimiter {
-    delays: Arc<Mutex<Vec<(String, Duration)>>>,
+/// ~keep Shared through an `Arc` because `CrawlEngineBuilder::rate_limiter` takes the limiter
+/// ~keep by value and wraps it in an `Arc<dyn RateLimiter>` the test cannot reach again, so
+/// ~keep the log is cloned out first.
+#[derive(Clone, Default)]
+struct LimiterCalls(Arc<Mutex<Vec<String>>>);
+
+impl LimiterCalls {
+    fn record(&self, event: String) {
+        self.0.lock().expect("the call log must not be poisoned").push(event);
+    }
+
+    fn events(&self) -> Vec<String> {
+        self.0.lock().expect("the call log must not be poisoned").clone()
+    }
 }
+
+/// Records the order of `set_crawl_delay` and `acquire` without waiting.
+///
+/// ~keep Waiting is what the real limiter does with a published delay; the ordering is what
+/// ~keep decides whether it has one to wait on, so recording it keeps the test off the clock.
+/// ~keep The events carry no domain on purpose: every wiremock server is on `127.0.0.1` and
+/// ~keep differs only by port, so the delay value is what distinguishes one origin's file
+/// ~keep from another's.
+struct RecordingRateLimiter(LimiterCalls);
 
 #[async_trait::async_trait]
 impl RateLimiter for RecordingRateLimiter {
     async fn acquire(&self, _domain: &str) -> Result<(), CrawlError> {
+        self.0.record("acquire".to_owned());
         Ok(())
     }
 
@@ -166,56 +185,75 @@ impl RateLimiter for RecordingRateLimiter {
         Ok(())
     }
 
-    async fn set_crawl_delay(&self, domain: &str, delay: Duration) -> Result<(), CrawlError> {
-        self.delays
-            .lock()
-            .expect("delay log mutex must not be poisoned")
-            .push((domain.to_owned(), delay));
+    async fn set_crawl_delay(&self, _domain: &str, delay: Duration) -> Result<(), CrawlError> {
+        self.0.record(format!("set_crawl_delay {}s", delay.as_secs()));
         Ok(())
     }
+}
+
+fn engine_recording_limiter(config: crawlberg::CrawlConfig) -> (CrawlEngine, LimiterCalls) {
+    let calls = LimiterCalls::default();
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .rate_limiter(RecordingRateLimiter(calls.clone()))
+        .build()
+        .expect("engine builds");
+    (engine, calls)
 }
 
 async fn mount_robots_with_delay(mock: &MockServer, seconds: u64) {
     mount_robots(mock, &format!("User-agent: *\nAllow: /\nCrawl-delay: {seconds}\n")).await;
 }
 
+/// `Crawl-delay` must reach the rate limiter before the request it governs.
+///
+/// Every request passes `acquire`, and a delay published afterwards throttles nothing that
+/// has already gone out.
 #[tokio::test]
-async fn should_publish_each_origins_crawl_delay_even_when_the_chain_leaves_that_origin() {
-    // ~keep The seed origin declares a Crawl-delay and then redirects away. Reading robots
-    // ~keep only for the origin the chain LANDS on loses the seed's delay entirely, which is
-    // ~keep the origin whose rules governed the request that was actually made to it.
-    let seed_host = MockServer::start().await;
-    let target = MockServer::start().await;
+async fn should_publish_the_seeds_crawl_delay_before_the_seed_request() {
+    let mock = MockServer::start().await;
+    mount_robots_with_delay(&mock, 3).await;
+    mount_page(&mock, "/", "<html><body>seed</body></html>").await;
 
-    mount_robots_with_delay(&seed_host, 2).await;
-    mount_redirect(&seed_host, "/", &format!("{}/landing.html", target.uri())).await;
-    mount_robots(&target, ALLOW_ALL).await;
+    let (engine, calls) = engine_recording_limiter(config().build());
+    let result = engine.crawl(&format!("{}/", mock.uri())).await.expect("crawl runs");
+
+    assert_eq!(result.pages.len(), 1, "the seed is the one crawled page");
+    assert_eq!(
+        calls.events(),
+        vec!["set_crawl_delay 3s".to_owned(), "acquire".to_owned()],
+        "the seed's Crawl-delay must be published before the seed is requested"
+    );
+}
+
+/// A redirect can leave the seed's origin, and each origin sets its own `Crawl-delay`.
+///
+/// ~keep Reading robots only for the origin the chain LANDS on loses the seed's delay
+/// ~keep entirely, and that is the origin whose rules governed the request actually made to
+/// ~keep it.
+#[tokio::test]
+async fn should_publish_each_origins_crawl_delay_before_its_own_request() {
+    let target = MockServer::start().await;
+    mount_robots_with_delay(&target, 2).await;
     mount_page(&target, "/landing.html", "<html><body>landing</body></html>").await;
 
-    let limiter = RecordingRateLimiter::default();
-    let engine = CrawlEngine::builder()
-        .config(config().build())
-        .rate_limiter(limiter.clone())
-        .build()
-        .expect("engine builds");
-    let _ = engine.crawl(&seed_host.uri()).await.expect("crawl runs");
+    let seed = MockServer::start().await;
+    mount_robots_with_delay(&seed, 1).await;
+    mount_redirect(&seed, "/", &format!("{}/landing.html", target.uri())).await;
 
-    let seed_domain = url::Url::parse(&seed_host.uri())
-        .expect("seed uri parses")
-        .host_str()
-        .expect("seed uri has a host")
-        .to_owned();
-    let recorded = limiter
-        .delays
-        .lock()
-        .expect("delay log mutex must not be poisoned")
-        .clone();
-    assert!(
-        recorded
-            .iter()
-            .any(|(domain, delay)| *domain == seed_domain && *delay == Duration::from_secs(2)),
-        "the seed origin's Crawl-delay must reach the limiter before its request goes out, \
-         but only these delays were published: {recorded:?}"
+    let (engine, calls) = engine_recording_limiter(config().build());
+    let result = engine.crawl(&format!("{}/", seed.uri())).await.expect("crawl runs");
+
+    assert_eq!(result.pages.len(), 1, "the redirect target is the crawl's one page");
+    assert_eq!(
+        calls.events(),
+        vec![
+            "set_crawl_delay 1s".to_owned(),
+            "acquire".to_owned(),
+            "set_crawl_delay 2s".to_owned(),
+            "acquire".to_owned(),
+        ],
+        "each origin's Crawl-delay must be published before that origin is requested"
     );
 }
 
