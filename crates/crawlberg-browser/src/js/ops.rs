@@ -101,9 +101,7 @@ fn op_dom(state: &OpState, #[string] cmd: String, #[string] arg1: String, #[stri
         "document_element" => {
             for cid in dom.children(dom.document()) {
                 if let Some(n) = dom.get_node(cid)
-                    && n.as_element()
-                        .map(|name| name.local.as_ref() == "html")
-                        .unwrap_or(false)
+                    && n.as_element().map(|name| &*name.local == "html").unwrap_or(false)
                 {
                     return cid.index().to_string();
                 }
@@ -168,7 +166,7 @@ fn op_dom(state: &OpState, #[string] cmd: String, #[string] arg1: String, #[stri
                 .get_node(NodeId::new(nid))
                 .map(|n| match &n.data {
                     NodeData::Document => "#document".to_string(),
-                    NodeData::Element { name, .. } => name.local.as_ref().to_ascii_uppercase(),
+                    NodeData::Element { name, .. } => (*name.local).to_ascii_uppercase(),
                     NodeData::Text { .. } => "#text".to_string(),
                     NodeData::Comment { .. } => "#comment".to_string(),
                     NodeData::Doctype { name, .. } => name.clone(),
@@ -208,7 +206,7 @@ fn op_dom(state: &OpState, #[string] cmd: String, #[string] arg1: String, #[stri
             let nid = arg1.parse::<u32>().unwrap_or(0);
             let name = dom
                 .get_node(NodeId::new(nid))
-                .and_then(|n| n.as_element().map(|name| name.local.as_ref().to_ascii_uppercase()))
+                .and_then(|n| n.as_element().map(|name| (*name.local).to_ascii_uppercase()))
                 .unwrap_or_default();
             serde_json::to_string(&name).unwrap_or("\"\"".into())
         }
@@ -264,7 +262,7 @@ fn op_dom(state: &OpState, #[string] cmd: String, #[string] arg1: String, #[stri
             let nid = arg1.parse::<u32>().unwrap_or(0);
             dom.with_node_mut(NodeId::new(nid), |n| {
                 if let NodeData::Element { attrs, .. } = &mut n.data {
-                    attrs.retain(|a| a.name.local.as_ref() != arg2.as_str());
+                    attrs.retain(|a| &*a.name.local != arg2.as_str());
                 }
             });
             "true".into()

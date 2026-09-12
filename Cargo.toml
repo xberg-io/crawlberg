@@ -58,7 +58,12 @@ clap = { version = "4", features = ["derive"] }
 crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.6.0" }
 crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.6.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
-# ~keep selectors 0.40 exposes cssparser 0.37 types in its parser traits.
+# ~keep Held at 0.37, and cannot move while `selectors` is at 0.40: selectors-0.40.0 itself
+# depends on cssparser 0.37 and exposes those types in the parser traits that
+# crawlberg-browser/src/dom/selector.rs implements. cssparser has exactly one consumer in
+# this workspace -- that file -- and every use there is in service of those traits, so
+# upgrading to 0.38 would split the dep graph and break the impls for no gain. Revisit only
+# when a selectors release picks up cssparser 0.38.
 cssparser = "0.37"
 dashmap = "6"
 deno_core = "0.411"
@@ -71,12 +76,15 @@ ext-php-rs = "0.15.15"
 flate2 = "1"
 futures = "0.3"
 html-to-markdown-rs = { version = "3.12", features = ["full"] }
-html5ever = "0.39"
+# ~keep 0.40 duplicates against html-to-markdown-rs 3.12, which pins html5ever 0.39. That is
+# accepted: no html5ever type crosses between the two crates (we hand it HTML strings), so the
+# cost is build time, not correctness.
+html5ever = "0.40"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
 liter-llm = { version = "2.0", features = ["native-http"] }
-markup5ever = "0.39"
+markup5ever = "0.40"
 memchr = "2"
 minijinja = "2"
 napi = { version = "3", default-features = false, features = ["napi8", "tokio_rt"] }

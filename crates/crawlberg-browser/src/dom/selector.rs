@@ -373,9 +373,7 @@ impl<'a> Element for DomElement<'a> {
         self.tree
             .with_node(self.node_id, |n| {
                 n.as_element()
-                    .map(|name| {
-                        matches!(name.local.as_ref(), "a" | "area" | "link") && n.get_attribute("href").is_some()
-                    })
+                    .map(|name| matches!(&*name.local, "a" | "area" | "link") && n.get_attribute("href").is_some())
                     .unwrap_or(false)
             })
             .unwrap_or(false)
@@ -535,7 +533,7 @@ mod tests {
         let result = tree.query_selector("h1").unwrap();
         assert!(result.is_some());
         let node = tree.get_node(result.unwrap()).unwrap();
-        assert_eq!(node.as_element().unwrap().local.as_ref(), "h1");
+        assert_eq!(&*node.as_element().unwrap().local, "h1");
     }
 
     #[test]
@@ -567,7 +565,7 @@ mod tests {
         let result = tree.query_selector("#outer span").unwrap();
         assert!(result.is_some());
         let node = tree.get_node(result.unwrap()).unwrap();
-        assert_eq!(node.as_element().unwrap().local.as_ref(), "span");
+        assert_eq!(&*node.as_element().unwrap().local, "span");
     }
 
     #[test]

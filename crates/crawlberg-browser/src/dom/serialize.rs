@@ -29,13 +29,13 @@ impl DomTree {
                 buf.push('>');
             }
             NodeData::Element { name, attrs, .. } => {
-                let tag = name.local.as_ref();
+                let tag: &str = &name.local;
                 if include_self {
                     buf.push('<');
                     buf.push_str(tag);
                     for attr in attrs {
                         buf.push(' ');
-                        let attr_name = attr.name.local.as_ref();
+                        let attr_name: &str = &attr.name.local;
                         buf.push_str(attr_name);
                         buf.push_str("=\"");
                         escape_attr(&attr.value, buf);
@@ -59,7 +59,7 @@ impl DomTree {
                     .and_then(|pid| {
                         self.with_node(pid, |p| {
                             p.as_element()
-                                .map(|name| is_raw_text_element(name.local.as_ref()))
+                                .map(|name| is_raw_text_element(&name.local))
                                 .unwrap_or(false)
                         })
                     })

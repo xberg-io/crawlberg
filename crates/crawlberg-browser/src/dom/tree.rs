@@ -105,7 +105,7 @@ impl Node {
 
     pub fn get_attribute(&self, name: &str) -> Option<&str> {
         self.attrs()?.iter().find_map(|a| {
-            if a.name.local.as_ref() == name {
+            if &*a.name.local == name {
                 Some(a.value.as_str())
             } else {
                 None
@@ -115,7 +115,7 @@ impl Node {
 
     pub fn set_attribute(&mut self, name: &str, value: String) {
         if let NodeData::Element { attrs, .. } = &mut self.data {
-            if let Some(attr) = attrs.iter_mut().find(|a| a.name.local.as_ref() == name) {
+            if let Some(attr) = attrs.iter_mut().find(|a| &*a.name.local == name) {
                 attr.value = value;
             } else {
                 attrs.push(Attribute {
@@ -185,7 +185,7 @@ impl DomTree {
         };
 
         if let NodeData::Element { ref attrs, .. } = data
-            && let Some(id_attr) = attrs.iter().find(|a| a.name.local.as_ref() == "id")
+            && let Some(id_attr) = attrs.iter().find(|a| &*a.name.local == "id")
         {
             inner.id_index.insert(id_attr.value.clone(), id);
         }
@@ -495,16 +495,11 @@ impl DomTree {
         let doc = self.document();
         for child in self.children(doc) {
             if let Some(n) = self.get_node(child)
-                && n.as_element()
-                    .map(|name| name.local.as_ref() == "html")
-                    .unwrap_or(false)
+                && n.as_element().map(|name| &*name.local == "html").unwrap_or(false)
             {
                 for html_child in self.children(child) {
                     if let Some(hc) = self.get_node(html_child)
-                        && hc
-                            .as_element()
-                            .map(|name| name.local.as_ref() == "body")
-                            .unwrap_or(false)
+                        && hc.as_element().map(|name| &*name.local == "body").unwrap_or(false)
                     {
                         return html_child;
                     }
