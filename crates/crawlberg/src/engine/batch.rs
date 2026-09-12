@@ -60,7 +60,10 @@ impl CrawlEngine {
         let url = url.to_owned();
         let engine = self.with_isolated_frontier();
 
-        let channel_size = self.config.max_concurrent.unwrap_or(4) * STREAM_BUFFER_MULTIPLIER;
+        // ~keep The fallback must match `DEFAULT_MAX_CONCURRENT`, which is what the crawl loop
+        // actually uses when `max_concurrent` is unset. A hardcoded 4 here sized this channel for a
+        // concurrency the engine never runs at, and disagreed with the batch variant below.
+        let channel_size = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT) * STREAM_BUFFER_MULTIPLIER;
         let (tx, rx) = tokio::sync::mpsc::channel(channel_size);
 
         tokio::spawn(
