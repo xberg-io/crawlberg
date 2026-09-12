@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.6.2"
+version = "1.6.3"
 dependencies = [
  "ahash",
  "aho-corasick",

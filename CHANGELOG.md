@@ -4,6 +4,25 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-09-12
+
+Redirect targets are now judged before they are requested. `exclude_paths` gains one deliberate behaviour change, described below.
+
+### Changed
+
+- Apply `exclude_paths` to every URL in a seed's redirect chain, not only the URL the chain lands on. A chain that passes through an excluded path is now refused, where it previously followed the redirect and crawled the target.
+
+### Fixed
+
+- Read a redirect target's own robots.txt before requesting it, and evaluate every hop rather than only the URL the chain ends on; each origin's file is read once per crawl. Thanks to @tobocop2.
+- Publish each origin's `Crawl-delay` when its robots.txt is first read, so the delay reaches the rate limiter before any request to that origin instead of after the whole chain.
+- Refuse a redirect URL whose origin cannot be determined, rather than admitting it: in the component that decides whether a request may go out, a parse failure must not become permission.
+- Report the redirects already followed, and keep the cookies they set, when a later hop is refused.
+- Report a crawl that stops before its loop begins to `EventEmitter` consumers. Neither `on_error` nor `on_complete` fired for a seed failure, an unreachable robots.txt, or a disallowed seed, so a callback-driven consumer could not distinguish a failed crawl from a hung one.
+- Construct `crawlberg-browser`'s test isolates inside a tokio runtime. Without one, deno_core aborts the process from a V8 background thread, which made `cargo test -p crawlberg-browser --lib` fail intermittently under parallel execution with no panic or backtrace.
+- Inject the loopback SSRF policy in `crawlberg-browser`'s tests instead of setting a process environment variable, which could abort the process when written while another test read it.
+- Add the gnu Rust target before building the Ruby Windows gem, so the platform gem compiles and RubyGems receives the release.
+
 ## [1.6.2] - 2026-09-12
 
 Repairs the v1.6.1 release pipeline, which shipped to crates.io, npm, pub.dev, Maven and Hex but missed RubyGems, NuGet and Packagist.
