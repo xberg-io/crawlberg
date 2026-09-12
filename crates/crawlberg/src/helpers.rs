@@ -96,13 +96,16 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         CrawlError::NotFound { .. }
         | CrawlError::Unauthorized { .. }
         | CrawlError::Forbidden { .. }
-        | CrawlError::WafBlocked { .. }
         | CrawlError::Gone { .. } => RobotsOutcome::AllowAll,
         // ~keep Everything else is RFC 9309 2.3.1.4 "unreachable". The catch-all arm must be
         // the closed one: fail-closed is only sound if an unrecognised failure denies.
         // `RateLimited` (429) lands here deliberately -- it is a 4xx that the RFC files under
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
+        // `WafBlocked` is here for a different reason: `http_fetch` raises it for a 403 but also for
+        // a WAF fingerprint on a *2xx* body or header (http.rs), so it does not imply a 4xx at all.
+        // What it does imply is that the bytes we hold are an interstitial rather than the origin's
+        // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
         _ => RobotsOutcome::DisallowAll {
             reason: error.to_string(),
         },
@@ -200,6 +203,20 @@ mod tests {
                 "{error} must be treated as unreachable (disallow all)"
             );
         }
+    }
+
+    #[test]
+    fn should_disallow_all_when_robots_txt_is_behind_a_waf() {
+        // ~keep `WafBlocked` is raised for a WAF fingerprint on a 2xx body as well as for a 403, so
+        // the file was not read in either case and "unavailable" would be the wrong reading.
+        let outcome = outcome_for_fetch_error(&CrawlError::WafBlocked {
+            vendor: "cloudflare".to_owned(),
+            message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
+        });
+        assert!(
+            is_disallow_all(&outcome),
+            "a WAF interstitial in place of robots.txt must fail closed"
+        );
     }
 
     #[test]
