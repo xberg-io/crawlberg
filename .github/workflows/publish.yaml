@@ -797,6 +797,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # ~keep The gnu TARGET must be added to the toolchain that is actually active here.
+          # ~keep `build-ruby-gem` installs a gnu-host toolchain and renames rust-toolchain.toml
+          # ~keep to .disabled for its own compile, then RESTORES it -- so by this step the
+          # ~keep active toolchain is the pinned 1.95 whose only extra target is
+          # ~keep wasm32-unknown-unknown, and cargo fails with `can't find crate for core`.
+          # ~keep Installing a gnu toolchain is not the same as adding the gnu target.
+          rustup target add x86_64-pc-windows-gnu
           $unixPath = ridk exec bash -lc "cygpath -au '$env:GITHUB_WORKSPACE/packages/ruby'"
           ridk exec bash -lc "cd '$unixPath' && export CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ CARGO_BUILD_TARGET=x86_64-pc-windows-gnu && bundle exec rake compile && bundle exec rake build"
 
