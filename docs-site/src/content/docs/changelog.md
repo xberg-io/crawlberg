@@ -4,6 +4,30 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-12
+
+Robots.txt handling now fails closed. `respect_robots_txt` still defaults to `false`, so only callers that opted in are affected.
+
+### Changed
+
+- Regenerate language bindings, test harnesses, and package metadata with Alef 0.85.19.
+- Upgrade html5ever and markup5ever to 0.40, refresh the Rust lockfile, and update the Node, Python, Ruby, and Elixir toolchains; cssparser stays at 0.37 because selectors 0.40 still depends on it.
+- Migrate the Node workspaces to pnpm 12 and refresh JavaScript dependencies.
+- Refresh the pinned GitHub Actions, correct two pins whose comments named the wrong major, and move setup-uv to 10.1.0.
+
+### Fixed
+
+- Build the robots.txt URL from the seed's origin, so a port-bearing seed reads its own file instead of another origin's, and a seed carrying credentials no longer sends them with the robots.txt request.
+- Fail closed when robots.txt is unreachable, a 5xx or a network failure, as RFC 9309 section 2.3.1.4 requires; a 4xx response still means crawl with no rules.
+- Treat HTTP 429 on robots.txt as unreachable rather than unavailable, a deliberate divergence from a literal reading of RFC 9309 section 2.3.1.3.
+- Treat a WAF interstitial served in place of robots.txt as unreachable, since it is raised for a fingerprint on a 2xx response as well as for a 403.
+- Report a fail-closed crawl through the existing `was_skipped` and `error` fields, the error prefixed `robots_unreachable: `, so no public struct gained a field.
+- Read robots.txt before the seed request, so a disallowed seed costs the site no requests and `Crawl-delay` applies to the seed as well.
+- Fetch the seed once instead of twice by carrying the redirect-resolution response into the crawl as the depth-0 page.
+- Report `is_allowed: false` from `scrape()` when robots.txt cannot be read, instead of failing open and parsing HTTP error bodies as policy.
+- Honour `respect_robots_txt` in the WebAssembly crawl loop, which previously ignored it and fetched, returned, and followed disallowed URLs.
+- Key the browser page loader's robots cache by origin, so two ports on one host no longer share one answer.
+
 ## [1.6.0] - 2026-09-10
 
 ### Changed
