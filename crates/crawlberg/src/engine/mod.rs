@@ -883,10 +883,9 @@ impl CrawlEngine {
             let max_redirects = self.config.max_redirects;
             let outcome = match follow_redirects(self, url, max_redirects, None).await? {
                 RedirectResolution::Fetched(outcome) => outcome,
-                // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
+                // ~keep A scrape passes no policy, so nothing refuses a hop here: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
-                // ~keep Reporting the refusal keeps this arm correct for a caller that does pass
-                // ~keep one, where a panic or a discarded refusal would not be.
+                // ~keep Reporting the refusal keeps the arm correct for a caller that passes one.
                 RedirectResolution::Refused(refusal) => return Err(refusal.into_error()),
             };
 

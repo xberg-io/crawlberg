@@ -102,16 +102,6 @@ fn url_host(url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Canonicalize a URL for redirect-cycle-set membership.
-///
-/// ~keep The seed comes from the caller's raw string, but every hop key comes from
-/// ~keep `resolve_redirect`, which WHATWG-serializes via `Url::join` (e.g. adding a
-/// ~keep trailing slash to a bare origin). Without canonicalizing the seed the same
-/// ~keep way, a chain that returns to the seed URL in a different-but-equivalent form
-/// ~keep (e.g. `http://host:port` vs `http://host:port/`) is missed by `seen.contains`
-/// ~keep on its first return and only caught one hop later. Falls back to the original
-/// ~keep string when it fails to parse, so an unparsable URL still participates in
-/// ~keep cycle detection via literal string equality.
 /// The key a robots.txt file is cached under: one file covers exactly one origin.
 fn robots_origin_key(parsed: &Url) -> String {
     format!(
@@ -167,10 +157,9 @@ impl PolicyRefusal {
 /// The crawl's per-URL policy: the path filters, then robots.txt for the URL's own origin.
 ///
 /// ~keep [`follow_redirects`] consults this immediately before every request it makes, so a
-/// ~keep redirect target is judged by the rules of the origin it belongs to and is refused
-/// ~keep before the request goes out. Judging the chain at its call site instead reads the
-/// ~keep seed's file, fetches the whole chain, and only then asks whether the target allowed
-/// ~keep it, which is one request too late.
+/// ~keep redirect target is judged by its own origin's rules and refused before the request
+/// ~keep goes out. Judging the chain from its call site reads the seed's file and fetches
+/// ~keep every hop first, which is one request too late for each of them.
 pub(crate) struct RedirectPolicy<'a> {
     engine: &'a CrawlEngine,
     client: &'a reqwest::Client,
@@ -197,25 +186,29 @@ impl<'a> RedirectPolicy<'a> {
         }
     }
 
-    /// Decide whether the crawl may request `url`.
-    async fn admits(&mut self, url: &str) -> Result<(), PolicyRefusal> {
-        // ~keep A URL that does not parse cannot be judged, and cannot be fetched either: the
-        // ~keep fetch validates it and fails with the error the caller already reports.
+    /// Decide whether the crawl may request `url`, and publish its origin's `Crawl-delay`
+    /// to the rate limiter before the request that delay governs.
+    ///
+    /// `Ok(None)` admits the URL. `Err` is the rate limiter's, not a refusal.
+    async fn admits(&mut self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
+        // ~keep An unparsable URL cannot be judged and cannot be fetched either: the fetch
+        // ~keep validates it and fails with the error the caller already reports.
         let Ok(parsed) = Url::parse(url) else {
-            return Ok(());
+            return Ok(None);
         };
 
-        // ~keep The path filters first: they are local, and an excluded URL should not cost
-        // ~keep its origin a robots.txt request either.
+        // ~keep The path filters run first because they are local: an excluded URL costs its
+        // ~keep origin no robots.txt request either.
         let path = parsed.path();
         let excluded = !self.exclude_regexes.is_empty() && self.exclude_regexes.iter().any(|re| re.is_match(path));
         if excluded {
             self.urls_filtered += 1;
-            return Err(PolicyRefusal::Filtered { url: url.to_owned() });
+            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
         }
 
         let origin = robots_origin_key(&parsed);
-        if !self.outcomes.contains_key(&origin) {
+        let first_visit = !self.outcomes.contains_key(&origin);
+        if first_visit {
             let outcome = if self.engine.config.respect_robots_txt {
                 fetch_robots_outcome(
                     url,
@@ -234,13 +227,19 @@ impl<'a> RedirectPolicy<'a> {
             .get(&origin)
             .expect("the origin's robots.txt outcome was just read");
         if let Some(reason) = robots_block_reason(outcome, &parsed) {
-            return Err(PolicyRefusal::Blocked {
+            return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
                 reason,
-            });
+            }));
+        }
+        // ~keep Published here, once per origin, because the rate limiter gates the request
+        // ~keep this call precedes. Publishing it after the chain has been fetched leaves the
+        // ~keep seed request, and every hop, unthrottled.
+        if first_visit {
+            self.engine.apply_crawl_delay(outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
-        Ok(())
+        Ok(None)
     }
 
     /// What robots.txt established for the origin the chain ended on, which the crawl loop
@@ -263,6 +262,16 @@ fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
     None
 }
 
+/// Canonicalize a URL for redirect-cycle-set membership.
+///
+/// ~keep The seed comes from the caller's raw string, but every hop key comes from
+/// ~keep `resolve_redirect`, which WHATWG-serializes via `Url::join` (e.g. adding a
+/// ~keep trailing slash to a bare origin). Without canonicalizing the seed the same
+/// ~keep way, a chain that returns to the seed URL in a different-but-equivalent form
+/// ~keep (e.g. `http://host:port` vs `http://host:port/`) is missed by `seen.contains`
+/// ~keep on its first return and only caught one hop later. Falls back to the original
+/// ~keep string when it fails to parse, so an unparsable URL still participates in
+/// ~keep cycle detection via literal string equality.
 fn canonical_redirect_key(url: &str) -> String {
     Url::parse(url)
         .map(|parsed| parsed.to_string())
@@ -286,7 +295,7 @@ fn canonical_redirect_key(url: &str) -> String {
 /// [`CrawlEngine::resolve_initial_redirects`], where the crawl would stop and
 /// surface a soft `state.error` rather than aborting the request.
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
-/// cannot reach a URL the configuration forbids, whatever order it does its own work in.
+/// cannot reach a URL the configuration forbids.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
@@ -308,7 +317,7 @@ pub(crate) async fn follow_redirects(
     let mut browser_used = false;
     loop {
         if let Some(policy) = policy.as_deref_mut()
-            && let Err(refusal) = policy.admits(&current_url).await
+            && let Some(refusal) = policy.admits(&current_url).await?
         {
             return Ok(RedirectResolution::Refused(refusal));
         }
@@ -609,10 +618,9 @@ impl CrawlEngine {
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
-        // ~keep robots.txt is read before anything goes on the wire, and the policy travels
-        // into the redirect resolution below rather than bracketing it. A redirect can leave
-        // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
-        // file after the chain has already been fetched asks the question one request late.
+        // ~keep The policy goes into the redirect resolution below rather than bracketing it.
+        // ~keep A redirect can leave the seed's robots.txt scope of scheme, host and port, so
+        // ~keep each URL the chain requests is judged against its own origin's file first.
         let mut policy = RedirectPolicy::new(self, &client, &exclude_regexes);
         let seed = self
             .resolve_initial_redirects(url, max_redirects, &mut state, &mut policy)
@@ -640,9 +648,6 @@ impl CrawlEngine {
         let Some(seed) = seed else {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         };
-
-        let final_parsed = Url::parse(&final_url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
-        self.apply_crawl_delay(&robots, &final_parsed).await?;
 
         let dedup_key = normalize_url_for_dedup(&final_url);
         self.frontier.mark_seen(&dedup_key).await?;
