@@ -4,6 +4,13 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Read robots.txt from the seed's own origin. A crawl of a site on a non-default port asked the default port for the file, so the site's rules were never applied. The browser page loader had the same defect and shared one set of rules between two ports on one host.
+- Disallow every path when robots.txt cannot be read, as RFC 9309 section 2.3.1.4 requires. A refused connection, a timeout and a 5xx answer used to be treated as "no rules" and the whole site was crawled. A 4xx answer still allows every path, and `CrawlResult.error` now names the file, the condition and the consequence.
+- Fetch the seed once instead of twice. Redirect resolution discarded its response and the crawl loop fetched the same page again. That first request also ran before robots.txt was read, so a disallowed seed was requested anyway.
+- Bound the network read for an oversized document fetched as the seed. The document body-size ceiling applied only where the crawl loop spawned a fetch.
+
 ## [1.6.0] - 2026-09-10
 
 ### Changed
