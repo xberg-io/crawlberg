@@ -536,11 +536,13 @@ impl Page {
         self.url = Some(url.clone());
         self.network_events.clear();
 
-        if self.context.obey_robots
-            && let Some(domain) = url.host_str()
-        {
-            if self.context.robots_cache.is_allowed(domain, "/robots.txt") {
-                let robots_url = format!("{}://{}/robots.txt", url.scheme(), domain);
+        if self.context.obey_robots && url.host_str().is_some() {
+            // ~keep Keyed and fetched by origin, not by host: RFC 9309 section 2.3 scopes a
+            // ~keep robots.txt file to a scheme, a host and a port, so two ports on one host are
+            // ~keep two files. A host key asks the wrong port and shares one answer between them.
+            let origin = url.origin().ascii_serialization();
+            if self.context.robots_cache.is_allowed(&origin, "/robots.txt") {
+                let robots_url = format!("{origin}/robots.txt");
                 if let Ok(robots_url) = Url::parse(&robots_url)
                     && let Ok(resp) = self.http_client.fetch(&robots_url).await
                     && resp.status == 200
@@ -548,11 +550,11 @@ impl Page {
                     let body = String::from_utf8_lossy(&resp.body);
                     self.context
                         .robots_cache
-                        .parse_and_store(domain, &body, &self.context.user_agent);
+                        .parse_and_store(&origin, &body, &self.context.user_agent);
                 }
             }
 
-            if !self.context.robots_cache.is_allowed(domain, url.path()) {
+            if !self.context.robots_cache.is_allowed(&origin, url.path()) {
                 self.lifecycle = LifecycleState::Failed;
                 return Err(PageError::NetworkError(format!("Blocked by robots.txt: {}", url)));
             }

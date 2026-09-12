@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::error::CrawlError;
 use crate::http::http_fetch;
+use crate::normalize::robots_url;
 use crate::robots::{RobotsRules, parse_robots_txt};
 use crate::types::CrawlConfig;
 
@@ -43,7 +44,10 @@ pub(crate) async fn fetch_robots_rules(
     client: &reqwest::Client,
 ) -> Option<RobotsRules> {
     let parsed = Url::parse(url).ok()?;
-    let robots_url = format!("{}://{}/robots.txt", parsed.scheme(), parsed.host_str()?);
+    if parsed.host_str().is_none() {
+        return None;
+    }
+    let robots_url = robots_url(&parsed);
     let ua = config
         .user_agent
         .as_deref()
