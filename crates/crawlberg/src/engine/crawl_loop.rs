@@ -89,6 +89,27 @@ pub(crate) struct RedirectOutcome {
     pub(crate) browser_used: bool,
 }
 
+/// The frontier entry the seed would have had: depth 0, no document ancestry.
+fn seed_entry(url: &str) -> FrontierEntry {
+    FrontierEntry {
+        url: url.to_owned(),
+        depth: 0,
+        doc_depth: 0,
+        priority: 1.0,
+    }
+}
+
+/// Whether two URL strings share a scheme, host and port.
+///
+/// ~keep A URL that does not parse compares equal to nothing, so an unparseable redirect
+/// target counts as a new origin and its own robots.txt is read.
+fn same_origin(left: &str, right: &str) -> bool {
+    match (Url::parse(left), Url::parse(right)) {
+        (Ok(left), Ok(right)) => left.origin() == right.origin(),
+        _ => false,
+    }
+}
+
 /// Best-effort host extraction for `Set-Cookie` `Domain=` validation.
 ///
 /// An unparsable `url` yields an empty host, which `validate_cookie_domain` never
@@ -428,29 +449,53 @@ impl CrawlEngine {
         let mut state = CrawlState::new(capacity, is_streaming);
         let start_time = Instant::now();
 
-        let final_url = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
+        let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
+        let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
+
+        // ~keep RFC 9309 section 2.3: the robots.txt decision comes before the first request to
+        // ~keep the seed, so a disallowed seed is never fetched. Resolving the seed's redirects below
+        // ~keep is that first request.
+        let mut robots_rules = match self.robots_rules_for(url, &client).await {
+            Ok(rules) => rules,
+            Err(reason) => {
+                state.error = Some(reason);
+                return Ok(self.finish_without_crawling(state, url.to_owned(), &tx).await);
+            }
+        };
+        if !self.seed_is_allowed(url, &exclude_regexes, &include_regexes, &robots_rules, &mut state) {
+            return Ok(self.finish_without_crawling(state, url.to_owned(), &tx).await);
+        }
+
+        let resolved = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
+        let final_url = resolved
+            .as_ref()
+            .map(|outcome| outcome.final_url.clone())
+            .unwrap_or_else(|| url.to_owned());
 
         if state.error.is_some() {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         }
 
-        let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
-        let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
-
-        let robots_rules: Option<RobotsRules> = if self.config.respect_robots_txt {
-            match fetch_robots_rules(&final_url, &self.config, &client).await {
-                RobotsOutcome::Rules(rules) => Some(rules),
-                RobotsOutcome::AllowAll => None,
-                // ~keep RFC 9309 section 2.3.1.4: an unreachable robots.txt disallows every
-                // path, so the crawl stops here rather than running with no rules.
-                RobotsOutcome::Unreachable(reason) => {
+        // ~keep A robots.txt file covers one origin, so a redirect that leaves the seed's origin
+        // ~keep lands on a page the seed's file says nothing about.
+        if !same_origin(url, &final_url) {
+            robots_rules = match self.robots_rules_for(&final_url, &client).await {
+                Ok(rules) => rules,
+                Err(reason) => {
                     state.error = Some(reason);
                     return Ok(self.finish_without_crawling(state, final_url, &tx).await);
                 }
+            };
+            if !self.seed_is_allowed(
+                &final_url,
+                &exclude_regexes,
+                &include_regexes,
+                &robots_rules,
+                &mut state,
+            ) {
+                return Ok(self.finish_without_crawling(state, final_url, &tx).await);
             }
-        } else {
-            None
-        };
+        }
 
         if let Some(rules) = &robots_rules
             && let Some(delay) = rules.crawl_delay
@@ -464,16 +509,13 @@ impl CrawlEngine {
 
         let dedup_key = normalize_url_for_dedup(&final_url);
         self.frontier.mark_seen(&dedup_key).await?;
-        self.push_to_frontier(
-            FrontierEntry {
-                url: final_url.clone(),
-                depth: 0,
-                doc_depth: 0,
-                priority: 1.0,
-            },
-            &mut state,
-        )
-        .await?;
+
+        // ~keep The response that resolved the seed's redirects IS the depth-0 page. Pushing the
+        // ~keep seed onto the frontier instead would fetch the same URL a second time.
+        let seed_fetch = match resolved {
+            Some(outcome) if max_pages > 0 => Some(self.seed_page_fetch(final_url.clone(), outcome).await?),
+            _ => None,
+        };
 
         self.run_crawl_loop(
             &mut state,
@@ -486,6 +528,7 @@ impl CrawlEngine {
             max_pages,
             start_time,
             &tx,
+            seed_fetch,
         )
         .await?;
 
@@ -568,8 +611,13 @@ impl CrawlEngine {
     ///
     /// Delegates to [`follow_redirects`] and maps any `CrawlError` into `state.error`,
     /// preserving the original string so that callers detect errors via `state.error.is_some()`.
-    async fn resolve_initial_redirects(&self, url: &str, max_redirects: usize, state: &mut CrawlState) -> String {
-        match follow_redirects(self, url, max_redirects).await {
+    async fn resolve_initial_redirects(
+        &self,
+        url: &str,
+        max_redirects: usize,
+        state: &mut CrawlState,
+    ) -> Option<RedirectOutcome> {
+        match follow_redirects(&self.with_document_body_bound(url), url, max_redirects).await {
             Ok(outcome) => {
                 if self.config.cookies_enabled {
                     for (host, headers) in &outcome.intermediate_headers {
@@ -585,13 +633,106 @@ impl CrawlEngine {
                 if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
                     state.error = Some(format!("HTTP {}", outcome.final_response.status));
                 }
-                outcome.final_url
+                Some(outcome)
             }
             Err(e) => {
                 state.error = Some(format!("{e}"));
-                url.to_owned()
+                None
             }
         }
+    }
+
+    /// Clone the engine with the body-size ceiling a document URL needs.
+    ///
+    /// ~keep `http::read_body_bounded` is the only place that bounds the network read, and it
+    /// is driven by `http::effective_max_body_size`, which falls back to a 100 MiB ceiling. When
+    /// `download_documents` is on (its default) and the URL looks like a document, this clone's
+    /// `max_body_size` is lifted to `document_max_size` so a large PDF or DOCX is never fully
+    /// materialized in memory, matching how `read_body_bounded` already bounds the HTML path.
+    /// Scoped to document-shaped URLs rather than every request, so an explicit `max_body_size`
+    /// — or a plain large HTML page — keeps today's behavior. `self.config` is untouched,
+    /// because the rest of the loop reads it, including the truncation in
+    /// `process_fetch_result`. Both fetch paths use this: the loop's spawned fetch and the
+    /// seed's redirect resolution, which is the crawl's only request for the depth-0 page.
+    fn with_document_body_bound(&self, url: &str) -> Self {
+        let mut engine = self.clone();
+        if engine.config.download_documents
+            && engine.config.max_body_size.is_none()
+            && (is_binary_url(url) || is_pdf_url(url))
+        {
+            engine.config.max_body_size = Some(
+                engine
+                    .config
+                    .document_max_size
+                    .unwrap_or(crate::document::DEFAULT_DOCUMENT_MAX_SIZE),
+            );
+        }
+        engine
+    }
+
+    /// Read robots.txt for `url`'s origin.
+    ///
+    /// `Err` carries the reason the file could not be read, which RFC 9309 section 2.3.1.4
+    /// makes a complete disallow for that origin.
+    async fn robots_rules_for(&self, url: &str, client: &reqwest::Client) -> Result<Option<RobotsRules>, String> {
+        if !self.config.respect_robots_txt {
+            return Ok(None);
+        }
+        match fetch_robots_rules(url, &self.config, client).await {
+            RobotsOutcome::Rules(rules) => Ok(Some(rules)),
+            RobotsOutcome::AllowAll => Ok(None),
+            RobotsOutcome::Unreachable(reason) => Err(reason),
+        }
+    }
+
+    /// Apply the path filters and robots.txt rules to the seed, at depth 0.
+    fn seed_is_allowed(
+        &self,
+        url: &str,
+        exclude_regexes: &[Regex],
+        include_regexes: &[Regex],
+        robots_rules: &Option<RobotsRules>,
+        state: &mut CrawlState,
+    ) -> bool {
+        self.should_fetch_url(
+            &seed_entry(url),
+            exclude_regexes,
+            include_regexes,
+            robots_rules,
+            &mut state.urls_filtered,
+        )
+    }
+
+    /// Build the crawl's depth-0 page from the response that resolved the seed's redirects.
+    async fn seed_page_fetch(&self, final_url: String, outcome: RedirectOutcome) -> Result<FetchResult, CrawlError> {
+        let entry = seed_entry(&final_url);
+        let response = outcome.final_response;
+        let status_code = response.status;
+        let content_type = response.content_type;
+        let headers = response.headers;
+        let body = response.body;
+        let body_bytes = response.body_bytes;
+
+        let content_type_for_extract = content_type.clone();
+        let page_ext = tokio::task::spawn_blocking(move || {
+            blocking_extract_page(&final_url, &content_type_for_extract, body, body_bytes)
+        })
+        .await
+        .map_err(|e| CrawlError::other(format!("extraction task failed: {e}")))?;
+
+        Ok(FetchResult {
+            entry,
+            status_code,
+            content_type,
+            body: page_ext.body,
+            body_bytes: page_ext.body_bytes,
+            headers,
+            extraction: page_ext.extraction,
+            is_binary: page_ext.is_binary,
+            is_pdf: page_ext.is_pdf,
+            detected_charset: page_ext.detected_charset,
+            browser_used: outcome.browser_used,
+        })
     }
 
     /// Push one entry onto the frontier, wrapping any backend failure with the URL.
@@ -645,6 +786,7 @@ impl CrawlEngine {
     /// Main crawl loop. Owns the selection window and returns it to the frontier on every
     /// exit path, including the error ones.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn run_crawl_loop(
         &self,
         state: &mut CrawlState,
@@ -657,6 +799,7 @@ impl CrawlEngine {
         max_pages: usize,
         start_time: Instant,
         tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
+        seed_fetch: Option<FetchResult>,
     ) -> Result<(), CrawlError> {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
         let mut window: Vec<FrontierEntry> = Vec::with_capacity(max_concurrent);
@@ -676,6 +819,7 @@ impl CrawlEngine {
                 max_pages,
                 start_time,
                 tx,
+                seed_fetch,
             )
             .await;
 
@@ -717,6 +861,7 @@ impl CrawlEngine {
         max_pages: usize,
         start_time: Instant,
         tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
+        seed_fetch: Option<FetchResult>,
     ) -> Result<(), CrawlError> {
         let max_concurrent = self.config.max_concurrent.unwrap_or(DEFAULT_MAX_CONCURRENT);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -724,6 +869,32 @@ impl CrawlEngine {
         let mut cancelled = false;
         let mut frontier_may_have_entries = true;
         let mut drain_confirmed = false;
+
+        // ~keep The seed is already fetched, so it skips the window and the permit, but it takes
+        // ~keep the same strategy and budget decisions the loop applies before it spawns a fetch.
+        if let Some(fetch) = seed_fetch {
+            let stats = CrawlStats {
+                pages_crawled: 0,
+                pages_failed: state.pages_failed,
+                urls_discovered: state.urls_discovered,
+                urls_filtered: state.urls_filtered,
+                elapsed: start_time.elapsed(),
+            };
+            if self.strategy.should_continue(&stats) && self.page_budget.check().await.is_ok() {
+                cancelled = self
+                    .process_fetch_result(
+                        fetch,
+                        state,
+                        base_host,
+                        base_host_suffix,
+                        max_depth,
+                        max_pages,
+                        tx,
+                        &mut join_set,
+                    )
+                    .await?;
+            }
+        }
 
         while !cancelled {
             while join_set.len() < max_concurrent {
@@ -813,28 +984,7 @@ impl CrawlEngine {
                     .await
                     .map_err(|_| CrawlError::other("semaphore closed"))?;
 
-                // ~keep `http.rs::read_body_bounded` is the only place that bounds the network
-                // read, and it is driven by `http::effective_max_body_size`, which falls back
-                // to a 100 MiB ceiling. When `download_documents` is on (its default) and the
-                // URL looks like a document, lift this per-task clone's `max_body_size`
-                // to `document_max_size` so a large PDF/DOCX/etc. is never fully materialized
-                // in memory regardless of `document_max_size`, matching how `read_body_bounded`
-                // already bounds the HTML body path. Scoped to document-shaped URLs (rather than
-                // every request) so an explicit `max_body_size` — or a plain large HTML page —
-                // keeps today's behavior; `self.config` (used by the rest of this loop, e.g. the
-                // `max_body_size` truncation in `process_fetch_result`) is untouched.
-                let mut engine = self.clone();
-                if engine.config.download_documents
-                    && engine.config.max_body_size.is_none()
-                    && (is_binary_url(&entry.url) || is_pdf_url(&entry.url))
-                {
-                    engine.config.max_body_size = Some(
-                        engine
-                            .config
-                            .document_max_size
-                            .unwrap_or(crate::document::DEFAULT_DOCUMENT_MAX_SIZE),
-                    );
-                }
+                let engine = self.with_document_body_bound(&entry.url);
 
                 // ~keep The entry moves into the task, so it is unreachable if that task is
                 // aborted. Keep a copy here and drop it when the fetch reports back, so an
