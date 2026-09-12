@@ -20,7 +20,7 @@ use opentelemetry::KeyValue;
 
 use super::DEFAULT_MAX_LINKS_PER_PAGE;
 use crate::error::CrawlError;
-use crate::helpers::{compile_regexes, fetch_robots_rules, find_ascii_case_insensitive};
+use crate::helpers::{RobotsOutcome, compile_regexes, fetch_robots_rules, find_ascii_case_insensitive};
 use crate::html::{
     HtmlExtraction, detect_charset, detect_meta_refresh, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, is_pdf_url,
@@ -430,32 +430,24 @@ impl CrawlEngine {
 
         let final_url = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
 
-        if let Some(ref error_msg) = state.error {
-            let error_event = CrawlEvent::Error {
-                url: final_url.clone(),
-                error: error_msg.clone(),
-            };
-            if let Some(sender) = &tx {
-                let _ = sender.send(error_event.clone()).await;
-            }
-            if let Some(ref sink) = self.event_sink {
-                sink.emit(error_event).await;
-            }
-            let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
-            if let Some(sender) = &tx {
-                let _ = sender.send(complete_event.clone()).await;
-            }
-            if let Some(ref sink) = self.event_sink {
-                sink.emit(complete_event).await;
-            }
-            return Ok(state.into_result(final_url));
+        if state.error.is_some() {
+            return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         }
 
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
         let robots_rules: Option<RobotsRules> = if self.config.respect_robots_txt {
-            fetch_robots_rules(&final_url, &self.config, &client).await
+            match fetch_robots_rules(&final_url, &self.config, &client).await {
+                RobotsOutcome::Rules(rules) => Some(rules),
+                RobotsOutcome::AllowAll => None,
+                // ~keep RFC 9309 section 2.3.1.4: an unreachable robots.txt disallows every
+                // path, so the crawl stops here rather than running with no rules.
+                RobotsOutcome::Unreachable(reason) => {
+                    state.error = Some(reason);
+                    return Ok(self.finish_without_crawling(state, final_url, &tx).await);
+                }
+            }
         } else {
             None
         };
@@ -541,6 +533,35 @@ impl CrawlEngine {
             .retain(|c| seen_cookies.insert((c.name.clone(), c.domain.clone(), c.path.clone())));
 
         Ok(state.into_result(final_url))
+    }
+
+    /// Emit the error and completion events for a crawl that fetched no page, and build its result.
+    async fn finish_without_crawling(
+        &self,
+        state: CrawlState,
+        final_url: String,
+        tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
+    ) -> CrawlResult {
+        if let Some(error) = state.error.clone() {
+            let error_event = CrawlEvent::Error {
+                url: final_url.clone(),
+                error,
+            };
+            if let Some(sender) = tx {
+                let _ = sender.send(error_event.clone()).await;
+            }
+            if let Some(ref sink) = self.event_sink {
+                sink.emit(error_event).await;
+            }
+        }
+        let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
+        if let Some(sender) = tx {
+            let _ = sender.send(complete_event.clone()).await;
+        }
+        if let Some(ref sink) = self.event_sink {
+            sink.emit(complete_event).await;
+        }
+        state.into_result(final_url)
     }
 
     /// Follow HTTP, Refresh header, and meta refresh redirects until a final page is reached.
