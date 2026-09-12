@@ -1209,24 +1209,40 @@ fn rendered_html(page: &Page) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, OnceLock};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use url::Url;
 
     use super::*;
 
-    static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
+    /// Permits the loopback address these tests serve from.
+    ///
+    /// ~keep This replaces a `std::env::set_var` that a `OnceLock` guarded. The lock made the
+    /// ~keep write happen once, but nothing stopped the ~130 other tests in this binary from
+    /// ~keep being inside `std::env::var` at the time -- `DefaultSsrfValidator::from_env` sits
+    /// ~keep on the construction path of almost all of them. glibc may realloc `environ` under
+    /// ~keep a concurrent `getenv`, which aborts the process with no Rust panic (issue #48).
+    /// ~keep Reaching a private address is a policy decision, so inject it, exactly as
+    /// ~keep `net::client::tests::RecordingValidator` already does.
+    #[derive(Debug)]
+    struct AllowLoopbackValidator;
 
-    fn allow_private_network() {
-        ALLOW_PRIVATE.get_or_init(|| {
-            // ~keep SAFETY: tests write this process env var once before network work starts.
-            #[allow(unsafe_code)]
-            unsafe {
-                std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-            }
-        });
+    #[async_trait::async_trait]
+    impl SsrfValidator for AllowLoopbackValidator {
+        async fn validate(&self, _url: &Url) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// A config whose SSRF policy admits the loopback test server.
+    fn test_config() -> NativeBrowserConfig {
+        NativeBrowserConfig {
+            ssrf: Some(Arc::new(AllowLoopbackValidator)),
+            ..NativeBrowserConfig::default()
+        }
     }
 
     fn assert_send<T: Send>(_: T) {}
@@ -1255,7 +1271,6 @@ mod tests {
 
     #[tokio::test]
     async fn native_browser_executor_runs_render_jobs_concurrently() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig {
             workers: 4,
@@ -1267,9 +1282,9 @@ mod tests {
         for index in 0..16 {
             let executor = executor.clone();
             let url = format!("{}/page-{index}", server.base_url);
-            tasks.push(tokio::spawn(async move {
-                executor.render_url(&url, &NativeBrowserConfig::default()).await
-            }));
+            tasks.push(tokio::spawn(
+                async move { executor.render_url(&url, &test_config()).await },
+            ));
         }
 
         let results = futures::future::join_all(tasks).await;
@@ -1285,7 +1300,6 @@ mod tests {
 
     #[tokio::test]
     async fn native_browser_executor_runs_interact_jobs_concurrently() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig {
             workers: 4,
@@ -1305,9 +1319,7 @@ mod tests {
             let actions = actions.clone();
             let url = format!("{}/action-{index}", server.base_url);
             tasks.push(tokio::spawn(async move {
-                executor
-                    .interact_url(&url, &NativeBrowserConfig::default(), &actions, None)
-                    .await
+                executor.interact_url(&url, &test_config(), &actions, None).await
             }));
         }
 
@@ -1325,13 +1337,12 @@ mod tests {
 
     #[tokio::test]
     async fn native_browser_executor_drops_after_work() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor =
             NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(2)).expect("executor should start");
 
         let rendered = executor
-            .render_url(&server.base_url, &NativeBrowserConfig::default())
+            .render_url(&server.base_url, &test_config())
             .await
             .expect("render should succeed");
         assert!(rendered.html.contains("Native executor"));
@@ -1352,11 +1363,10 @@ mod tests {
     /// very `BrowserJsRuntime` that was just terminated.
     #[tokio::test]
     async fn hung_execute_js_terminates_and_the_native_worker_recovers_for_later_actions() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor =
             NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
-        let config = NativeBrowserConfig::default();
+        let config = test_config();
 
         let same_job_actions = vec![
             NativePageAction::ExecuteJs {
@@ -1415,13 +1425,12 @@ mod tests {
     /// the worker OS thread free for the next job on this single-worker executor.
     #[tokio::test]
     async fn hung_post_navigation_eval_script_terminates_and_the_native_worker_recovers() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor =
             NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
         let config = NativeBrowserConfig {
             eval_script: Some("while (true) {}".to_owned()),
-            ..NativeBrowserConfig::default()
+            ..test_config()
         };
 
         let outcome = tokio::time::timeout(
@@ -1442,7 +1451,7 @@ mod tests {
             Duration::from_secs(15),
             executor.interact_url(
                 &server.base_url,
-                &NativeBrowserConfig::default(),
+                &test_config(),
                 &[NativePageAction::Scrape],
                 None,
             ),
@@ -1465,13 +1474,12 @@ mod tests {
     /// succeed, and must leave the worker OS thread free for the next job.
     #[tokio::test]
     async fn hung_render_path_eval_script_is_terminated_and_the_native_worker_recovers() {
-        allow_private_network();
         let server = TestServer::start().await;
         let executor =
             NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1)).expect("executor should start");
         let config = NativeBrowserConfig {
             eval_script: Some("while (true) {}".to_owned()),
-            ..NativeBrowserConfig::default()
+            ..test_config()
         };
 
         let rendered = tokio::time::timeout(
@@ -1491,7 +1499,7 @@ mod tests {
 
         let followup = tokio::time::timeout(
             Duration::from_secs(15),
-            executor.render_url(&server.base_url, &NativeBrowserConfig::default()),
+            executor.render_url(&server.base_url, &test_config()),
         )
         .await
         .expect("a trivial follow-up render on the same single-worker executor must complete now that the worker thread is free")
