@@ -6,13 +6,13 @@ use url::Url;
 use crate::assets;
 use crate::browser_detect;
 use crate::error::CrawlError;
+use crate::helpers::{RobotsOutcome, fetch_robots_outcome};
 use crate::html::{
     detect_charset, detect_nofollow, detect_noindex, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content,
 };
-use crate::http::{build_client, http_fetch};
-use crate::normalize::robots_url;
-use crate::robots::{is_path_allowed, parse_robots_txt};
+use crate::http::build_client;
+use crate::robots::is_path_allowed;
 use crate::types::{CrawlConfig, ScrapeResult};
 
 /// Build a `ScrapeResult` from a Tower [`CrawlResponse`](crate::tower::CrawlResponse).
@@ -31,12 +31,29 @@ pub(crate) async fn scrape_from_crawl_response(
     let mut is_allowed = true;
     let mut crawl_delay = None;
     if config.respect_robots_txt {
-        let robots = robots_url(&parsed_url);
-        if let Ok(robots_resp) = http_fetch(&robots, config, &std::collections::HashMap::new(), &client).await {
-            let ua = config.user_agent.as_deref().unwrap_or("*");
-            let rules = parse_robots_txt(&robots_resp.body, ua);
-            is_allowed = is_path_allowed(parsed_url.path(), &rules);
-            crawl_delay = rules.crawl_delay;
+        // ~keep This used to swallow every fetch error and report `is_allowed: true`, and it
+        // never checked the status, so an HTTP error page (451, 405, ...) had its *body*
+        // parsed as though it were a robots.txt. `scrape()` reports robots status rather than
+        // enforcing it -- the page is fetched by the caller either way -- so failing closed
+        // here means reporting `is_allowed: false`, which is the honest answer when the
+        // site's policy could not be read.
+        // ~keep The `"*"` user-agent is preserved from the previous behaviour; see
+        // `helpers::default_robots_user_agent` for why unifying it is deferred.
+        let ua = config.user_agent.as_deref().unwrap_or("*");
+        match fetch_robots_outcome(url, config, &client, ua).await {
+            RobotsOutcome::Rules(rules) => {
+                is_allowed = is_path_allowed(parsed_url.path(), &rules);
+                crawl_delay = rules.crawl_delay;
+            }
+            RobotsOutcome::AllowAll => {}
+            RobotsOutcome::DisallowAll { reason } => {
+                tracing::warn!(
+                    url = %url,
+                    reason = %reason,
+                    "robots.txt unreachable; reporting is_allowed=false"
+                );
+                is_allowed = false;
+            }
         }
     }
 

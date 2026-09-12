@@ -9,8 +9,7 @@ use url::Url;
 use crate::error::CrawlError;
 use crate::html::{extract_links, is_html_content};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
-use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, robots_url, strip_fragment};
-use crate::robots::parse_robots_txt;
+use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
 use crate::sitemap::{
     decompress_gzip, fetch_sitemap_tree, is_sitemap_index, parse_sitemap_xml, process_sitemap_response,
 };
@@ -35,26 +34,32 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
     let filter = MapFilter::from_config(config)?;
 
     if config.respect_robots_txt {
-        let robots = robots_url(&parsed_url);
-        if let Ok(robots_resp) = http_fetch(&robots, config, &std::collections::HashMap::new(), &client).await {
-            let ua = config.user_agent.as_deref().unwrap_or("*");
-            let rules = parse_robots_txt(&robots_resp.body, ua);
-            if !rules.sitemaps.is_empty() {
-                let mut all_urls = Vec::new();
-                for sitemap_ref in &rules.sitemaps {
-                    if let Some(limit) = config.map_limit
-                        && all_urls.len() >= limit
-                    {
-                        break;
-                    }
-                    let sitemap_url = resolve_redirect(url, sitemap_ref);
-                    let resolved = rewrite_url_host(&sitemap_url, &parsed_url);
-                    let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
-                    all_urls.extend(fetch_sitemap_tree(&resolved, config, &client, &filter, remaining).await);
+        // ~keep `map()` deliberately stays fail-open where the crawl path now fails closed.
+        // It reads robots.txt only to discover `Sitemap:` directives -- it never calls
+        // `is_path_allowed`, so there is no access decision to fail closed on -- and
+        // `MapResult` is `{ urls }` with no `error` or `was_skipped` field, so a fail-closed
+        // result would be an empty list with no way to say why. Both `AllowAll` and
+        // `DisallowAll` therefore mean "no sitemap hints", falling through to /sitemap.xml.
+        // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
+        let ua = config.user_agent.as_deref().unwrap_or("*");
+        if let crate::helpers::RobotsOutcome::Rules(rules) =
+            crate::helpers::fetch_robots_outcome(url, config, &client, ua).await
+            && !rules.sitemaps.is_empty()
+        {
+            let mut all_urls = Vec::new();
+            for sitemap_ref in &rules.sitemaps {
+                if let Some(limit) = config.map_limit
+                    && all_urls.len() >= limit
+                {
+                    break;
                 }
-                if !all_urls.is_empty() {
-                    return Ok(filter_map_result(all_urls, &filter, config.map_limit));
-                }
+                let sitemap_url = resolve_redirect(url, sitemap_ref);
+                let resolved = rewrite_url_host(&sitemap_url, &parsed_url);
+                let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
+                all_urls.extend(fetch_sitemap_tree(&resolved, config, &client, &filter, remaining).await);
+            }
+            if !all_urls.is_empty() {
+                return Ok(filter_map_result(all_urls, &filter, config.map_limit));
             }
         }
     }
