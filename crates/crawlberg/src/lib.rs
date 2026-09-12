@@ -22,7 +22,6 @@ pub(crate) mod defaults;
 mod document;
 pub(crate) mod engine;
 mod error;
-#[cfg(not(target_arch = "wasm32"))]
 mod helpers;
 mod html;
 pub mod http;

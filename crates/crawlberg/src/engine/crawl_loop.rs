@@ -20,7 +20,9 @@ use opentelemetry::KeyValue;
 
 use super::DEFAULT_MAX_LINKS_PER_PAGE;
 use crate::error::CrawlError;
-use crate::helpers::{compile_regexes, fetch_robots_rules, find_ascii_case_insensitive};
+use crate::helpers::{
+    RobotsOutcome, compile_regexes, default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive,
+};
 use crate::html::{
     HtmlExtraction, detect_charset, detect_meta_refresh, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, is_pdf_url,
@@ -28,7 +30,6 @@ use crate::html::{
 use crate::http::{build_client, extract_cookies_from_hashmap};
 use crate::net::ssrf::validate_url;
 use crate::normalize::{normalize_url, normalize_url_for_dedup, resolve_redirect, strip_fragment};
-use crate::robots::{RobotsRules, is_path_allowed};
 use crate::telemetry::attributes::{
     CRAWL_ALLOWED, CRAWL_BROWSER_MODE, CRAWL_DEPTH, CRAWL_FRONTIER_SIZE, CRAWL_HOST, CRAWL_LINK_TYPE, CRAWL_MAX_DEPTH,
     CRAWL_MAX_PAGES, CRAWL_PAGES_COMPLETED, CRAWL_PARENT_URL, CRAWL_SEED_COUNT, CRAWL_STRATEGY, URL_DOMAIN, URL_FULL,
@@ -111,6 +112,24 @@ fn url_host(url: &str) -> String {
 /// ~keep on its first return and only caught one hop later. Falls back to the original
 /// ~keep string when it fails to parse, so an unparsable URL still participates in
 /// ~keep cycle detection via literal string equality.
+/// Whether two URLs share one robots.txt scope: scheme, host and port (RFC 9309 section 2.3).
+fn same_robots_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+/// The reason robots.txt forbids fetching `parsed` at all, if it does.
+fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
+    if let Some(reason) = robots.disallow_all_reason() {
+        return Some(format!("robots_unreachable: {reason}"));
+    }
+    if !robots.allows(parsed.path()) {
+        return Some(format!("robots.txt disallows {}", parsed.path()));
+    }
+    None
+}
+
 fn canonical_redirect_key(url: &str) -> String {
     Url::parse(url)
         .map(|parsed| parsed.to_string())
@@ -152,7 +171,10 @@ pub(crate) async fn follow_redirects(
 
     let mut browser_used = false;
     loop {
-        let (resp, hop_browser_used) = match engine.fetch_response(&current_url, origin_host.as_deref()).await {
+        // ~keep Bound the read per hop: the seed's final response is now consumed directly as
+        // the depth-0 page, so a document seed must be bounded here rather than in the loop.
+        let hop_engine = engine.clone_for_url(&current_url);
+        let (resp, hop_browser_used) = match hop_engine.fetch_response(&current_url, origin_host.as_deref()).await {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -428,46 +450,56 @@ impl CrawlEngine {
         let mut state = CrawlState::new(capacity, is_streaming);
         let start_time = Instant::now();
 
-        let final_url = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
-
-        if let Some(ref error_msg) = state.error {
-            let error_event = CrawlEvent::Error {
-                url: final_url.clone(),
-                error: error_msg.clone(),
-            };
-            if let Some(sender) = &tx {
-                let _ = sender.send(error_event.clone()).await;
-            }
-            if let Some(ref sink) = self.event_sink {
-                sink.emit(error_event).await;
-            }
-            let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
-            if let Some(sender) = &tx {
-                let _ = sender.send(complete_event.clone()).await;
-            }
-            if let Some(ref sink) = self.event_sink {
-                sink.emit(complete_event).await;
-            }
-            return Ok(state.into_result(final_url));
-        }
-
         let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
-        let robots_rules: Option<RobotsRules> = if self.config.respect_robots_txt {
-            fetch_robots_rules(&final_url, &self.config, &client).await
+        // ~keep robots.txt is read before anything goes on the wire. It used to be read after
+        // `resolve_initial_redirects` had already fetched the seed, so a seed the site
+        // disallows still cost that site one request for the very page it had forbidden.
+        let mut robots = if self.config.respect_robots_txt {
+            fetch_robots_outcome(url, &self.config, &client, default_robots_user_agent(&self.config)).await
         } else {
-            None
+            RobotsOutcome::AllowAll
+        };
+        if let Some(reason) = robots_block_reason(&robots, &parsed_url) {
+            state.was_skipped = true;
+            state.error = Some(reason);
+            return Ok(self.finish_without_crawling(state, url.to_owned(), &tx).await);
+        }
+        self.apply_crawl_delay(&robots, &parsed_url).await?;
+
+        // ~keep The one and only fetch of the seed: the response is carried into the loop
+        // below instead of being dropped and re-requested.
+        let seed = self.resolve_initial_redirects(url, max_redirects, &mut state).await;
+        let final_url = seed
+            .as_ref()
+            .map(|outcome| outcome.final_url.clone())
+            .unwrap_or_else(|| url.to_owned());
+
+        if state.error.is_some() {
+            return Ok(self.finish_without_crawling(state, final_url, &tx).await);
+        }
+        let Some(seed) = seed else {
+            return Ok(self.finish_without_crawling(state, final_url, &tx).await);
         };
 
-        if let Some(rules) = &robots_rules
-            && let Some(delay) = rules.crawl_delay
-            && let Ok(parsed) = Url::parse(&final_url)
-            && let Some(domain) = parsed.host_str()
-        {
-            self.rate_limiter
-                .set_crawl_delay(domain, Duration::from_secs(delay))
-                .await?;
+        // ~keep A redirect can leave the seed's robots.txt scope (scheme + host + port), and
+        // the new origin's policy is the one that governs everything fetched from it.
+        let final_parsed = Url::parse(&final_url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
+        if self.config.respect_robots_txt && !same_robots_origin(&parsed_url, &final_parsed) {
+            robots = fetch_robots_outcome(
+                &final_url,
+                &self.config,
+                &client,
+                default_robots_user_agent(&self.config),
+            )
+            .await;
+            if let Some(reason) = robots_block_reason(&robots, &final_parsed) {
+                state.was_skipped = true;
+                state.error = Some(reason);
+                return Ok(self.finish_without_crawling(state, final_url, &tx).await);
+            }
+            self.apply_crawl_delay(&robots, &final_parsed).await?;
         }
 
         let dedup_key = normalize_url_for_dedup(&final_url);
@@ -483,11 +515,17 @@ impl CrawlEngine {
         )
         .await?;
 
+        // ~keep The seed keeps flowing through the frontier and the loop so that budget,
+        // streaming, max_pages and filter accounting stay in exactly one place; only its
+        // *fetch* is skipped, by handing the loop the response we already have.
+        let mut preloaded = Some((final_url.clone(), seed.final_response, seed.browser_used));
+
         self.run_crawl_loop(
             &mut state,
             &exclude_regexes,
             &include_regexes,
-            &robots_rules,
+            &robots,
+            &mut preloaded,
             &base_host,
             &base_host_suffix,
             max_depth,
@@ -543,11 +581,94 @@ impl CrawlEngine {
         Ok(state.into_result(final_url))
     }
 
+    /// Emit the terminal events for a crawl that never entered the loop, and build its result.
+    ///
+    /// ~keep Extracted so every pre-loop bail-out -- robots unreachable, seed disallowed,
+    /// seed network failure, seed HTTP error -- reports through one path.
+    async fn finish_without_crawling(
+        &self,
+        state: CrawlState,
+        final_url: String,
+        tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
+    ) -> CrawlResult {
+        if let Some(ref error_msg) = state.error {
+            let error_event = CrawlEvent::Error {
+                url: final_url.clone(),
+                error: error_msg.clone(),
+            };
+            if let Some(sender) = tx {
+                let _ = sender.send(error_event.clone()).await;
+            }
+            if let Some(ref sink) = self.event_sink {
+                sink.emit(error_event).await;
+            }
+        }
+        let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
+        if let Some(sender) = tx {
+            let _ = sender.send(complete_event.clone()).await;
+        }
+        if let Some(ref sink) = self.event_sink {
+            sink.emit(complete_event).await;
+        }
+        state.into_result(final_url)
+    }
+
+    /// Clone this engine, lifting `max_body_size` to `document_max_size` for document-shaped URLs.
+    ///
+    /// ~keep `http::read_body_bounded` is the only place that bounds the network read, and it
+    /// is driven by `http::effective_max_body_size`, which falls back to a 100 MiB ceiling.
+    /// When `download_documents` is on (its default) and the URL looks like a document, lift
+    /// the clone's `max_body_size` to `document_max_size` so a large PDF/DOCX/etc. is never
+    /// fully materialized in memory. Scoped to document-shaped URLs (rather than every
+    /// request) so an explicit `max_body_size` -- or a plain large HTML page -- keeps today's
+    /// behavior; `self.config` is untouched.
+    ///
+    /// ~keep Applied to the seed's redirect chain as well as to each loop entry: the seed's
+    /// response is now reused rather than refetched, so bounding it only inside the loop
+    /// would leave a document seed unbounded.
+    fn clone_for_url(&self, url: &str) -> Self {
+        let mut engine = self.clone();
+        if engine.config.download_documents
+            && engine.config.max_body_size.is_none()
+            && (is_binary_url(url) || is_pdf_url(url))
+        {
+            engine.config.max_body_size = Some(
+                engine
+                    .config
+                    .document_max_size
+                    .unwrap_or(crate::document::DEFAULT_DOCUMENT_MAX_SIZE),
+            );
+        }
+        engine
+    }
+
+    /// Publish any `Crawl-delay` from robots.txt to the per-domain rate limiter.
+    async fn apply_crawl_delay(&self, robots: &RobotsOutcome, parsed: &Url) -> Result<(), CrawlError> {
+        if let Some(rules) = robots.rules()
+            && let Some(delay) = rules.crawl_delay
+            && let Some(domain) = parsed.host_str()
+        {
+            self.rate_limiter
+                .set_crawl_delay(domain, Duration::from_secs(delay))
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Follow HTTP, Refresh header, and meta refresh redirects until a final page is reached.
     ///
     /// Delegates to [`follow_redirects`] and maps any `CrawlError` into `state.error`,
     /// preserving the original string so that callers detect errors via `state.error.is_some()`.
-    async fn resolve_initial_redirects(&self, url: &str, max_redirects: usize, state: &mut CrawlState) -> String {
+    ///
+    /// ~keep Returns the whole [`RedirectOutcome`], including `final_response`. It used to
+    /// return only the final URL and drop the response, which is what made the crawl loop
+    /// fetch the seed a second time.
+    async fn resolve_initial_redirects(
+        &self,
+        url: &str,
+        max_redirects: usize,
+        state: &mut CrawlState,
+    ) -> Option<RedirectOutcome> {
         match follow_redirects(self, url, max_redirects).await {
             Ok(outcome) => {
                 if self.config.cookies_enabled {
@@ -564,11 +685,11 @@ impl CrawlEngine {
                 if outcome.final_response.status >= 400 && outcome.redirect_count > 0 {
                     state.error = Some(format!("HTTP {}", outcome.final_response.status));
                 }
-                outcome.final_url
+                Some(outcome)
             }
             Err(e) => {
                 state.error = Some(format!("{e}"));
-                url.to_owned()
+                None
             }
         }
     }
@@ -629,7 +750,8 @@ impl CrawlEngine {
         state: &mut CrawlState,
         exclude_regexes: &[Regex],
         include_regexes: &[Regex],
-        robots_rules: &Option<RobotsRules>,
+        robots: &RobotsOutcome,
+        preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
         base_host: &str,
         base_host_suffix: &str,
         max_depth: usize,
@@ -648,7 +770,8 @@ impl CrawlEngine {
                 &mut in_flight,
                 exclude_regexes,
                 include_regexes,
-                robots_rules,
+                robots,
+                preloaded,
                 base_host,
                 base_host_suffix,
                 max_depth,
@@ -689,7 +812,8 @@ impl CrawlEngine {
         in_flight: &mut Vec<FrontierEntry>,
         exclude_regexes: &[Regex],
         include_regexes: &[Regex],
-        robots_rules: &Option<RobotsRules>,
+        robots: &RobotsOutcome,
+        preloaded: &mut Option<(String, crate::tower::CrawlResponse, bool)>,
         base_host: &str,
         base_host_suffix: &str,
         max_depth: usize,
@@ -752,7 +876,7 @@ impl CrawlEngine {
                     &entry,
                     exclude_regexes,
                     include_regexes,
-                    robots_rules,
+                    robots,
                     &mut state.urls_filtered,
                 ) {
                     continue;
@@ -802,18 +926,7 @@ impl CrawlEngine {
                 // every request) so an explicit `max_body_size` — or a plain large HTML page —
                 // keeps today's behavior; `self.config` (used by the rest of this loop, e.g. the
                 // `max_body_size` truncation in `process_fetch_result`) is untouched.
-                let mut engine = self.clone();
-                if engine.config.download_documents
-                    && engine.config.max_body_size.is_none()
-                    && (is_binary_url(&entry.url) || is_pdf_url(&entry.url))
-                {
-                    engine.config.max_body_size = Some(
-                        engine
-                            .config
-                            .document_max_size
-                            .unwrap_or(crate::document::DEFAULT_DOCUMENT_MAX_SIZE),
-                    );
-                }
+                let engine = self.clone_for_url(&entry.url);
 
                 // ~keep The entry moves into the task, so it is unreachable if that task is
                 // aborted. Keep a copy here and drop it when the fetch reports back, so an
@@ -822,13 +935,26 @@ impl CrawlEngine {
                 // frontier would otherwise never revisit them.
                 in_flight.push(entry.clone());
 
+                // ~keep The seed was already fetched to resolve its redirect chain. Reusing
+                // that response is what stops the crawl from issuing a second identical
+                // request for it; every other URL still fetches normally.
+                let preloaded_response = match preloaded {
+                    Some((preloaded_url, _, _)) if *preloaded_url == entry.url => {
+                        preloaded.take().map(|(_, resp, browser_used)| (resp, browser_used))
+                    }
+                    _ => None,
+                };
+
                 join_set.spawn(async move {
                     let _permit = permit;
 
-                    let (resp, browser_used) = engine
-                        .fetch_response(&entry.url, None)
-                        .await
-                        .map_err(|e| (entry.clone(), e))?;
+                    let (resp, browser_used) = match preloaded_response {
+                        Some(preloaded) => preloaded,
+                        None => engine
+                            .fetch_response(&entry.url, None)
+                            .await
+                            .map_err(|e| (entry.clone(), e))?,
+                    };
 
                     let status_code = resp.status;
                     let content_type = resp.content_type;
@@ -956,7 +1082,7 @@ impl CrawlEngine {
         entry: &FrontierEntry,
         exclude_regexes: &[Regex],
         include_regexes: &[Regex],
-        robots_rules: &Option<RobotsRules>,
+        robots: &RobotsOutcome,
         urls_filtered: &mut usize,
     ) -> bool {
         let page_parsed = match Url::parse(&entry.url) {
@@ -973,9 +1099,9 @@ impl CrawlEngine {
             *urls_filtered += 1;
             return false;
         }
-        if let Some(rules) = robots_rules {
+        if !matches!(robots, RobotsOutcome::AllowAll) {
             let host = page_parsed.host_str().unwrap_or("");
-            let allowed = is_path_allowed(path, rules);
+            let allowed = robots.allows(path);
 
             let _span = tracing::info_span!(
                 "crawl.robots.check",
