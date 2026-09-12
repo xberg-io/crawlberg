@@ -62,6 +62,19 @@ impl BrowserJsRuntime {
 
         let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf));
 
+        // ~keep deno_core captures `Handle::try_current().ok()` when it registers the isolate
+        // ~keep and, if that handle is `None`, calls `std::process::abort()` from a V8
+        // ~keep background thread the moment V8 posts a delayed task for it (the GC memory
+        // ~keep reducer is the usual one). That is a bare SIGABRT with no panic, no backtrace
+        // ~keep and no failing test name -- issue #48. The abort window is the isolate's whole
+        // ~keep lifetime, so this has to be caught at construction, not at first use.
+        debug_assert!(
+            tokio::runtime::Handle::try_current().is_ok(),
+            "BrowserJsRuntime must be constructed inside a tokio runtime context; deno_core \
+             aborts the process instead of panicking when V8 posts a delayed task for an \
+             isolate registered without one"
+        );
+
         let mut runtime = JsRuntime::new(RuntimeOptions {
             extensions: vec![build_extension()],
             module_loader: Some(module_loader),
@@ -926,50 +939,50 @@ mod tests {
         rt
     }
 
-    #[test]
-    fn test_document_title() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_title() {
         let mut rt = setup_runtime("<html><head><title>Test</title></head><body></body></html>");
         let title = rt.evaluate("document.title").unwrap();
         assert_eq!(title, serde_json::json!("Test Page"));
     }
 
-    #[test]
-    fn test_document_url() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_url() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let url = rt.evaluate("document.URL").unwrap();
         assert_eq!(url, serde_json::json!("http://example.com/test"));
     }
 
-    #[test]
-    fn test_query_selector() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_query_selector() {
         let mut rt = setup_runtime("<html><body><h1>Hello</h1><p>World</p></body></html>");
         let text = rt.evaluate("document.querySelector('h1').textContent").unwrap();
         assert_eq!(text, serde_json::json!("Hello"));
     }
 
-    #[test]
-    fn test_query_selector_all() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_query_selector_all() {
         let mut rt = setup_runtime("<ul><li>A</li><li>B</li><li>C</li></ul>");
         let count = rt.evaluate("document.querySelectorAll('li').length").unwrap();
         assert_eq!(count.as_f64().unwrap() as i64, 3);
     }
 
-    #[test]
-    fn test_get_element_by_id() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_get_element_by_id() {
         let mut rt = setup_runtime(r#"<div id="test">Content</div>"#);
         let tag = rt.evaluate("document.getElementById('test').tagName").unwrap();
         assert_eq!(tag, serde_json::json!("DIV"));
     }
 
-    #[test]
-    fn test_inner_html() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_inner_html() {
         let mut rt = setup_runtime(r#"<div id="x"><p>Hello</p></div>"#);
         let html = rt.evaluate("document.getElementById('x').innerHTML").unwrap();
         assert!(html.as_str().unwrap().contains("<p>"));
     }
 
-    #[test]
-    fn test_script_execution() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_script_execution() {
         let mut rt = setup_runtime("<ul><li>A</li><li>B</li></ul>");
         rt.execute_script(
             "test",
@@ -991,8 +1004,8 @@ mod tests {
     /// `while(true){}` spun V8 at 100% CPU with no recovery (observed on
     /// staging: three worker threads pinned for six hours). Every script now
     /// gets the wall-clock execution bound regardless of size.
-    #[test]
-    fn execute_script_guarded_kills_small_infinite_loop() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn execute_script_guarded_kills_small_infinite_loop() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let start = std::time::Instant::now();
         let result = rt.execute_script_guarded("evil", "while(true){}");
@@ -1011,8 +1024,8 @@ mod tests {
     /// the runtime so that subsequent scripts (or DOM queries) collapse to
     /// empty. The reporter saw `--dump text` return 1 byte after offside.js
     /// crashed; that cascade should never happen.
-    #[test]
-    fn script_typeerror_does_not_poison_subsequent_execution() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn script_typeerror_does_not_poison_subsequent_execution() {
         let mut rt = setup_runtime("<html><body><p id=hit>BODY_TEXT</p></body></html>");
 
         let err = rt.execute_script("buggy", "var x; x.classList.add('y');").unwrap_err();
@@ -1031,21 +1044,21 @@ mod tests {
         assert_eq!(text, serde_json::json!("BODY_TEXT"));
     }
 
-    #[test]
-    fn test_console_log() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_console_log() {
         let mut rt = setup_runtime("<html><body></body></html>");
         rt.execute_script("test", "console.log('Hello from V8!')").unwrap();
     }
 
-    #[test]
-    fn test_location() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_location() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let href = rt.evaluate("location.href").unwrap();
         assert_eq!(href, serde_json::json!("http://example.com/test"));
     }
 
-    #[test]
-    fn test_button_click_dispatches_listener() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_button_click_dispatches_listener() {
         let mut rt = setup_runtime(r#"<button id="go">Go</button>"#);
         let result = rt
             .evaluate(
@@ -1060,8 +1073,8 @@ mod tests {
         assert_eq!(result, serde_json::json!("yes"));
     }
 
-    #[test]
-    fn test_dispatch_mouse_event_runs_listener() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_dispatch_mouse_event_runs_listener() {
         let mut rt = setup_runtime(r#"<button id="go">Go</button>"#);
         let result = rt
             .evaluate(
@@ -1077,8 +1090,8 @@ mod tests {
         assert_eq!(result.as_f64().unwrap() as i64, 1);
     }
 
-    #[test]
-    fn test_location_href_assignment_updates_navigation_state() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_location_href_assignment_updates_navigation_state() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let href = rt
             .evaluate("const next = '/next'; location.href = next; return location.href;")
@@ -1090,8 +1103,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_submit_button_click_handler_can_prevent_default_and_navigate() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_submit_button_click_handler_can_prevent_default_and_navigate() {
         let mut rt = setup_runtime(r#"<form><button type="submit" id="submit">Submit</button></form>"#);
         let href = rt
             .evaluate(
@@ -1117,8 +1130,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_navigator() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_navigator() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let ua = rt.evaluate("navigator.userAgent").unwrap();
         assert!(
@@ -1277,8 +1290,8 @@ mod tests {
         assert_eq!(result.value.unwrap().as_f64().unwrap() as i64, 2);
     }
 
-    #[test]
-    fn test_inner_html_setter() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_inner_html_setter() {
         let mut rt = setup_runtime(r#"<div id="target"><p>Old</p></div>"#);
         rt.execute_script(
             "test",
@@ -1303,8 +1316,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_inner_html_with_nested() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_inner_html_with_nested() {
         let mut rt = setup_runtime(r#"<div id="root"></div>"#);
         rt.execute_script(
             "test",
@@ -1325,8 +1338,8 @@ mod tests {
         assert_eq!(text, serde_json::json!("A"));
     }
 
-    #[test]
-    fn test_input_value() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_input_value() {
         let mut rt = setup_runtime(
             r#"<form><input id="name" type="text" value="initial"><textarea id="bio">old text</textarea></form>"#,
         );
@@ -1340,8 +1353,8 @@ mod tests {
         assert_eq!(bio, serde_json::json!("old text"));
     }
 
-    #[test]
-    fn test_sequential_runtime_swap() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_sequential_runtime_swap() {
         let mut rt1 = setup_runtime("<html><body><h1>Page1</h1></body></html>");
         let title1 = rt1.evaluate("document.querySelector('h1').textContent").unwrap();
         assert_eq!(title1, serde_json::json!("Page1"));
@@ -1365,8 +1378,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_checkbox_checked() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_checkbox_checked() {
         let mut rt = setup_runtime(r#"<input id="cb" type="checkbox" checked>"#);
         let checked = rt.evaluate("document.getElementById('cb').checked").unwrap();
         assert_eq!(checked, serde_json::json!(true));
@@ -1376,8 +1389,8 @@ mod tests {
         assert_eq!(checked2, serde_json::json!(false));
     }
 
-    #[test]
-    fn test_matches_and_closest() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_matches_and_closest() {
         let mut rt = setup_runtime(r#"<div class="outer"><div class="inner"><span id="target">Hi</span></div></div>"#);
         let matches = rt
             .evaluate("document.getElementById('target').matches('span')")
@@ -1393,8 +1406,8 @@ mod tests {
         assert_eq!(no_match, serde_json::Value::Null);
     }
 
-    #[test]
-    fn test_clone_node_deep() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_clone_node_deep() {
         let mut rt = setup_runtime(r#"<div id="src"><p>A</p><p>B</p></div>"#);
         rt.execute_script(
             "test",
@@ -1413,8 +1426,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_evaluate_multistatement() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_evaluate_multistatement() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let result = rt.evaluate("var x = 5; var y = 10; return x + y;").unwrap();
         assert_eq!(result.as_f64().unwrap() as i64, 15);
@@ -1448,8 +1461,8 @@ mod tests {
         (rt, jar)
     }
 
-    #[test]
-    fn test_document_cookie_reads_http_cookies() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_reads_http_cookies() {
         let (mut rt, jar) = setup_runtime_with_cookies("<html><body></body></html>");
         let url = url::Url::parse("http://example.com/test").unwrap();
         jar.set_cookie("session=abc123; Path=/", &url);
@@ -1468,8 +1481,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_document_cookie_excludes_httponly() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_excludes_httponly() {
         let (mut rt, jar) = setup_runtime_with_cookies("<html><body></body></html>");
         let url = url::Url::parse("http://example.com/test").unwrap();
         jar.set_cookie("visible=yes; Path=/", &url);
@@ -1488,8 +1501,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_document_cookie_setter_stores_in_jar() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_setter_stores_in_jar() {
         let (mut rt, jar) = setup_runtime_with_cookies("<html><body></body></html>");
         rt.evaluate("document.cookie = 'foo=bar; Path=/'").unwrap();
         let url = url::Url::parse("http://example.com/test").unwrap();
@@ -1499,8 +1512,8 @@ mod tests {
         assert!(header.contains("foo=bar"), "cookie should be in jar, got: {}", header);
     }
 
-    #[test]
-    fn test_document_cookie_delete_via_max_age() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_delete_via_max_age() {
         let (mut rt, jar) = setup_runtime_with_cookies("<html><body></body></html>");
         let url = url::Url::parse("http://example.com/test").unwrap();
         rt.evaluate("document.cookie = 'temp=val; Path=/'").unwrap();
@@ -1521,8 +1534,8 @@ mod tests {
         assert!(!jar.get_cookie_header(&url).contains("temp="));
     }
 
-    #[test]
-    fn test_document_cookie_js_and_http_merge() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_js_and_http_merge() {
         let (mut rt, jar) = setup_runtime_with_cookies("<html><body></body></html>");
         let url = url::Url::parse("http://example.com/test").unwrap();
         jar.set_cookie("server_sid=xyz; Path=/", &url);
@@ -1541,22 +1554,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_document_cookie_empty_when_no_cookies() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_empty_when_no_cookies() {
         let (mut rt, _jar) = setup_runtime_with_cookies("<html><body></body></html>");
         let result = rt.evaluate("document.cookie").unwrap();
         assert_eq!(result.as_str().unwrap(), "");
     }
 
-    #[test]
-    fn test_document_cookie_no_jar_returns_empty() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_cookie_no_jar_returns_empty() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let result = rt.evaluate("document.cookie").unwrap();
         assert_eq!(result.as_str().unwrap(), "");
     }
 
-    #[test]
-    fn test_document_write_appends_to_body() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_write_appends_to_body() {
         let mut rt = setup_runtime("<html><body><p>Existing</p></body></html>");
         rt.evaluate("document.write('<div>Added</div>')").unwrap();
         let html = rt.evaluate("document.body.innerHTML").unwrap();
@@ -1569,32 +1582,32 @@ mod tests {
         assert!(body.contains("Added"), "written content should appear, got: {}", body);
     }
 
-    #[test]
-    fn test_document_writeln() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_writeln() {
         let mut rt = setup_runtime("<html><body></body></html>");
         rt.evaluate("document.writeln('Hello')").unwrap();
         let html = rt.evaluate("document.body.innerHTML").unwrap();
         assert!(html.as_str().unwrap().contains("Hello"));
     }
 
-    #[test]
-    fn test_document_write_multiple_args() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_write_multiple_args() {
         let mut rt = setup_runtime("<html><body></body></html>");
         rt.evaluate("document.write('Hello', ' ', 'World')").unwrap();
         let text = rt.evaluate("document.body.textContent").unwrap();
         assert_eq!(text.as_str().unwrap().trim(), "Hello World");
     }
 
-    #[test]
-    fn test_document_open_clears_body() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_open_clears_body() {
         let mut rt = setup_runtime("<html><body><p>Old content</p></body></html>");
         rt.evaluate("document.open()").unwrap();
         let html = rt.evaluate("document.body.innerHTML").unwrap();
         assert_eq!(html.as_str().unwrap(), "");
     }
 
-    #[test]
-    fn test_document_write_html_elements() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_write_html_elements() {
         let mut rt = setup_runtime("<html><body></body></html>");
         rt.evaluate(r#"document.write('<h1 id="title">Test</h1><p>Para</p>')"#)
             .unwrap();
@@ -1604,8 +1617,8 @@ mod tests {
         assert_eq!(p.as_str().unwrap(), "Para");
     }
 
-    #[test]
-    fn test_url_relative_resolution() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_url_relative_resolution() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let result = rt
             .evaluate("new URL('data.json', 'http://example.com/path/page.html').href")
@@ -1719,8 +1732,8 @@ mod tests {
         assert_eq!(result.value.unwrap(), serde_json::json!(true));
     }
 
-    #[test]
-    fn test_text_decoder_respects_typed_array_view() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_text_decoder_respects_typed_array_view() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let result = rt
             .evaluate("new TextDecoder().decode(new Uint8Array([65, 66, 67]).subarray(1, 2))")
@@ -1728,8 +1741,8 @@ mod tests {
         assert_eq!(result.as_str().unwrap(), "B");
     }
 
-    #[test]
-    fn test_document_doctype() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_doctype() {
         let mut rt = setup_runtime("<!DOCTYPE html><html><body></body></html>");
         let result = rt.evaluate("document.doctype !== null").unwrap();
         assert_eq!(result, serde_json::json!(true));
@@ -1741,15 +1754,15 @@ mod tests {
         assert_eq!(node_type.as_f64().unwrap() as i64, 10);
     }
 
-    #[test]
-    fn test_document_doctype_null_when_missing() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_document_doctype_null_when_missing() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let result = rt.evaluate("document.doctype === null").unwrap();
         assert_eq!(result, serde_json::json!(true));
     }
 
-    #[test]
-    fn test_xml_serializer_doctype() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_xml_serializer_doctype() {
         let mut rt = setup_runtime("<!DOCTYPE html><html><body></body></html>");
         let result = rt
             .evaluate("new XMLSerializer().serializeToString(document.doctype)")
@@ -1757,8 +1770,8 @@ mod tests {
         assert_eq!(result.as_str().unwrap(), "<!DOCTYPE html>");
     }
 
-    #[test]
-    fn test_xml_serializer_element() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_xml_serializer_element() {
         let mut rt = setup_runtime(r#"<html><body><div id="x">Hello</div></body></html>"#);
         let result = rt
             .evaluate("new XMLSerializer().serializeToString(document.getElementById('x'))")
@@ -1768,8 +1781,8 @@ mod tests {
         assert!(html.contains("Hello"));
     }
 
-    #[test]
-    fn test_create_event_custom_event_has_init_method() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_create_event_custom_event_has_init_method() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let kind = rt
             .evaluate("typeof document.createEvent('CustomEvent').initCustomEvent")
@@ -1777,8 +1790,8 @@ mod tests {
         assert_eq!(kind, serde_json::json!("function"));
     }
 
-    #[test]
-    fn test_init_custom_event_sets_fields() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_init_custom_event_sets_fields() {
         let mut rt = setup_runtime("<html><body></body></html>");
         rt.execute_script(
             "test",
@@ -1798,8 +1811,8 @@ mod tests {
         assert_eq!(d, serde_json::json!("world"));
     }
 
-    #[test]
-    fn test_create_event_returns_correct_class() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_create_event_returns_correct_class() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let cust = rt
             .evaluate("document.createEvent('CustomEvent') instanceof CustomEvent")
@@ -1819,8 +1832,8 @@ mod tests {
         assert_eq!(kb, serde_json::json!(true));
     }
 
-    #[test]
-    fn test_create_event_unknown_type_returns_event() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_create_event_unknown_type_returns_event() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let kind = rt
             .evaluate("document.createEvent('NotARealType') instanceof Event")
@@ -1828,8 +1841,8 @@ mod tests {
         assert_eq!(kind, serde_json::json!(true));
     }
 
-    #[test]
-    fn test_page_content_puppeteer_pattern() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_page_content_puppeteer_pattern() {
         let mut rt = setup_runtime("<!DOCTYPE html><html><head></head><body><p>Test</p></body></html>");
         let result = rt.evaluate(
             "(function() { let retVal = ''; if (document.doctype) retVal = new XMLSerializer().serializeToString(document.doctype); if (document.documentElement) retVal += document.documentElement.outerHTML; return retVal; })()"
@@ -1840,8 +1853,8 @@ mod tests {
         assert!(html.contains("<p>Test</p>"));
     }
 
-    #[test]
-    fn test_element_from_point_is_function() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_element_from_point_is_function() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let kind = rt.evaluate("typeof document.elementFromPoint").unwrap();
         assert_eq!(kind, serde_json::json!("function"));
@@ -1849,15 +1862,15 @@ mod tests {
         assert_eq!(kind2, serde_json::json!("function"));
     }
 
-    #[test]
-    fn test_element_from_point_in_viewport_returns_body() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_element_from_point_in_viewport_returns_body() {
         let mut rt = setup_runtime("<html><body><h1>Hi</h1></body></html>");
         let tag = rt.evaluate("document.elementFromPoint(10, 10)?.tagName").unwrap();
         assert_eq!(tag, serde_json::json!("BODY"));
     }
 
-    #[test]
-    fn test_element_from_point_out_of_viewport_returns_null() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_element_from_point_out_of_viewport_returns_null() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let neg_x = rt.evaluate("document.elementFromPoint(-1, 10)").unwrap();
         assert_eq!(neg_x, serde_json::Value::Null);
@@ -1867,8 +1880,8 @@ mod tests {
         assert_eq!(huge, serde_json::Value::Null);
     }
 
-    #[test]
-    fn test_elements_from_point_returns_array() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_elements_from_point_returns_array() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let len_in = rt.evaluate("document.elementsFromPoint(10, 10).length").unwrap();
         assert_eq!(len_in.as_f64().unwrap() as i64, 1);
@@ -1876,8 +1889,8 @@ mod tests {
         assert_eq!(len_out.as_f64().unwrap() as i64, 0);
     }
 
-    #[test]
-    fn test_element_from_point_non_numeric_returns_null() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_element_from_point_non_numeric_returns_null() {
         let mut rt = setup_runtime("<html><body></body></html>");
         let nan = rt.evaluate("document.elementFromPoint(NaN, 10)").unwrap();
         assert_eq!(nan, serde_json::Value::Null);
@@ -1917,8 +1930,8 @@ mod tests {
         assert_eq!(direct.proxy_url, None);
     }
 
-    #[test]
-    fn runtime_with_base_url_and_proxy_constructs_successfully() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_with_base_url_and_proxy_constructs_successfully() {
         let _direct = BrowserJsRuntime::with_base_url_and_proxy("https://example.com/", None);
         let _proxied = BrowserJsRuntime::with_base_url_and_proxy(
             "https://example.com/",
