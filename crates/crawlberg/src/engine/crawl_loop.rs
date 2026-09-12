@@ -127,7 +127,16 @@ pub(crate) enum RedirectResolution {
     /// The chain ended on a response.
     Fetched(RedirectOutcome),
     /// The policy refused a URL in the chain, so it was never requested.
-    Refused(PolicyRefusal),
+    Refused {
+        /// Why the URL was refused.
+        refusal: PolicyRefusal,
+        /// ~keep Hops already followed before the refusal. Carried out so a crawl refused at
+        /// ~keep hop 3 does not report `redirect_count: 0` and understate what it did.
+        redirect_count: usize,
+        /// ~keep Headers from the hops already made, so a refusal does not discard cookies
+        /// ~keep the chain legitimately collected before it was stopped.
+        intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)>,
+    },
 }
 
 /// Why [`RedirectPolicy`] refused a URL.
@@ -198,12 +207,30 @@ impl<'a> RedirectPolicy<'a> {
     }
 
     /// Decide whether the crawl may request `url`.
-    async fn admits(&mut self, url: &str) -> Result<(), PolicyRefusal> {
-        // ~keep A URL that does not parse cannot be judged, and cannot be fetched either: the
-        // ~keep fetch validates it and fails with the error the caller already reports.
+    ///
+    /// `Ok(None)` admits it, `Ok(Some(refusal))` refuses it, and `Err` is an engine failure
+    /// (a rate-limiter backend error), which is not a policy decision and must not be
+    /// reported as one.
+    async fn admits(&mut self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
+        // ~keep A URL this cannot parse is refused, not admitted. Letting it through would
+        // ~keep skip robots entirely on the strength of a parse failure, and this is the
+        // ~keep component that decides whether a request may go out at all -- the same
+        // ~keep fail-closed rule that governs `outcome_for_fetch_error`, where the catch-all
+        // ~keep arm has to be the closed one for the guarantee to hold.
         let Ok(parsed) = Url::parse(url) else {
-            return Ok(());
+            return Ok(Some(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason: format!("robots_unreachable: cannot parse {url} to determine its origin"),
+            }));
         };
+        // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
+        // ~keep share one cache entry and inherit an unrelated origin's rules.
+        if parsed.host_str().is_none() {
+            return Ok(Some(PolicyRefusal::Blocked {
+                url: url.to_owned(),
+                reason: format!("robots_unreachable: {url} has no host to read robots.txt from"),
+            }));
+        }
 
         // ~keep The path filters first: they are local, and an excluded URL should not cost
         // ~keep its origin a robots.txt request either.
@@ -211,7 +238,7 @@ impl<'a> RedirectPolicy<'a> {
         let excluded = !self.exclude_regexes.is_empty() && self.exclude_regexes.iter().any(|re| re.is_match(path));
         if excluded {
             self.urls_filtered += 1;
-            return Err(PolicyRefusal::Filtered { url: url.to_owned() });
+            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
         }
 
         let origin = robots_origin_key(&parsed);
@@ -227,6 +254,12 @@ impl<'a> RedirectPolicy<'a> {
             } else {
                 RobotsOutcome::AllowAll
             };
+            // ~keep Publish this origin's `Crawl-delay` the moment its file is first read,
+            // ~keep which is before any request to it goes out. The call this replaces ran
+            // ~keep once for the seed before the chain and once for a changed final origin;
+            // ~keep doing it here covers every origin in the chain instead, and keeps the
+            // ~keep delay ahead of the request rather than behind it.
+            self.engine.apply_crawl_delay(&outcome, &parsed).await?;
             self.outcomes.insert(origin.clone(), outcome);
         }
         let outcome = self
@@ -234,13 +267,13 @@ impl<'a> RedirectPolicy<'a> {
             .get(&origin)
             .expect("the origin's robots.txt outcome was just read");
         if let Some(reason) = robots_block_reason(outcome, &parsed) {
-            return Err(PolicyRefusal::Blocked {
+            return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
                 reason,
-            });
+            }));
         }
         self.last_origin = Some(origin);
-        Ok(())
+        Ok(None)
     }
 
     /// What robots.txt established for the origin the chain ended on, which the crawl loop
@@ -308,9 +341,13 @@ pub(crate) async fn follow_redirects(
     let mut browser_used = false;
     loop {
         if let Some(policy) = policy.as_deref_mut()
-            && let Err(refusal) = policy.admits(&current_url).await
+            && let Some(refusal) = policy.admits(&current_url).await?
         {
-            return Ok(RedirectResolution::Refused(refusal));
+            return Ok(RedirectResolution::Refused {
+                refusal,
+                redirect_count,
+                intermediate_headers,
+            });
         }
 
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
@@ -811,7 +848,21 @@ impl CrawlEngine {
         policy: &mut RedirectPolicy<'_>,
     ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
         let resolution = match follow_redirects(self, url, max_redirects, Some(policy)).await {
-            Ok(RedirectResolution::Refused(refusal)) => return Err(refusal),
+            Ok(RedirectResolution::Refused {
+                refusal,
+                redirect_count,
+                intermediate_headers,
+            }) => {
+                // ~keep A refusal still happened after real hops: keep what they produced so
+                // ~keep the reported result matches what the crawl actually did.
+                if self.config.cookies_enabled {
+                    for (host, headers) in &intermediate_headers {
+                        state.all_cookies.extend(extract_cookies_from_hashmap(host, headers));
+                    }
+                }
+                state.redirect_count = redirect_count;
+                return Err(refusal);
+            }
             Ok(RedirectResolution::Fetched(outcome)) => Ok(outcome),
             Err(e) => Err(e),
         };

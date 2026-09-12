@@ -887,7 +887,7 @@ impl CrawlEngine {
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
                 // ~keep Reporting the refusal keeps this arm correct for a caller that does pass
                 // ~keep one, where a panic or a discarded refusal would not be.
-                RedirectResolution::Refused(refusal) => return Err(refusal.into_error()),
+                RedirectResolution::Refused { refusal, .. } => return Err(refusal.into_error()),
             };
 
             // ~keep Synthesized empty 4xx responses return minimal results instead of parsing an empty body as HTML.
