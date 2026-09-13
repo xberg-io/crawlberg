@@ -1,12 +1,12 @@
 //! Integration tests for BrowserBackend::Native via wiremock.
 //!
-//! The native HTTP client rejects RFC1918/loopback unless CRAWLBERG_ALLOW_PRIVATE_NETWORK
-//! is set. We set it once via std::sync::OnceLock before any test runs.
+//! The native HTTP client rejects RFC1918/loopback unless the crawl config's SSRF policy
+//! permits private networks, which every config below opts into.
 
 #![cfg(feature = "browser-native")]
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, batch_scrape, create_engine, scrape};
@@ -15,20 +15,19 @@ use tokio::net::TcpListener;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers and the loopback test server are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 fn native_config(extra: impl FnOnce(BrowserConfig) -> BrowserConfig) -> CrawlConfig {
-    allow_private_network();
     let browser = extra(BrowserConfig {
         backend: BrowserBackend::Native,
         mode: crawlberg::BrowserMode::Always,
@@ -37,7 +36,7 @@ fn native_config(extra: impl FnOnce(BrowserConfig) -> BrowserConfig) -> CrawlCon
     });
     CrawlConfig {
         browser,
-        ..CrawlConfig::default()
+        ..allow_private_config()
     }
 }
 
@@ -95,7 +94,6 @@ async fn native_follows_redirect() {
 
 #[tokio::test]
 async fn native_respects_timeout() {
-    allow_private_network();
     let url = "http://192.0.2.1:80/timeout-target";
     let config = native_config(|mut c| {
         c.timeout = Duration::from_millis(500);
@@ -128,7 +126,6 @@ async fn native_forwards_extra_headers() {
 
     let url = mock.uri();
     let config = {
-        allow_private_network();
         let mut headers = std::collections::HashMap::new();
         headers.insert("x-custom".to_string(), "value".to_string());
         CrawlConfig {
@@ -139,7 +136,7 @@ async fn native_forwards_extra_headers() {
                 ..BrowserConfig::default()
             },
             custom_headers: headers,
-            ..CrawlConfig::default()
+            ..allow_private_config()
         }
     };
     let result = scrape(&engine_with(config), &url).await;
@@ -148,7 +145,6 @@ async fn native_forwards_extra_headers() {
 
 #[tokio::test]
 async fn native_errors_on_connection_refused() {
-    allow_private_network();
     let url = "http://127.0.0.1:1/unreachable";
     let result = scrape(&engine_with(native_config(|c| c)), url).await;
     assert!(result.is_err(), "should return error, not panic");
@@ -254,7 +250,6 @@ async fn native_prior_cookies_sent_on_request() {
 
     let url = mock.uri();
     let config = {
-        allow_private_network();
         let mut headers = std::collections::HashMap::new();
         headers.insert("cookie".to_string(), "session=abc".to_string());
         CrawlConfig {
@@ -265,7 +260,7 @@ async fn native_prior_cookies_sent_on_request() {
                 ..BrowserConfig::default()
             },
             custom_headers: headers,
-            ..CrawlConfig::default()
+            ..allow_private_config()
         }
     };
     let result = scrape(&engine_with(config), &url).await;
@@ -362,7 +357,6 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
-        allow_private_network();
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("test server should bind");
         let addr = listener.local_addr().expect("test server should have local addr");
         let current = Arc::new(AtomicUsize::new(0));

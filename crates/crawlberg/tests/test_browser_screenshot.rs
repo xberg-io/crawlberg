@@ -14,7 +14,6 @@
 
 #![cfg(feature = "browser")]
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, create_engine, scrape};
@@ -22,22 +21,19 @@ use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlEr
 mod common;
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so the loopback test
-/// server below is reachable.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so the loopback
+/// test server is reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 fn chromiumoxide_config(capture_screenshot: bool) -> CrawlConfig {
-    allow_private_network();
     CrawlConfig {
         browser: BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
@@ -46,7 +42,7 @@ fn chromiumoxide_config(capture_screenshot: bool) -> CrawlConfig {
             ..BrowserConfig::default()
         },
         capture_screenshot,
-        ..CrawlConfig::default()
+        ..allow_private_config()
     }
 }
 

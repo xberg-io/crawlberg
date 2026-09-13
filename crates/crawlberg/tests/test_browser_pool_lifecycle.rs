@@ -29,8 +29,8 @@
 
 #![cfg(feature = "browser")]
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crawlberg::{
@@ -43,23 +43,19 @@ use tokio::net::TcpListener;
 mod common;
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so the loopback test
-/// server below is reachable. Without this the engine's SSRF check rejects
-/// `127.0.0.1` before the pool-lifecycle behaviour under test ever runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so the loopback
+/// test server is reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 fn pool_config(pool: Arc<BrowserPool>, max_concurrent: Option<usize>) -> CrawlConfig {
-    allow_private_network();
     CrawlConfig {
         browser: BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
@@ -72,7 +68,7 @@ fn pool_config(pool: Arc<BrowserPool>, max_concurrent: Option<usize>) -> CrawlCo
         },
         browser_pool: Some(pool),
         max_concurrent,
-        ..CrawlConfig::default()
+        ..allow_private_config()
     }
 }
 

@@ -6,30 +6,23 @@
 //!
 //! Tests are written RED-first: they prove the bug exists before the fix lands.
 
-use std::sync::OnceLock;
-
 use crawlberg::{BrowserMode, CrawlConfig, CrawlError, DispatchProfile, EscalationStrategy, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
-/// check rejects the loopback URL before the Forbidden/WafBlocked logic
-/// under test is ever reached.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 fn engine_with(config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
-    allow_private_network();
     create_engine(Some(config)).expect("engine build must not fail")
 }
 
@@ -54,7 +47,7 @@ async fn browser_only_strategy_browser_never_returns_forbidden_error() {
             mode: BrowserMode::Never,
             ..Default::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     });
 
     let url = format!("{}/forbidden", mock.uri());
@@ -92,7 +85,7 @@ async fn browser_only_strategy_browser_never_returns_waf_blocked_error() {
             mode: BrowserMode::Never,
             ..Default::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     });
 
     let url = format!("{}/cf", mock.uri());
@@ -125,7 +118,7 @@ async fn none_strategy_browser_auto_returns_forbidden_error() {
             mode: BrowserMode::Never,
             ..Default::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     });
 
     let url = format!("{}/forbidden", mock.uri());
@@ -164,7 +157,7 @@ async fn none_strategy_returns_waf_blocked_not_ok() {
             mode: BrowserMode::Never,
             ..Default::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     });
 
     let url = format!("{}/akamai", mock.uri());

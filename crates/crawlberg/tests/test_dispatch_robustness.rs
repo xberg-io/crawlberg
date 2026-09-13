@@ -13,8 +13,8 @@
 //! change. Those gaps must be covered by unit tests inside
 //! `crates/crawlberg/src/defaults/domain_state.rs` or by a future re-export.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use crawlberg::{
@@ -82,25 +82,21 @@ fn build_engine(provider: Arc<CountingMockProvider>, soft_http_errors: bool) -> 
             bypass: Some(provider as _),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
-    allow_private_network();
     CrawlEngine::builder().config(config).build().unwrap()
 }
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the escalation semantics under test run.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 /// When `soft_http_errors = true`, a plain 403 (no WAF signal, no challenge

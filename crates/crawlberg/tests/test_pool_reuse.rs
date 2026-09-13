@@ -6,25 +6,22 @@
 //! use `BrowserMode::Always`) and the test asserts construction-once via
 //! `Arc::strong_count`.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crawlberg::{BrowserPool, BrowserPoolConfig, CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the pool-reuse behaviour under test runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 /// Construct a pool, hand it to `create_engine` via `CrawlConfig.browser_pool`, then verify:
@@ -33,7 +30,6 @@ fn allow_private_network() {
 ///    therefore the same pool arc), proving no re-construction per call.
 #[tokio::test]
 async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     for page in ["page1", "page2"] {
@@ -56,7 +52,7 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
     let config = CrawlConfig {
         max_depth: Some(0),
         browser_pool: Some(Arc::clone(&pool)),
-        ..Default::default()
+        ..allow_private_config()
     };
     let engine_handle = create_engine(Some(config)).expect("engine build must not fail");
 
@@ -92,11 +88,11 @@ async fn pool_injected_once_and_reused_across_batch_crawl_calls() {
 async fn with_browser_pool_builder_method_injects_pool() {
     use crawlberg::CrawlEngine;
 
-    allow_private_network();
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     assert_eq!(Arc::strong_count(&pool), 1, "only caller before builder");
 
     let _engine = CrawlEngine::builder()
+        .config(allow_private_config())
         .with_browser_pool(Arc::clone(&pool))
         .build()
         .expect("builder with pool must not fail");

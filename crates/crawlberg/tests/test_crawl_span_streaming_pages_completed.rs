@@ -68,17 +68,16 @@ impl tracing::Subscriber for CapturingSubscriber {
     fn exit(&self, _span: &Id) {}
 }
 
-/// Mirrors `test_escalation.rs::allow_private_network` so wiremock's loopback server is
-/// reachable past the SSRF policy.
-fn allow_private_network() {
-    static ALLOW_PRIVATE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 /// Serve a seed linking to three leaves, so the crawl runs several loop iterations and the
@@ -124,13 +123,11 @@ fn max_recorded_pages_completed(recorded: &[(String, String)]) -> i64 {
 async fn should_report_real_page_progress_in_the_span_when_streaming() {
     // ~keep #[tokio::test] is a current-thread runtime, so the crawl stays on the thread the
     // subscriber guard was installed on.
-    allow_private_network();
-
     let mock = MockServer::start().await;
     mount_site(&mock).await;
 
     let engine = CrawlEngine::builder()
-        .config(CrawlConfig::default())
+        .config(allow_private_config())
         .build()
         .expect("engine must build");
 
@@ -170,13 +167,11 @@ async fn should_report_real_page_progress_in_the_span_when_streaming() {
 async fn should_still_report_page_progress_in_the_span_when_not_streaming() {
     // ~keep Pins the non-streaming half of the same accessor, so a future refactor cannot fix
     // streaming by breaking the buffered path.
-    allow_private_network();
-
     let mock = MockServer::start().await;
     mount_site(&mock).await;
 
     let engine = CrawlEngine::builder()
-        .config(CrawlConfig::default())
+        .config(allow_private_config())
         .build()
         .expect("engine must build");
 

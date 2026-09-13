@@ -323,7 +323,6 @@ mod proxy_credential_tests {
 
 #[cfg(test)]
 mod native_worker_hang_tests {
-    use std::sync::OnceLock;
     use std::time::Duration;
 
     use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeBrowserExecutorConfig};
@@ -334,20 +333,13 @@ mod native_worker_hang_tests {
     use crate::interact::actions::PageAction;
     use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
 
-    static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-    fn allow_private_network() {
-        ALLOW_PRIVATE.get_or_init(|| {
-            // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-            #[allow(unsafe_code)]
-            unsafe {
-                std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-            }
-        });
-    }
-
+    // ~keep Reaches wiremock's 127.0.0.1 server through the `allow_private_networks` config
+    // seam rather than the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` variable. Writing that variable
+    // here was a process-global mutation racing the `std::env::var` reads that every
+    // concurrent non-serial test in this binary performs via `CrawlConfig::default` ->
+    // `SsrfPolicy::from_env`; on glibc that can realloc `environ` under a reader and abort
+    // the process with no failing test name.
     fn native_test_config() -> CrawlConfig {
-        allow_private_network();
         CrawlConfig {
             browser: BrowserConfig {
                 backend: BrowserBackend::Native,
@@ -355,7 +347,7 @@ mod native_worker_hang_tests {
                 timeout: Duration::from_secs(10),
                 ..BrowserConfig::default()
             },
-            ..CrawlConfig::default()
+            ..CrawlConfig::builder().allow_private_networks(true).build()
         }
     }
 

@@ -8,31 +8,24 @@
 //! `markdown`, while `detected_charset` accurately reported the encoding the crawl
 //! failed to apply.
 
-use std::sync::OnceLock;
-
 use crawlberg::{BrowserMode, CrawlConfig, crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, `create_engine`'s SSRF
-/// check rejects the loopback URL before the charset-decoding path under
-/// test is ever reached.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 fn engine_with_config(mut config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     config.browser.mode = BrowserMode::Never;
-    allow_private_network();
     create_engine(Some(config)).expect("engine build must not fail")
 }
 
@@ -57,7 +50,7 @@ async fn crawl_applies_detected_windows_1252_charset() {
         .mount(&mock)
         .await;
 
-    let handle = engine_with_config(CrawlConfig::default());
+    let handle = engine_with_config(allow_private_config());
     let url = format!("{}/page", mock.uri());
     let result = crawl(&handle, &url).await.expect("crawl must succeed");
 
@@ -109,7 +102,7 @@ async fn crawl_applies_detected_shift_jis_charset() {
         .mount(&mock)
         .await;
 
-    let handle = engine_with_config(CrawlConfig::default());
+    let handle = engine_with_config(allow_private_config());
     let url = format!("{}/page", mock.uri());
     let result = crawl(&handle, &url).await.expect("crawl must succeed");
 
@@ -167,7 +160,7 @@ async fn crawl_applies_detected_utf16le_bom_charset() {
         .mount(&mock)
         .await;
 
-    let handle = engine_with_config(CrawlConfig::default());
+    let handle = engine_with_config(allow_private_config());
     let url = format!("{}/page", mock.uri());
     let result = crawl(&handle, &url).await.expect("crawl must succeed");
 

@@ -12,30 +12,24 @@
 //! This exercises `entry.doc_depth` propagation and the `follow_document_urls` gate without
 //! requiring actual binary document parsing.
 
-use std::sync::OnceLock;
-
 use crawlberg::{CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the document-follow behaviour under test runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[tokio::test]
 async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -73,7 +67,7 @@ async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
         max_pages: Some(20),
         download_documents: true,
         follow_document_urls: false,
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -97,7 +91,6 @@ async fn follow_document_urls_false_does_not_crawl_links_from_document_page() {
 
 #[tokio::test]
 async fn follow_document_urls_true_no_depth_cap_traverses_until_max_depth() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -146,7 +139,7 @@ async fn follow_document_urls_true_no_depth_cap_traverses_until_max_depth() {
         download_documents: true,
         follow_document_urls: true,
         document_url_depth: None,
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -168,7 +161,6 @@ async fn follow_document_urls_true_no_depth_cap_traverses_until_max_depth() {
 
 #[tokio::test]
 async fn follow_document_urls_document_depth_cap_stops_at_configured_limit() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -207,7 +199,7 @@ async fn follow_document_urls_document_depth_cap_stops_at_configured_limit() {
         download_documents: true,
         follow_document_urls: true,
         document_url_depth: Some(1),
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 

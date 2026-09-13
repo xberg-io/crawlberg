@@ -3,8 +3,6 @@ mod common;
 #[cfg(feature = "browser-chromiumoxide")]
 use common::{announce_chrome_skip, is_missing_chrome_message};
 
-#[cfg(feature = "browser-native")]
-use std::sync::OnceLock;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use std::time::Duration;
 
@@ -35,18 +33,17 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
-#[cfg(feature = "browser-native")]
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-#[cfg(feature = "browser-native")]
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[cfg(feature = "browser-chromiumoxide")]
@@ -86,7 +83,7 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
             eval_script: Some("document.body.setAttribute('data-eval-script', 'ran')".to_string()),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -154,7 +151,6 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_click_type_wait_scroll_execute_js_and_scrape() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -204,7 +200,7 @@ async fn native_interact_click_type_wait_scroll_execute_js_and_scrape() {
             eval_script: Some("document.body.setAttribute('data-eval-script', 'ran')".to_string()),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -332,7 +328,6 @@ async fn native_interact_click_type_wait_scroll_execute_js_and_scrape() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_full_page_screenshot_returns_png() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -358,7 +353,7 @@ async fn native_interact_full_page_screenshot_returns_png() {
             timeout: Duration::from_secs(15),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -408,7 +403,6 @@ async fn native_interact_full_page_screenshot_returns_png() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_link_click_navigates() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -440,7 +434,7 @@ async fn native_interact_link_click_navigates() {
             timeout: Duration::from_secs(15),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -465,7 +459,6 @@ async fn native_interact_link_click_navigates() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_click_respects_prevent_default() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -504,7 +497,7 @@ async fn native_interact_click_respects_prevent_default() {
             timeout: Duration::from_secs(15),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -530,7 +523,6 @@ async fn native_interact_click_respects_prevent_default() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_press_enter_submits_focused_form() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -564,7 +556,7 @@ async fn native_interact_press_enter_submits_focused_form() {
             timeout: Duration::from_secs(15),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 
@@ -597,7 +589,6 @@ async fn native_interact_press_enter_submits_focused_form() {
 #[cfg(feature = "browser-native")]
 #[tokio::test]
 async fn native_interact_keyboard_prevent_default_blocks_defaults() {
-    allow_private_network();
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -642,7 +633,7 @@ async fn native_interact_keyboard_prevent_default_blocks_defaults() {
             timeout: Duration::from_secs(15),
             ..BrowserConfig::default()
         },
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = create_engine(Some(config)).unwrap();
 

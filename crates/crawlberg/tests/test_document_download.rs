@@ -2,8 +2,6 @@
 //! non-HTML documents (PDF, …) into `CrawlPageResult.downloaded_document`,
 //! while plain HTML pages leave that field `None`.
 
-use std::sync::OnceLock;
-
 use crawlberg::{CrawlConfig, batch_crawl, create_engine};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -11,24 +9,20 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Minimal PDF payload — the leading `%PDF-` magic plus a trailing `%%EOF`.
 const PDF_BYTES: &[u8] = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF";
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the document-download behaviour under test runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[tokio::test]
 async fn crawl_loop_downloads_linked_pdf_document() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -55,7 +49,7 @@ async fn crawl_loop_downloads_linked_pdf_document() {
         max_depth: Some(1),
         max_pages: Some(10),
         download_documents: true,
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -88,7 +82,6 @@ async fn crawl_loop_downloads_linked_pdf_document() {
 
 #[tokio::test]
 async fn crawl_loop_leaves_html_pages_without_downloaded_document() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -104,7 +97,7 @@ async fn crawl_loop_leaves_html_pages_without_downloaded_document() {
     let config = CrawlConfig {
         max_depth: Some(0),
         download_documents: true,
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -122,7 +115,6 @@ async fn crawl_loop_leaves_html_pages_without_downloaded_document() {
 
 #[tokio::test]
 async fn crawl_loop_skips_document_download_when_disabled() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -148,7 +140,7 @@ async fn crawl_loop_skips_document_download_when_disabled() {
         max_depth: Some(1),
         max_pages: Some(10),
         download_documents: false,
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -170,7 +162,6 @@ async fn crawl_loop_skips_document_download_when_disabled() {
 
 #[tokio::test]
 async fn crawl_loop_truncates_oversized_document_but_reports_true_size() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -187,7 +178,7 @@ async fn crawl_loop_truncates_oversized_document_but_reports_true_size() {
         max_depth: Some(0),
         download_documents: true,
         document_max_size: Some(4),
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -212,7 +203,6 @@ async fn crawl_loop_truncates_oversized_document_but_reports_true_size() {
 
 #[tokio::test]
 async fn crawl_loop_bounds_the_network_read_for_an_oversized_document_at_fetch_time() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     // ~keep Large enough that "fully materialized, then truncated" (the pre-fix
@@ -238,7 +228,7 @@ async fn crawl_loop_bounds_the_network_read_for_an_oversized_document_at_fetch_t
         // is exactly the scenario where, without the fetch-time bound in
         // `engine::crawl_loop::run_crawl_loop`, the full 1MB body would be read into
         // memory regardless of `document_max_size`.
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 
@@ -265,7 +255,6 @@ async fn crawl_loop_bounds_the_network_read_for_an_oversized_document_at_fetch_t
 
 #[tokio::test]
 async fn crawl_loop_streams_document_to_output_dir() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -284,7 +273,7 @@ async fn crawl_loop_streams_document_to_output_dir() {
         max_depth: Some(0),
         download_documents: true,
         document_output_dir: Some(output_dir.clone()),
-        ..Default::default()
+        ..allow_private_config()
     };
     let handle = create_engine(Some(config)).unwrap();
 

@@ -77,25 +77,22 @@ impl ProxyProvider for BrokenProxyProvider {
     }
 }
 
-/// Opts into the SSRF policy's private-network allowance so wiremock's `127.0.0.1` server
-/// is reachable. Mirrors `test_crawl_span_credential_redaction.rs::allow_private_network`.
-fn allow_private_network() {
-    static ALLOW_PRIVATE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[tokio::test]
 async fn an_unparseable_provider_proxy_url_is_reported_before_the_request_goes_direct() {
     // ~keep #[tokio::test] defaults to a current-thread runtime, so the whole crawl stays
     // on the thread the subscriber guard was set on.
-    allow_private_network();
-
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
@@ -108,7 +105,7 @@ async fn an_unparseable_provider_proxy_url_is_reported_before_the_request_goes_d
         .await;
 
     let engine = CrawlEngine::builder()
-        .config(CrawlConfig::default())
+        .config(allow_private_config())
         .with_proxy_provider(Arc::new(BrokenProxyProvider))
         .build()
         .expect("engine must build");

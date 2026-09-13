@@ -58,26 +58,22 @@ impl tracing::Subscriber for CapturingSubscriber {
     fn exit(&self, _span: &Id) {}
 }
 
-/// Opts into the SSRF policy's private-network allowance so wiremock's `127.0.0.1` server
-/// is reachable. Without this, the engine's SSRF check rejects the loopback URL before the
-/// crawl under test runs. Mirrors `test_escalation.rs::allow_private_network`.
-fn allow_private_network() {
-    static ALLOW_PRIVATE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[tokio::test]
 async fn crawl_never_records_raw_credentials_into_a_span() {
     // ~keep #[tokio::test] defaults to a current-thread runtime, so the whole crawl
     // (including every `.await`) stays on the thread the subscriber guard was set on.
-    allow_private_network();
-
     let mock = MockServer::start().await;
     let authority = mock.uri().trim_start_matches("http://").to_owned();
     let seed_url = format!("http://user:{RAW_PASSWORD}@{authority}/");
@@ -103,7 +99,7 @@ async fn crawl_never_records_raw_credentials_into_a_span() {
         .await;
 
     let engine = CrawlEngine::builder()
-        .config(CrawlConfig::default())
+        .config(allow_private_config())
         .build()
         .expect("engine must build");
 

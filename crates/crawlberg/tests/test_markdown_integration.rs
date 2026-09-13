@@ -1,29 +1,23 @@
 //! Integration tests for markdown output: citations, fit_content, and structure.
 
-use std::sync::OnceLock;
-
 use crawlberg::{CrawlConfig, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the markdown behaviour under test runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 #[tokio::test]
 async fn test_markdown_output_is_populated() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -46,7 +40,7 @@ async fn test_markdown_output_is_populated() {
         .mount(&mock)
         .await;
 
-    let handle = create_engine(Some(CrawlConfig::default())).unwrap();
+    let handle = create_engine(Some(allow_private_config())).unwrap();
     let result = scrape(&handle, &mock.uri()).await.unwrap();
     let md = result.markdown.expect("markdown should be present");
 
@@ -66,7 +60,6 @@ async fn test_markdown_output_is_populated() {
 
 #[tokio::test]
 async fn test_markdown_heading_extraction() {
-    allow_private_network();
     let mock = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -87,7 +80,7 @@ async fn test_markdown_heading_extraction() {
         .mount(&mock)
         .await;
 
-    let handle = create_engine(Some(CrawlConfig::default())).unwrap();
+    let handle = create_engine(Some(allow_private_config())).unwrap();
     let result = scrape(&handle, &mock.uri()).await.unwrap();
     let md = result.markdown.expect("markdown should be present");
 

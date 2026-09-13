@@ -357,3 +357,77 @@ impl Default for CrawlEngineBuilder {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod env_private_network_precedence_tests {
+    use crate::engine::CrawlEngine;
+    use crate::net::SsrfPolicy;
+    use crate::types::CrawlConfig;
+
+    /// Resolves `deny_private` the way `CrawlEngineBuilder::build` does, with
+    /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` set to `value` for the duration of the build.
+    ///
+    // ~keep These two tests are the only place that may write this variable in this binary,
+    // and both are `#[serial]`. `serial_test` does not exclude *non*-serial tests, and this
+    // binary has many that read the variable through `CrawlConfig::default` ->
+    // `SsrfPolicy::from_env`; on glibc a concurrent `setenv` can realloc `environ` under a
+    // `getenv` and abort the process with no failing test name. Keep the write window as
+    // narrow as possible and never add a third writer.
+    #[allow(unsafe_code)]
+    fn deny_private_after_build_with_env(config: CrawlConfig, value: &str) -> bool {
+        // ~keep SAFETY: #[serial] on both callers prevents concurrent serial env access.
+        unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", value) };
+        let engine = CrawlEngine::builder().config(config).build();
+        unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
+        engine.expect("engine build must not fail").config.ssrf.deny_private
+    }
+
+    /// Regression test for rc.77: `CRAWLBERG_ALLOW_PRIVATE_NETWORK` must override a
+    /// hardcoded `deny_private: true` carried on `CrawlConfig.ssrf`. Several alef-generated
+    /// bindings (Elixir NIF, PHP, WASM, Ruby) build their config with `SsrfPolicy::default()`
+    /// (deny=true) when the host-side `ssrf` field is absent, silently overriding the env var
+    /// their e2e harnesses set. `CrawlEngineBuilder::build` must apply the env override so the
+    /// operator flag wins regardless of how the policy reached the engine.
+    #[test]
+    #[serial_test::serial]
+    fn env_bypass_overrides_ambient_deny_private() {
+        let config = CrawlConfig {
+            ssrf: SsrfPolicy::default(),
+            ..CrawlConfig::default()
+        };
+        assert!(
+            config.ssrf.deny_private,
+            "precondition: SsrfPolicy::default() must hardcode deny_private=true"
+        );
+
+        assert!(
+            !deny_private_after_build_with_env(config, "true"),
+            "engine builder must apply CRAWLBERG_ALLOW_PRIVATE_NETWORK over an ambient deny_private=true"
+        );
+    }
+
+    /// Regression test for #22: `ssrf_deny_private_explicit` must survive
+    /// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` — a caller that pins `deny_private: true` via that
+    /// field keeps denying private networks even while the operator env var is set suite-wide.
+    ///
+    /// Counterpart to `env_bypass_overrides_ambient_deny_private`: that test proves the env var
+    /// wins when a binding hands us an *ambient* `SsrfPolicy::default()` with no way to prove
+    /// intent; this one proves a caller with a *provable* intent is never overridden.
+    #[test]
+    #[serial_test::serial]
+    fn explicit_deny_private_survives_env_bypass() {
+        let config = CrawlConfig {
+            ssrf: SsrfPolicy {
+                deny_private: true,
+                ..SsrfPolicy::default()
+            },
+            ssrf_deny_private_explicit: Some(true),
+            ..CrawlConfig::default()
+        };
+
+        assert!(
+            deny_private_after_build_with_env(config, "true"),
+            "ssrf_deny_private_explicit=Some(true) must survive CRAWLBERG_ALLOW_PRIVATE_NETWORK=true"
+        );
+    }
+}

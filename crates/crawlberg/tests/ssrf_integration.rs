@@ -3,8 +3,14 @@
 //! "Refuses" tests exercise `crawlberg::validate_url` — the publicly exported
 //! SSRF validator that `http_fetch` calls on every hop.  "Succeeds" tests
 //! exercise `crawlberg::scrape` with an actual wiremock server to confirm that
-//! a permissive policy (allow_private_networks / CIDR allowlist / env-var bypass)
-//! lets a real HTTP round-trip complete.
+//! a permissive policy (allow_private_networks / CIDR allowlist) lets a real HTTP
+//! round-trip complete.
+//!
+//! ~keep This binary deliberately never writes a process environment variable. `CrawlConfig::default()`
+//! calls `SsrfPolicy::from_env`, so a process-global env write here would race the
+//! `std::env::var` reads of every concurrent non-serial test in this binary. The
+//! `CRAWLBERG_ALLOW_PRIVATE_NETWORK` precedence rules are covered instead by the serial unit
+//! tests in `src/engine/builder.rs` and `src/net/ssrf.rs`.
 //!
 //! The split reflects the architecture: `validate_url` is the single chokepoint
 //! for SSRF enforcement; `scrape` goes through the Tower stack which delegates
@@ -111,11 +117,7 @@ async fn crawl_succeeds_when_allow_private_set() {
 /// A CIDR allowlist entry must carry a real scrape() through the Tower stack, not
 /// merely satisfy validate_url. This is the configuration the allowlist exists for:
 /// reach exactly one private host while deny_private stays on for everything else.
-///
-/// Serial because it builds a CrawlConfig via `SsrfPolicy::from_env`, and the env-bypass
-/// tests below mutate `CRAWLBERG_ALLOW_PRIVATE_NETWORK` process-wide.
 #[tokio::test]
-#[serial_test::serial]
 async fn crawl_succeeds_through_scrape_with_cidr_allowlist() {
     let mock = MockServer::start().await;
 
@@ -210,138 +212,6 @@ async fn crawl_succeeds_with_cidr_allowlist() {
     validate_url(&url(&mock.uri()), &policy)
         .await
         .expect("127.0.0.0/8 on allowlist must permit loopback");
-}
-
-/// When CRAWLBERG_ALLOW_PRIVATE_NETWORK=1 is set, SsrfPolicy::from_env()
-/// must produce a policy that permits loopback IPs.
-///
-/// Uses serial_test::serial to prevent concurrent env-var mutation.
-#[allow(unsafe_code)]
-#[tokio::test]
-#[serial_test::serial]
-async fn crawl_succeeds_when_env_bypass_set() {
-    let mock = MockServer::start().await;
-
-    Mock::given(method("GET"))
-        .and(path("/"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("<html><body>ok</body></html>")
-                .append_header("content-type", "text/html"),
-        )
-        .mount(&mock)
-        .await;
-
-    // ~keep SAFETY: #[serial] prevents concurrent environment access in this test process.
-    unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1") };
-
-    let ssrf = SsrfPolicy::from_env();
-    let config = CrawlConfig {
-        ssrf,
-        ..CrawlConfig::default()
-    };
-    let result = scrape(&engine(config), &mock.uri()).await;
-
-    unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
-
-    assert!(
-        result.is_ok(),
-        "CRAWLBERG_ALLOW_PRIVATE_NETWORK=1 must permit loopback: {:?}",
-        result.err()
-    );
-}
-
-/// Regression test for rc.77: CRAWLBERG_ALLOW_PRIVATE_NETWORK must override a
-/// hardcoded `deny_private: true` carried on `CrawlConfig.ssrf`. Several
-/// alef-generated bindings (Elixir NIF, PHP, WASM, Ruby) build their config
-/// with `SsrfPolicy::default()` (deny=true) when the host-side `ssrf` field
-/// is absent, silently overriding the env var their e2e harnesses set.
-/// `CrawlEngineBuilder::build` must apply the env override so the operator
-/// flag wins regardless of how the policy reached the engine.
-#[allow(unsafe_code)]
-#[tokio::test]
-#[serial_test::serial]
-async fn engine_env_bypass_overrides_explicit_deny_private() {
-    let mock = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("<html><body>ok</body></html>")
-                .append_header("content-type", "text/html"),
-        )
-        .mount(&mock)
-        .await;
-
-    // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test binary.
-    unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
-
-    let config = CrawlConfig {
-        ssrf: SsrfPolicy::default(),
-        ..CrawlConfig::default()
-    };
-    assert!(
-        config.ssrf.deny_private,
-        "precondition: SsrfPolicy::default() must hardcode deny_private=true"
-    );
-
-    let result = scrape(&engine(config), &mock.uri()).await;
-
-    unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
-
-    assert!(
-        result.is_ok(),
-        "engine builder must apply env override over explicit deny_private=true: {:?}",
-        result.err()
-    );
-}
-
-/// Regression test for #22: `ssrf_deny_private_explicit` must survive
-/// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` — a caller that pins `deny_private: true` via the new
-/// field keeps denying private networks even while the operator env var is set suite-wide.
-///
-/// This is the counterpart to `engine_env_bypass_overrides_explicit_deny_private` above:
-/// that test proves the env var still wins when a binding hands us an *ambient*
-/// `SsrfPolicy::default()` with no way to prove intent; this one proves a caller with a
-/// *provable* intent (`ssrf_deny_private_explicit: Some(true)`) is never overridden.
-#[allow(unsafe_code)]
-#[tokio::test]
-#[serial_test::serial]
-async fn explicit_deny_private_survives_env_bypass() {
-    let mock = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("<html><body>ok</body></html>")
-                .append_header("content-type", "text/html"),
-        )
-        .mount(&mock)
-        .await;
-
-    // ~keep SAFETY: #[serial] prevents concurrent environment mutation in this test binary.
-    unsafe { std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true") };
-
-    let config = CrawlConfig {
-        ssrf: SsrfPolicy {
-            deny_private: true,
-            ..SsrfPolicy::default()
-        },
-        ssrf_deny_private_explicit: Some(true),
-        ..CrawlConfig::default()
-    };
-
-    let result = scrape(&engine(config), &mock.uri()).await;
-
-    unsafe { std::env::remove_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK") };
-
-    match result {
-        Err(CrawlError::SsrfPolicyViolation { .. }) => {}
-        other => panic!(
-            "explicit deny_private=true (ssrf_deny_private_explicit=Some(true)) must deny loopback \
-             even with CRAWLBERG_ALLOW_PRIVATE_NETWORK=true set, got: {other:?}"
-        ),
-    }
 }
 
 /// A redirect from an allowlisted range (127.0.0.0/8) to 10.0.0.1 (a

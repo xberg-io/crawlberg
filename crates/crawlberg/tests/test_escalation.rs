@@ -7,8 +7,8 @@
 //! The browser tier is not exercised here — browser tests require the `browser`
 //! feature and a live Chrome instance.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use crawlberg::{
@@ -60,23 +60,19 @@ impl BypassProvider for CountingMockProvider {
 }
 
 fn build_engine(config: CrawlConfig) -> CrawlEngine {
-    allow_private_network();
     CrawlEngine::builder().config(config).build().unwrap()
 }
 
-static ALLOW_PRIVATE: OnceLock<()> = OnceLock::new();
-
-/// Opts into the SSRF policy's private-network allowance so wiremock's
-/// 127.0.0.1 servers are reachable. Without this, the engine's SSRF check
-/// rejects the loopback URL before the dispatch chain behaviour under test runs.
-fn allow_private_network() {
-    ALLOW_PRIVATE.get_or_init(|| {
-        // ~keep SAFETY: OnceLock writes this env var once before any network call is made.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "1");
-        }
-    });
+/// Builds a `CrawlConfig` whose SSRF policy permits private networks, so wiremock's
+/// 127.0.0.1 servers are reachable.
+///
+// ~keep Uses the `allow_private_networks` config seam rather than the
+// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` env var: writing that variable is a process-global mutation
+// that races every concurrent `std::env::var` read (`SsrfPolicy::from_env`, reached from
+// `CrawlConfig::default()`) in this binary's other tests, aborting the process on glibc
+// with no failing test name.
+fn allow_private_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(true).build()
 }
 
 /// Extract the markdown text content from a `ScrapeResult`, returning an empty
@@ -92,7 +88,7 @@ fn config_with(strategy: EscalationStrategy, provider: Option<Arc<CountingMockPr
             bypass: provider.map(|p| p as _),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     }
 }
 
@@ -183,7 +179,7 @@ async fn bypass_first_explicit_strategy_routes_through_bypass() {
             bypass: Some(provider.clone() as _),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(config);
@@ -303,7 +299,7 @@ async fn zero_budget_prevents_escalation() {
             escalation_budget: Some(Arc::new(ZeroBudget)),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(cfg);
@@ -348,7 +344,7 @@ async fn unlimited_budget_allows_escalation() {
             escalation_budget: Some(Arc::new(AlwaysOkBudget)),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(cfg);
@@ -396,7 +392,7 @@ async fn buggy_policy_returning_retry_forever_does_not_spin() {
             max_total_attempts: 5,
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(config);
@@ -445,7 +441,7 @@ async fn turnstile_challenge_html_triggers_escalation() {
             waf_classifier: Some(Arc::new(crawlberg::TomlClassifier::builtin())),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(config);
@@ -507,7 +503,7 @@ async fn antibot_strategy_receives_response_body_without_waf_classifier() {
             waf_classifier: None,
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
 
     let engine = build_engine(config);
@@ -561,7 +557,7 @@ async fn content_density_populated_for_html_response() {
             retry_policy: Some(Arc::new(RecordingPolicy(recorded.clone()))),
             ..DispatchProfile::default()
         }),
-        ..CrawlConfig::default()
+        ..allow_private_config()
     };
     let engine = build_engine(config);
     let _ = engine.scrape(&format!("{}/dense", mock.uri())).await.unwrap();
