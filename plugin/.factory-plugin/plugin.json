@@ -1,6 +1,6 @@
 {
   "name": "crawlberg",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Web crawling and scraping with HTML→Markdown and headless-Chrome fallback.",
   "author": {
     "name": "Kreuzberg, Inc.",

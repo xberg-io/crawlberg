@@ -4,6 +4,18 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-09-13
+
+Two release-infrastructure and test-correctness fixes. No library behaviour changes.
+
+### Fixed
+
+- The Elixir publish job no longer corrupts `Package.swift` on `main`. It checks out the release tag, and the Swift injection job force-moves that tag onto a commit which rewrites the `__ALEF_SWIFT_CHECKSUM__` placeholder into a literal checksum — so pushing this job's `HEAD` to `main` fast-forwarded `main` through that commit and destroyed the placeholder. The next release then failed with "carries no `__ALEF_SWIFT_CHECKSUM__` placeholder" and published no `release/swift/<version>` branch for SwiftPM to resolve, which is what left 1.6.3 unresolvable on SwiftPM. Whether it happened at all was a race between that checkout and the tag move, so it bit some releases and not others. The checksum commit is now built in a throwaway worktree based on the current `origin/main`, carrying the checksum file and nothing else.
+
+### Changed
+
+- Integration tests reach loopback through `CrawlConfigBuilder::allow_private_networks(true)` instead of writing `CRAWLBERG_ALLOW_PRIVATE_NETWORK` into the process environment. The previous approach was justified by a comment claiming `#[serial]` made it safe; it did not — `serial_test` serialises serial tests against each other and does nothing about a non-serial test calling `std::env::var` at the same moment, and that reader sits on the `CrawlConfig::default` path most of these binaries use. On glibc a concurrent `setenv` can reallocate `environ` underneath a `getenv` and abort the process with no panic, no backtrace and no failing test name. No test now writes the process environment.
+
 ## [1.6.3] - 2026-09-12
 
 Redirect targets are now judged before they are requested. `exclude_paths` gains one deliberate behaviour change, described below.

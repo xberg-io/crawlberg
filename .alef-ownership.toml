@@ -3990,6 +3990,7 @@ owned_paths = [
   "docs-site/src/snippets/generated/zig/warc/warc-basic-output.md",
   "docs-site/src/snippets/generated/zig/warc/warc-multi-page-crawl.md",
   "e2e/c/Makefile",
+  "e2e/java/.mvn/wrapper/maven-wrapper.properties",
   "e2e/node/.npmrc",
   "packages/csharp/README.md",
   "packages/elixir/README.md",
@@ -3998,6 +3999,7 @@ owned_paths = [
   "packages/java/pom.xml",
   "packages/kotlin-android/README.md",
   "packages/kotlin-android/gradle.properties",
+  "packages/kotlin-android/gradle/wrapper/gradle-wrapper.jar",
   "packages/kotlin-android/src/main/AndroidManifest.xml",
   "packages/php/README.md",
   "packages/python/crawlberg/_crawlberg.pyi",
@@ -4009,6 +4011,7 @@ owned_paths = [
   "test_apps/c/Makefile",
   "test_apps/csharp/XbergIo.Crawlberg.E2eTests.csproj",
   "test_apps/java/.mvn/wrapper/maven-wrapper.properties",
+  "test_apps/kotlin_android/gradle/wrapper/gradle-wrapper.jar",
   "test_apps/node/.npmrc",
   "test_apps/php/phpunit.xml",
 ]

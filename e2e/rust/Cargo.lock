@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-e2e-rust"
-version = "1.6.3"
+version = "1.6.4"
 dependencies = [
  "axum",
  "brotli 9.0.0",
