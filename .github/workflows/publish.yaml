@@ -2306,36 +2306,51 @@ jobs:
       - name: Commit updated checksum file to main
         if: needs.prepare.outputs.dry_run != 'true'
         run: |
+          set -euo pipefail
+          CHECKSUM_FILE="packages/elixir/checksum-Elixir.Crawlberg.Native.exs"
           git config user.name "xberg-dev-publisher[bot]"
           git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
-          git add packages/elixir/checksum-Elixir.Crawlberg.Native.exs
-          if git diff --cached --quiet; then
+          if git diff --quiet -- "$CHECKSUM_FILE"; then
             echo "No checksum changes to commit — skipping"
             exit 0
           fi
           CHECKSUM_SNAPSHOT="$(mktemp)"
-          cp packages/elixir/checksum-Elixir.Crawlberg.Native.exs "$CHECKSUM_SNAPSHOT"
-          git commit -m "chore: update Elixir NIF checksums for v${{ needs.prepare.outputs.version }}"
-          for i in 1 2 3 4 5; do
-            if git push origin HEAD:refs/heads/main; then
-              echo "Push succeeded on attempt $i"
+          cp "$CHECKSUM_FILE" "$CHECKSUM_SNAPSHOT"
+          # ~keep This job checks out the release TAG, and the Swift injection job force-moves
+          # that tag onto a commit that rewrites Package.swift's __ALEF_SWIFT_CHECKSUM__
+          # placeholder into a literal checksum. Pushing this job's own HEAD to main therefore
+          # fast-forwarded main THROUGH that commit and destroyed the placeholder on main --
+          # which is exactly why the next release's injection step failed with "carries no
+          # __ALEF_SWIFT_CHECKSUM__ placeholder" (v1.4.0, and again v1.6.2 -> v1.6.3). Whether
+          # it happens is a race between this checkout and the tag move, which is why it bit
+          # only some releases. Build the commit in a throwaway worktree based on the CURRENT
+          # origin/main so the pushed commit contains the checksum file and nothing else, and
+          # leave this job's own tree on the tag, which the Hex publish below still needs at
+          # the released version.
+          MAIN_TREE="$(mktemp -d)/main"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git worktree add --detach "$MAIN_TREE" FETCH_HEAD
+            cp "$CHECKSUM_SNAPSHOT" "${MAIN_TREE}/${CHECKSUM_FILE}"
+            git -C "$MAIN_TREE" add "$CHECKSUM_FILE"
+            if git -C "$MAIN_TREE" diff --cached --quiet; then
+              echo "Remote already has these checksums — done"
+              git worktree remove --force "$MAIN_TREE"
               exit 0
             fi
-            echo "Push attempt $i failed; retrying after rebase"
-            if [ "$i" -eq 5 ]; then
+            git -C "$MAIN_TREE" commit -m "chore: update Elixir NIF checksums for v${{ needs.prepare.outputs.version }}"
+            if git -C "$MAIN_TREE" push origin HEAD:refs/heads/main; then
+              echo "Push succeeded on attempt ${attempt}"
+              git worktree remove --force "$MAIN_TREE"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; refetching main and retrying"
+            git worktree remove --force "$MAIN_TREE"
+            if [ "$attempt" -eq 5 ]; then
               echo "ERROR: push failed after 5 attempts" >&2
               exit 1
             fi
-            git fetch origin main
-            git reset --hard origin/main
-            cp "$CHECKSUM_SNAPSHOT" packages/elixir/checksum-Elixir.Crawlberg.Native.exs
-            git add packages/elixir/checksum-Elixir.Crawlberg.Native.exs
-            if git diff --cached --quiet; then
-              echo "Remote already has these checksums — done"
-              exit 0
-            fi
-            git commit -m "chore: update Elixir NIF checksums for v${{ needs.prepare.outputs.version }}"
-            sleep $((i * 2))
+            sleep $((attempt * 2))
           done
         shell: bash
 
