@@ -7,12 +7,32 @@ on:
       - "docs-site/**"
       - "alef.toml"
       - ".github/workflows/ci-docs.yaml"
+      # ~keep This job installs the WHOLE pnpm workspace with --frozen-lockfile, so it depends
+      # ~keep on the lockfile and on every workspace manifest -- not just on docs-site/**.
+      # ~keep Without these, a lockfile that drifts from a manifest breaks this job while
+      # ~keep staying invisible until something under docs-site/ happens to change. That is
+      # ~keep exactly how the 1.6.0 lockfile survived the 1.6.1, 1.6.2 and 1.6.3 bumps: only a
+      # ~keep release commit touches both, so only a release commit ever ran the job that fails.
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "**/package.json"
   pull_request:
     branches: [main]
     paths:
       - "docs-site/**"
       - "alef.toml"
       - ".github/workflows/ci-docs.yaml"
+      # ~keep This job installs the WHOLE pnpm workspace with --frozen-lockfile, so it depends
+      # ~keep on the lockfile and on every workspace manifest -- not just on docs-site/**.
+      # ~keep Without these, a lockfile that drifts from a manifest breaks this job while
+      # ~keep staying invisible until something under docs-site/ happens to change. That is
+      # ~keep exactly how the 1.6.0 lockfile survived the 1.6.1, 1.6.2 and 1.6.3 bumps: only a
+      # ~keep release commit touches both, so only a release commit ever ran the job that fails.
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "**/package.json"
   workflow_dispatch:
 
 permissions:
