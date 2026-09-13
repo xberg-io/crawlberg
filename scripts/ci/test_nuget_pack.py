@@ -67,7 +67,13 @@ class NugetPackWorkflowTests(unittest.TestCase):
         ]
         expected.append(["pack", MANAGED, "-c", "Release", "--output", OUTPUT])
         assert calls == expected
-        assert len(self.rids) == 6
+        # ~keep Pin the RID set itself, not its size. win-arm64 was dropped deliberately in
+        # ~keep ea90640a8 because nothing builds an aarch64 Windows native, and the bare count
+        # ~keep this replaces went stale silently -- it still demanded 6 and failed every run
+        # ~keep after that removal. An exact set says which runtimes ship, so adding or losing
+        # ~keep one fails here naming the difference. Re-add win-arm64 here, in
+        # ~keep runtime.json.template and in Crawlberg.csproj together.
+        assert self.rids == ["linux-arm64", "linux-x64", "osx-arm64", "osx-x64", "win-x64"]
 
     def test_runtime_pack_failure_stops_before_managed_package(self) -> None:
         result, calls = self.run_pack(self.rids[0])
