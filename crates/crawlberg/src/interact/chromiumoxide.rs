@@ -9,6 +9,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
+use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -397,10 +398,12 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             .user_data_dir(&user_data_dir)
             .disable_default_args();
         for arg in safe_default_args() {
-            builder = builder.arg(arg);
+            builder = builder.arg(chrome_arg_key(arg));
         }
         if let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) {
-            builder = builder.arg(format!("--proxy-server={}", proxy.url));
+            // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+            // ~keep `----proxy-server=...` and the proxy was silently never applied.
+            builder = builder.arg(format!("proxy-server={}", proxy.url));
         }
         let browser_config = builder
             .build()

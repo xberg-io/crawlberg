@@ -12,6 +12,7 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
+use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 
 /// Timeout for opening a new page (tab) in Chrome.
@@ -334,10 +335,10 @@ impl BrowserPool {
                 .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
                 .env("OS_ACTIVITY_MODE", "disable");
             for arg in safe_default_args() {
-                builder = builder.arg(arg);
+                builder = builder.arg(chrome_arg_key(arg));
             }
             for arg in &self.config.chrome_args {
-                builder = builder.arg(arg.as_str());
+                builder = builder.arg(chrome_arg_key(arg.as_str()));
             }
             let browser_config = builder
                 .build()

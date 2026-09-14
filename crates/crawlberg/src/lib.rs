@@ -7,6 +7,8 @@ pub(crate) mod bindings;
 #[cfg(feature = "browser")]
 mod browser;
 mod browser_detect;
+// ~keep Gated on `browser-chromiumoxide`, not `browser`: `browser` implies it, and the
+// ~keep interact launcher is gated on the narrower feature, so both callers can reach this.
 #[cfg(feature = "browser")]
 pub mod browser_pool;
 #[cfg(feature = "browser")]
@@ -14,6 +16,8 @@ pub mod browser_profile;
 #[cfg(feature = "browser")]
 pub mod browser_session_pool;
 pub mod budget;
+#[cfg(feature = "browser-chromiumoxide")]
+mod chrome_args;
 pub(crate) mod citations;
 #[cfg(feature = "browser")]
 mod stealth;
