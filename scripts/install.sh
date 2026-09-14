@@ -6,7 +6,6 @@ set -euo pipefail
 REPO="xberg-io/crawlberg"
 BINARY_NAME="crawlberg"
 
-
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m%s\033[0m\n' "$*" >&2; }
 error() {
@@ -19,7 +18,6 @@ need_cmd() {
     error "need '$1' (command not found)"
   fi
 }
-
 
 detect_os() {
   local os
@@ -55,7 +53,6 @@ detect_target() {
   esac
 }
 
-
 get_latest_version() {
   need_cmd curl
 
@@ -68,7 +65,6 @@ get_latest_version() {
   fi
   echo "$tag"
 }
-
 
 install() {
   need_cmd curl

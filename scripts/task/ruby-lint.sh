@@ -5,7 +5,6 @@ mode="${1:-check}"
 
 root="$(git rev-parse --show-toplevel)"
 
-
 failed=0
 
 has_ruby_files() {

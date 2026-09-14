@@ -17,7 +17,7 @@ echo "  RUST_BACKTRACE: ${RUST_BACKTRACE:-not set}"
 echo "  CARGO_TERM_COLOR: ${CARGO_TERM_COLOR:-not set}"
 
 TEST_LOG="/tmp/cargo-test-$$.log"
-: > "$TEST_LOG"
+: >"$TEST_LOG"
 
 # ~keep A single `if ! { cmd1; cmd2; } | tee log; then` masks cmd1's failure: `set -e`
 # is suppressed inside an `if` condition, and the compound command's exit status

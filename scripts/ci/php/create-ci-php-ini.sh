@@ -2,7 +2,6 @@
 
 set -e
 
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../" && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-.}"
@@ -67,7 +66,7 @@ fi
 
 echo "Detected PHP extension_dir: $DEFAULT_EXT_DIR"
 
-if cat >"$INI_FILE" <<EOF; then
+if cat >"$INI_FILE" <<EOF
 ; Crawlberg PHP Extension Configuration for CI Testing
 ; This file is generated automatically by create-ci-php-ini.sh
 ; It allows loading the locally-built extension without system-wide installation
@@ -87,6 +86,7 @@ extension = tokenizer
 extension = xml
 extension = xmlwriter
 EOF
+then
   echo "✓ INI file created: $INI_FILE"
   echo ""
   echo "INI file contents:"

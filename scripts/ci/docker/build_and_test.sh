@@ -17,27 +17,27 @@ VERBOSE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-build)
-      BUILD_IMAGE=false
-      shift
-      ;;
-    --image)
-      IMAGE_NAME="$2"
-      BUILD_IMAGE=false
-      shift 2
-      ;;
-    --verbose)
-      VERBOSE=true
-      shift
-      ;;
-    --help|-h)
-      grep "^#" "$0" | tail -n +2
-      exit 0
-      ;;
-    *)
-      echo "Error: unknown option: $1" >&2
-      exit 2
-      ;;
+  --no-build)
+    BUILD_IMAGE=false
+    shift
+    ;;
+  --image)
+    IMAGE_NAME="$2"
+    BUILD_IMAGE=false
+    shift 2
+    ;;
+  --verbose)
+    VERBOSE=true
+    shift
+    ;;
+  --help | -h)
+    grep "^#" "$0" | tail -n +2
+    exit 0
+    ;;
+  *)
+    echo "Error: unknown option: $1" >&2
+    exit 2
+    ;;
   esac
 done
 
@@ -52,7 +52,6 @@ log_ok() {
 log_error() {
   echo -e "${RED}[ERROR]${NC} $*" >&2
 }
-
 
 if [[ "$BUILD_IMAGE" == "true" ]]; then
   log_info "Building Docker image: $IMAGE_NAME"
@@ -72,15 +71,13 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
   log_ok "Docker image built successfully"
 fi
 
-
 log_info "Verifying image: $IMAGE_NAME"
-if ! docker inspect "$IMAGE_NAME" > /dev/null 2>&1; then
+if ! docker inspect "$IMAGE_NAME" >/dev/null 2>&1; then
   log_error "Image not found: $IMAGE_NAME"
   exit 1
 fi
 
 log_ok "Image verified"
-
 
 log_info "Running test suite..."
 

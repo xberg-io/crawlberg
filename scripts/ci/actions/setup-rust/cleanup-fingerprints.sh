@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-
 echo "=== Cleaning Cargo Fingerprints ==="
 
 echo "Removing incremental compilation caches..."
