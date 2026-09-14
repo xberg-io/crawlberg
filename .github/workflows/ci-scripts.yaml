@@ -1,0 +1,71 @@
+name: CI Scripts
+
+on:
+  push:
+    branches: [main]
+    paths: &script-paths
+      - "scripts/**"
+      - "Taskfile.yml"
+      - ".github/workflows/ci-scripts.yaml"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+    paths: *script-paths
+  workflow_dispatch:
+
+concurrency:
+  group: ci-scripts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The same version task test:scripts:bats expects locally. install-bats defaults to a pin now,
+  # but the input is passed explicitly: a default only helps the caller who omits it, and omitting
+  # it is how a workflow ends up reading as pinned while installing whatever the release API
+  # served that morning.
+  BATS_VERSION: "1.14.0"
+
+jobs:
+  bats:
+    name: Bats on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both, because the helpers under test branch on RUNNER_OS: the macOS arm sets DYLD_* where
+        # the Linux arm sets LD_LIBRARY_PATH, so a Linux-only job never executes half the code.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Bats
+        uses: xberg-io/actions/install-bats@v1
+        with:
+          version: ${{ env.BATS_VERSION }}
+
+      - name: Run the shell contract tests
+        uses: xberg-io/actions/run-bats@v1
+        env:
+          # `bats_load_library` searches BATS_LIB_PATH and nothing else. run-bats grew a lib-path
+          # input for this, but it is not in the released v1 yet, so the variable is set directly;
+          # switch to `lib-path: scripts/tests/lib` once actions ships it. ~keep
+          BATS_LIB_PATH: ${{ github.workspace }}/scripts/tests/lib
+        with:
+          path: scripts/tests/bats
+          args: |-
+            --recursive
+            --print-output-on-failure
+
+  format:
+    name: Shell formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Task
+        uses: xberg-io/actions/install-task@v1
+
+      - name: Check shell formatting
+        run: task lint:shell

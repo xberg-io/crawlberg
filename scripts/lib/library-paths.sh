@@ -135,7 +135,7 @@ setup_go_paths() {
   local pc_path="${repo_root}/crates/crawlberg-ffi/crawlberg-ffi.pc"
   if [ ! -f "$pc_path" ]; then
     local version=""
-    version="$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' "${repo_root}/Cargo.toml" | head -n 1 || true)"
+    version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1 || true)"
     [ -z "$version" ] && version="unknown"
 
     local platform="${RUNNER_OS:-$(uname -s)}"
