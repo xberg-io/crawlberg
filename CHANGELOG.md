@@ -4,12 +4,13 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
-## [1.6.4] - 2026-09-13
+## [1.6.4] - 2026-09-14
 
-Two release-infrastructure and test-correctness fixes. No library behaviour changes.
+A browser-flag fix, plus two release-infrastructure and test-correctness fixes.
 
 ### Fixed
 
+- Pass Chrome command-line flags with a single `--` prefix. chromiumoxide's `BrowserConfig::arg` treats the whole string as the flag key and renders it back as `--{key}`, so every already-prefixed flag reached Chrome as `----flag` and was discarded as unknown. Confirmed in a launched browser's own argv: 21 flags carried four dashes. That silenced every entry of the built-in safe defaults — including `--disable-dev-shm-usage`, the standard workaround for the small `/dev/shm` in CI containers, where Chrome otherwise stalls or crashes — every caller-supplied `chrome_args` entry, and the interact path's `--proxy-server`, so a proxy configured for an interaction was never actually applied.
 - The Elixir publish job no longer corrupts `Package.swift` on `main`. It checks out the release tag, and the Swift injection job force-moves that tag onto a commit which rewrites the `__ALEF_SWIFT_CHECKSUM__` placeholder into a literal checksum — so pushing this job's `HEAD` to `main` fast-forwarded `main` through that commit and destroyed the placeholder. The next release then failed with "carries no `__ALEF_SWIFT_CHECKSUM__` placeholder" and published no `release/swift/<version>` branch for SwiftPM to resolve, which is what left 1.6.3 unresolvable on SwiftPM. Whether it happened at all was a race between that checkout and the tag move, so it bit some releases and not others. The checksum commit is now built in a throwaway worktree based on the current `origin/main`, carrying the checksum file and nothing else.
 
 ### Changed
