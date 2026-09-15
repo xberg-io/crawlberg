@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use opentelemetry::KeyValue;
 
 use super::DEFAULT_MAX_LINKS_PER_PAGE;
+use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::{
     RobotsOutcome, compile_regexes, default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive,
@@ -102,26 +103,6 @@ fn url_host(url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Canonicalize a URL for redirect-cycle-set membership.
-///
-/// ~keep The seed comes from the caller's raw string, but every hop key comes from
-/// ~keep `resolve_redirect`, which WHATWG-serializes via `Url::join` (e.g. adding a
-/// ~keep trailing slash to a bare origin). Without canonicalizing the seed the same
-/// ~keep way, a chain that returns to the seed URL in a different-but-equivalent form
-/// ~keep (e.g. `http://host:port` vs `http://host:port/`) is missed by `seen.contains`
-/// ~keep on its first return and only caught one hop later. Falls back to the original
-/// ~keep string when it fails to parse, so an unparsable URL still participates in
-/// ~keep cycle detection via literal string equality.
-/// The key a robots.txt file is cached under: one file covers exactly one origin.
-fn robots_origin_key(parsed: &Url) -> String {
-    format!(
-        "{}://{}:{}",
-        parsed.scheme(),
-        parsed.host_str().unwrap_or(""),
-        parsed.port_or_known_default().unwrap_or(0)
-    )
-}
-
 /// What a [`follow_redirects`] call produced.
 pub(crate) enum RedirectResolution {
     /// The chain ended on a response.
@@ -187,9 +168,9 @@ pub(crate) struct RedirectPolicy<'a> {
     /// ~keep `should_fetch_url`, and every URL in the seed's redirect chain is depth 0.
     exclude_regexes: &'a [Regex],
     /// What robots.txt established per origin, so one origin's file is read once per crawl.
-    outcomes: HashMap<String, RobotsOutcome>,
+    outcomes: HashMap<RobotsCacheKey, Arc<RobotsOutcome>>,
     /// The origin of the last URL admitted, whose rules the crawl loop keeps applying.
-    last_origin: Option<String>,
+    last_origin: Option<RobotsCacheKey>,
     /// URLs this policy rejected, folded into `CrawlState::urls_filtered`.
     urls_filtered: usize,
 }
@@ -241,19 +222,19 @@ impl<'a> RedirectPolicy<'a> {
             return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
         }
 
-        let origin = robots_origin_key(&parsed);
+        let user_agent = default_robots_user_agent(&self.engine.config);
+        let origin = RobotsCacheKey::new(&parsed, user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
             let outcome = if self.engine.config.respect_robots_txt {
-                fetch_robots_outcome(
-                    url,
-                    &self.engine.config,
-                    self.client,
-                    default_robots_user_agent(&self.engine.config),
-                )
-                .await
+                self.engine
+                    .robots_cache
+                    .get_or_fetch(origin.clone(), || {
+                        fetch_robots_outcome(url, &self.engine.config, self.client, user_agent)
+                    })
+                    .await
             } else {
-                RobotsOutcome::AllowAll
+                Arc::new(RobotsOutcome::AllowAll)
             };
             self.outcomes.insert(origin.clone(), outcome);
         }
@@ -282,10 +263,10 @@ impl<'a> RedirectPolicy<'a> {
 
     /// What robots.txt established for the origin the chain ended on, which the crawl loop
     /// applies to every page it fetches from there.
-    fn into_outcome(mut self) -> RobotsOutcome {
+    fn into_outcome(mut self) -> Arc<RobotsOutcome> {
         self.last_origin
             .and_then(|origin| self.outcomes.remove(&origin))
-            .unwrap_or(RobotsOutcome::AllowAll)
+            .unwrap_or_else(|| Arc::new(RobotsOutcome::AllowAll))
     }
 }
 
@@ -300,6 +281,16 @@ fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
     None
 }
 
+/// Canonicalize a URL for redirect-cycle-set membership.
+///
+/// ~keep The seed comes from the caller's raw string, but every hop key comes from
+/// ~keep `resolve_redirect`, which WHATWG-serializes via `Url::join` (e.g. adding a
+/// ~keep trailing slash to a bare origin). Without canonicalizing the seed the same
+/// ~keep way, a chain that returns to the seed URL in a different-but-equivalent form
+/// ~keep (e.g. `http://host:port` vs `http://host:port/`) is missed by `seen.contains`
+/// ~keep on its first return and only caught one hop later. Falls back to the original
+/// ~keep string when it fails to parse, so an unparsable URL still participates in
+/// ~keep cycle detection via literal string equality.
 fn canonical_redirect_key(url: &str) -> String {
     Url::parse(url)
         .map(|parsed| parsed.to_string())
