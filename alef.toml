@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.85.19"
+alef_version = "0.90.0"
 languages = [
   "python",
   "node",
@@ -457,6 +457,16 @@ remove-fixme = false
 remove-docs = false
 use-default-ignores = true
 preserve-patterns = ["SAFETY", "SPDX", "Copyright", "License", "licensed under"]
+
+# Shell is two-space in this tree. Both keys are load-bearing: without `enabled` poly runs no
+# shell formatter at all, and without `indent-width` it falls through to the language default
+# of four and reindents every script. poly resolves this from the generated poly.toml, not
+# .editorconfig -- it pipes stdin to shfmt with an explicit -i, under which .editorconfig is
+# inert by design. Declared here rather than hand-edited into poly.toml, where b4d992dad put
+# it: that file carries a DO-NOT-EDIT header and any `alef generate` eats the edit. ~keep
+[workspace.poly.shell-formatter]
+enabled = true
+indent-width = 2
 
 [workspace.poly.typos.extend-words]
 # Deliberate misspelling inside a generated comment quoting a type-checker error
@@ -2234,60 +2244,60 @@ categories = ["scrape", "markdown", "metadata"]
 
 [crates.e2e.registry.packages.python]
 name = "crawlberg"
-version = ">=1.6.4"
+version = ">=1.7.0"
 
 [crates.e2e.registry.packages.node]
 name = "@xberg-io/crawlberg"
-version = "^1.6.4"
+version = "^1.7.0"
 
 [crates.e2e.registry.packages.rust]
 name = "crawlberg"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.e2e.registry.packages.go]
 module = "github.com/xberg-io/crawlberg/packages/go"
-version = "v1.6.4"
+version = "v1.7.0"
 
 [crates.e2e.registry.packages.java]
 name = "io.xberg.crawlberg:crawlberg"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.e2e.registry.packages.csharp]
 name = "XbergIo.Crawlberg"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.e2e.registry.packages.php]
 name = "xberg-io/crawlberg"
-version = ">=1.6.4"
+version = ">=1.7.0"
 
 [crates.e2e.registry.packages.ruby]
 name = "crawlberg"
-version = ">= 1.6.4"
+version = ">= 1.7.0"
 
 [crates.e2e.registry.packages.elixir]
 name = "crawlberg"
-version = "~> 1.6.4"
+version = "~> 1.7.0"
 
 [crates.e2e.registry.packages.wasm]
 name = "@xberg-io/crawlberg-wasm"
-version = "^1.6.4"
+version = "^1.7.0"
 
 [crates.e2e.registry.packages.brew]
 name = "crawlberg"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.e2e.registry.packages.c]
 name = "crawlberg-ffi"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.e2e.registry.packages.zig]
 name = "crawlberg"
-version = "1.6.4"
-hash = "crawlberg-1.6.4-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
+version = "1.7.0"
+hash = "crawlberg-1.7.0-STALE_PLACEHOLDER_TO_BE_RESOLVED_BY_ZIG_FETCH"
 
 [crates.e2e.registry.packages.kotlin_android]
 name = "io.xberg.crawlberg.android:crawlberg-android"
-version = "1.6.4"
+version = "1.7.0"
 
 [crates.scaffold]
 description = "High-performance web crawling engine"

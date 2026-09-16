@@ -407,7 +407,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-harness"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1177,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1233,14 +1233,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bindings-common"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
 ]
 
 [[package]]
 name = "crawlberg-browser"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1248,7 +1248,7 @@ dependencies = [
  "deno_core",
  "deno_error",
  "futures",
- "html5ever 0.40.0",
+ "html5ever",
  "ipnet",
  "png",
  "precomputed-hash",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bypass"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "async-trait",
  "crawlberg",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-cli"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "clap",
  "crawlberg",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-dart"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
  "flutter_rust_bridge",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-ffi"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "ahash",
  "cbindgen",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-jni"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-node"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
  "futures-util",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-php"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
  "ext-php-rs",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-py"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-swift"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-wasm"
-version = "1.6.4"
+version = "1.7.0"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1412,9 +1412,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
 dependencies = [
  "cfg-if",
 ]
@@ -1560,7 +1560,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -2634,16 +2634,16 @@ checksum = "c9356095b4b41197bba32173600e1582792cda618f65d12f68e2e77d273413c5"
 
 [[package]]
 name = "html-to-markdown-rs"
-version = "3.12.3"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92a0c610a5780d769f7e2e0c3e7e36003582f688d5648ea8263d11161561f461"
+checksum = "250c27ba332993f6972a03b1b7243fe087a94c3401318015fe0dde5e8ea1ccef"
 dependencies = [
  "ahash",
  "astral-tl",
  "base64 0.23.1",
  "bitflags 2.13.2",
  "html-escape",
- "html5ever 0.39.0",
+ "html5ever",
  "image",
  "memchr",
  "once_cell",
@@ -2657,22 +2657,12 @@ dependencies = [
 
 [[package]]
 name = "html5ever"
-version = "0.39.0"
+version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a1761807faccc9a19e86944bbf40610014066306f96edcdedc2fb714bcb7b8"
+checksum = "456a1a377e608e555d22ddab27ac0114bc7a7b4199078108e34c2aeae6c9b130"
 dependencies = [
  "log",
- "markup5ever 0.39.0",
-]
-
-[[package]]
-name = "html5ever"
-version = "0.40.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1fb45cc6b576ff3c8053c7a1a4c14b2b24ae166ab6a3e5bc5856aa45d39de70"
-dependencies = [
- "log",
- "markup5ever 0.40.0",
+ "markup5ever",
  "memchr",
 ]
 
@@ -3429,24 +3419,13 @@ dependencies = [
 
 [[package]]
 name = "markup5ever"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7122d987ec5f704ee56f6e5b41a7d93722e9aae27ae07cafa4036c4d3f9757de"
-dependencies = [
- "log",
- "tendril",
- "web_atoms 0.2.6",
-]
-
-[[package]]
-name = "markup5ever"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ab3dc68ac4a0f5719e560136778c1ee716e296030d75dbd4484e37e39e3a842"
 dependencies = [
  "log",
  "tendril",
- "web_atoms 0.3.0",
+ "web_atoms",
 ]
 
 [[package]]
@@ -5585,18 +5564,6 @@ dependencies = [
 
 [[package]]
 name = "string_cache"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a18596f8c785a729f2819c0f6a7eae6ebeebdfffbfe4214ae6b087f690e31901"
-dependencies = [
- "new_debug_unreachable",
- "parking_lot",
- "phf_shared 0.13.1",
- "precomputed-hash",
-]
-
-[[package]]
-name = "string_cache"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffa8a5dbe8b3f0bbe29d4c3225daafaeead63afdc1b65fc4c01a1384166038e6"
@@ -5609,21 +5576,9 @@ dependencies = [
 
 [[package]]
 name = "string_cache_codegen"
-version = "0.6.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "585635e46db231059f76c5849798146164652513eb9e8ab2685939dd90f29b69"
-dependencies = [
- "phf_generator 0.13.1",
- "phf_shared 0.13.1",
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "string_cache_codegen"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d576664ce111e003a5db4748200f838b98043cbc44e6341025cd6a77d40e3944"
+checksum = "928dcdf75e47626b3617a976ec205d9f057584c371c1f23b782129268d0e6edc"
 dependencies = [
  "phf_generator 0.14.0",
  "phf_shared 0.14.0",
@@ -5876,7 +5831,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -6869,26 +6824,14 @@ dependencies = [
 
 [[package]]
 name = "web_atoms"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba8b815c1b593dc0baf78dd0f4fc8fdb2de53198fb1163738093e9a311c33fb3"
-dependencies = [
- "phf 0.13.1",
- "phf_codegen 0.13.1",
- "string_cache 0.9.0",
- "string_cache_codegen 0.6.1",
-]
-
-[[package]]
-name = "web_atoms"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7572660c8890448ba236b7376f27e389c6a7e1c70195622faced601f855c0ada"
 dependencies = [
  "phf 0.14.0",
  "phf_codegen 0.14.0",
- "string_cache 0.11.0",
- "string_cache_codegen 0.11.1",
+ "string_cache",
+ "string_cache_codegen",
 ]
 
 [[package]]
@@ -7517,9 +7460,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.7"
+version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

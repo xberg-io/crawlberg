@@ -4,6 +4,61 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-16
+
+The generated bindings move to Alef 0.90.0 and the markdown converter to html-to-markdown 3.14.
+Two binding changes are source-breaking, both in generated code and neither visible on the wire.
+
+### Changed
+
+- **BREAKING (java): enum constants are now `SCREAMING_SNAKE_CASE`.** `LinkType.Internal` becomes
+  `LinkType.INTERNAL`. 38 constants across 11 enums: `AssetCategory` (10), `BrowserMode` (4),
+  `CrawlStrategyKind` (4), `ImageSource` (4), `LinkType` (4), `BrowserWait` (3), `FeedType` (3),
+  `BrowserBackend` (2), `ScrollDirection` (2), `ContentFilterKind` (1) and
+  `DocumentContentEncoding` (1). The `@JsonValue` string each constant carries is unchanged, so
+  nothing serialises differently -- only Java source that names a constant needs editing.
+
+- **BREAKING (swift): `DownloadedDocument` is a native struct, not an alias for the bridge type.**
+  It is now `Codable`, `Sendable` and `Hashable`, with Swift-cased stored properties
+  (`mimeType`, `contentHash`, `contentPath`, `contentBase64`) and a memberwise initialiser.
+  `DownloadedDocumentRef` and `DownloadedDocumentRefMut` remain aliases to the bridge types.
+
+- **Upgraded `html-to-markdown-rs` to 3.14**, which fixes five ways HTML could lose visible content
+  on its way to markdown. The one that reaches the widest input is an html5ever serializer defect:
+  0.40.0 dropped the leading byte of a two-byte UTF-8 sequence, so a single `§`, `©`, `°` or `·`
+  could make a repaired document's re-parse fail and silently truncate everything after it. The
+  rest: character references in attribute values are now decoded (`title="A&amp;B"` reached the
+  output literally, across twelve attributes); a nested `<table>` behind a wrapper element no
+  longer emits raw `|` characters that re-parse as the outer row's cell boundaries; content after
+  a table whose last row is never closed is no longer dropped; an `<a>` wrapping a block element no
+  longer crushes that block into the link label; and `keepInlineImagesIn` is honoured for `<a>`.
+
+- **Deduplicated the html5ever stack.** 3.14 pins html5ever 0.40, matching this workspace's own
+  direct dependency, where 3.12 pinned 0.39 and the graph carried two copies of each crate in that
+  stack. `Cargo.lock` loses five duplicate entries -- `html5ever`, `markup5ever`, `string_cache`,
+  `string_cache_codegen` and `web_atoms` -- and 57 lines net.
+
+- **The Java binding gains a handle borrow lifecycle.** Alef 0.90.0 emits package-private
+  `HandleLease` and `HandleTransfer` types -- `AutoCloseable`, reference-counted and synchronized
+  on the handle -- so a native engine handle cannot be closed while a streaming call still holds
+  it. No public API changes; `crawlStream` and `batchCrawlStream` are the callers. The two methods
+  cross the 150-line `MethodLength` limit as a result, and generated Java is now suppressed for
+  that check: its method sizes belong to the emitter, not to this repo.
+
+- **Bumped the Alef pin from 0.85.19 to 0.90.0** and moved the shell-formatter configuration into
+  `alef.toml` as `[workspace.poly.shell-formatter]`. It had been hand-edited into the generated
+  `poly.toml`, which carries a DO-NOT-EDIT header -- the next `alef generate` would have deleted it
+  and returned poly to formatting no shell at all, since poly runs `shfmt` only when a config
+  enables it.
+
+### Fixed
+
+- The version bump now refreshes `uv.lock`. `alef sync-versions` rewrites
+  `packages/python/pyproject.toml`, but nothing regenerated the workspace lock beside it, so
+  every 1.6.x release was tagged with a stale one: 1.6.1 through 1.6.4 all shipped
+  `crawlberg 1.6.0` in `uv.lock`, and 1.6.0 itself shipped 1.4.2. `uv sync --locked` and
+  `uv run --locked` fail against such a lock.
+
 ## [1.6.4] - 2026-09-14
 
 A browser-flag fix, plus two release-infrastructure and test-correctness fixes.

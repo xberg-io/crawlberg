@@ -8,6 +8,12 @@
   <suppress checks="ConstantName" files=".*FFI\.java" />
   <suppress checks="MagicNumber" files=".*FFI\.java" />
 
+  <!-- MethodLength disciplines hand-written code; every file under io/xberg/crawlberg/ is
+       alef-generated and carries a DO-NOT-EDIT header, so its method sizes are the emitter's
+       to decide and cannot be fixed here. crawlStream and batchCrawlStream crossed 150 lines
+       when alef 0.90.0 added the HandleLease/HandleTransfer borrow lifecycle. -->
+  <suppress checks="MethodLength" files=".*[\\/]io[\\/]xberg[\\/]crawlberg[\\/].*\.java" />
+
   <!-- Allow star imports and magic numbers in test files -->
   <suppress checks="AvoidStarImport" files=".*Test\.java" />
   <suppress checks="MagicNumber" files=".*Test\.java" />

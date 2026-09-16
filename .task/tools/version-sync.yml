@@ -49,6 +49,15 @@ tasks:
       # runs that would have caught it were cancelled to free runners. --lockfile-only resolves
       # without touching node_modules, so this stays cheap and offline-ish.
       - pnpm install --lockfile-only --ignore-scripts
+      # ~keep The uv workspace lock needs the same treatment for the same reason: `alef
+      # sync-versions` rewrites packages/python/pyproject.toml's version, and uv.lock records
+      # the workspace member's version alongside it, but nothing above refreshed it. Every
+      # 1.6.x release was tagged with a stale lock -- 1.6.1 through 1.6.4 all carried
+      # `crawlberg 1.6.0`, and 1.6.0 itself carried 1.4.2 -- because the only thing that ever
+      # fixed it was someone running `uv lock` by hand in an unrelated commit. `uv sync
+      # --locked` and `uv run --locked` fail against such a lock with "the lockfile is not
+      # up-to-date".
+      - uv lock
       # ~keep The gate. A bump is not finished because the commands above exited 0 -- each
       # reports only on what it writes. `alef verify` is the only step that looks at the whole
       # managed surface at once. Read its output: it exits 0 while still reporting frozen paths

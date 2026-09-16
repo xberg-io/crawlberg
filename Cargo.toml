@@ -17,7 +17,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.6.4"
+version = "1.7.0"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -55,8 +55,8 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.6.4" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.6.4" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.7.0" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.7.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Held at 0.37, and cannot move while `selectors` is at 0.40: selectors-0.40.0 itself
 # depends on cssparser 0.37 and exposes those types in the parser traits that
@@ -75,10 +75,10 @@ encoding_rs = "0.8"
 ext-php-rs = "0.15.15"
 flate2 = "1"
 futures = "0.3"
-html-to-markdown-rs = { version = "3.12", features = ["full"] }
-# ~keep 0.40 duplicates against html-to-markdown-rs 3.12, which pins html5ever 0.39. That is
-# accepted: no html5ever type crosses between the two crates (we hand it HTML strings), so the
-# cost is build time, not correctness.
+html-to-markdown-rs = { version = "3.14", features = ["full"] }
+# ~keep Kept in lockstep with html-to-markdown-rs, which pins html5ever 0.40 from 3.14 on.
+# Before that it pinned 0.39 and the graph carried two copies of the html5ever/markup5ever/
+# string_cache/web_atoms stack; matching majors is what collapses them to one.
 html5ever = "0.40"
 ipnet = "2"
 itertools = "0.15"
