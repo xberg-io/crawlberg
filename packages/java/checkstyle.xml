@@ -9,9 +9,15 @@
   <property name="severity" value="error" />
   <property name="fileExtensions" value="java" />
 
+  <!-- config_loc is set to ${project.basedir} by the maven-checkstyle-plugin propertyExpansion
+       below. A bare relative path here resolves against the PROCESS working directory instead,
+       so it only found the file when maven happened to run from packages/java. The release job
+       runs `mvn -f packages/java/pom.xml` from the repo root and silently found nothing, because
+       `optional=true` discarded the whole suppressions file without a word. Every suppression in
+       it was therefore inert in CI while passing locally. Anchored and no longer optional, so a
+       missing file is an error. -->
   <module name="SuppressionFilter">
-    <property name="file" value="checkstyle-suppressions.xml" />
-    <property name="optional" value="true" />
+    <property name="file" value="${config_loc}/checkstyle-suppressions.xml" />
   </module>
 
   <module name="LineLength">

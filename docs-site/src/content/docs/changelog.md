@@ -4,6 +4,18 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Fixed
+
+- Checkstyle's suppressions file is found regardless of where maven is invoked from. `checkstyle.xml`
+  named it by a bare relative path, which checkstyle resolves against the process working directory,
+  not against `config_loc` — and `optional="true"` meant a miss discarded the entire suppressions
+  file in silence. `mvn checkstyle:check` from `packages/java` therefore passed while
+  `mvn -f packages/java/pom.xml` from the repo root, which is how the release job invokes it,
+  failed on the same bytes. That is what stopped `io.xberg.crawlberg:crawlberg:1.7.0` reaching
+  Maven Central. Every suppression in the file had been inert in CI for as long as it has existed.
+  The path is now anchored to `${config_loc}` and the filter is no longer optional, so a missing
+  file is an error rather than a silent skip.
+
 ## [1.7.0] - 2026-09-16
 
 The generated bindings move to Alef 0.90.0 and the markdown converter to html-to-markdown 3.14.
