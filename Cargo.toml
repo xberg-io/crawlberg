@@ -17,7 +17,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "1.7.0"
+version = "1.7.1"
 edition = "2024"
 authors = ["Na'aman Hirschfeld <naaman@xberg.io>"]
 license = "MIT"
@@ -55,8 +55,8 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.7.0" }
-crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.7.0" }
+crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.7.1" }
+crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.7.1" }
 criterion = { version = "0.8", features = ["html_reports"] }
 # ~keep Held at 0.37, and cannot move while `selectors` is at 0.40: selectors-0.40.0 itself
 # depends on cssparser 0.37 and exposes those types in the parser traits that

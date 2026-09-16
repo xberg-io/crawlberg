@@ -4,6 +4,12 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-16
+
+A release-tooling fix. 1.7.0's Java artifact never reached Maven Central; this version carries the
+fix and publishes it. No library code changed, so 1.7.0 and 1.7.1 are byte-identical apart from the
+version string and the two CI files below.
+
 ### Fixed
 
 - Checkstyle's suppressions file is found regardless of where maven is invoked from. `checkstyle.xml`
@@ -15,6 +21,12 @@ All notable changes to crawlberg are documented here.
   Maven Central. Every suppression in the file had been inert in CI for as long as it has existed.
   The path is now anchored to `${config_loc}` and the filter is no longer optional, so a missing
   file is an error rather than a silent skip.
+
+- The publish workflow fails a run that cannot publish. Every publish job gates on
+  `is_tag == 'true'`, so a `workflow_dispatch` carrying a branch as `ref` skips all of them and
+  still reports success. Run 35122273610 skipped 68 jobs that way and went green having published
+  nothing, which is indistinguishable from a real success in the run list. `is_tag` is true in
+  every legitimate mode, dry-run included, so refusing a non-tag ref rejects no real dispatch.
 
 ## [1.7.0] - 2026-09-16
 
