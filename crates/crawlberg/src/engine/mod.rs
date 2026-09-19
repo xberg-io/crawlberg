@@ -5,6 +5,8 @@ mod batch;
 mod builder;
 #[cfg(not(target_arch = "wasm32"))]
 mod crawl_loop;
+#[cfg(not(target_arch = "wasm32"))]
+mod robots_cache;
 
 #[cfg(not(target_arch = "wasm32"))]
 use opentelemetry::KeyValue;
@@ -107,6 +109,8 @@ pub struct CrawlEngine {
     /// Shared UA rotation layer — preserves rotation counter across service builds.
     #[cfg(not(target_arch = "wasm32"))]
     ua_rotation: crate::tower::UaRotationLayer,
+    #[cfg(not(target_arch = "wasm32"))]
+    robots_cache: Arc<robots_cache::RobotsCache>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
     pub(crate) native_browser_executor: Option<Arc<crawlberg_browser::adapter::NativeBrowserExecutor>>,
 }

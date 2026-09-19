@@ -42,6 +42,20 @@ async fn mount_robots(mock: &MockServer, status: u16, body: &str, expected: u64)
         .await;
 }
 
+async fn mount_slow_robots(mock: &MockServer, expected: u64) {
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("User-agent: *\nAllow: /\n")
+                .append_header("content-type", "text/plain")
+                .set_delay(Duration::from_millis(100)),
+        )
+        .expect(expected)
+        .mount(mock)
+        .await;
+}
+
 fn robots_config() -> CrawlConfig {
     CrawlConfig::builder()
         .respect_robots_txt(true)
@@ -60,6 +74,74 @@ fn crawled_paths(result: &crawlberg::CrawlResult, base: &str) -> Vec<String> {
             rest => rest.to_owned(),
         })
         .collect()
+}
+
+#[tokio::test]
+async fn should_coalesce_concurrent_robots_reads_for_one_origin() {
+    let mock = MockServer::start().await;
+    mount_slow_robots(&mock, 1).await;
+    for path in ["/one", "/two", "/three", "/four"] {
+        mount_html_expecting(&mock, path, "<html><body>page</body></html>", 1).await;
+    }
+
+    let engine = create_engine(Some(robots_config())).expect("engine");
+    let base = mock.uri();
+    let one_url = format!("{base}/one");
+    let two_url = format!("{base}/two");
+    let three_url = format!("{base}/three");
+    let four_url = format!("{base}/four");
+    let (one, two, three, four) = tokio::join!(
+        crawl(&engine, &one_url),
+        crawl(&engine, &two_url),
+        crawl(&engine, &three_url),
+        crawl(&engine, &four_url),
+    );
+
+    for result in [one, two, three, four] {
+        assert_eq!(
+            result.expect("crawl").pages.len(),
+            1,
+            "every allowed seed must be fetched"
+        );
+    }
+    // ~keep The `.expect(1)` on /robots.txt is the singleflight assertion, verified on drop.
+    drop(mock);
+}
+
+#[tokio::test]
+async fn should_cache_robots_separately_for_each_effective_port() {
+    let first = MockServer::start().await;
+    let second = MockServer::start().await;
+    mount_slow_robots(&first, 1).await;
+    mount_slow_robots(&second, 1).await;
+    for mock in [&first, &second] {
+        mount_html_expecting(mock, "/one", "<html><body>one</body></html>", 1).await;
+        mount_html_expecting(mock, "/two", "<html><body>two</body></html>", 1).await;
+    }
+
+    let engine = create_engine(Some(robots_config())).expect("engine");
+    let first_base = first.uri();
+    let second_base = second.uri();
+    let first_one_url = format!("{first_base}/one");
+    let first_two_url = format!("{first_base}/two");
+    let second_one_url = format!("{second_base}/one");
+    let second_two_url = format!("{second_base}/two");
+    let (first_one, first_two, second_one, second_two) = tokio::join!(
+        crawl(&engine, &first_one_url),
+        crawl(&engine, &first_two_url),
+        crawl(&engine, &second_one_url),
+        crawl(&engine, &second_two_url),
+    );
+
+    for result in [first_one, first_two, second_one, second_two] {
+        assert_eq!(
+            result.expect("crawl").pages.len(),
+            1,
+            "every allowed seed must be fetched"
+        );
+    }
+    // ~keep Each server uses a distinct non-default port and independently expects one read.
+    drop((first, second));
 }
 
 /// #43: the robots URL must carry the seed's port, so the seed's own server receives the request.

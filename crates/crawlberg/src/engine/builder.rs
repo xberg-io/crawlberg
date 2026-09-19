@@ -294,6 +294,8 @@ impl CrawlEngineBuilder {
                 .unwrap_or_else(|| Arc::new(crate::budget::DefaultPageBudget)),
             #[cfg(not(target_arch = "wasm32"))]
             ua_rotation,
+            #[cfg(not(target_arch = "wasm32"))]
+            robots_cache: Arc::new(super::robots_cache::RobotsCache::default()),
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
         })
