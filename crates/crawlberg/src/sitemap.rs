@@ -63,6 +63,47 @@ fn push_entity_ref(buffer: &mut String, entity: &BytesRef<'_>) {
     }
 }
 
+/// The `<url>` entry currently being read, committed to the result on `</url>`.
+#[derive(Default)]
+struct UrlEntry {
+    loc: String,
+    lastmod: Option<String>,
+    changefreq: Option<String>,
+    priority: Option<String>,
+}
+
+impl UrlEntry {
+    /// Discard any partially-read entry so a new `<url>` starts clean.
+    fn reset(&mut self) {
+        self.loc.clear();
+        self.lastmod = None;
+        self.changefreq = None;
+        self.priority = None;
+    }
+
+    fn set(&mut self, field: UrlField, value: &str) {
+        match field {
+            UrlField::Loc => self.loc = value.to_owned(),
+            UrlField::LastMod => self.lastmod = Some(value.to_owned()),
+            UrlField::ChangeFreq => self.changefreq = Some(value.to_owned()),
+            UrlField::Priority => self.priority = Some(value.to_owned()),
+        }
+    }
+
+    /// The finished entry, or `None` when the entry carried no `<loc>`.
+    fn build(&self) -> Option<SitemapUrl> {
+        if self.loc.is_empty() {
+            return None;
+        }
+        Some(SitemapUrl {
+            url: self.loc.clone(),
+            lastmod: self.lastmod.clone(),
+            changefreq: self.changefreq.clone(),
+            priority: self.priority.clone(),
+        })
+    }
+}
+
 /// Parse a sitemap XML document and extract URL entries.
 pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
     let mut urls = Vec::new();
@@ -75,10 +116,7 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
     // ~keep inside an element, so text is accumulated here and only committed to a field
     // ~keep on the closing tag.
     let mut text = String::new();
-    let mut current_loc = String::new();
-    let mut current_lastmod: Option<String> = None;
-    let mut current_changefreq: Option<String> = None;
-    let mut current_priority: Option<String> = None;
+    let mut entry = UrlEntry::default();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -86,10 +124,7 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
                 let field = match e.name().as_ref() {
                     "url" => {
                         in_url = true;
-                        current_loc.clear();
-                        current_lastmod = None;
-                        current_changefreq = None;
-                        current_priority = None;
+                        entry.reset();
                         None
                     }
                     "loc" if in_url => Some(UrlField::Loc),
@@ -105,27 +140,18 @@ pub fn parse_sitemap_xml(body: &str) -> Vec<SitemapUrl> {
             }
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 "url" => {
-                    if in_url && !current_loc.is_empty() {
-                        urls.push(SitemapUrl {
-                            url: current_loc.clone(),
-                            lastmod: current_lastmod.clone(),
-                            changefreq: current_changefreq.clone(),
-                            priority: current_priority.clone(),
-                        });
+                    if in_url && let Some(finished) = entry.build() {
+                        urls.push(finished);
                     }
                     in_url = false;
                     current_field = None;
                 }
                 "loc" | "lastmod" | "changefreq" | "priority" => {
                     let value = text.trim();
-                    if !value.is_empty() {
-                        match current_field {
-                            Some(UrlField::Loc) => current_loc = value.to_owned(),
-                            Some(UrlField::LastMod) => current_lastmod = Some(value.to_owned()),
-                            Some(UrlField::ChangeFreq) => current_changefreq = Some(value.to_owned()),
-                            Some(UrlField::Priority) => current_priority = Some(value.to_owned()),
-                            None => {}
-                        }
+                    if !value.is_empty()
+                        && let Some(field) = current_field
+                    {
+                        entry.set(field, value);
                     }
                     current_field = None;
                     text.clear();
@@ -215,27 +241,48 @@ pub fn is_sitemap_index(body: &str) -> bool {
 /// sitemap-index trees.
 pub(crate) async fn fetch_sitemap_tree(
     sitemap_url: &str,
-    config: &CrawlConfig,
-    client: &reqwest::Client,
-    filter: &MapFilter,
+    context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
-    let resp = match http_fetch(sitemap_url, config, &std::collections::HashMap::new(), client).await {
+    let resp = match http_fetch(
+        sitemap_url,
+        context.config,
+        &std::collections::HashMap::new(),
+        context.client,
+    )
+    .await
+    {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
 
     process_sitemap_response(
-        sitemap_url,
-        &resp.body,
-        &resp.body_bytes,
-        &resp.content_type,
-        config,
-        client,
-        filter,
+        &SitemapDocument {
+            url: sitemap_url,
+            body: &resp.body,
+            body_bytes: &resp.body_bytes,
+            content_type: &resp.content_type,
+        },
+        context,
         limit,
     )
     .await
+}
+
+/// Everything a sitemap tree walk needs besides the document itself: the crawl
+/// config, the HTTP client used for child fetches, and the compiled URL filter.
+pub(crate) struct SitemapWalkContext<'a> {
+    pub(crate) config: &'a CrawlConfig,
+    pub(crate) client: &'a reqwest::Client,
+    pub(crate) filter: &'a MapFilter,
+}
+
+/// An already-fetched sitemap document: where it came from and what came back.
+pub(crate) struct SitemapDocument<'a> {
+    pub(crate) url: &'a str,
+    pub(crate) body: &'a str,
+    pub(crate) body_bytes: &'a [u8],
+    pub(crate) content_type: &'a str,
 }
 
 /// Maximum sitemap-index nesting depth followed before giving up on a branch.
@@ -269,82 +316,135 @@ const MAX_SITEMAP_DOCUMENTS: usize = 1_000;
 /// followed recursively, bounded by [`MAX_SITEMAP_INDEX_DEPTH`] and a visited
 /// set of already-fetched URLs so a self-referential sitemap cannot loop
 /// forever.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process_sitemap_response(
-    sitemap_url: &str,
-    body: &str,
-    body_bytes: &[u8],
-    content_type: &str,
-    config: &CrawlConfig,
-    client: &reqwest::Client,
-    filter: &MapFilter,
+    document: &SitemapDocument<'_>,
+    context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
     let mut visited = std::collections::HashSet::new();
-    visited.insert(sitemap_url.to_owned());
-    process_sitemap_response_inner(
-        sitemap_url,
-        body,
-        body_bytes,
-        content_type,
-        config,
-        client,
-        filter,
-        limit,
-        0,
-        &mut visited,
+    visited.insert(document.url.to_owned());
+    process_sitemap_response_inner(document, context, limit, 0, &mut visited).await
+}
+
+/// The XML to parse for a fetched document: a gzip payload is inflated, anything
+/// else is the body as received. A gzip payload that fails to inflate falls back
+/// to the raw body rather than aborting the walk.
+fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, str> {
+    if document.content_type.contains("gzip") || document.content_type.contains("x-gzip") {
+        match decompress_gzip(document.body_bytes) {
+            Ok(decompressed) => std::borrow::Cow::Owned(decompressed),
+            Err(_) => std::borrow::Cow::Borrowed(document.body),
+        }
+    } else {
+        std::borrow::Cow::Borrowed(document.body)
+    }
+}
+
+/// Parse a leaf sitemap, keeping only entries `filter` accepts and stopping once
+/// `limit` of them have been collected.
+fn collect_filtered_urls(xml_body: &str, filter: &MapFilter, limit: Option<usize>) -> Vec<SitemapUrl> {
+    let mut urls = Vec::new();
+    for entry in parse_sitemap_xml(xml_body) {
+        if !filter.matches(&entry.url) {
+            continue;
+        }
+        urls.push(entry);
+        if limit.is_some_and(|limit| urls.len() >= limit) {
+            break;
+        }
+    }
+    urls
+}
+
+/// Whether the walk has already committed to fetching [`MAX_SITEMAP_DOCUMENTS`] documents.
+fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::HashSet<String>) -> bool {
+    // ~keep `visited` holds every document the walk has committed to fetching, root
+    // included, and is shared across the whole recursion — so its length is the
+    // running total this cap is expressed in.
+    if visited.len() < MAX_SITEMAP_DOCUMENTS {
+        return false;
+    }
+    tracing::warn!(
+        sitemap_url = %sitemap_url,
+        fetched = visited.len(),
+        max_documents = MAX_SITEMAP_DOCUMENTS,
+        "stopping sitemap walk: fetched the maximum number of sitemap documents"
+    );
+    true
+}
+
+/// Resolve one child `<loc>` of a sitemap index against the index's own URL.
+fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> String {
+    let Some(base_parsed) = base else {
+        return child_url.to_owned();
+    };
+    if Url::parse(child_url).is_ok() {
+        rewrite_url_host(child_url, base_parsed)
+    } else {
+        resolve_redirect(sitemap_url, child_url)
+    }
+}
+
+/// Fetch one child sitemap named by an index and walk whatever it turns out to be.
+///
+/// ~keep A child that cannot be fetched contributes nothing rather than aborting the
+/// walk: one unreachable child must not lose the URLs its siblings carry. `depth` is
+/// the *parent's* depth; the child is walked one tier deeper.
+async fn fetch_child_sitemap(
+    child_url: &str,
+    context: &SitemapWalkContext<'_>,
+    limit: Option<usize>,
+    depth: u32,
+    visited: &mut std::collections::HashSet<String>,
+) -> Vec<SitemapUrl> {
+    let Ok(child_resp) = http_fetch(
+        child_url,
+        context.config,
+        &std::collections::HashMap::new(),
+        context.client,
     )
+    .await
+    else {
+        return Vec::new();
+    };
+
+    Box::pin(process_sitemap_response_inner(
+        &SitemapDocument {
+            url: child_url,
+            body: &child_resp.body,
+            body_bytes: &child_resp.body_bytes,
+            content_type: &child_resp.content_type,
+        },
+        context,
+        limit,
+        depth + 1,
+        visited,
+    ))
     .await
 }
 
 /// Recursive worker behind [`process_sitemap_response`]. See that function's
 /// docs for the general contract; `depth` and `visited` are the recursion
 /// guards threaded through nested sitemap-index fetches.
-#[allow(clippy::too_many_arguments)]
 async fn process_sitemap_response_inner(
-    sitemap_url: &str,
-    body: &str,
-    body_bytes: &[u8],
-    content_type: &str,
-    config: &CrawlConfig,
-    client: &reqwest::Client,
-    filter: &MapFilter,
+    document: &SitemapDocument<'_>,
+    context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
     depth: u32,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<SitemapUrl> {
-    let decompressed;
-    let xml_body = if content_type.contains("gzip") || content_type.contains("x-gzip") {
-        match decompress_gzip(body_bytes) {
-            Ok(d) => {
-                decompressed = d;
-                &decompressed
-            }
-            Err(_) => body,
-        }
-    } else {
-        body
-    };
+    let xml_source = sitemap_xml_body(document);
+    let xml_body = xml_source.as_ref();
 
     let reached_limit = |len: usize| limit.is_some_and(|limit| len >= limit);
 
     if !is_sitemap_index(xml_body) {
-        let mut urls = Vec::new();
-        for entry in parse_sitemap_xml(xml_body) {
-            if !filter.matches(&entry.url) {
-                continue;
-            }
-            urls.push(entry);
-            if reached_limit(urls.len()) {
-                break;
-            }
-        }
-        return urls;
+        return collect_filtered_urls(xml_body, context.filter, limit);
     }
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
         tracing::warn!(
-            sitemap_url = %sitemap_url,
+            sitemap_url = %document.url,
             depth,
             max_depth = MAX_SITEMAP_INDEX_DEPTH,
             "skipping sitemap index tier: max nesting depth exceeded"
@@ -353,33 +453,16 @@ async fn process_sitemap_response_inner(
     }
 
     let child_urls = parse_sitemap_index(xml_body);
-    let base = Url::parse(sitemap_url).ok();
+    let base = Url::parse(document.url).ok();
     let mut all_urls = Vec::new();
     for child_url in child_urls.iter().take(MAX_SITEMAP_INDEX_CHILDREN) {
         if reached_limit(all_urls.len()) {
             break;
         }
-        // ~keep `visited` holds every document the walk has committed to fetching, root
-        // included, and is shared across the whole recursion — so its length is the
-        // running total this cap is expressed in.
-        if visited.len() >= MAX_SITEMAP_DOCUMENTS {
-            tracing::warn!(
-                sitemap_url = %sitemap_url,
-                fetched = visited.len(),
-                max_documents = MAX_SITEMAP_DOCUMENTS,
-                "stopping sitemap walk: fetched the maximum number of sitemap documents"
-            );
+        if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let resolved = if let Some(ref base_parsed) = base {
-            if Url::parse(child_url).is_ok() {
-                rewrite_url_host(child_url, base_parsed)
-            } else {
-                resolve_redirect(sitemap_url, child_url)
-            }
-        } else {
-            child_url.clone()
-        };
+        let resolved = resolve_child_sitemap_url(base.as_ref(), document.url, child_url);
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
@@ -389,25 +472,8 @@ async fn process_sitemap_response_inner(
             continue;
         }
 
-        let child_resp = match http_fetch(&resolved, config, &std::collections::HashMap::new(), client).await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
         let remaining = limit.map(|limit| limit.saturating_sub(all_urls.len()));
-
-        let child_entries = Box::pin(process_sitemap_response_inner(
-            &resolved,
-            &child_resp.body,
-            &child_resp.body_bytes,
-            &child_resp.content_type,
-            config,
-            client,
-            filter,
-            remaining,
-            depth + 1,
-            visited,
-        ))
-        .await;
+        let child_entries = fetch_child_sitemap(&resolved, context, remaining, depth, visited).await;
 
         for entry in child_entries {
             all_urls.push(entry);
@@ -452,6 +518,23 @@ mod tests {
         }
     }
 
+    fn walk_context<'a>(
+        config: &'a CrawlConfig,
+        client: &'a reqwest::Client,
+        filter: &'a MapFilter,
+    ) -> SitemapWalkContext<'a> {
+        SitemapWalkContext { config, client, filter }
+    }
+
+    fn xml_document<'a>(url: &'a str, body: &'a str) -> SitemapDocument<'a> {
+        SitemapDocument {
+            url,
+            body,
+            body_bytes: body.as_bytes(),
+            content_type: "application/xml",
+        }
+    }
+
     fn sitemap_index_xml(child_locs: &[&str]) -> String {
         let mut body =
             String::from(r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
@@ -492,7 +575,12 @@ mod tests {
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
 
-        let urls = fetch_sitemap_tree(&format!("{base}/root.xml"), &config, &client, &filter, None).await;
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/root.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
 
         assert_eq!(
             urls.len(),
@@ -516,7 +604,12 @@ mod tests {
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
 
-        let urls = fetch_sitemap_tree(&format!("{base}/cycle.xml"), &config, &client, &filter, None).await;
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/cycle.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
 
         assert!(
             urls.is_empty(),
@@ -536,7 +629,7 @@ mod tests {
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
 
-        let urls = fetch_sitemap_tree(&format!("{base}/a.xml"), &config, &client, &filter, None).await;
+        let urls = fetch_sitemap_tree(&format!("{base}/a.xml"), &walk_context(&config, &client, &filter), None).await;
 
         assert!(
             urls.is_empty(),
@@ -566,7 +659,12 @@ mod tests {
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
 
-        let urls = fetch_sitemap_tree(&format!("{base}/level0.xml"), &config, &client, &filter, None).await;
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/level0.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
 
         assert!(
             urls.is_empty(),
@@ -619,7 +717,12 @@ mod tests {
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
 
-        let urls = fetch_sitemap_tree(&format!("{base}/root.xml"), &config, &client, &filter, None).await;
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/root.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
 
         assert!(
             urls.is_empty(),
@@ -652,13 +755,8 @@ mod tests {
         let body = urlset(1000);
 
         let urls = process_sitemap_response(
-            "https://example.com/sitemap.xml",
-            &body,
-            body.as_bytes(),
-            "application/xml",
-            &config,
-            &client,
-            &filter,
+            &xml_document("https://example.com/sitemap.xml", &body),
+            &walk_context(&config, &client, &filter),
             Some(10),
         )
         .await;
@@ -678,13 +776,8 @@ mod tests {
         let body = urlset(25);
 
         let urls = process_sitemap_response(
-            "https://example.com/sitemap.xml",
-            &body,
-            body.as_bytes(),
-            "application/xml",
-            &config,
-            &client,
-            &filter,
+            &xml_document("https://example.com/sitemap.xml", &body),
+            &walk_context(&config, &client, &filter),
             None,
         )
         .await;
@@ -710,13 +803,8 @@ mod tests {
         );
 
         let urls = process_sitemap_response(
-            "https://example.com/sitemap.xml",
-            body,
-            body.as_bytes(),
-            "application/xml",
-            &config,
-            &client,
-            &filter,
+            &xml_document("https://example.com/sitemap.xml", body),
+            &walk_context(&config, &client, &filter),
             None,
         )
         .await;

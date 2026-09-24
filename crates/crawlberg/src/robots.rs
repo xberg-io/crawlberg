@@ -39,82 +39,88 @@ struct RulesBlock {
     crawl_delay: Option<u64>,
 }
 
-/// Parse the body of a robots.txt file and extract rules for the given user-agent.
-///
-/// Returns the most specific matching rules block, falling back to the wildcard (`*`) block.
-pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
-    let ua_lower = user_agent.to_lowercase();
+/// Accumulator for the block-by-block scan of a robots.txt body.
+#[derive(Default)]
+struct RobotsParseState {
+    blocks: Vec<(Vec<String>, RulesBlock)>,
+    current_agents: Vec<String>,
+    current_rules: RulesBlock,
+    in_rules: bool,
+    sitemaps: Vec<String>,
+}
 
-    let mut blocks: Vec<(Vec<String>, RulesBlock)> = Vec::new();
-    let mut current_agents: Vec<String> = Vec::new();
-    let mut current_rules = RulesBlock::default();
-    let mut in_rules = false;
-    let mut sitemaps: Vec<String> = Vec::new();
-
-    for raw_line in body.lines() {
-        let line = raw_line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let key = key.trim().to_lowercase();
-        let value = value.trim();
-
-        match key.as_str() {
+impl RobotsParseState {
+    /// Fold one `key: value` directive into the state.
+    ///
+    /// `key` is already lower-cased and `value` already trimmed.
+    fn apply_directive(&mut self, key: &str, value: &str) {
+        match key {
             "sitemap" if !value.is_empty() => {
-                sitemaps.push(value.to_owned());
+                self.sitemaps.push(value.to_owned());
             }
             "user-agent" => {
-                if in_rules {
-                    if !current_agents.is_empty() {
-                        blocks.push((std::mem::take(&mut current_agents), std::mem::take(&mut current_rules)));
+                if self.in_rules {
+                    if !self.current_agents.is_empty() {
+                        self.blocks.push((
+                            std::mem::take(&mut self.current_agents),
+                            std::mem::take(&mut self.current_rules),
+                        ));
                     }
-                    in_rules = false;
+                    self.in_rules = false;
                 }
-                current_agents.push(value.to_lowercase());
+                self.current_agents.push(value.to_lowercase());
             }
             "allow" => {
-                in_rules = true;
+                self.in_rules = true;
                 if !value.is_empty() {
-                    current_rules.allow.push(value.to_owned());
+                    self.current_rules.allow.push(value.to_owned());
                 }
             }
             "disallow" => {
-                in_rules = true;
+                self.in_rules = true;
                 if !value.is_empty() {
-                    current_rules.disallow.push(value.to_owned());
+                    self.current_rules.disallow.push(value.to_owned());
                 }
             }
             "crawl-delay" => {
-                in_rules = true;
+                self.in_rules = true;
                 if let Ok(delay) = value.parse::<u64>() {
-                    current_rules.crawl_delay = Some(delay);
+                    self.current_rules.crawl_delay = Some(delay);
                 }
             }
             "request-rate" => {
-                in_rules = true;
+                self.in_rules = true;
                 if let Some((_, seconds)) = value.split_once('/')
                     && let Ok(s) = seconds.parse::<u64>()
-                    && current_rules.crawl_delay.is_none()
+                    && self.current_rules.crawl_delay.is_none()
                 {
-                    current_rules.crawl_delay = Some(s);
+                    self.current_rules.crawl_delay = Some(s);
                 }
             }
             _ => {}
         }
     }
 
-    if !current_agents.is_empty() {
-        blocks.push((current_agents, current_rules));
+    /// Close the block still being accumulated and yield the parsed blocks and sitemaps.
+    fn finish(mut self) -> (Vec<(Vec<String>, RulesBlock)>, Vec<String>) {
+        if !self.current_agents.is_empty() {
+            self.blocks.push((self.current_agents, self.current_rules));
+        }
+        (self.blocks, self.sitemaps)
     }
+}
 
-    let mut wildcard_block: Option<&RulesBlock> = None;
+/// Pick the last block written for `ua_lower` specifically and the last `*` block.
+///
+/// Returns `(specific, wildcard)`; either may be absent.
+fn select_rule_blocks<'a>(
+    blocks: &'a [(Vec<String>, RulesBlock)],
+    ua_lower: &str,
+) -> (Option<&'a RulesBlock>, Option<&'a RulesBlock>) {
     let mut specific_block: Option<&RulesBlock> = None;
+    let mut wildcard_block: Option<&RulesBlock> = None;
 
-    for (agents, rules) in &blocks {
+    for (agents, rules) in blocks {
         let mut matches_specific = false;
         let mut matches_wildcard = false;
 
@@ -138,6 +144,31 @@ pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
             wildcard_block = Some(rules);
         }
     }
+
+    (specific_block, wildcard_block)
+}
+
+/// Parse the body of a robots.txt file and extract rules for the given user-agent.
+///
+/// Returns the most specific matching rules block, falling back to the wildcard (`*`) block.
+pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
+    let ua_lower = user_agent.to_lowercase();
+
+    let mut state = RobotsParseState::default();
+    for raw_line in body.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        state.apply_directive(&key.trim().to_lowercase(), value.trim());
+    }
+
+    let (blocks, sitemaps) = state.finish();
+    let (specific_block, wildcard_block) = select_rule_blocks(&blocks, &ua_lower);
 
     let using_wildcard = specific_block.is_none() && wildcard_block.is_some();
     let chosen = specific_block.or(wildcard_block);

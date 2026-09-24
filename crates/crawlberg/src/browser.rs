@@ -113,82 +113,108 @@ async fn chromiumoxide_fetch_inner(
         .await
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
-    if let Some(pool) = pool {
-        if config.browser_profile.is_some() {
-            // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
-            // ~keep profile named later cannot retroactively change that process's
-            // ~keep --user-data-dir, so surface it instead of a silent no-op.
-            tracing::warn!(
-                profile = config.browser_profile.as_deref().unwrap_or_default(),
-                "browser_profile is ignored when a shared browser_pool is configured; \
-                 profiles only apply to per-crawl (non-pooled) browser launches"
-            );
-        }
+    match pool {
+        Some(pool) => pooled_fetch(url, config, prior_cookies, pool, want_screenshot).await,
+        None => one_shot_fetch(url, config, prior_cookies, want_screenshot).await,
+    }
+}
 
-        // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the
-        // ~keep acquisition guard drop as the tail expression of this block, which released the
-        // ~keep semaphore permit AND spawned a `Target.closeTarget` race against the navigation
-        // ~keep that was about to start on the very same CDP target.
-        let (page, permit) = if config.browser.session_affinity {
-            let session_key = crate::browser_session_pool::SessionKey::from_url(
-                url,
-                config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-            )?;
-            let session_pool = config.browser_session_pool.as_deref().ok_or_else(|| {
-                CrawlError::browser_error("session_affinity enabled but session pool is not configured")
-            })?;
+/// How long to wait for the CDP handler task to wind down after a one-shot
+/// browser is closed, before abandoning it.
+const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-            if let Some(reused) = session_pool.acquire(&session_key).await {
-                reused
-            } else {
-                let pooled = pool.acquire_page().await?;
-                pooled.into_parts()
-            }
+/// Fetch using a page borrowed from a shared [`BrowserPool`], returning the page
+/// to the session pool on success when session affinity is enabled.
+async fn pooled_fetch(
+    url: &str,
+    config: &CrawlConfig,
+    prior_cookies: Option<&[CookieInfo]>,
+    pool: &BrowserPool,
+    want_screenshot: bool,
+) -> Result<HttpResponse, CrawlError> {
+    if config.browser_profile.is_some() {
+        // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
+        // ~keep profile named later cannot retroactively change that process's
+        // ~keep --user-data-dir, so surface it instead of a silent no-op.
+        tracing::warn!(
+            profile = config.browser_profile.as_deref().unwrap_or_default(),
+            "browser_profile is ignored when a shared browser_pool is configured; \
+             profiles only apply to per-crawl (non-pooled) browser launches"
+        );
+    }
+
+    // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the
+    // ~keep acquisition guard drop as the tail expression of this block, which released the
+    // ~keep semaphore permit AND spawned a `Target.closeTarget` race against the navigation
+    // ~keep that was about to start on the very same CDP target.
+    let (page, permit) = if config.browser.session_affinity {
+        let session_key = crate::browser_session_pool::SessionKey::from_url(
+            url,
+            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
+        )?;
+        let session_pool = config
+            .browser_session_pool
+            .as_deref()
+            .ok_or_else(|| CrawlError::browser_error("session_affinity enabled but session pool is not configured"))?;
+
+        if let Some(reused) = session_pool.acquire(&session_key).await {
+            reused
         } else {
             let pooled = pool.acquire_page().await?;
             pooled.into_parts()
-        };
-
-        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
-
-        if config.browser.session_affinity
-            && result.is_ok()
-            && let Ok(session_key) = crate::browser_session_pool::SessionKey::from_url(
-                url,
-                config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-            )
-            && let Some(session_pool) = config.browser_session_pool.as_deref()
-        {
-            session_pool.insert(session_key, page, permit).await;
-        } else {
-            let _ = page.close().await;
-            drop(permit);
         }
-
-        result
     } else {
-        let (mut browser, mut handler, data_dir) = launch_or_connect(config).await?;
-        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let pooled = pool.acquire_page().await?;
+        pooled.into_parts()
+    };
 
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+    let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
 
-        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
-
+    if config.browser.session_affinity
+        && result.is_ok()
+        && let Ok(session_key) = crate::browser_session_pool::SessionKey::from_url(
+            url,
+            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
+        )
+        && let Some(session_pool) = config.browser_session_pool.as_deref()
+    {
+        session_pool.insert(session_key, page, permit).await;
+    } else {
         let _ = page.close().await;
-        let _ = browser.close().await;
-        let _ = browser.wait().await;
-        drop(browser);
-        let _ = tokio::time::timeout(Duration::from_secs(5), handler_handle).await;
-
-        if let Some(dir) = data_dir {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
-
-        result
+        drop(permit);
     }
+
+    result
+}
+
+/// Launch (or connect to) a browser for this single fetch and tear it down again.
+async fn one_shot_fetch(
+    url: &str,
+    config: &CrawlConfig,
+    prior_cookies: Option<&[CookieInfo]>,
+    want_screenshot: bool,
+) -> Result<HttpResponse, CrawlError> {
+    let (mut browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+
+    let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
+
+    let _ = page.close().await;
+    let _ = browser.close().await;
+    let _ = browser.wait().await;
+    drop(browser);
+    let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handler_handle).await;
+
+    if let Some(dir) = data_dir {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    result
 }
 
 #[cfg(feature = "browser-native")]
@@ -322,61 +348,14 @@ async fn page_fetch(
         crate::stealth::apply_stealth_patches(page).await;
     }
 
-    let resolved_ua = if let Some(ref ua) = config.user_agent {
-        ua.clone()
-    } else if stealth {
-        resolve_default_user_agent().to_string()
-    } else {
-        "".to_string()
-    };
+    apply_user_agent(page, config, stealth).await?;
 
-    if !resolved_ua.is_empty() {
-        page.set_user_agent(&resolved_ua)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
-    }
-
-    if stealth && let Err(e) = set_viewport(page, 1920, 1080).await {
+    if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
         return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
     }
 
-    if let Some(cookies) = prior_cookies {
-        for cookie in cookies {
-            let mut builder = SetCookieParams::builder().name(&cookie.name).value(&cookie.value);
-            if let Some(ref domain) = cookie.domain {
-                builder = builder.domain(domain);
-            }
-            if let Some(ref path) = cookie.path {
-                builder = builder.path(path);
-            }
-            if let Ok(params) = builder.build() {
-                let _ = page.execute(params).await;
-            }
-        }
-    }
-
-    let mut extra_headers = serde_json::Map::new();
-    for (k, v) in &config.custom_headers {
-        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
-    }
+    apply_prior_cookies(page, prior_cookies).await;
+    apply_extra_headers(page, config).await?;
 
     let timeout = config.browser.timeout;
 
@@ -396,31 +375,7 @@ async fn page_fetch(
     .await;
 
     let blocked = interceptor.finish().await;
-    match navigation {
-        Ok(Ok(())) => {}
-        Ok(Err(navigation_error)) => {
-            if let Some((blocked_url, reason)) = blocked {
-                return Err(CrawlError::SsrfPolicyViolation {
-                    url: blocked_url,
-                    reason,
-                    source: None,
-                });
-            }
-            return Err(navigation_error);
-        }
-        Err(_) => {
-            if let Some((blocked_url, reason)) = blocked {
-                return Err(CrawlError::SsrfPolicyViolation {
-                    url: blocked_url,
-                    reason,
-                    source: None,
-                });
-            }
-            return Err(CrawlError::browser_timeout(format!(
-                "browser timed out after {timeout:?}"
-            )));
-        }
-    }
+    resolve_navigation_outcome(navigation, blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -432,33 +387,12 @@ async fn page_fetch(
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
 
     let body_bytes = html.as_bytes().to_vec();
-
-    // ~keep Gated on the CALLER wanting the bytes, not merely on the config flag. Only
-    // scrape()'s dedicated path consumes a screenshot; every other caller converts through
-    // browser_http_to_crawl, which has nowhere to put it. Reading the flag alone meant a
-    // crawl paid a full CDP screenshot round-trip per page and then discarded every one.
-    let screenshot = if want_screenshot && config.capture_screenshot {
-        let params = ScreenshotParams::builder()
-            .format(CaptureScreenshotFormat::Png)
-            .full_page(false)
-            .build();
-        match page.screenshot(params).await {
-            Ok(bytes) => Some(bytes),
-            Err(e) => {
-                // ~keep A failed screenshot must not fail an otherwise-successful page fetch;
-                // ~keep the caller still gets HTML, just no image.
-                tracing::warn!(error = %e, "failed to capture page screenshot; continuing without one");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
     // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
     Ok(HttpResponse {
-        status: 200,
-        content_type: "text/html".to_owned(),
+        status: RENDERED_PAGE_STATUS,
+        content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
         body: html,
         body_bytes,
         headers: std::collections::HashMap::new(),
@@ -467,6 +401,139 @@ async fn page_fetch(
         final_url: url.to_owned(),
         screenshot,
     })
+}
+
+/// Viewport a stealth session presents, chosen to match a common desktop display
+/// so the reported metrics are unremarkable.
+const STEALTH_VIEWPORT_WIDTH: u32 = 1920;
+const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
+
+/// Synthetic status and content type reported for a CDP-rendered page.
+const RENDERED_PAGE_STATUS: u16 = 200;
+const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
+
+/// Set the page's user agent, if one is configured or implied by stealth mode.
+async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stealth: bool) -> Result<(), CrawlError> {
+    let resolved_ua = if let Some(ref ua) = config.user_agent {
+        ua.clone()
+    } else if stealth {
+        resolve_default_user_agent().to_string()
+    } else {
+        "".to_string()
+    };
+
+    if resolved_ua.is_empty() {
+        return Ok(());
+    }
+    page.set_user_agent(&resolved_ua)
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
+    Ok(())
+}
+
+/// Seed the page with cookies carried over from a previous fetch.
+///
+/// ~keep A cookie that cannot be built or set is skipped rather than failing the
+/// fetch: a partial session is still worth attempting, and CDP rejects cookies
+/// whose domain does not match the target.
+async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&[CookieInfo]>) {
+    let Some(cookies) = prior_cookies else {
+        return;
+    };
+    for cookie in cookies {
+        let mut builder = SetCookieParams::builder().name(&cookie.name).value(&cookie.value);
+        if let Some(ref domain) = cookie.domain {
+            builder = builder.domain(domain);
+        }
+        if let Some(ref path) = cookie.path {
+            builder = builder.path(path);
+        }
+        if let Ok(params) = builder.build() {
+            let _ = page.execute(params).await;
+        }
+    }
+}
+
+/// Install the configured custom headers plus any `auth`-derived header on the page.
+async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
+    let mut extra_headers = serde_json::Map::new();
+    for (k, v) in &config.custom_headers {
+        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
+    }
+    match config.auth {
+        Some(AuthConfig::Bearer { ref token }) => {
+            extra_headers.insert(
+                "Authorization".to_owned(),
+                serde_json::Value::String(format!("Bearer {token}")),
+            );
+        }
+        Some(AuthConfig::Header { ref name, ref value }) => {
+            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
+        }
+        _ => {}
+    }
+    if extra_headers.is_empty() {
+        return Ok(());
+    }
+    let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
+    page.execute(params)
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))
+        .map(|_| ())
+}
+
+/// Turn the navigation result and the interceptor's verdict into one error.
+///
+/// ~keep A request the SSRF interceptor blocked takes precedence over both the
+/// navigation error and the timeout: Chrome reports a blocked request as a generic
+/// navigation failure, so reporting that would hide the policy violation that
+/// actually caused it.
+fn resolve_navigation_outcome(
+    navigation: Result<Result<(), CrawlError>, tokio::time::error::Elapsed>,
+    blocked: Option<(String, String)>,
+    timeout: Duration,
+) -> Result<(), CrawlError> {
+    let navigation_error = match navigation {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => error,
+        Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
+    };
+    if let Some((blocked_url, reason)) = blocked {
+        return Err(CrawlError::SsrfPolicyViolation {
+            url: blocked_url,
+            reason,
+            source: None,
+        });
+    }
+    Err(navigation_error)
+}
+
+/// Capture a PNG of the current viewport, when the caller asked for one.
+async fn capture_screenshot(
+    page: &chromiumoxide::Page,
+    config: &CrawlConfig,
+    want_screenshot: bool,
+) -> Option<Vec<u8>> {
+    // ~keep Gated on the CALLER wanting the bytes, not merely on the config flag. Only
+    // scrape()'s dedicated path consumes a screenshot; every other caller converts through
+    // browser_http_to_crawl, which has nowhere to put it. Reading the flag alone meant a
+    // crawl paid a full CDP screenshot round-trip per page and then discarded every one.
+    if !(want_screenshot && config.capture_screenshot) {
+        return None;
+    }
+    let params = ScreenshotParams::builder()
+        .format(CaptureScreenshotFormat::Png)
+        .full_page(false)
+        .build();
+    match page.screenshot(params).await {
+        Ok(bytes) => Some(bytes),
+        Err(e) => {
+            // ~keep A failed screenshot must not fail an otherwise-successful page fetch;
+            // ~keep the caller still gets HTML, just no image.
+            tracing::warn!(error = %e, "failed to capture page screenshot; continuing without one");
+            None
+        }
+    }
 }
 
 /// Wait for the page to be ready based on the configured wait strategy.
@@ -835,5 +902,97 @@ mod user_data_dir_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(7);
+
+    fn elapsed() -> tokio::time::error::Elapsed {
+        // ~keep `Elapsed` has no public constructor, so the only way to obtain one is to
+        // ~keep let a zero-duration timeout actually expire.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime")
+            .block_on(async {
+                tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+                    .await
+                    .expect_err("a zero timeout over a pending future must elapse")
+            })
+    }
+
+    fn blocked() -> Option<(String, String)> {
+        Some((
+            "http://169.254.169.254/".to_owned(),
+            "cloud metadata address".to_owned(),
+        ))
+    }
+
+    #[test]
+    fn a_successful_navigation_with_nothing_blocked_is_ok() {
+        assert!(resolve_navigation_outcome(Ok(Ok(())), None, TEST_TIMEOUT).is_ok());
+    }
+
+    #[test]
+    fn a_successful_navigation_wins_even_if_a_subresource_was_blocked() {
+        assert!(
+            resolve_navigation_outcome(Ok(Ok(())), blocked(), TEST_TIMEOUT).is_ok(),
+            "a blocked subresource must not fail a navigation that otherwise succeeded"
+        );
+    }
+
+    #[test]
+    fn a_blocked_request_is_reported_instead_of_the_navigation_error() {
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+        let error = resolve_navigation_outcome(navigation, blocked(), TEST_TIMEOUT)
+            .expect_err("a blocked request must surface as an error");
+
+        match error {
+            CrawlError::SsrfPolicyViolation { url, reason, .. } => {
+                assert_eq!(url, "http://169.254.169.254/");
+                assert_eq!(reason, "cloud metadata address");
+            }
+            other => panic!("expected an SSRF policy violation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_blocked_request_is_reported_instead_of_the_timeout() {
+        let error = resolve_navigation_outcome(Err(elapsed()), blocked(), TEST_TIMEOUT)
+            .expect_err("a blocked request must surface as an error");
+
+        assert!(
+            matches!(error, CrawlError::SsrfPolicyViolation { .. }),
+            "a navigation that timed out because a request was blocked must report the block, got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_navigation_error_with_nothing_blocked_is_reported_verbatim() {
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: boom")));
+        let error = resolve_navigation_outcome(navigation, None, TEST_TIMEOUT).expect_err("must be an error");
+
+        assert!(
+            error.to_string().contains("navigation failed: boom"),
+            "the original navigation error must be preserved, got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_timeout_with_nothing_blocked_reports_the_browser_timeout() {
+        let error = resolve_navigation_outcome(Err(elapsed()), None, TEST_TIMEOUT).expect_err("must be an error");
+
+        assert!(
+            matches!(error, CrawlError::BrowserTimeout { .. }),
+            "expected a browser timeout, got: {error:?}"
+        );
+        assert!(
+            error.to_string().contains("7s"),
+            "the timeout message must name the configured timeout, got: {error}"
+        );
     }
 }

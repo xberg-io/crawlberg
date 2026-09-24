@@ -34,7 +34,64 @@ fn simple_relevance_score(query: &str, content: &str) -> f64 {
     matches as f64 / query_words.len() as f64
 }
 
+/// Longest snippet, in characters, recorded per source in [`SourceInfo::snippet`].
+const SOURCE_SNIPPET_CHARS: usize = 200;
+
+/// Longest excerpt, in characters, kept per page in [`Finding::content`].
+const FINDING_CONTENT_CHARS: usize = 500;
+
+/// What one crawl step contributed: the pages it visited and how many of them
+/// yielded a finding.
+struct AbsorbedPages {
+    urls_visited: Vec<String>,
+    findings_count: usize,
+}
+
 impl ResearchAgent {
+    /// Record every crawled page as a source, and every page with non-empty
+    /// markdown as a scored finding.
+    fn absorb_crawl_pages(
+        &self,
+        pages: &[crate::types::CrawlPageResult],
+        findings: &mut Vec<Finding>,
+        sources: &mut Vec<SourceInfo>,
+    ) -> AbsorbedPages {
+        let mut urls_visited = Vec::new();
+        let mut findings_count = 0;
+
+        for page in pages {
+            urls_visited.push(page.url.clone());
+
+            sources.push(SourceInfo {
+                url: page.url.clone(),
+                title: page.metadata.title.clone(),
+                snippet: page
+                    .markdown
+                    .as_ref()
+                    .map(|m| m.content.chars().take(SOURCE_SNIPPET_CHARS).collect()),
+            });
+
+            let Some(ref markdown) = page.markdown else {
+                continue;
+            };
+            if markdown.content.is_empty() {
+                continue;
+            }
+
+            findings.push(Finding {
+                content: markdown.content.chars().take(FINDING_CONTENT_CHARS).collect(),
+                source_url: page.url.clone(),
+                relevance_score: simple_relevance_score(&self.config.query, &markdown.content),
+            });
+            findings_count += 1;
+        }
+
+        AbsorbedPages {
+            urls_visited,
+            findings_count,
+        }
+    }
+
     /// Create a new agent with the given research configuration.
     pub fn new(config: ResearchConfig) -> Self {
         Self {
@@ -78,44 +135,8 @@ impl ResearchAgent {
 
                     let engine = CrawlEngine::builder().config(step_config).build()?;
 
-                    let result = engine.crawl(url).await;
-
-                    match result {
-                        Ok(crawl_result) => {
-                            let mut step_urls = Vec::new();
-                            let mut step_findings = 0;
-
-                            for page in &crawl_result.pages {
-                                pages_crawled += 1;
-                                step_urls.push(page.url.clone());
-
-                                sources.push(SourceInfo {
-                                    url: page.url.clone(),
-                                    title: page.metadata.title.clone(),
-                                    snippet: page.markdown.as_ref().map(|m| m.content.chars().take(200).collect()),
-                                });
-
-                                if let Some(ref md) = page.markdown
-                                    && !md.content.is_empty()
-                                {
-                                    let score = simple_relevance_score(&self.config.query, &md.content);
-                                    findings.push(Finding {
-                                        content: md.content.chars().take(500).collect(),
-                                        source_url: page.url.clone(),
-                                        relevance_score: score,
-                                    });
-                                    step_findings += 1;
-                                }
-                            }
-
-                            steps.push(ResearchStep {
-                                step_number: step_num,
-                                action: action.clone(),
-                                urls_visited: step_urls,
-                                findings_count: step_findings,
-                                error: None,
-                            });
-                        }
+                    let crawl_result = match engine.crawl(url).await {
+                        Ok(crawl_result) => crawl_result,
                         Err(e) => {
                             steps.push(ResearchStep {
                                 step_number: step_num,
@@ -126,7 +147,18 @@ impl ResearchAgent {
                             });
                             continue;
                         }
-                    }
+                    };
+
+                    let absorbed = self.absorb_crawl_pages(&crawl_result.pages, &mut findings, &mut sources);
+                    pages_crawled += absorbed.urls_visited.len();
+
+                    steps.push(ResearchStep {
+                        step_number: step_num,
+                        action: action.clone(),
+                        urls_visited: absorbed.urls_visited,
+                        findings_count: absorbed.findings_count,
+                        error: None,
+                    });
                 }
                 StepAction::Synthesize => {
                     steps.push(ResearchStep {
@@ -158,6 +190,103 @@ impl ResearchAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agent_for(query: &str) -> ResearchAgent {
+        ResearchAgent::new(ResearchConfig {
+            query: query.to_owned(),
+            max_steps: 1,
+            max_pages_per_step: 10,
+            max_depth: 1,
+            seed_urls: Vec::new(),
+        })
+    }
+
+    fn page(url: &str, title: Option<&str>, markdown: Option<&str>) -> crate::types::CrawlPageResult {
+        crate::types::CrawlPageResult {
+            url: url.to_owned(),
+            metadata: crate::types::PageMetadata {
+                title: title.map(str::to_owned),
+                ..Default::default()
+            },
+            markdown: markdown.map(|content| crate::types::MarkdownResult {
+                content: content.to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn absorb_crawl_pages_records_every_page_as_a_source() {
+        let agent = agent_for("rust");
+        let mut findings = Vec::new();
+        let mut sources = Vec::new();
+
+        let pages = vec![
+            page("https://a.example/1", Some("One"), Some("rust content")),
+            page("https://a.example/2", None, None),
+        ];
+        let absorbed = agent.absorb_crawl_pages(&pages, &mut findings, &mut sources);
+
+        assert_eq!(
+            absorbed.urls_visited,
+            vec!["https://a.example/1".to_owned(), "https://a.example/2".to_owned()],
+            "every crawled page must be reported as visited, with or without markdown"
+        );
+        assert_eq!(sources.len(), 2, "every crawled page must become a source");
+        assert_eq!(sources[0].title.as_deref(), Some("One"));
+        assert_eq!(sources[0].snippet.as_deref(), Some("rust content"));
+        assert_eq!(sources[1].snippet, None, "a page without markdown has no snippet");
+    }
+
+    #[test]
+    fn absorb_crawl_pages_skips_pages_with_empty_or_missing_markdown() {
+        let agent = agent_for("rust language");
+        let mut findings = Vec::new();
+        let mut sources = Vec::new();
+
+        let pages = vec![
+            page("https://a.example/1", None, Some("rust is a language")),
+            page("https://a.example/2", None, Some("")),
+            page("https://a.example/3", None, None),
+        ];
+        let absorbed = agent.absorb_crawl_pages(&pages, &mut findings, &mut sources);
+
+        assert_eq!(absorbed.findings_count, 1, "only non-empty markdown yields a finding");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].source_url, "https://a.example/1");
+        assert!(
+            (findings[0].relevance_score - 1.0).abs() < f64::EPSILON,
+            "both query words appear, so the score must be 1.0, got {}",
+            findings[0].relevance_score
+        );
+    }
+
+    #[test]
+    fn absorb_crawl_pages_truncates_snippets_and_finding_content() {
+        let agent = agent_for("rust");
+        let mut findings = Vec::new();
+        let mut sources = Vec::new();
+
+        let long = "x".repeat(1000);
+        let absorbed = agent.absorb_crawl_pages(
+            &[page("https://a.example/1", None, Some(&long))],
+            &mut findings,
+            &mut sources,
+        );
+
+        assert_eq!(absorbed.findings_count, 1);
+        assert_eq!(
+            sources[0].snippet.as_deref().map(|s| s.chars().count()),
+            Some(200),
+            "the source snippet must be capped at 200 characters"
+        );
+        assert_eq!(
+            findings[0].content.chars().count(),
+            500,
+            "the finding content must be capped at 500 characters"
+        );
+    }
 
     #[test]
     fn test_simple_relevance_score_full_match() {
