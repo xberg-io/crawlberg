@@ -11,8 +11,7 @@ use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocument
 /// JS source for the stealth patches. Concatenated string runs as a single
 /// pre-document script. Each section is a self-invoking function with its
 /// own try/catch so one failure doesn't take out the others.
-fn stealth_script() -> &'static str {
-    r#"
+const STEALTH_SCRIPT: &str = r#"
 // 1. navigator.webdriver should be false (or absent), not true.
 (function() {
     try {
@@ -132,7 +131,11 @@ fn stealth_script() -> &'static str {
         }
     } catch (_) {}
 })();
-    "#
+    "#;
+
+/// Return the concatenated stealth patch source injected before any page script runs.
+fn stealth_script() -> &'static str {
+    STEALTH_SCRIPT
 }
 
 /// Inject the stealth patches into a freshly-created Page. Must be called

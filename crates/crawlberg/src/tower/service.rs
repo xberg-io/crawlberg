@@ -90,6 +90,182 @@ fn apply_headers(
     req
 }
 
+/// HTTP status codes in `[REDIRECT_STATUS_MIN, REDIRECT_STATUS_MAX)` are returned to the caller
+/// unclassified so that redirect handling stays caller-owned.
+const REDIRECT_STATUS_MIN: u16 = 300;
+const REDIRECT_STATUS_MAX: u16 = 400;
+
+/// Bytes by which a body may fall short of `content-length` before it counts as data loss.
+///
+/// ~keep A small shortfall is routinely produced by servers that miscount a compressed or
+/// chunked body, so only a clearly truncated transfer is reported.
+const CONTENT_LENGTH_SHORTFALL_TOLERANCE: usize = 100;
+
+/// Largest 2xx body still treated as a possible WAF challenge page rather than real content.
+const WAF_CHALLENGE_MAX_BODY_LEN: usize = 5000;
+
+/// Whether a status is a redirect that `do_fetch` returns to the caller unclassified.
+fn is_redirect_status(status: u16) -> bool {
+    (REDIRECT_STATUS_MIN..REDIRECT_STATUS_MAX).contains(&status)
+}
+
+/// Read the last `content-type` header, or an empty string when absent or non-UTF-8.
+fn content_type_of(resp: &reqwest::Response) -> String {
+    resp.headers()
+        .get_all(reqwest::header::CONTENT_TYPE)
+        .iter()
+        .next_back()
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// Collect response headers into a lowercase-keyed multi-map, dropping non-UTF-8 values.
+fn collect_headers(resp: &reqwest::Response) -> HashMap<String, Vec<String>> {
+    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, value) in resp.headers().iter() {
+        if let Ok(v) = value.to_str() {
+            headers
+                .entry(name.as_str().to_lowercase())
+                .or_default()
+                .push(v.to_string());
+        }
+    }
+    headers
+}
+
+/// Read the lowercase `server` header, or an empty string when absent.
+fn server_header(headers: &HashMap<String, Vec<String>>) -> String {
+    headers
+        .get("server")
+        .and_then(|v| v.first())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default()
+}
+
+/// Build the `CrawlResponse` for a 3xx without classifying it; a failed body read yields an
+/// empty body rather than an error, because the caller only needs the status and headers.
+async fn read_redirect_response(
+    resp: reqwest::Response,
+    config: &CrawlConfig,
+    status: u16,
+    content_type: String,
+    headers: HashMap<String, Vec<String>>,
+) -> CrawlResponse {
+    let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
+        .await
+        .unwrap_or_default();
+    let body = String::from_utf8_lossy(&body_bytes).into_owned();
+    CrawlResponse {
+        status,
+        content_type,
+        body,
+        body_bytes,
+        headers,
+    }
+}
+
+/// Classify a 403 as a WAF block when the body or headers carry a vendor fingerprint.
+async fn forbidden_error(
+    resp: reqwest::Response,
+    headers: &HashMap<String, Vec<String>>,
+    config: &CrawlConfig,
+) -> CrawlError {
+    let server = server_header(headers);
+    let body = crate::http::read_text_bounded(resp, crate::http::effective_max_body_size(config)).await;
+    if crate::http::is_waf_blocked(&server, &body, headers) {
+        let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
+        return CrawlError::WafBlocked {
+            message: format!("waf/blocked detected: {vendor}"),
+            vendor,
+        };
+    }
+    CrawlError::forbidden("forbidden")
+}
+
+/// Map a status code that needs no body inspection onto its error, if it is an error at all.
+fn status_error(status: u16, url: &str) -> Option<CrawlError> {
+    match status {
+        401 => Some(CrawlError::unauthorized("unauthorized")),
+        404 => Some(CrawlError::not_found(format!("not_found: {url}"))),
+        408 => Some(CrawlError::timeout("timeout")),
+        410 => Some(CrawlError::gone("gone")),
+        429 => Some(CrawlError::rate_limited("rate_limited")),
+        500 => Some(CrawlError::server_error("server_error")),
+        502 => Some(CrawlError::bad_gateway("bad_gateway")),
+        503 => Some(CrawlError::server_error("service unavailable")),
+        _ => None,
+    }
+}
+
+/// Whether an error chain names a truncated or failed body transfer rather than a transport fault.
+fn is_body_error_chain(chain: &str) -> bool {
+    chain.contains("content-length")
+        || chain.contains("truncate")
+        || chain.contains("incomplete")
+        || chain.contains("end of file")
+        || chain.contains("body error")
+        || chain.contains("body from connection")
+        || chain.contains("decoding response body")
+        || chain.contains("error decoding")
+}
+
+/// Classify a failed body read as data loss where the chain says so, else as a transport error.
+fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
+    let chain = crate::error::error_chain_string(&e);
+    let is_body_error = is_body_error_chain(&chain);
+    #[cfg(not(target_arch = "wasm32"))]
+    let is_body_error = is_body_error || e.is_body();
+    if is_body_error {
+        let message = format!("data_loss: {e}");
+        CrawlError::data_loss_with_source(message, e)
+    } else {
+        classify_reqwest_error(e)
+    }
+}
+
+/// Report data loss when a body stops materially short of its declared `content-length`.
+fn content_length_shortfall_error(
+    headers: &HashMap<String, Vec<String>>,
+    body_len: usize,
+    hit_cap: bool,
+) -> Option<CrawlError> {
+    // ~keep A capped read stopping short of `content-length` is expected (that is the
+    // point of `max_body_size`), not evidence of a truncated/failed transfer.
+    if hit_cap {
+        return None;
+    }
+    let expected = headers
+        .get("content-length")
+        .and_then(|v| v.first())
+        .and_then(|s| s.parse::<usize>().ok())?;
+    if body_len < expected && expected - body_len > CONTENT_LENGTH_SHORTFALL_TOLERANCE {
+        return Some(CrawlError::data_loss(format!(
+            "data_loss: expected {expected} bytes, got {body_len}"
+        )));
+    }
+    None
+}
+
+/// Classify a short 2xx body as a WAF challenge page when it carries a vendor fingerprint.
+///
+/// ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
+#[cfg(not(target_arch = "wasm32"))]
+fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<String>>) -> Option<CrawlError> {
+    if status != 200 || body.len() >= WAF_CHALLENGE_MAX_BODY_LEN {
+        return None;
+    }
+    let server = server_header(headers);
+    if !crate::http::is_waf_blocked(&server, body, headers) {
+        return None;
+    }
+    let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
+    Some(CrawlError::WafBlocked {
+        message: format!("waf/blocked detected on 2xx (body): {vendor}"),
+        vendor,
+    })
+}
+
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.
 ///
 /// Returns the raw response — including any 3xx — without following redirects.
@@ -119,126 +295,34 @@ async fn do_fetch(
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;
 
     let status = resp.status().as_u16();
-    let content_type = resp
-        .headers()
-        .get_all(reqwest::header::CONTENT_TYPE)
-        .iter()
-        .next_back()
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-
-    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
-    for (name, value) in resp.headers().iter() {
-        if let Ok(v) = value.to_str() {
-            headers
-                .entry(name.as_str().to_lowercase())
-                .or_default()
-                .push(v.to_string());
-        }
-    }
+    let content_type = content_type_of(&resp);
+    let headers = collect_headers(&resp);
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
-    if (300..400).contains(&status) {
-        let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
-            .await
-            .unwrap_or_default();
-        let body = String::from_utf8_lossy(&body_bytes).into_owned();
-        return Ok(CrawlResponse {
-            status,
-            content_type,
-            body,
-            body_bytes,
-            headers,
-        });
+    if is_redirect_status(status) {
+        return Ok(read_redirect_response(resp, config, status, content_type, headers).await);
     }
 
-    match status {
-        401 => return Err(CrawlError::unauthorized("unauthorized")),
-        403 => {
-            let server = headers
-                .get("server")
-                .and_then(|v| v.first())
-                .map(|s| s.to_lowercase())
-                .unwrap_or_default();
-            let body = crate::http::read_text_bounded(resp, crate::http::effective_max_body_size(config)).await;
-            if crate::http::is_waf_blocked(&server, &body, &headers) {
-                let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-                return Err(CrawlError::WafBlocked {
-                    message: format!("waf/blocked detected: {vendor}"),
-                    vendor,
-                });
-            }
-            return Err(CrawlError::forbidden("forbidden"));
-        }
-        404 => return Err(CrawlError::not_found(format!("not_found: {}", req.url))),
-        408 => return Err(CrawlError::timeout("timeout")),
-        410 => return Err(CrawlError::gone("gone")),
-        429 => return Err(CrawlError::rate_limited("rate_limited")),
-        500 => return Err(CrawlError::server_error("server_error")),
-        502 => return Err(CrawlError::bad_gateway("bad_gateway")),
-        503 => {
-            return Err(CrawlError::server_error("service unavailable"));
-        }
-        _ => {}
+    if status == 403 {
+        return Err(forbidden_error(resp, &headers, config).await);
+    }
+    if let Some(error) = status_error(status, &req.url) {
+        return Err(error);
     }
 
     let (body_vec, hit_cap) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
-        .map_err(|e| {
-            let chain = crate::error::error_chain_string(&e);
-            let is_body_error = chain.contains("content-length")
-                || chain.contains("truncate")
-                || chain.contains("incomplete")
-                || chain.contains("end of file")
-                || chain.contains("body error")
-                || chain.contains("body from connection")
-                || chain.contains("decoding response body")
-                || chain.contains("error decoding");
-            #[cfg(not(target_arch = "wasm32"))]
-            let is_body_error = is_body_error || e.is_body();
-            if is_body_error {
-                let message = format!("data_loss: {e}");
-                CrawlError::data_loss_with_source(message, e)
-            } else {
-                classify_reqwest_error(e)
-            }
-        })?;
+        .map_err(classify_body_read_error)?;
 
-    // ~keep A capped read stopping short of `content-length` is expected (that is the
-    // point of `max_body_size`), not evidence of a truncated/failed transfer.
-    if !hit_cap
-        && let Some(expected) = headers
-            .get("content-length")
-            .and_then(|v| v.first())
-            .and_then(|s| s.parse::<usize>().ok())
-        && body_vec.len() < expected
-        && expected - body_vec.len() > 100
-    {
-        return Err(CrawlError::data_loss(format!(
-            "data_loss: expected {} bytes, got {}",
-            expected,
-            body_vec.len()
-        )));
+    if let Some(error) = content_length_shortfall_error(&headers, body_vec.len(), hit_cap) {
+        return Err(error);
     }
 
     let body = String::from_utf8_lossy(&body_vec).into_owned();
 
-    // ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        let server = headers
-            .get("server")
-            .and_then(|v| v.first())
-            .map(|s| s.to_lowercase())
-            .unwrap_or_default();
-        if status == 200 && body.len() < 5000 && crate::http::is_waf_blocked(&server, &body, &headers) {
-            let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-            return Err(CrawlError::WafBlocked {
-                message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-                vendor,
-            });
-        }
+    if let Some(error) = waf_error_for_success(status, &body, &headers) {
+        return Err(error);
     }
 
     Ok(CrawlResponse {
@@ -286,5 +370,149 @@ impl Service<CrawlRequest> for HttpFetchService {
 
             Err(CrawlError::other("retry exhausted"))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Status → error mapping captured from the pre-extraction `do_fetch` match, so the
+    /// extraction into [`status_error`] can be shown to be behavior-preserving.
+    fn expected_status_mapping() -> Vec<(u16, Option<&'static str>)> {
+        vec![
+            (200, None),
+            (201, None),
+            (204, None),
+            (400, None),
+            (401, Some("unauthorized")),
+            (402, None),
+            (403, None),
+            (404, Some("not_found")),
+            (405, None),
+            (408, Some("timeout")),
+            (409, None),
+            (410, Some("gone")),
+            (418, None),
+            (429, Some("rate_limited")),
+            (451, None),
+            (500, Some("server_error")),
+            (501, None),
+            (502, Some("bad_gateway")),
+            (503, Some("service_unavailable")),
+            (504, None),
+        ]
+    }
+
+    fn error_tag(error: &CrawlError) -> &'static str {
+        match error {
+            CrawlError::Unauthorized { .. } => "unauthorized",
+            CrawlError::NotFound { .. } => "not_found",
+            CrawlError::Timeout { .. } => "timeout",
+            CrawlError::Gone { .. } => "gone",
+            CrawlError::RateLimited { .. } => "rate_limited",
+            CrawlError::ServerError { message, .. } if message == "service unavailable" => "service_unavailable",
+            CrawlError::ServerError { .. } => "server_error",
+            CrawlError::BadGateway { .. } => "bad_gateway",
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_error_maps_exactly_the_codes_the_fetch_path_classified() {
+        for (status, expected) in expected_status_mapping() {
+            let actual = status_error(status, "https://example.com/x");
+            assert_eq!(
+                actual.as_ref().map(error_tag),
+                expected,
+                "status {status} mapped to {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn status_error_embeds_the_requested_url_in_the_not_found_message() {
+        let error = status_error(404, "https://example.com/missing").expect("404 is an error");
+        assert!(
+            matches!(&error, CrawlError::NotFound { message, .. } if message == "not_found: https://example.com/missing"),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn only_3xx_is_returned_to_the_caller_as_a_redirect() {
+        for status in [200u16, 204, 299, 400, 403, 404, 500] {
+            assert!(
+                !is_redirect_status(status),
+                "{status} must not be treated as a redirect"
+            );
+        }
+        for status in [300u16, 301, 302, 303, 307, 308, 399] {
+            assert!(is_redirect_status(status), "{status} must be treated as a redirect");
+        }
+    }
+
+    #[test]
+    fn body_error_chains_are_recognised_by_substring() {
+        for chain in [
+            "connection closed before message completed: content-length mismatch",
+            "body truncated",
+            "incomplete message",
+            "unexpected end of file",
+            "body error",
+            "error reading body from connection",
+            "error decoding response body",
+            "error decoding gzip",
+        ] {
+            assert!(is_body_error_chain(chain), "{chain:?} should be a body error");
+        }
+        for chain in ["dns error", "connection refused", "tls handshake failure"] {
+            assert!(!is_body_error_chain(chain), "{chain:?} should not be a body error");
+        }
+    }
+
+    fn headers_with_content_length(value: &str) -> HashMap<String, Vec<String>> {
+        let mut headers = HashMap::new();
+        headers.insert("content-length".to_owned(), vec![value.to_owned()]);
+        headers
+    }
+
+    #[test]
+    fn a_capped_read_is_never_reported_as_data_loss() {
+        let headers = headers_with_content_length("100000");
+        assert!(content_length_shortfall_error(&headers, 10, true).is_none());
+    }
+
+    #[test]
+    fn a_shortfall_within_tolerance_is_not_data_loss() {
+        let headers = headers_with_content_length("1000");
+        assert!(
+            content_length_shortfall_error(&headers, 1000 - CONTENT_LENGTH_SHORTFALL_TOLERANCE, false).is_none(),
+            "a shortfall of exactly the tolerance is accepted"
+        );
+        assert!(content_length_shortfall_error(&headers, 1000, false).is_none());
+        assert!(
+            content_length_shortfall_error(&headers, 1200, false).is_none(),
+            "a body longer than content-length is not data loss"
+        );
+    }
+
+    #[test]
+    fn a_shortfall_past_the_tolerance_is_data_loss() {
+        let headers = headers_with_content_length("1000");
+        let body_len = 1000 - CONTENT_LENGTH_SHORTFALL_TOLERANCE - 1;
+        let error = content_length_shortfall_error(&headers, body_len, false).expect("data loss expected");
+        assert!(
+            matches!(&error, CrawlError::DataLoss { message, .. }
+                if message == &format!("data_loss: expected 1000 bytes, got {body_len}")),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_unparseable_content_length_is_not_data_loss() {
+        assert!(content_length_shortfall_error(&HashMap::new(), 0, false).is_none());
+        let headers = headers_with_content_length("not-a-number");
+        assert!(content_length_shortfall_error(&headers, 0, false).is_none());
     }
 }

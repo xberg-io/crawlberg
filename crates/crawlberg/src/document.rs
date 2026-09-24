@@ -149,6 +149,38 @@ async fn persist_document(
     (content, None)
 }
 
+/// Emit the download span, the truncation warning, and the discovery counter.
+///
+/// ~keep Kept out of `build_downloaded_document` because `EnteredSpan` is !Send: entering it
+/// inside that async fn and holding it across the `persist_document` await makes the whole
+/// future !Send, which breaks every spawned batch task and axum handler. A synchronous helper
+/// cannot hold it across an await at all.
+fn record_download_telemetry(url: &str, mime_type: &str, size: usize, max_size: usize, truncated: bool) {
+    // ~keep `url` may carry userinfo (http://user:pass@host/); redact before it reaches
+    // the span, which is shipped to logs/OTLP by default.
+    let redacted_url = crate::net::redact_url_credentials(url);
+    let _span = tracing::info_span!(
+        "crawl.document.download",
+        { URL_FULL } = %redacted_url,
+        { CRAWL_MIME_TYPE } = %mime_type,
+        { CRAWL_SIZE_BYTES } = size as i64,
+    )
+    .entered();
+
+    if truncated {
+        tracing::warn!(
+            size,
+            max_size,
+            "document exceeded document_max_size; content truncated, size and content_hash still reflect \
+             the original bytes"
+        );
+    }
+
+    registry()
+        .documents_discovered_total
+        .add(1, &[KeyValue::new("mime_type", mime_type.to_string())]);
+}
+
 /// Build a [`DownloadedDocument`] from a fetched response body.
 ///
 /// Returns `None` when document downloading is disabled (`download_documents` is
@@ -198,34 +230,7 @@ pub(crate) async fn build_downloaded_document(
     let content_hash = hash_content(body_bytes);
     let filename = derive_filename(parsed_url);
 
-    // ~keep `url` may carry userinfo (http://user:pass@host/); redact before it reaches
-    // the span, which is shipped to logs/OTLP by default.
-    let redacted_url = crate::net::redact_url_credentials(url);
-    // ~keep EnteredSpan is !Send, so it must be entered and dropped inside this block,
-    // before the `persist_document` await below. Holding it across the await makes the
-    // whole future !Send, which breaks every spawned batch task and axum handler.
-    {
-        let _span = tracing::info_span!(
-            "crawl.document.download",
-            { URL_FULL } = %redacted_url,
-            { CRAWL_MIME_TYPE } = %mime_type,
-            { CRAWL_SIZE_BYTES } = size as i64,
-        )
-        .entered();
-
-        if truncated {
-            tracing::warn!(
-                size,
-                max_size,
-                "document exceeded document_max_size; content truncated, size and content_hash still reflect \
-                 the original bytes"
-            );
-        }
-
-        registry()
-            .documents_discovered_total
-            .add(1, &[KeyValue::new("mime_type", mime_type.to_string())]);
-    }
+    record_download_telemetry(url, &mime_type, size, max_size, truncated);
 
     let content_base64 = matches!(config.document_content_encoding, Some(DocumentContentEncoding::Base64))
         .then(|| BASE64.encode(&content));

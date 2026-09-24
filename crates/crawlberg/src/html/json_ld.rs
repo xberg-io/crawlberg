@@ -17,19 +17,24 @@ pub(crate) fn extract_json_ld(dom: &VDom<'_>) -> Vec<JsonLdEntry> {
     let parser = dom.parser();
     let mut entries = Vec::new();
 
-    if let Some(iter) = dom.query_selector(SEL_JSON_LD) {
-        for handle in iter {
-            if let Some(node) = handle.get(parser) {
-                let raw = node.inner_text(parser).to_string();
-                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-                    match &val {
-                        // A bare top-level object (the common case) keeps the original,
-                        // unreformatted raw text for the single entry it produces.
-                        Value::Object(map) if !map.contains_key("@graph") => push_entry(&val, raw, &mut entries),
-                        _ => collect_nodes(&val, &mut entries),
-                    }
-                }
-            }
+    let Some(iter) = dom.query_selector(SEL_JSON_LD) else {
+        return entries;
+    };
+
+    for handle in iter {
+        let Some(node) = handle.get(parser) else {
+            continue;
+        };
+        let raw = node.inner_text(parser).to_string();
+        let Ok(val) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
+
+        match &val {
+            // A bare top-level object (the common case) keeps the original,
+            // unreformatted raw text for the single entry it produces.
+            Value::Object(map) if !map.contains_key("@graph") => push_entry(&val, raw, &mut entries),
+            _ => collect_nodes(&val, &mut entries),
         }
     }
     entries

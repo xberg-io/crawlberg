@@ -218,24 +218,9 @@ impl CrawlEngineBuilder {
             config.proxy_provider = Some(provider);
         }
 
-        // ~keep `ssrf.deny_private` alone cannot prove caller intent — several alef-generated
-        // bindings hand us `SsrfPolicy::default()` (deny=true) whenever their caller never
-        // touched SSRF settings, so a bare `true` is as likely to be a binding's structural
-        // default as a deliberate choice. `ssrf_deny_private_explicit` is the only reliable
-        // "the caller meant it" signal: when set, honor it verbatim and skip the env var
-        // entirely; otherwise keep applying `CRAWLBERG_ALLOW_PRIVATE_NETWORK` as the
-        // operator-level default it has always been, so binding defaults still cannot hide it.
-        if let Some(explicit) = config.ssrf_deny_private_explicit {
-            config.ssrf.deny_private = explicit;
-        } else if std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
-            .map(|v| v.to_lowercase())
-            .ok()
-            .is_some_and(|v| v == "1" || v == "true")
-        {
-            config.ssrf.deny_private = false;
-        }
+        resolve_ssrf_deny_private(&mut config);
 
-        let rate_limit_ms = config.rate_limit_ms.unwrap_or(200);
+        let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
         #[cfg(not(target_arch = "wasm32"))]
         let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());
 
@@ -249,26 +234,12 @@ impl CrawlEngineBuilder {
         #[cfg(not(target_arch = "wasm32"))]
         let event_sink = attach_warc_sink(&config, self.event_sink)?;
 
-        // ~keep Traversal order is a property of the frontier, not the strategy: the engine
-        // hands the strategy a bounded selection window, so `DfsStrategy` over a FIFO queue
-        // reorders only what has already been dequeued and does not crawl depth-first.
-        // `crawl_strategy` therefore picks both halves, and an explicitly supplied frontier or
-        // strategy still wins.
         let crawl_strategy = config.crawl_strategy;
-        let content_filter = match config.content_filter {
-            Some(ContentFilterKind::Bm25) => config
-                .bm25_query
-                .clone()
-                .map(|query| (query, config.bm25_threshold.unwrap_or(0.0))),
-            None => None,
-        };
+        let bm25_filter = resolve_bm25_filter(&config);
 
         Ok(CrawlEngine {
             config,
-            frontier: self.frontier.unwrap_or_else(|| match crawl_strategy {
-                CrawlStrategyKind::Dfs => Arc::new(defaults::LifoFrontier::new()),
-                _ => Arc::new(defaults::InMemoryFrontier::new()),
-            }),
+            frontier: self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
             rate_limiter: self.rate_limiter.unwrap_or_else(|| {
                 Arc::new(defaults::PerDomainThrottle::new(std::time::Duration::from_millis(
                     rate_limit_ms,
@@ -276,16 +247,10 @@ impl CrawlEngineBuilder {
             }),
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
             event_emitter: self.event_emitter.unwrap_or_else(|| Arc::new(defaults::NoopEmitter)),
-            strategy: self.strategy.unwrap_or_else(|| match crawl_strategy {
-                CrawlStrategyKind::Bfs => Arc::new(defaults::BfsStrategy),
-                CrawlStrategyKind::Dfs => Arc::new(defaults::DfsStrategy),
-                CrawlStrategyKind::BestFirst => Arc::new(defaults::BestFirstStrategy),
-                CrawlStrategyKind::Adaptive => Arc::new(defaults::AdaptiveStrategy::default()),
-            }),
-            content_filter: self.content_filter.unwrap_or_else(|| match content_filter {
-                Some((query, threshold)) => Arc::new(defaults::Bm25Filter::new(&query, threshold)),
-                None => Arc::new(defaults::NoopFilter),
-            }),
+            strategy: self.strategy.unwrap_or_else(|| default_strategy(crawl_strategy)),
+            content_filter: self
+                .content_filter
+                .unwrap_or_else(|| default_content_filter(bm25_filter)),
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
             event_sink,
@@ -299,6 +264,76 @@ impl CrawlEngineBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
             native_browser_executor,
         })
+    }
+}
+
+/// Default per-domain throttle interval when `rate_limit_ms` is unset.
+const DEFAULT_RATE_LIMIT_MS: u64 = 200;
+
+/// Default BM25 relevance threshold when `bm25_threshold` is unset.
+const DEFAULT_BM25_THRESHOLD: f64 = 0.0;
+
+/// Apply the operator-level SSRF override unless the caller pinned `deny_private` explicitly.
+///
+/// ~keep `ssrf.deny_private` alone cannot prove caller intent — several alef-generated
+/// bindings hand us `SsrfPolicy::default()` (deny=true) whenever their caller never
+/// touched SSRF settings, so a bare `true` is as likely to be a binding's structural
+/// default as a deliberate choice. `ssrf_deny_private_explicit` is the only reliable
+/// "the caller meant it" signal: when set, honor it verbatim and skip the env var
+/// entirely; otherwise keep applying `CRAWLBERG_ALLOW_PRIVATE_NETWORK` as the
+/// operator-level default it has always been, so binding defaults still cannot hide it.
+fn resolve_ssrf_deny_private(config: &mut CrawlConfig) {
+    if let Some(explicit) = config.ssrf_deny_private_explicit {
+        config.ssrf.deny_private = explicit;
+    } else if std::env::var("CRAWLBERG_ALLOW_PRIVATE_NETWORK")
+        .map(|v| v.to_lowercase())
+        .ok()
+        .is_some_and(|v| v == "1" || v == "true")
+    {
+        config.ssrf.deny_private = false;
+    }
+}
+
+/// Resolve the BM25 query and threshold, if BM25 content filtering is configured.
+fn resolve_bm25_filter(config: &CrawlConfig) -> Option<(String, f64)> {
+    match config.content_filter {
+        Some(ContentFilterKind::Bm25) => config
+            .bm25_query
+            .clone()
+            .map(|query| (query, config.bm25_threshold.unwrap_or(DEFAULT_BM25_THRESHOLD))),
+        None => None,
+    }
+}
+
+/// Pick the frontier queue discipline that matches the configured traversal strategy.
+///
+/// ~keep Traversal order is a property of the frontier, not the strategy: the engine
+/// hands the strategy a bounded selection window, so `DfsStrategy` over a FIFO queue
+/// reorders only what has already been dequeued and does not crawl depth-first.
+/// `crawl_strategy` therefore picks both halves, and an explicitly supplied frontier or
+/// strategy still wins.
+fn default_frontier(crawl_strategy: CrawlStrategyKind) -> Arc<dyn Frontier> {
+    match crawl_strategy {
+        CrawlStrategyKind::Dfs => Arc::new(defaults::LifoFrontier::new()),
+        _ => Arc::new(defaults::InMemoryFrontier::new()),
+    }
+}
+
+/// Pick the selection strategy for the configured traversal kind.
+fn default_strategy(crawl_strategy: CrawlStrategyKind) -> Arc<dyn CrawlStrategy> {
+    match crawl_strategy {
+        CrawlStrategyKind::Bfs => Arc::new(defaults::BfsStrategy),
+        CrawlStrategyKind::Dfs => Arc::new(defaults::DfsStrategy),
+        CrawlStrategyKind::BestFirst => Arc::new(defaults::BestFirstStrategy),
+        CrawlStrategyKind::Adaptive => Arc::new(defaults::AdaptiveStrategy::default()),
+    }
+}
+
+/// Build the content filter from a resolved BM25 query, or a no-op filter when absent.
+fn default_content_filter(bm25_filter: Option<(String, f64)>) -> Arc<dyn ContentFilter> {
+    match bm25_filter {
+        Some((query, threshold)) => Arc::new(defaults::Bm25Filter::new(&query, threshold)),
+        None => Arc::new(defaults::NoopFilter),
     }
 }
 

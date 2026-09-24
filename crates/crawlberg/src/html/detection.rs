@@ -16,6 +16,50 @@ static BINARY_EXTENSIONS: &[&str] = &[
     ".gz", ".tgz", ".tar", ".7z", ".rar", ".bz2", ".xz", ".zst", ".exe", ".dll", ".so", ".bin",
 ];
 
+/// Content-Type prefixes (already lowercase) that mark a response as binary.
+///
+/// Anchored at the start because these are whole type/subtype names: a `contains` test would
+/// misread `application/vnd.ms-word.document+xml`-style parameters and, more importantly,
+/// `text/rtf` must not match a `charset=` parameter that merely mentions it.
+const BINARY_CONTENT_TYPE_PREFIXES: &[&str] = &[
+    "image/",
+    "video/",
+    "audio/",
+    "message/",
+    "application/octet-stream",
+    "application/pdf",
+    "application/msword",
+    "application/rtf",
+    "text/rtf",
+];
+
+/// Substrings (already lowercase) that mark a Content-Type as a binary document or archive.
+///
+/// These are matched anywhere because the formats they identify appear inside long vendor
+/// types -- `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and
+/// `application/x-7z-compressed` among them -- rather than at a fixed position.
+const BINARY_CONTENT_TYPE_MARKERS: &[&str] = &[
+    "openxmlformats",
+    "opendocument",
+    "ms-excel",
+    "ms-powerpoint",
+    "ms-word",
+    "ms-outlook",
+    "iwork",
+    "hwp",
+    "epub",
+    "fictionbook",
+    "dbase",
+    "x-dbf",
+    "zip",
+    "tar",
+    "7z-compressed",
+    "x-rar",
+    "bzip",
+    "x-xz",
+    "zstd",
+];
+
 /// Tag-name prefixes (already lowercase) that mark `body` as HTML.
 const HTML_TAG_PREFIXES: &[&str] = &[
     "<!doctype",
@@ -77,37 +121,10 @@ pub(crate) fn is_html_content(content_type: &str, body: &str) -> bool {
 /// that decision independently in `document::build_downloaded_document`.
 pub(crate) fn is_binary_content_type(ct: &str) -> bool {
     let lower = ct.to_lowercase();
-    if lower.starts_with("image/")
-        || lower.starts_with("video/")
-        || lower.starts_with("audio/")
-        || lower.starts_with("message/")
-    {
-        return true;
-    }
-    lower.starts_with("application/octet-stream")
-        || lower.starts_with("application/pdf")
-        || lower.starts_with("application/msword")
-        || lower.starts_with("application/rtf")
-        || lower.starts_with("text/rtf")
-        || lower.contains("openxmlformats")
-        || lower.contains("opendocument")
-        || lower.contains("ms-excel")
-        || lower.contains("ms-powerpoint")
-        || lower.contains("ms-word")
-        || lower.contains("ms-outlook")
-        || lower.contains("iwork")
-        || lower.contains("hwp")
-        || lower.contains("epub")
-        || lower.contains("fictionbook")
-        || lower.contains("dbase")
-        || lower.contains("x-dbf")
-        || lower.contains("zip")
-        || lower.contains("tar")
-        || lower.contains("7z-compressed")
-        || lower.contains("x-rar")
-        || lower.contains("bzip")
-        || lower.contains("x-xz")
-        || lower.contains("zstd")
+    BINARY_CONTENT_TYPE_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        || BINARY_CONTENT_TYPE_MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 /// Check whether a URL has a binary file extension.

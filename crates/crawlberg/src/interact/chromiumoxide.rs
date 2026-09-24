@@ -34,6 +34,62 @@ pub(super) async fn run(
     result
 }
 
+/// Run every action in order, collecting one [`ActionResult`] each and the last screenshot taken.
+///
+/// A failing action is recorded and the run continues, so the caller always gets one result per
+/// requested action.
+async fn run_actions(page: &chromiumoxide::Page, actions: &[PageAction]) -> (Vec<ActionResult>, Option<Vec<u8>>) {
+    let mut action_results = Vec::with_capacity(actions.len());
+    let mut screenshot = None;
+
+    for (index, action) in actions.iter().enumerate() {
+        match run_action_with_timeout(page, action, index).await {
+            Ok(action_data) => {
+                if let Some(bytes) = action_data.screenshot {
+                    screenshot = Some(bytes);
+                }
+                action_results.push(ActionResult {
+                    action_index: index,
+                    action_type: action_type(action).into(),
+                    success: true,
+                    data: action_data.data,
+                    error: None,
+                });
+            }
+            Err(error) => {
+                action_results.push(ActionResult {
+                    action_index: index,
+                    action_type: action_type(action).into(),
+                    success: false,
+                    data: None,
+                    error: Some(error.to_string()),
+                });
+            }
+        }
+    }
+
+    (action_results, screenshot)
+}
+
+/// Execute one action under its own timeout budget.
+///
+/// ~keep A non-terminating ExecuteJs script otherwise hangs `page.evaluate` forever,
+/// ~keep leaking the Chrome subprocess the caller never gets a chance to close.
+async fn run_action_with_timeout(
+    page: &chromiumoxide::Page,
+    action: &PageAction,
+    index: usize,
+) -> Result<ActionData, CrawlError> {
+    let budget = action.timeout();
+    match tokio::time::timeout(budget, execute_action(page, action)).await {
+        Ok(result) => result,
+        Err(_) => Err(CrawlError::browser_timeout(format!(
+            "action[{index}] ({}) timed out after {budget:?}",
+            action_type(action)
+        ))),
+    }
+}
+
 async fn run_with_browser(
     browser: &Browser,
     url: &str,
@@ -56,44 +112,7 @@ async fn run_with_browser(
             })?;
         }
 
-        let mut action_results = Vec::with_capacity(actions.len());
-        let mut screenshot = None;
-
-        for (index, action) in actions.iter().enumerate() {
-            // ~keep A non-terminating ExecuteJs script otherwise hangs `page.evaluate` forever,
-            // ~keep leaking the Chrome subprocess this loop never gets a chance to close.
-            let budget = action.timeout();
-            let outcome = match tokio::time::timeout(budget, execute_action(&page, action)).await {
-                Ok(result) => result,
-                Err(_) => Err(CrawlError::browser_timeout(format!(
-                    "action[{index}] ({}) timed out after {budget:?}",
-                    action_type(action)
-                ))),
-            };
-            match outcome {
-                Ok(action_data) => {
-                    if let Some(bytes) = action_data.screenshot {
-                        screenshot = Some(bytes);
-                    }
-                    action_results.push(ActionResult {
-                        action_index: index,
-                        action_type: action_type(action).into(),
-                        success: true,
-                        data: action_data.data,
-                        error: None,
-                    });
-                }
-                Err(error) => {
-                    action_results.push(ActionResult {
-                        action_index: index,
-                        action_type: action_type(action).into(),
-                        success: false,
-                        data: None,
-                        error: Some(error.to_string()),
-                    });
-                }
-            }
-        }
+        let (action_results, screenshot) = run_actions(&page, actions).await;
 
         let final_html = page
             .content()

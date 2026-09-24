@@ -136,6 +136,116 @@ impl Rules {
     }
 }
 
+/// Body patterns accumulated across all fingerprints, plus their owning fingerprint index.
+///
+/// ~keep The two vectors are index-aligned: `Rules::pattern_to_fp[i]` is the fingerprint that
+/// contributed Aho-Corasick pattern `i`, so they must only ever be appended to in lockstep.
+#[derive(Default)]
+struct BodyPatterns {
+    patterns: Vec<String>,
+    owners: Vec<usize>,
+}
+
+/// Reject a duplicate or dot-bearing fingerprint id, and record the id as seen.
+fn validate_fingerprint_id(raw_fp: &TomlFingerprint, seen_ids: &mut HashMap<String, ()>) -> Result<(), RulesError> {
+    if seen_ids.contains_key(&raw_fp.id) {
+        return Err(RulesError::Validation {
+            fingerprint_id: raw_fp.id.clone(),
+            reason: "duplicate fingerprint id".into(),
+        });
+    }
+    if raw_fp.id.contains('.') {
+        return Err(RulesError::Validation {
+            fingerprint_id: raw_fp.id.clone(),
+            reason: "fingerprint id must not contain dots".into(),
+        });
+    }
+    seen_ids.insert(raw_fp.id.clone(), ());
+    Ok(())
+}
+
+/// Compile one raw signal, appending any body pattern to `body` under `fingerprint_index`.
+fn compile_signal(
+    fingerprint_id: &str,
+    raw_sig: &TomlSignal,
+    fingerprint_index: usize,
+    body: &mut BodyPatterns,
+) -> Result<Signal, RulesError> {
+    let validation = |reason: String| RulesError::Validation {
+        fingerprint_id: fingerprint_id.to_owned(),
+        reason,
+    };
+    match raw_sig.kind.as_str() {
+        "response_header" => {
+            let name = raw_sig
+                .name
+                .clone()
+                .ok_or_else(|| validation("response_header signal requires 'name'".into()))?
+                .to_lowercase();
+            if raw_sig
+                .value_contains
+                .as_deref()
+                .is_some_and(|vc| vc.len() > MAX_PATTERN_LEN)
+            {
+                return Err(validation(format!(
+                    "pattern too long: {} > MAX_PATTERN_LEN={MAX_PATTERN_LEN}",
+                    raw_sig.value_contains.as_ref().map_or(0, |s| s.len())
+                )));
+            }
+            Ok(Signal::ResponseHeader {
+                name,
+                value_contains: raw_sig.value_contains.as_ref().map(|s| s.to_lowercase()),
+            })
+        }
+        "body_substring" => {
+            let pattern = raw_sig
+                .pattern
+                .clone()
+                .ok_or_else(|| validation("body_substring signal requires 'pattern'".into()))?
+                .to_lowercase();
+            if pattern.len() > MAX_PATTERN_LEN {
+                return Err(validation(format!(
+                    "pattern too long: {} > MAX_PATTERN_LEN={MAX_PATTERN_LEN}",
+                    pattern.len()
+                )));
+            }
+            body.patterns.push(pattern);
+            body.owners.push(fingerprint_index);
+            Ok(Signal::BodySubstring)
+        }
+        other => Err(validation(format!("unknown signal kind '{other}'"))),
+    }
+}
+
+/// Compile one raw fingerprint and all of its signals.
+fn compile_fingerprint(
+    raw_fp: &TomlFingerprint,
+    fingerprint_index: usize,
+    body: &mut BodyPatterns,
+) -> Result<Fingerprint, RulesError> {
+    if raw_fp.signals.len() > MAX_SIGNALS_PER_FINGERPRINT {
+        return Err(RulesError::Validation {
+            fingerprint_id: raw_fp.id.clone(),
+            reason: format!(
+                "too many signals: {} > MAX_SIGNALS_PER_FINGERPRINT={MAX_SIGNALS_PER_FINGERPRINT}",
+                raw_fp.signals.len()
+            ),
+        });
+    }
+
+    let mut signals: Vec<Signal> = Vec::with_capacity(raw_fp.signals.len());
+    for raw_sig in &raw_fp.signals {
+        signals.push(compile_signal(&raw_fp.id, raw_sig, fingerprint_index, body)?);
+    }
+
+    Ok(Fingerprint {
+        id: raw_fp.id.clone(),
+        vendor: raw_fp.vendor.clone(),
+        weight: raw_fp.weight,
+        signals,
+    })
+}
+
 fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
     if raw.fingerprint.len() > MAX_FINGERPRINTS {
         return Err(RulesError::Validation {
@@ -148,116 +258,24 @@ fn compile(raw: TomlRules) -> Result<Rules, RulesError> {
     }
 
     let mut fingerprints: Vec<Fingerprint> = Vec::with_capacity(raw.fingerprint.len());
-    let mut ac_patterns: Vec<String> = Vec::new();
-    let mut pattern_to_fp: Vec<usize> = Vec::new();
-
+    let mut body = BodyPatterns::default();
     let mut seen_ids: HashMap<String, ()> = HashMap::new();
 
-    for (fp_idx, raw_fp) in raw.fingerprint.iter().enumerate() {
-        if seen_ids.contains_key(&raw_fp.id) {
-            return Err(RulesError::Validation {
-                fingerprint_id: raw_fp.id.clone(),
-                reason: "duplicate fingerprint id".into(),
-            });
-        }
-        if raw_fp.id.contains('.') {
-            return Err(RulesError::Validation {
-                fingerprint_id: raw_fp.id.clone(),
-                reason: "fingerprint id must not contain dots".into(),
-            });
-        }
-        seen_ids.insert(raw_fp.id.clone(), ());
-
-        if raw_fp.signals.len() > MAX_SIGNALS_PER_FINGERPRINT {
-            return Err(RulesError::Validation {
-                fingerprint_id: raw_fp.id.clone(),
-                reason: format!(
-                    "too many signals: {} > MAX_SIGNALS_PER_FINGERPRINT={MAX_SIGNALS_PER_FINGERPRINT}",
-                    raw_fp.signals.len()
-                ),
-            });
-        }
-
-        let mut signals: Vec<Signal> = Vec::with_capacity(raw_fp.signals.len());
-
-        for raw_sig in &raw_fp.signals {
-            match raw_sig.kind.as_str() {
-                "response_header" => {
-                    let name = raw_sig
-                        .name
-                        .clone()
-                        .ok_or_else(|| RulesError::Validation {
-                            fingerprint_id: raw_fp.id.clone(),
-                            reason: "response_header signal requires 'name'".into(),
-                        })?
-                        .to_lowercase();
-                    if raw_sig
-                        .value_contains
-                        .as_deref()
-                        .is_some_and(|vc| vc.len() > MAX_PATTERN_LEN)
-                    {
-                        return Err(RulesError::Validation {
-                            fingerprint_id: raw_fp.id.clone(),
-                            reason: format!(
-                                "pattern too long: {} > MAX_PATTERN_LEN={MAX_PATTERN_LEN}",
-                                raw_sig.value_contains.as_ref().map_or(0, |s| s.len())
-                            ),
-                        });
-                    }
-                    signals.push(Signal::ResponseHeader {
-                        name,
-                        value_contains: raw_sig.value_contains.as_ref().map(|s| s.to_lowercase()),
-                    });
-                }
-                "body_substring" => {
-                    let pattern = raw_sig
-                        .pattern
-                        .clone()
-                        .ok_or_else(|| RulesError::Validation {
-                            fingerprint_id: raw_fp.id.clone(),
-                            reason: "body_substring signal requires 'pattern'".into(),
-                        })?
-                        .to_lowercase();
-                    if pattern.len() > MAX_PATTERN_LEN {
-                        return Err(RulesError::Validation {
-                            fingerprint_id: raw_fp.id.clone(),
-                            reason: format!(
-                                "pattern too long: {} > MAX_PATTERN_LEN={MAX_PATTERN_LEN}",
-                                pattern.len()
-                            ),
-                        });
-                    }
-                    ac_patterns.push(pattern);
-                    pattern_to_fp.push(fp_idx);
-                    signals.push(Signal::BodySubstring);
-                }
-                other => {
-                    return Err(RulesError::Validation {
-                        fingerprint_id: raw_fp.id.clone(),
-                        reason: format!("unknown signal kind '{other}'"),
-                    });
-                }
-            }
-        }
-
-        fingerprints.push(Fingerprint {
-            id: raw_fp.id.clone(),
-            vendor: raw_fp.vendor.clone(),
-            weight: raw_fp.weight,
-            signals,
-        });
+    for (fingerprint_index, raw_fp) in raw.fingerprint.iter().enumerate() {
+        validate_fingerprint_id(raw_fp, &mut seen_ids)?;
+        fingerprints.push(compile_fingerprint(raw_fp, fingerprint_index, &mut body)?);
     }
 
     let automaton = AhoCorasickBuilder::new()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::LeftmostFirst)
-        .build(ac_patterns)
+        .build(body.patterns)
         .map_err(|e| RulesError::MatcherBuild(e.to_string()))?;
 
     Ok(Rules {
         fingerprints,
         automaton,
-        pattern_to_fp,
+        pattern_to_fp: body.owners,
     })
 }
 
@@ -472,6 +490,151 @@ kind = "magic_beam"
         assert!(
             matches!(rules.classify(&resp), Ok(Some(_))),
             "x-datadome header must return Ok(Some(_))"
+        );
+    }
+
+    fn validation_reason(src: &str) -> (String, String) {
+        match load_from_str(src) {
+            Err(RulesError::Validation { fingerprint_id, reason }) => (fingerprint_id, reason),
+            Err(other) => panic!("expected a validation error, got {other:?}"),
+            Ok(_) => panic!("expected a validation error, got a compiled rule set"),
+        }
+    }
+
+    #[test]
+    fn compile_rejects_a_fingerprint_id_containing_a_dot() {
+        let src = r#"
+[[fingerprint]]
+id = "vendor.rule"
+vendor = "test"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "foo"
+"#;
+        assert_eq!(
+            validation_reason(src),
+            (
+                "vendor.rule".to_owned(),
+                "fingerprint id must not contain dots".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn compile_rejects_a_response_header_signal_without_a_name() {
+        let src = r#"
+[[fingerprint]]
+id = "no_name"
+vendor = "test"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "response_header"
+"#;
+        assert_eq!(
+            validation_reason(src),
+            (
+                "no_name".to_owned(),
+                "response_header signal requires 'name'".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn compile_rejects_a_body_substring_signal_without_a_pattern() {
+        let src = r#"
+[[fingerprint]]
+id = "no_pattern"
+vendor = "test"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+"#;
+        assert_eq!(
+            validation_reason(src),
+            (
+                "no_pattern".to_owned(),
+                "body_substring signal requires 'pattern'".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn compile_rejects_an_unknown_signal_kind_by_name() {
+        let src = r#"
+[[fingerprint]]
+id = "weird"
+vendor = "test"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "magic_beam"
+"#;
+        assert_eq!(
+            validation_reason(src),
+            ("weird".to_owned(), "unknown signal kind 'magic_beam'".to_owned())
+        );
+    }
+
+    #[test]
+    fn compile_lowercases_header_names_and_value_substrings() {
+        let src = r#"
+[[fingerprint]]
+id = "case"
+vendor = "test"
+weight = 2.5
+[[fingerprint.signals]]
+kind = "response_header"
+name = "X-Mixed-Case"
+value_contains = "BlockedHere"
+"#;
+        let rules = load_from_str(src).expect("valid rules");
+        assert_eq!(rules.fingerprints.len(), 1);
+        assert_eq!(rules.fingerprints[0].id, "case");
+        assert_eq!(rules.fingerprints[0].vendor, "test");
+        assert_eq!(rules.fingerprints[0].weight, 2.5);
+        match &rules.fingerprints[0].signals[..] {
+            [Signal::ResponseHeader { name, value_contains }] => {
+                assert_eq!(name, "x-mixed-case");
+                assert_eq!(value_contains.as_deref(), Some("blockedhere"));
+            }
+            other => panic!("expected one ResponseHeader signal, got {other:?}"),
+        }
+        assert!(rules.pattern_to_fp.is_empty(), "header-only rules add no body patterns");
+    }
+
+    #[test]
+    fn compile_maps_each_body_pattern_back_to_its_fingerprint_index() {
+        let src = r#"
+[[fingerprint]]
+id = "first"
+vendor = "a"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "response_header"
+name = "server"
+
+[[fingerprint]]
+id = "second"
+vendor = "b"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "Alpha"
+[[fingerprint.signals]]
+kind = "body_substring"
+pattern = "Beta"
+"#;
+        let rules = load_from_str(src).expect("valid rules");
+        assert_eq!(rules.fingerprints.len(), 2);
+        assert_eq!(
+            rules.pattern_to_fp,
+            vec![1, 1],
+            "both body patterns belong to the second fingerprint"
+        );
+        assert_eq!(rules.fingerprints[1].signals.len(), 2);
+        assert!(
+            rules.automaton.is_match("an ALPHA token"),
+            "patterns are matched case-insensitively"
         );
     }
 }

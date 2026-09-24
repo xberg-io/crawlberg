@@ -13,6 +13,9 @@ use crate::traits::RateLimiter;
 /// Maximum backoff duration for 429 responses.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
+/// Clean responses required before a domain's backoff is relaxed by one halving.
+const SUCCESSES_BEFORE_RELAX: u32 = 5;
+
 /// A rate limiter that does nothing, allowing all requests through immediately.
 #[derive(Debug, Clone, Default)]
 pub struct NoopRateLimiter;
@@ -39,6 +42,36 @@ struct DomainState {
     crawl_delay: Option<Duration>,
     robots_delay: Option<Duration>,
     consecutive_success: u32,
+}
+
+impl DomainState {
+    /// Double the delay after a 429, capped at [`MAX_BACKOFF`].
+    fn back_off(&mut self, default_delay: Duration) {
+        self.consecutive_success = 0;
+        let current = self.crawl_delay.unwrap_or(default_delay);
+        self.crawl_delay = Some((current * 2).min(MAX_BACKOFF));
+    }
+
+    /// Halve the delay once [`SUCCESSES_BEFORE_RELAX`] clean responses have accumulated,
+    /// clearing it entirely when halving would take it to or below the floor.
+    ///
+    /// ~keep The floor is the robots-declared delay when there is one, so relaxing never
+    /// undercuts a crawl-delay the site asked for; without a robots value it falls back to the
+    /// configured default rather than to zero.
+    fn record_success(&mut self, default_delay: Duration) {
+        self.consecutive_success += 1;
+        if self.consecutive_success < SUCCESSES_BEFORE_RELAX {
+            return;
+        }
+        self.consecutive_success = 0;
+
+        let Some(current) = self.crawl_delay else {
+            return;
+        };
+        let floor = self.robots_delay.unwrap_or(default_delay);
+        let halved = current / 2;
+        self.crawl_delay = if halved <= floor { None } else { Some(halved) };
+    }
 }
 
 /// How long a domain's throttle state survives without being touched.
@@ -149,27 +182,14 @@ impl RateLimiter for PerDomainThrottle {
 
     async fn record_response(&self, domain: &str, status: u16) -> Result<(), CrawlError> {
         let mut state = self.state.lock().expect("lock poisoned");
-        if let Some(domain_state) = state.domains.get_mut(domain) {
-            if status == 429 {
-                domain_state.consecutive_success = 0;
-                let current = domain_state.crawl_delay.unwrap_or(self.default_delay);
-                let new_delay = (current * 2).min(MAX_BACKOFF);
-                domain_state.crawl_delay = Some(new_delay);
-            } else if status < 400 {
-                domain_state.consecutive_success += 1;
-                if domain_state.consecutive_success >= 5 {
-                    if let Some(ref mut cd) = domain_state.crawl_delay {
-                        let floor = domain_state.robots_delay.unwrap_or(self.default_delay);
-                        let halved = *cd / 2;
-                        if halved <= floor {
-                            domain_state.crawl_delay = None;
-                        } else {
-                            *cd = halved;
-                        }
-                    }
-                    domain_state.consecutive_success = 0;
-                }
-            }
+        let Some(domain_state) = state.domains.get_mut(domain) else {
+            return Ok(());
+        };
+
+        if status == 429 {
+            domain_state.back_off(self.default_delay);
+        } else if status < 400 {
+            domain_state.record_success(self.default_delay);
         }
         Ok(())
     }
@@ -199,6 +219,102 @@ mod tests {
             robots_delay: None,
             consecutive_success: 0,
         }
+    }
+
+    const DEFAULT: Duration = Duration::from_millis(400);
+
+    // ~keep `record_response` had no coverage at all before these -- neither the 429 backoff nor
+    // the success-relaxation ladder -- so the whole transition table below is characterisation of
+    // behaviour that already shipped, not new policy.
+
+    #[test]
+    fn should_double_the_delay_from_the_default_when_backing_off_without_one_set() {
+        let mut state = state_with(Instant::now());
+        state.consecutive_success = 3;
+
+        state.back_off(DEFAULT);
+
+        assert_eq!(state.crawl_delay, Some(DEFAULT * 2));
+        assert_eq!(state.consecutive_success, 0, "a 429 restarts the success run");
+    }
+
+    #[test]
+    fn should_cap_the_delay_at_max_backoff_when_doubling_would_exceed_it() {
+        let mut state = state_with(Instant::now());
+        state.crawl_delay = Some(MAX_BACKOFF);
+
+        state.back_off(DEFAULT);
+
+        assert_eq!(state.crawl_delay, Some(MAX_BACKOFF));
+    }
+
+    #[test]
+    fn should_not_relax_the_delay_until_the_success_threshold_is_reached() {
+        let mut state = state_with(Instant::now());
+        state.crawl_delay = Some(Duration::from_secs(8));
+
+        for _ in 0..SUCCESSES_BEFORE_RELAX - 1 {
+            state.record_success(DEFAULT);
+        }
+
+        assert_eq!(state.crawl_delay, Some(Duration::from_secs(8)));
+        assert_eq!(state.consecutive_success, SUCCESSES_BEFORE_RELAX - 1);
+    }
+
+    #[test]
+    fn should_halve_the_delay_and_reset_the_run_when_the_threshold_is_reached() {
+        let mut state = state_with(Instant::now());
+        state.crawl_delay = Some(Duration::from_secs(8));
+
+        for _ in 0..SUCCESSES_BEFORE_RELAX {
+            state.record_success(DEFAULT);
+        }
+
+        assert_eq!(state.crawl_delay, Some(Duration::from_secs(4)));
+        assert_eq!(state.consecutive_success, 0);
+    }
+
+    #[test]
+    fn should_clear_the_delay_when_halving_reaches_the_robots_floor() {
+        let mut state = state_with(Instant::now());
+        state.crawl_delay = Some(Duration::from_secs(4));
+        state.robots_delay = Some(Duration::from_secs(2));
+
+        for _ in 0..SUCCESSES_BEFORE_RELAX {
+            state.record_success(DEFAULT);
+        }
+
+        assert_eq!(
+            state.crawl_delay, None,
+            "halving to exactly the floor drops the override"
+        );
+    }
+
+    #[test]
+    fn should_use_the_default_delay_as_the_floor_when_robots_declares_none() {
+        let mut state = state_with(Instant::now());
+        state.crawl_delay = Some(DEFAULT * 2);
+
+        for _ in 0..SUCCESSES_BEFORE_RELAX {
+            state.record_success(DEFAULT);
+        }
+
+        assert_eq!(state.crawl_delay, None);
+    }
+
+    #[test]
+    fn should_reset_the_success_run_at_the_threshold_even_with_no_delay_to_relax() {
+        let mut state = state_with(Instant::now());
+
+        for _ in 0..SUCCESSES_BEFORE_RELAX {
+            state.record_success(DEFAULT);
+        }
+
+        assert_eq!(state.crawl_delay, None);
+        assert_eq!(
+            state.consecutive_success, 0,
+            "the run resets on reaching the threshold whether or not a delay was set"
+        );
     }
 
     /// ~keep Time is injected rather than slept: the TTL is an hour, so a sleeping test
