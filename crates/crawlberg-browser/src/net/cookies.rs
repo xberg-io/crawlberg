@@ -25,73 +25,25 @@ impl CookieJar {
     }
 
     pub fn set_cookie(&self, set_cookie_str: &str, url: &Url) {
-        let parts: Vec<&str> = set_cookie_str.splitn(2, ';').collect();
-        let name_value = parts[0].trim();
-        let (name, value) = match name_value.split_once('=') {
-            Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
-            None => return,
+        let Some((name, value, attribute_list)) = split_cookie_string(set_cookie_str) else {
+            return;
         };
+        let mut attributes = CookieAttributes::defaults_for(url);
+        attributes.apply_all(attribute_list);
+        self.commit(name, value, attributes);
+    }
 
-        let mut domain = url.host_str().unwrap_or("").to_lowercase();
-        let mut path = url.path().to_string();
-        let mut secure = false;
-        let mut http_only = false;
-        let mut expires: Option<u64> = None;
-
-        if parts.len() > 1 {
-            for attr in parts[1].split(';') {
-                let attr = attr.trim();
-                if let Some((key, val)) = attr.split_once('=') {
-                    match key.trim().to_lowercase().as_str() {
-                        "domain" => {
-                            domain = val.trim().trim_start_matches('.').to_lowercase();
-                        }
-                        "path" => {
-                            path = val.trim().to_string();
-                        }
-                        "expires" => {
-                            if let Ok(ts) = parse_http_date(val.trim()) {
-                                expires = Some(ts);
-                            }
-                        }
-                        "max-age" => {
-                            if let Ok(secs) = val.trim().parse::<i64>() {
-                                if secs <= 0 {
-                                    expires = Some(0);
-                                } else {
-                                    let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs();
-                                    expires = Some(now + secs as u64);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                } else {
-                    match attr.to_lowercase().as_str() {
-                        "secure" => secure = true,
-                        "httponly" => http_only = true,
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        if let Some(exp) = expires {
-            if exp == 0 {
+    /// Store a parsed cookie, honouring the delete sentinel and dropping already-expired cookies.
+    fn commit(&self, name: String, value: String, attributes: CookieAttributes) {
+        if let Some(expiry) = attributes.expires {
+            if expiry == EXPIRY_DELETE_SENTINEL {
                 let mut cookies = self.cookies.write().unwrap();
-                if let Some(domain_cookies) = cookies.get_mut(&domain) {
+                if let Some(domain_cookies) = cookies.get_mut(&attributes.domain) {
                     domain_cookies.remove(&name);
                 }
                 return;
             }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if exp < now {
+            if expiry < unix_now_seconds() {
                 return;
             }
         }
@@ -99,15 +51,15 @@ impl CookieJar {
         let entry = CookieEntry {
             name: name.clone(),
             value,
-            path,
-            domain: domain.clone(),
-            secure,
-            http_only,
-            expires,
+            path: attributes.path,
+            domain: attributes.domain.clone(),
+            secure: attributes.secure,
+            http_only: attributes.http_only,
+            expires: attributes.expires,
         };
 
         let mut cookies = self.cookies.write().unwrap();
-        cookies.entry(domain).or_default().insert(name, entry);
+        cookies.entry(attributes.domain).or_default().insert(name, entry);
     }
 
     pub fn get_cookie_header(&self, url: &Url) -> String {
@@ -220,84 +172,16 @@ impl CookieJar {
     }
 
     pub fn set_cookie_from_js(&self, cookie_str: &str, url: &Url) {
-        let parts: Vec<&str> = cookie_str.splitn(2, ';').collect();
-        let name_value = parts[0].trim();
-        let (name, value) = match name_value.split_once('=') {
-            Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
-            None => return,
+        let Some((name, value, attribute_list)) = split_cookie_string(cookie_str) else {
+            return;
         };
-
-        let mut domain = url.host_str().unwrap_or("").to_lowercase();
-        let mut path = url.path().to_string();
-        let mut secure = false;
-        let mut expires: Option<u64> = None;
-
-        if parts.len() > 1 {
-            for attr in parts[1].split(';') {
-                let attr = attr.trim();
-                if let Some((key, val)) = attr.split_once('=') {
-                    match key.trim().to_lowercase().as_str() {
-                        "domain" => {
-                            domain = val.trim().trim_start_matches('.').to_lowercase();
-                        }
-                        "path" => {
-                            path = val.trim().to_string();
-                        }
-                        "expires" => {
-                            if let Ok(ts) = parse_http_date(val.trim()) {
-                                expires = Some(ts);
-                            }
-                        }
-                        "max-age" => {
-                            if let Ok(secs) = val.trim().parse::<i64>() {
-                                if secs <= 0 {
-                                    expires = Some(0);
-                                } else {
-                                    let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs();
-                                    expires = Some(now + secs as u64);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                } else if attr.to_lowercase() == "secure" {
-                    secure = true;
-                }
-            }
-        }
-
-        if let Some(exp) = expires {
-            if exp == 0 {
-                let mut cookies = self.cookies.write().unwrap();
-                if let Some(domain_cookies) = cookies.get_mut(&domain) {
-                    domain_cookies.remove(&name);
-                }
-                return;
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if exp < now {
-                return;
-            }
-        }
-
-        let entry = CookieEntry {
-            name: name.clone(),
-            value,
-            path,
-            domain: domain.clone(),
-            secure,
-            http_only: false,
-            expires,
-        };
-
-        let mut cookies = self.cookies.write().unwrap();
-        cookies.entry(domain).or_default().insert(name, entry);
+        let mut attributes = CookieAttributes::defaults_for(url);
+        attributes.apply_all(attribute_list);
+        // ~keep A `document.cookie` assignment can never mark a cookie HttpOnly: per RFC 6265 the
+        // attribute is only meaningful on a Set-Cookie header, and honouring it here would let a
+        // page hide a cookie from its own script and from `get_js_visible_cookies`.
+        attributes.http_only = false;
+        self.commit(name, value, attributes);
     }
 
     pub fn delete_cookie(&self, name: &str, domain: &str) {
@@ -393,6 +277,96 @@ pub struct CookieInfo {
     pub secure: bool,
     #[serde(rename = "httpOnly")]
     pub http_only: bool,
+}
+
+/// Expiry value standing for "delete this cookie now", produced by `Max-Age` values <= 0.
+const EXPIRY_DELETE_SENTINEL: u64 = 0;
+
+fn unix_now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Split `name=value; attr=val; flag` into its name, value and the unparsed attribute list.
+///
+/// Returns `None` when the leading pair has no `=`, which discards the whole cookie.
+fn split_cookie_string(cookie_str: &str) -> Option<(String, String, &str)> {
+    let mut parts = cookie_str.splitn(2, ';');
+    let (name, value) = parts.next()?.trim().split_once('=')?;
+    Some((
+        name.trim().to_string(),
+        value.trim().to_string(),
+        parts.next().unwrap_or(""),
+    ))
+}
+
+/// Cookie attributes, seeded from the request URL and then overwritten by the cookie string.
+struct CookieAttributes {
+    domain: String,
+    path: String,
+    secure: bool,
+    http_only: bool,
+    expires: Option<u64>,
+}
+
+impl CookieAttributes {
+    fn defaults_for(url: &Url) -> Self {
+        CookieAttributes {
+            domain: url.host_str().unwrap_or("").to_lowercase(),
+            path: url.path().to_string(),
+            secure: false,
+            http_only: false,
+            expires: None,
+        }
+    }
+
+    /// Apply every attribute in order, so a repeated attribute is won by its last occurrence.
+    fn apply_all(&mut self, attribute_list: &str) {
+        for attribute in attribute_list.split(';') {
+            let attribute = attribute.trim();
+            match attribute.split_once('=') {
+                Some((key, value)) => self.apply_keyed(key.trim(), value.trim()),
+                None => self.apply_flag(attribute),
+            }
+        }
+    }
+
+    fn apply_keyed(&mut self, key: &str, value: &str) {
+        match key.to_lowercase().as_str() {
+            "domain" => self.domain = value.trim_start_matches('.').to_lowercase(),
+            "path" => self.path = value.to_string(),
+            "expires" => {
+                if let Ok(timestamp) = parse_http_date(value) {
+                    self.expires = Some(timestamp);
+                }
+            }
+            "max-age" => {
+                if let Some(expiry) = max_age_to_expiry(value) {
+                    self.expires = Some(expiry);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_flag(&mut self, flag: &str) {
+        match flag.to_lowercase().as_str() {
+            "secure" => self.secure = true,
+            "httponly" => self.http_only = true,
+            _ => {}
+        }
+    }
+}
+
+/// Convert a `Max-Age` value to an absolute expiry, or `None` when it does not parse.
+fn max_age_to_expiry(value: &str) -> Option<u64> {
+    let seconds = value.parse::<i64>().ok()?;
+    if seconds <= 0 {
+        return Some(EXPIRY_DELETE_SENTINEL);
+    }
+    Some(unix_now_seconds() + seconds as u64)
 }
 
 fn parse_http_date(s: &str) -> Result<u64, ()> {
@@ -548,5 +522,125 @@ mod tests {
 
         jar.clear();
         assert!(jar.get_cookie_header(&url).is_empty());
+    }
+
+    #[test]
+    fn set_cookie_hides_httponly_cookies_from_javascript_but_still_sends_them() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie("session=abc; HttpOnly", &url);
+
+        assert_eq!(jar.get_cookie_header(&url), "session=abc");
+        assert_eq!(jar.get_js_visible_cookies(&url), "");
+    }
+
+    #[test]
+    fn set_cookie_from_js_ignores_the_httponly_attribute() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie_from_js("session=abc; HttpOnly", &url);
+
+        assert_eq!(jar.get_js_visible_cookies(&url), "session=abc");
+        assert!(!jar.snapshot()[0].5, "document.cookie cannot set HttpOnly");
+    }
+
+    #[test]
+    fn set_cookie_from_js_applies_domain_path_and_secure_attributes() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://www.example.com/app/page").unwrap();
+        jar.set_cookie_from_js("token=xyz; Domain=.example.com; Path=/app; Secure", &url);
+
+        let snapshot = jar.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        let (name, value, domain, path, secure, http_only) = snapshot[0].clone();
+        assert_eq!(name, "token");
+        assert_eq!(value, "xyz");
+        assert_eq!(domain, "example.com", "leading dot is stripped");
+        assert_eq!(path, "/app");
+        assert!(secure);
+        assert!(!http_only);
+
+        assert_eq!(jar.get_js_visible_cookies(&url), "token=xyz");
+        let http_url = Url::parse("http://www.example.com/app/page").unwrap();
+        assert_eq!(jar.get_js_visible_cookies(&http_url), "", "Secure blocks plain http");
+        let other_path = Url::parse("https://www.example.com/other").unwrap();
+        assert_eq!(jar.get_js_visible_cookies(&other_path), "", "Path prefix must match");
+    }
+
+    #[test]
+    fn set_cookie_from_js_with_max_age_zero_deletes_the_cookie() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie_from_js("session=abc", &url);
+        assert_eq!(jar.get_js_visible_cookies(&url), "session=abc");
+
+        jar.set_cookie_from_js("session=abc; Max-Age=0", &url);
+        assert_eq!(jar.get_js_visible_cookies(&url), "");
+    }
+
+    #[test]
+    fn set_cookie_from_js_with_expired_expires_is_dropped_without_storing() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie_from_js("old=gone; Expires=Thu, 01 Jan 2020 00:00:00 GMT", &url);
+        assert_eq!(jar.snapshot().len(), 0);
+    }
+
+    #[test]
+    fn set_cookie_from_js_keeps_a_future_max_age_cookie() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie_from_js("token=xyz; Max-Age=3600", &url);
+        assert_eq!(jar.get_js_visible_cookies(&url), "token=xyz");
+    }
+
+    #[test]
+    fn unparsable_max_age_and_expires_leave_the_cookie_session_scoped() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie("a=1; Max-Age=not-a-number", &url);
+        jar.set_cookie("b=2; Expires=not-a-date", &url);
+        jar.set_cookie_from_js("c=3; Max-Age=not-a-number", &url);
+
+        let mut names: Vec<String> = jar.snapshot().into_iter().map(|entry| entry.0).collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_cookie_string_without_an_equals_sign_is_ignored_on_both_paths() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie("justaname; Path=/", &url);
+        jar.set_cookie_from_js("justaname; Path=/", &url);
+        assert_eq!(jar.snapshot().len(), 0);
+    }
+
+    #[test]
+    fn a_repeated_attribute_is_won_by_the_last_occurrence() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/a/b/c").unwrap();
+        jar.set_cookie("a=1; Path=/a; Path=/a/b", &url);
+        jar.set_cookie_from_js("b=2; Path=/a; Path=/a/b", &url);
+
+        let mut paths: Vec<String> = jar.snapshot().into_iter().map(|entry| entry.3).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["/a/b", "/a/b"]);
+    }
+
+    #[test]
+    fn unknown_attributes_and_valueless_flags_are_skipped_without_affecting_the_cookie() {
+        let jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        jar.set_cookie("a=1; SameSite=Lax; Priority=High; Partitioned", &url);
+        jar.set_cookie_from_js("b=2; SameSite=Lax; Partitioned", &url);
+
+        let snapshot = jar.snapshot();
+        assert_eq!(snapshot.len(), 2);
+        for entry in snapshot {
+            assert!(!entry.4, "no unknown attribute should set Secure");
+            assert!(!entry.5, "no unknown attribute should set HttpOnly");
+            assert_eq!(entry.3, "/", "path stays the request path");
+        }
     }
 }

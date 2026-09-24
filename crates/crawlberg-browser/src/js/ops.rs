@@ -94,250 +94,254 @@ fn op_dom(state: &OpState, #[string] cmd: String, #[string] arg1: String, #[stri
         None => return "null".to_string(),
     };
 
-    match cmd.as_str() {
+    // ~keep Each handler returns None for a command it does not own, so the chain reproduces the
+    // single flat `match cmd` it replaced: every command string belongs to exactly one handler,
+    // and an unknown command falls through all of them to the same "null" default.
+    document_command(dom, &gs, &cmd)
+        .or_else(|| selector_command(dom, &cmd, &arg1))
+        .or_else(|| node_query_command(dom, &cmd, &arg1, &arg2))
+        .or_else(|| mutation_command(dom, &cmd, &arg1, &arg2))
+        .or_else(|| create_command(dom, &cmd, &arg1))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+/// Parse a node-id argument, falling back to the document root id on malformed input.
+fn node_id_arg(arg: &str) -> NodeId {
+    NodeId::new(arg.parse::<u32>().unwrap_or(0))
+}
+
+/// `document.*` accessors, which read page state rather than a specific node.
+fn document_command(dom: &DomTree, gs: &JsOpState, cmd: &str) -> Option<String> {
+    Some(match cmd {
         "document_node_id" => dom.document().index().to_string(),
         "document_title" => serde_json::to_string(&gs.title).unwrap_or("\"\"".into()),
         "document_url" => serde_json::to_string(&gs.url).unwrap_or("\"\"".into()),
-        "document_element" => {
-            for cid in dom.children(dom.document()) {
-                if let Some(n) = dom.get_node(cid)
-                    && n.as_element().map(|name| &*name.local == "html").unwrap_or(false)
-                {
-                    return cid.index().to_string();
-                }
-            }
-            "-1".into()
+        "document_element" => document_element(dom),
+        "document_doctype" => document_doctype(dom),
+        _ => return None,
+    })
+}
+
+fn document_element(dom: &DomTree) -> String {
+    for cid in dom.children(dom.document()) {
+        if let Some(n) = dom.get_node(cid)
+            && n.as_element().map(|name| &*name.local == "html").unwrap_or(false)
+        {
+            return cid.index().to_string();
         }
-        "document_doctype" => {
-            for cid in dom.children(dom.document()) {
-                if let Some(n) = dom.get_node(cid)
-                    && let crate::dom::NodeData::Doctype {
-                        name,
-                        public_id,
-                        system_id,
-                    } = &n.data
-                {
-                    return serde_json::json!({
-                        "name": name,
-                        "publicId": public_id,
-                        "systemId": system_id,
-                        "nodeId": cid.index(),
-                    })
-                    .to_string();
-                }
-            }
-            "null".into()
+    }
+    "-1".into()
+}
+
+fn document_doctype(dom: &DomTree) -> String {
+    for cid in dom.children(dom.document()) {
+        if let Some(n) = dom.get_node(cid)
+            && let crate::dom::NodeData::Doctype {
+                name,
+                public_id,
+                system_id,
+            } = &n.data
+        {
+            return serde_json::json!({
+                "name": name,
+                "publicId": public_id,
+                "systemId": system_id,
+                "nodeId": cid.index(),
+            })
+            .to_string();
         }
+    }
+    "null".into()
+}
+
+/// Selector lookups, which take a CSS selector rather than a node id.
+fn selector_command(dom: &DomTree, cmd: &str, arg1: &str) -> Option<String> {
+    Some(match cmd {
         "get_element_by_id" => dom
-            .get_element_by_id(&arg1)
+            .get_element_by_id(arg1)
             .map(|id| id.index().to_string())
             .unwrap_or("-1".into()),
         "query_selector" => dom
-            .query_selector(&arg1)
+            .query_selector(arg1)
             .ok()
             .flatten()
             .map(|id| id.index().to_string())
             .unwrap_or("-1".into()),
         "query_selector_all" => {
             let ids: Vec<i32> = dom
-                .query_selector_all(&arg1)
+                .query_selector_all(arg1)
                 .ok()
                 .map(|ids| ids.iter().map(|id| id.index() as i32).collect())
                 .unwrap_or_default();
             serde_json::to_string(&ids).unwrap_or("[]".into())
         }
-        "node_type" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            dom.get_node(NodeId::new(nid))
-                .map(|n| match &n.data {
-                    NodeData::Document => "9",
-                    NodeData::Element { .. } => "1",
-                    NodeData::Text { .. } => "3",
-                    NodeData::Comment { .. } => "8",
-                    NodeData::Doctype { .. } => "10",
-                    NodeData::ProcessingInstruction { .. } => "7",
-                })
-                .unwrap_or("0")
-                .into()
-        }
-        "node_name" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            let name: String = dom
-                .get_node(NodeId::new(nid))
-                .map(|n| match &n.data {
-                    NodeData::Document => "#document".to_string(),
-                    NodeData::Element { name, .. } => (*name.local).to_ascii_uppercase(),
-                    NodeData::Text { .. } => "#text".to_string(),
-                    NodeData::Comment { .. } => "#comment".to_string(),
-                    NodeData::Doctype { name, .. } => name.clone(),
-                    NodeData::ProcessingInstruction { target, .. } => target.clone(),
-                })
-                .unwrap_or_default();
-            serde_json::to_string(&name).unwrap_or("\"\"".into())
-        }
-        "text_content" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            serde_json::to_string(&dom.text_content(NodeId::new(nid))).unwrap_or("\"\"".into())
-        }
-        "parent_node" | "first_child" | "last_child" | "next_sibling" | "prev_sibling" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            dom.get_node(NodeId::new(nid))
-                .and_then(|n| match cmd.as_str() {
-                    "parent_node" => n.parent,
-                    "first_child" => n.first_child,
-                    "last_child" => n.last_child,
-                    "next_sibling" => n.next_sibling,
-                    "prev_sibling" => n.prev_sibling,
-                    _ => None,
-                })
-                .map(|id| id.index().to_string())
-                .unwrap_or("-1".into())
-        }
+        _ => return None,
+    })
+}
+
+/// Read-only queries against a single node identified by `arg1`.
+fn node_query_command(dom: &DomTree, cmd: &str, arg1: &str, arg2: &str) -> Option<String> {
+    let node_id = node_id_arg(arg1);
+    Some(match cmd {
+        "node_type" => node_type(dom, node_id),
+        "node_name" => node_name(dom, node_id),
+        "text_content" => serde_json::to_string(&dom.text_content(node_id)).unwrap_or("\"\"".into()),
+        "parent_node" | "first_child" | "last_child" | "next_sibling" | "prev_sibling" => dom
+            .get_node(node_id)
+            .and_then(|n| match cmd {
+                "parent_node" => n.parent,
+                "first_child" => n.first_child,
+                "last_child" => n.last_child,
+                "next_sibling" => n.next_sibling,
+                "prev_sibling" => n.prev_sibling,
+                _ => None,
+            })
+            .map(|id| id.index().to_string())
+            .unwrap_or("-1".into()),
         "child_nodes" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            let ids: Vec<i32> = dom
-                .children(NodeId::new(nid))
-                .iter()
-                .map(|id| id.index() as i32)
-                .collect();
+            let ids: Vec<i32> = dom.children(node_id).iter().map(|id| id.index() as i32).collect();
             serde_json::to_string(&ids).unwrap_or("[]".into())
         }
         "tag_name" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
             let name = dom
-                .get_node(NodeId::new(nid))
+                .get_node(node_id)
                 .and_then(|n| n.as_element().map(|name| (*name.local).to_ascii_uppercase()))
                 .unwrap_or_default();
             serde_json::to_string(&name).unwrap_or("\"\"".into())
         }
         "get_attribute" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
             let val = dom
-                .get_node(NodeId::new(nid))
-                .and_then(|n| n.get_attribute(&arg2).map(|s| s.to_string()));
+                .get_node(node_id)
+                .and_then(|n| n.get_attribute(arg2).map(|s| s.to_string()));
             serde_json::to_string(&val).unwrap_or("null".into())
         }
-        "set_attribute" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            let node_id = NodeId::new(nid);
-            if let Some((name, value)) = arg2.split_once('\0') {
-                if name == "id" {
-                    let old_id = dom
-                        .get_node(node_id)
-                        .and_then(|n| n.get_attribute("id").map(|s| s.to_string()));
-                    dom.with_node_mut(node_id, |n| n.set_attribute(name, value.to_string()));
-                    dom.update_id_index(node_id, old_id.as_deref(), Some(value));
-                } else {
-                    dom.with_node_mut(node_id, |n| n.set_attribute(name, value.to_string()));
-                }
-            }
-            "true".into()
-        }
-        "inner_html" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            serde_json::to_string(&dom.inner_html(NodeId::new(nid))).unwrap_or("\"\"".into())
-        }
-        "outer_html" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            serde_json::to_string(&dom.outer_html(NodeId::new(nid))).unwrap_or("\"\"".into())
-        }
-        "append_child" => {
-            let parent = arg1.parse::<u32>().unwrap_or(0);
-            let child = arg2.parse::<u32>().unwrap_or(0);
-            dom.append_child(NodeId::new(parent), NodeId::new(child));
-            "true".into()
-        }
-        "remove_child" => {
-            let child = arg1.parse::<u32>().unwrap_or(0);
-            dom.detach(NodeId::new(child));
-            "true".into()
-        }
-        "insert_before" => {
-            let new_node = arg1.parse::<u32>().unwrap_or(0);
-            let ref_node = arg2.parse::<u32>().unwrap_or(0);
-            dom.insert_before(NodeId::new(ref_node), NodeId::new(new_node));
-            "true".into()
-        }
-        "remove_attribute" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            dom.with_node_mut(NodeId::new(nid), |n| {
-                if let NodeData::Element { attrs, .. } = &mut n.data {
-                    attrs.retain(|a| &*a.name.local != arg2.as_str());
-                }
-            });
-            "true".into()
-        }
-        "set_inner_html" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            let target = NodeId::new(nid);
-            let children = dom.children(target);
-            for child in children {
-                dom.detach(child);
-            }
-            if !arg2.is_empty() {
-                let fragment = crate::dom::parse_fragment(&arg2);
-                let import_root = fragment.find_body_or_root();
-                dom.import_children_from(target, &fragment, import_root);
-            }
-            "true".into()
-        }
-        "set_text_content" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            dom.with_node_mut(NodeId::new(nid), |n| match &mut n.data {
-                NodeData::Text { contents } => {
-                    *contents = arg2.clone();
-                }
-                NodeData::Comment { contents } => {
-                    *contents = arg2.clone();
-                }
-                _ => {}
-            });
-            "true".into()
-        }
-        "create_document_fragment" => dom.new_node(NodeData::Document).index().to_string(),
-        "create_element" => dom
-            .new_node(NodeData::Element {
-                name: html5ever::QualName::new(None, html5ever::ns!(html), html5ever::LocalName::from(arg1.as_str())),
-                attrs: vec![],
-                template_contents: None,
-                mathml_annotation_xml_integration_point: false,
-            })
-            .index()
-            .to_string(),
-        "create_text_node" => dom
-            .new_node(NodeData::Text { contents: arg1.clone() })
-            .index()
-            .to_string(),
-        "create_comment_node" => dom
-            .new_node(NodeData::Comment { contents: arg1.clone() })
-            .index()
-            .to_string(),
+        "inner_html" => serde_json::to_string(&dom.inner_html(node_id)).unwrap_or("\"\"".into()),
+        "outer_html" => serde_json::to_string(&dom.outer_html(node_id)).unwrap_or("\"\"".into()),
         "element_children" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
             let ids: Vec<i32> = dom
-                .children(NodeId::new(nid))
+                .children(node_id)
                 .iter()
                 .filter(|&&id| dom.get_node(id).map(|n| n.is_element()).unwrap_or(false))
                 .map(|id| id.index() as i32)
                 .collect();
             serde_json::to_string(&ids).unwrap_or("[]".into())
         }
-        "has_child_nodes" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            dom.get_node(NodeId::new(nid))
-                .map(|n| n.first_child.is_some())
-                .unwrap_or(false)
-                .to_string()
+        "has_child_nodes" => dom
+            .get_node(node_id)
+            .map(|n| n.first_child.is_some())
+            .unwrap_or(false)
+            .to_string(),
+        "contains" => dom.descendants(node_id).contains(&node_id_arg(arg2)).to_string(),
+        _ => return None,
+    })
+}
+
+/// DOM level 1 `nodeType` code, as a decimal string; `"0"` when the node does not exist.
+fn node_type(dom: &DomTree, node_id: NodeId) -> String {
+    dom.get_node(node_id)
+        .map(|n| match &n.data {
+            NodeData::Document => "9",
+            NodeData::Element { .. } => "1",
+            NodeData::Text { .. } => "3",
+            NodeData::Comment { .. } => "8",
+            NodeData::Doctype { .. } => "10",
+            NodeData::ProcessingInstruction { .. } => "7",
+        })
+        .unwrap_or("0")
+        .into()
+}
+
+/// DOM `nodeName`, JSON-encoded. Element names are upper-cased, as the HTML DOM requires.
+fn node_name(dom: &DomTree, node_id: NodeId) -> String {
+    let name: String = dom
+        .get_node(node_id)
+        .map(|n| match &n.data {
+            NodeData::Document => "#document".to_string(),
+            NodeData::Element { name, .. } => (*name.local).to_ascii_uppercase(),
+            NodeData::Text { .. } => "#text".to_string(),
+            NodeData::Comment { .. } => "#comment".to_string(),
+            NodeData::Doctype { name, .. } => name.clone(),
+            NodeData::ProcessingInstruction { target, .. } => target.clone(),
+        })
+        .unwrap_or_default();
+    serde_json::to_string(&name).unwrap_or("\"\"".into())
+}
+
+/// Commands that mutate an existing node. Each answers `"true"`, as the JS bridge expects.
+fn mutation_command(dom: &DomTree, cmd: &str, arg1: &str, arg2: &str) -> Option<String> {
+    let node_id = node_id_arg(arg1);
+    match cmd {
+        "set_attribute" => set_attribute(dom, node_id, arg2),
+        "append_child" => dom.append_child(node_id, node_id_arg(arg2)),
+        "remove_child" => dom.detach(node_id),
+        // ~keep Argument order is inverted here: JS passes (newNode, refNode) but
+        // `DomTree::insert_before` takes (refNode, newNode).
+        "insert_before" => dom.insert_before(node_id_arg(arg2), node_id),
+        "remove_attribute" => {
+            dom.with_node_mut(node_id, |n| {
+                if let NodeData::Element { attrs, .. } = &mut n.data {
+                    attrs.retain(|a| &*a.name.local != arg2);
+                }
+            });
         }
-        "contains" => {
-            let nid = arg1.parse::<u32>().unwrap_or(0);
-            let other = arg2.parse::<u32>().unwrap_or(0);
-            dom.descendants(NodeId::new(nid))
-                .contains(&NodeId::new(other))
-                .to_string()
+        "set_inner_html" => set_inner_html(dom, node_id, arg2),
+        "set_text_content" => {
+            dom.with_node_mut(node_id, |n| match &mut n.data {
+                NodeData::Text { contents } => *contents = arg2.to_string(),
+                NodeData::Comment { contents } => *contents = arg2.to_string(),
+                _ => {}
+            });
         }
-        _ => "null".into(),
+        _ => return None,
     }
+    Some("true".into())
+}
+
+fn set_attribute(dom: &DomTree, node_id: NodeId, arg2: &str) {
+    let Some((name, value)) = arg2.split_once('\0') else {
+        return;
+    };
+    if name == "id" {
+        let old_id = dom
+            .get_node(node_id)
+            .and_then(|n| n.get_attribute("id").map(|s| s.to_string()));
+        dom.with_node_mut(node_id, |n| n.set_attribute(name, value.to_string()));
+        dom.update_id_index(node_id, old_id.as_deref(), Some(value));
+    } else {
+        dom.with_node_mut(node_id, |n| n.set_attribute(name, value.to_string()));
+    }
+}
+
+fn set_inner_html(dom: &DomTree, target: NodeId, html: &str) {
+    for child in dom.children(target) {
+        dom.detach(child);
+    }
+    if !html.is_empty() {
+        let fragment = crate::dom::parse_fragment(html);
+        let import_root = fragment.find_body_or_root();
+        dom.import_children_from(target, &fragment, import_root);
+    }
+}
+
+/// Node constructors, which answer the new node's id.
+fn create_command(dom: &DomTree, cmd: &str, arg1: &str) -> Option<String> {
+    let data = match cmd {
+        "create_document_fragment" => NodeData::Document,
+        "create_element" => NodeData::Element {
+            name: html5ever::QualName::new(None, html5ever::ns!(html), html5ever::LocalName::from(arg1)),
+            attrs: vec![],
+            template_contents: None,
+            mathml_annotation_xml_integration_point: false,
+        },
+        "create_text_node" => NodeData::Text {
+            contents: arg1.to_string(),
+        },
+        "create_comment_node" => NodeData::Comment {
+            contents: arg1.to_string(),
+        },
+        _ => return None,
+    };
+    Some(dom.new_node(data).index().to_string())
 }
 
 #[op2(fast)]
@@ -391,315 +395,65 @@ async fn op_fetch_url(
         validator
     };
 
-    let parsed_url = url::Url::parse(&url).ok();
-    if let Some(ref parsed_url) = parsed_url
+    if let Ok(ref parsed_url) = url::Url::parse(&url)
         && let Err(e) = validate_fetch_url(parsed_url, &ssrf).await
     {
-        return Ok(serde_json::json!({
-            "status": 0,
-            "body": "",
-            "url": url,
-            "headers": {},
-            "blocked": true,
-            "error": e,
-        })
-        .to_string());
+        return Ok(blocked_response(&url, Some(e)));
     }
 
-    let (cookie_jar, in_flight, intercept_tx, proxy_url) = {
-        let state_borrow = state.borrow();
-        let gs = state_borrow.borrow::<SharedState>().clone();
-        let mut gs = gs.borrow_mut();
-        for pattern in &gs.blocked_urls {
-            if pattern == "*" || url.contains(pattern) || glob_match(pattern, &url) {
-                return Ok(serde_json::json!({
-                    "status": 0,
-                    "body": "",
-                    "url": url,
-                    "headers": {},
-                    "blocked": true,
-                })
-                .to_string());
-            }
-        }
-        let jar = gs.cookie_jar.clone();
-        let in_flight = gs.http_client.as_ref().map(|c| c.in_flight.clone());
-        let proxy_url = gs
-            .http_client
-            .as_ref()
-            .and_then(|c| c.proxy_url().map(|s| s.to_string()));
-        tracing::debug!(
-            "op_fetch_url: intercept_enabled={}, has_tx={}",
-            gs.intercept_enabled,
-            gs.intercept_tx.is_some()
-        );
-        let itx = if gs.intercept_enabled {
-            gs.intercept_counter += 1;
-            gs.intercept_tx
-                .clone()
-                .map(|tx| (tx, format!("intercept-{}", gs.intercept_counter)))
-        } else {
-            None
-        };
-        (jar, in_flight, itx, proxy_url)
+    let Some(context) = read_fetch_context(&state, &url) else {
+        return Ok(blocked_response(&url, None));
     };
 
-    if let Some((tx, request_id)) = intercept_tx {
-        let custom_headers: HashMap<String, String> = serde_json::from_str(&headers_json).unwrap_or_default();
-        let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
-        let intercepted = InterceptedRequest {
-            request_id: request_id.clone(),
-            url: url.clone(),
-            method: method.clone(),
-            headers: custom_headers.clone(),
-            resource_type: "Fetch".to_string(),
-            resolver: resolve_tx,
-        };
-        if tx.send(intercepted).is_ok() {
-            match resolve_rx.await {
-                Ok(InterceptResolution::Fulfill {
-                    status,
-                    headers: h,
-                    body: b,
-                }) => {
-                    let resp_headers: HashMap<String, String> = h;
-                    return Ok(serde_json::json!({
-                        "status": status,
-                        "body": b,
-                        "url": url,
-                        "headers": resp_headers,
-                    })
-                    .to_string());
-                }
-                Ok(InterceptResolution::Fail { reason }) => {
-                    return Ok(serde_json::json!({
-                        "status": 0,
-                        "body": "",
-                        "url": url,
-                        "headers": {},
-                        "blocked": true,
-                        "error": reason,
-                    })
-                    .to_string());
-                }
-                Ok(InterceptResolution::Continue {
-                    url: _new_url,
-                    method: _new_method,
-                    headers: _new_headers,
-                    body: _new_body,
-                }) => {
-                    tracing::debug!("Interception: continue request {}", url);
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        "Interception: resolver for {} dropped without a decision ({}); \
-                         falling back to a direct fetch",
-                        url,
-                        error
-                    );
-                }
-            }
-        }
+    if let Some(intercepted) = &context.intercept
+        && let Some(early) = resolve_interception(intercepted, &url, &method, &headers_json).await
+    {
+        return Ok(early);
     }
 
-    let client = build_request_client(proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
-    let request_origin = url::Url::parse(&url)
-        .ok()
-        .map(|u| {
-            let host = u.host_str().unwrap_or("");
-            match u.port() {
-                Some(p) => format!("{}://{}:{}", u.scheme(), host, p),
-                None => format!("{}://{}", u.scheme(), host),
-            }
-        })
-        .unwrap_or_default();
-    let page_origin = if origin.is_empty() {
-        request_origin.clone()
-    } else {
-        origin.clone()
-    };
-    let is_cross_origin = !page_origin.is_empty() && request_origin != page_origin;
-
-    let req_method: reqwest::Method = method.parse().unwrap_or(reqwest::Method::GET);
-
-    let custom_headers: std::collections::HashMap<String, String> =
-        serde_json::from_str(&headers_json).unwrap_or_default();
-
-    let needs_preflight = is_cross_origin
-        && mode == "cors"
-        && (req_method != reqwest::Method::GET
-            && req_method != reqwest::Method::HEAD
-            && req_method != reqwest::Method::POST
-            || custom_headers.keys().any(|k| {
-                let kl = k.to_lowercase();
-                kl != "accept" && kl != "accept-language" && kl != "content-language" && kl != "content-type"
-            }));
-
-    if needs_preflight {
-        let preflight = client
-            .request(reqwest::Method::OPTIONS, &url)
-            .header("Origin", &page_origin)
-            .header("Access-Control-Request-Method", method.as_str())
-            .header(
-                "Access-Control-Request-Headers",
-                custom_headers.keys().cloned().collect::<Vec<_>>().join(", "),
-            )
-            .send()
-            .await
-            .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
-
-        let allowed_origin = preflight
-            .headers()
-            .get("access-control-allow-origin")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        if allowed_origin != "*" && allowed_origin != page_origin {
-            return Err(deno_error::JsErrorBox::generic(format!(
-                "CORS preflight: Origin '{}' not allowed by Access-Control-Allow-Origin '{}'",
-                page_origin, allowed_origin
-            )));
-        }
+    if cors.needs_preflight(&mode) {
+        send_preflight(&client, &url, &method, &cors).await?;
     }
 
     // ~keep Follow redirects manually so the SSRF policy applies to every hop.
-    let mut current_url = url.clone();
-    let mut current_method = req_method;
-    let mut current_body = body;
-    let mut redirects_followed: usize = 0;
-    let response = loop {
-        let mut req = client.request(current_method.clone(), &current_url);
-
-        if is_cross_origin {
-            req = req.header("Origin", &page_origin);
-        }
-
-        if !is_cross_origin
-            && let Some(ref jar) = cookie_jar
-            && let Ok(parsed_url) = url::Url::parse(&current_url)
-        {
-            let cookie_header = jar.get_cookie_header(&parsed_url);
-            if !cookie_header.is_empty() {
-                req = req.header("Cookie", &cookie_header);
-            }
-        }
-
-        for (k, v) in &custom_headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
-        if !current_body.is_empty() {
-            req = req.body(current_body.clone());
-        }
-
-        if let Some(ref counter) = in_flight {
-            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        let resp = req.send().await.map_err(|e| {
-            if let Some(ref counter) = in_flight {
-                counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            deno_error::JsErrorBox::generic(e.to_string())
-        })?;
-
-        if let Some(ref counter) = in_flight {
-            counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        if let Some(ref jar) = cookie_jar
-            && let Ok(parsed_url) = url::Url::parse(&current_url)
-        {
-            for val in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-                if let Ok(s) = val.to_str() {
-                    jar.set_cookie(s, &parsed_url);
-                }
-            }
-        }
-
-        if !resp.status().is_redirection() {
-            break resp;
-        }
-
-        let location_header = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
-        let Some(location) = location_header else {
-            break resp;
-        };
-
-        let base = match url::Url::parse(&current_url) {
-            Ok(b) => b,
-            Err(_) => break resp,
-        };
-        let next_url = match base.join(&location) {
-            Ok(u) => u,
-            Err(_) => break resp,
-        };
-
-        // ~keep Re-validate every redirect target against the SSRF policy.
-        if let Err(reason) = validate_fetch_url(&next_url, &ssrf).await {
-            return Ok(serde_json::json!({
-                "status": 0,
-                "body": "",
-                "url": next_url.to_string(),
-                "headers": {},
-                "blocked": true,
-                "error": format!("Redirect to forbidden URL blocked: {}", reason),
-            })
-            .to_string());
-        }
-
-        redirects_followed += 1;
-        if redirects_followed > FETCH_REDIRECT_LIMIT {
-            return Ok(serde_json::json!({
-                "status": 0,
-                "body": "",
-                "url": next_url.to_string(),
-                "headers": {},
-                "blocked": true,
-                "error": format!("Too many redirects (>{})", FETCH_REDIRECT_LIMIT),
-            })
-            .to_string());
-        }
-
-        let status_code = resp.status().as_u16();
-        if status_code == 301 || status_code == 302 || status_code == 303 {
-            current_method = reqwest::Method::GET;
-            current_body.clear();
-        }
-
-        current_url = next_url.to_string();
+    let response = match send_following_redirects(FetchRequest {
+        client: &client,
+        url: &url,
+        method: cors.request_method.clone(),
+        body,
+        cors: &cors,
+        context: &context,
+        ssrf: &ssrf,
+    })
+    .await?
+    {
+        RedirectOutcome::Response(response) => response,
+        RedirectOutcome::Blocked(payload) => return Ok(payload),
     };
 
-    let status = response.status().as_u16();
+    finish_response(response, &cors, &mode, &url, &method).await
+}
 
-    let resp_headers: std::collections::HashMap<String, String> = response
+/// Apply the response-side CORS check, then read the body into the op's JSON payload.
+async fn finish_response(
+    response: reqwest::Response,
+    cors: &CorsContext,
+    mode: &str,
+    url: &str,
+    method: &str,
+) -> Result<String, deno_error::JsErrorBox> {
+    let status = response.status().as_u16();
+    let resp_headers: HashMap<String, String> = response
         .headers()
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
 
-    if is_cross_origin && mode == "cors" {
-        let allowed = resp_headers
-            .get("access-control-allow-origin")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
-        if allowed != "*" && allowed != page_origin {
-            return Ok(serde_json::json!({
-                "status": 0,
-                "body": "",
-                "url": url,
-                "headers": {},
-                "corsBlocked": true,
-                "corsError": format!("CORS error: Origin '{}' not in Access-Control-Allow-Origin '{}'", page_origin, allowed),
-            })
-            .to_string());
-        }
+    if let Some(payload) = cors.reject_response(mode, &resp_headers, url) {
+        return Ok(payload);
     }
 
     let resp_bytes = response
@@ -719,6 +473,363 @@ async fn op_fetch_url(
         "headers": resp_headers,
     })
     .to_string())
+}
+
+/// The payload page JS receives for a request that never reached the network, or whose
+/// response must not be exposed. `bootstrap.js` turns a status of 0 into a rejected promise.
+fn blocked_response(url: &str, error: Option<String>) -> String {
+    let mut payload = serde_json::json!({
+        "status": 0,
+        "body": "",
+        "url": url,
+        "headers": {},
+        "blocked": true,
+    });
+    if let Some(error) = error {
+        payload["error"] = serde_json::Value::String(error);
+    }
+    payload.to_string()
+}
+
+/// Page state a fetch needs, read out of the `RefCell` in one borrow so none is held
+/// across an await point.
+struct FetchContext {
+    cookie_jar: Option<Arc<CookieJar>>,
+    in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
+    intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
+    proxy_url: Option<String>,
+}
+
+/// `None` when `url` matches one of the page's blocked-URL patterns.
+fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchContext> {
+    let state_borrow = state.borrow();
+    let gs = state_borrow.borrow::<SharedState>().clone();
+    let mut gs = gs.borrow_mut();
+
+    for pattern in &gs.blocked_urls {
+        if pattern == "*" || url.contains(pattern) || glob_match(pattern, url) {
+            return None;
+        }
+    }
+
+    tracing::debug!(
+        "op_fetch_url: intercept_enabled={}, has_tx={}",
+        gs.intercept_enabled,
+        gs.intercept_tx.is_some()
+    );
+    let intercept = if gs.intercept_enabled {
+        gs.intercept_counter += 1;
+        gs.intercept_tx
+            .clone()
+            .map(|tx| (tx, format!("intercept-{}", gs.intercept_counter)))
+    } else {
+        None
+    };
+
+    Some(FetchContext {
+        cookie_jar: gs.cookie_jar.clone(),
+        in_flight: gs.http_client.as_ref().map(|c| c.in_flight.clone()),
+        intercept,
+        proxy_url: gs
+            .http_client
+            .as_ref()
+            .and_then(|c| c.proxy_url().map(|s| s.to_string())),
+    })
+}
+
+/// Hand the request to the interceptor and wait for its decision.
+///
+/// `Some(payload)` means the interceptor answered the request itself and the op must return
+/// that payload; `None` means carry on with a direct fetch.
+async fn resolve_interception(
+    intercepted: &(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String),
+    url: &str,
+    method: &str,
+    headers_json: &str,
+) -> Option<String> {
+    let (tx, request_id) = intercepted;
+    let custom_headers: HashMap<String, String> = serde_json::from_str(headers_json).unwrap_or_default();
+    let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel();
+    let request = InterceptedRequest {
+        request_id: request_id.clone(),
+        url: url.to_string(),
+        method: method.to_string(),
+        headers: custom_headers,
+        resource_type: "Fetch".to_string(),
+        resolver: resolve_tx,
+    };
+    if tx.send(request).is_err() {
+        return None;
+    }
+
+    match resolve_rx.await {
+        Ok(InterceptResolution::Fulfill { status, headers, body }) => Some(
+            serde_json::json!({
+                "status": status,
+                "body": body,
+                "url": url,
+                "headers": headers,
+            })
+            .to_string(),
+        ),
+        Ok(InterceptResolution::Fail { reason }) => Some(blocked_response(url, Some(reason))),
+        Ok(InterceptResolution::Continue { .. }) => {
+            tracing::debug!("Interception: continue request {}", url);
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Interception: resolver for {} dropped without a decision ({}); \
+                 falling back to a direct fetch",
+                url,
+                error
+            );
+            None
+        }
+    }
+}
+
+/// Origin comparison and CORS decisions for one fetch.
+struct CorsContext {
+    page_origin: String,
+    is_cross_origin: bool,
+    request_method: reqwest::Method,
+    custom_headers: HashMap<String, String>,
+}
+
+impl CorsContext {
+    fn new(url: &str, origin: &str, method: &str, headers_json: &str) -> Self {
+        let request_origin = url::Url::parse(url)
+            .ok()
+            .map(|u| {
+                let host = u.host_str().unwrap_or("");
+                match u.port() {
+                    Some(p) => format!("{}://{}:{}", u.scheme(), host, p),
+                    None => format!("{}://{}", u.scheme(), host),
+                }
+            })
+            .unwrap_or_default();
+        let page_origin = if origin.is_empty() {
+            request_origin.clone()
+        } else {
+            origin.to_string()
+        };
+        CorsContext {
+            is_cross_origin: !page_origin.is_empty() && request_origin != page_origin,
+            page_origin,
+            request_method: method.parse().unwrap_or(reqwest::Method::GET),
+            custom_headers: serde_json::from_str(headers_json).unwrap_or_default(),
+        }
+    }
+
+    /// A cross-origin CORS request needs a preflight unless it is a simple request: a
+    /// GET/HEAD/POST carrying only CORS-safelisted headers.
+    fn needs_preflight(&self, mode: &str) -> bool {
+        self.is_cross_origin
+            && mode == "cors"
+            && (self.request_method != reqwest::Method::GET
+                && self.request_method != reqwest::Method::HEAD
+                && self.request_method != reqwest::Method::POST
+                || self.custom_headers.keys().any(|k| {
+                    let kl = k.to_lowercase();
+                    kl != "accept" && kl != "accept-language" && kl != "content-language" && kl != "content-type"
+                }))
+    }
+
+    /// `Some(payload)` when the response's `Access-Control-Allow-Origin` does not admit this page.
+    fn reject_response(&self, mode: &str, resp_headers: &HashMap<String, String>, url: &str) -> Option<String> {
+        if !self.is_cross_origin || mode != "cors" {
+            return None;
+        }
+        let allowed = resp_headers
+            .get("access-control-allow-origin")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        if allowed == "*" || allowed == self.page_origin {
+            return None;
+        }
+        Some(
+            serde_json::json!({
+                "status": 0,
+                "body": "",
+                "url": url,
+                "headers": {},
+                "corsBlocked": true,
+                "corsError": format!("CORS error: Origin '{}' not in Access-Control-Allow-Origin '{}'", self.page_origin, allowed),
+            })
+            .to_string(),
+        )
+    }
+}
+
+async fn send_preflight(
+    client: &reqwest::Client,
+    url: &str,
+    method: &str,
+    cors: &CorsContext,
+) -> Result<(), deno_error::JsErrorBox> {
+    let preflight = client
+        .request(reqwest::Method::OPTIONS, url)
+        .header("Origin", &cors.page_origin)
+        .header("Access-Control-Request-Method", method)
+        .header(
+            "Access-Control-Request-Headers",
+            cors.custom_headers.keys().cloned().collect::<Vec<_>>().join(", "),
+        )
+        .send()
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+
+    let allowed_origin = preflight
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if allowed_origin != "*" && allowed_origin != cors.page_origin {
+        return Err(deno_error::JsErrorBox::generic(format!(
+            "CORS preflight: Origin '{}' not allowed by Access-Control-Allow-Origin '{}'",
+            cors.page_origin, allowed_origin
+        )));
+    }
+    Ok(())
+}
+
+struct FetchRequest<'a> {
+    client: &'a reqwest::Client,
+    url: &'a str,
+    method: reqwest::Method,
+    body: String,
+    cors: &'a CorsContext,
+    context: &'a FetchContext,
+    ssrf: &'a Arc<dyn SsrfValidator>,
+}
+
+enum RedirectOutcome {
+    Response(reqwest::Response),
+    /// A JSON payload the op must return instead of a response.
+    Blocked(String),
+}
+
+/// Statuses that rewrite a redirected request to a bodyless GET.
+const REDIRECT_STATUSES_FORCING_GET: [u16; 3] = [301, 302, 303];
+
+async fn send_following_redirects(request: FetchRequest<'_>) -> Result<RedirectOutcome, deno_error::JsErrorBox> {
+    let FetchRequest {
+        client,
+        url,
+        mut method,
+        mut body,
+        cors,
+        context,
+        ssrf,
+    } = request;
+    let mut current_url = url.to_string();
+    let mut redirects_followed: usize = 0;
+
+    loop {
+        let response = send_one_hop(client, &current_url, &method, &body, cors, context).await?;
+        store_response_cookies(context, &current_url, &response);
+
+        if !response.status().is_redirection() {
+            return Ok(RedirectOutcome::Response(response));
+        }
+
+        let Some(next_url) = redirect_target(&current_url, &response) else {
+            return Ok(RedirectOutcome::Response(response));
+        };
+
+        // ~keep Re-validate every redirect target against the SSRF policy.
+        if let Err(reason) = validate_fetch_url(&next_url, ssrf).await {
+            return Ok(RedirectOutcome::Blocked(blocked_response(
+                next_url.as_str(),
+                Some(format!("Redirect to forbidden URL blocked: {}", reason)),
+            )));
+        }
+
+        redirects_followed += 1;
+        if redirects_followed > FETCH_REDIRECT_LIMIT {
+            return Ok(RedirectOutcome::Blocked(blocked_response(
+                next_url.as_str(),
+                Some(format!("Too many redirects (>{})", FETCH_REDIRECT_LIMIT)),
+            )));
+        }
+
+        if REDIRECT_STATUSES_FORCING_GET.contains(&response.status().as_u16()) {
+            method = reqwest::Method::GET;
+            body.clear();
+        }
+        current_url = next_url.to_string();
+    }
+}
+
+async fn send_one_hop(
+    client: &reqwest::Client,
+    current_url: &str,
+    method: &reqwest::Method,
+    body: &str,
+    cors: &CorsContext,
+    context: &FetchContext,
+) -> Result<reqwest::Response, deno_error::JsErrorBox> {
+    let mut req = client.request(method.clone(), current_url);
+
+    if cors.is_cross_origin {
+        req = req.header("Origin", &cors.page_origin);
+    }
+
+    // ~keep Same-origin only: sending the jar's cookies on a cross-origin fetch would leak
+    // them to a third party, which `credentials: "omit"` semantics forbid.
+    if !cors.is_cross_origin
+        && let Some(ref jar) = context.cookie_jar
+        && let Ok(parsed_url) = url::Url::parse(current_url)
+    {
+        let cookie_header = jar.get_cookie_header(&parsed_url);
+        if !cookie_header.is_empty() {
+            req = req.header("Cookie", &cookie_header);
+        }
+    }
+
+    for (k, v) in &cors.custom_headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    if !body.is_empty() {
+        req = req.body(body.to_string());
+    }
+
+    if let Some(ref counter) = context.in_flight {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    let response = req.send().await.map_err(|e| {
+        if let Some(ref counter) = context.in_flight {
+            counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        deno_error::JsErrorBox::generic(e.to_string())
+    })?;
+    if let Some(ref counter) = context.in_flight {
+        counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(response)
+}
+
+fn store_response_cookies(context: &FetchContext, current_url: &str, response: &reqwest::Response) {
+    if let Some(ref jar) = context.cookie_jar
+        && let Ok(parsed_url) = url::Url::parse(current_url)
+    {
+        for val in response.headers().get_all(reqwest::header::SET_COOKIE) {
+            if let Ok(s) = val.to_str() {
+                jar.set_cookie(s, &parsed_url);
+            }
+        }
+    }
+}
+
+fn redirect_target(current_url: &str, response: &reqwest::Response) -> Option<url::Url> {
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())?;
+    url::Url::parse(current_url).ok()?.join(location).ok()
 }
 
 fn glob_match(pattern: &str, url: &str) -> bool {
