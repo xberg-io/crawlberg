@@ -1,5 +1,6 @@
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Duration
 import java.util.zip.ZipFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -139,6 +140,25 @@ tasks.register("copyHostJni", Copy::class) {
 tasks.withType<Test> {
     useJUnitPlatform()
     environment("CRAWLBERG_ALLOW_PRIVATE_NETWORK", "true")
+
+    // ~keep Without these two the CI job is diagnostically blind, and was for weeks. Gradle's
+    // ~keep default reporting prints one line per failure with no message and no stack, so 23
+    // ~keep real failures read as a wall of "FAILED" with nothing to act on. Worse, before the
+    // ~keep timeout a hung native call ran until the job's own 90-minute cap, and GitHub records
+    // ~keep a job-level timeout as `cancelled`, not `failure` -- so the suite hanging looked
+    // ~keep exactly like the suite passing in the Actions UI and stayed unnoticed across several
+    // ~keep releases. The timeout makes a hang fail here, with attribution, well inside that cap.
+    // ~keep Alef emits both itself as of 0.95.0, but this file is declared user_owned in
+    // ~keep alef.toml, so alef's write guard will not add them -- hence by hand.
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showCauses = true
+        showExceptions = true
+        showStackTraces = true
+    }
+    timeout.set(Duration.ofSeconds(1800))
 
     // Resolve the native library location (e.g., ../../target/release)
     val libPath = System.getProperty("kb.lib.path") ?: "${rootDir}/../../target/release"
