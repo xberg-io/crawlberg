@@ -1,21 +1,34 @@
 //! HTTP fetching with redirect handling, retry logic, and cookie extraction.
 
+mod body;
+mod client;
+mod headers;
+mod retry;
+mod waf;
+
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex, OnceLock};
-use std::time::Duration;
 
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::net::cookie::validate_cookie_domain;
 use crate::net::origin::same_host;
 use crate::net::ssrf::validate_url;
+use crate::types::{AuthConfig, CrawlConfig};
+
+use headers::build_headers_map;
+use retry::{GATEWAY_TIMEOUT_SUFFIX, SERVICE_UNAVAILABLE_SUFFIX};
+
+pub(crate) use body::{
+    effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
+    truncate_body_at_char_boundary,
+};
+pub(crate) use client::build_client;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::types::CookieInfo;
-use crate::types::WafClassifier;
-use crate::types::{AuthConfig, CrawlConfig, ResponseMeta};
-use crate::waf::TomlClassifier;
+pub(crate) use headers::extract_cookies_from_hashmap;
+pub(crate) use headers::extract_response_meta_from_hashmap;
+pub(crate) use retry::fetch_with_retry;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
@@ -30,159 +43,6 @@ pub struct BrowserExtras {
     pub network_events: Vec<crate::types::ResponseMeta>,
     /// Cookies present in the browser session after page load.
     pub cookies: Vec<crate::types::CookieInfo>,
-}
-
-/// Process-wide WAF classifier built once from the embedded fingerprint corpus.
-///
-/// ~keep `TomlClassifier::builtin()` re-parses `waf_fingerprints.toml` (via
-/// `include_str!`) and rebuilds the Aho-Corasick matcher set on every call — it was
-/// previously constructed fresh per response on the `http_fetch` hot path (robots.txt,
-/// every asset download, every sitemap fetch, and every page fetch), so this cache
-/// turns a per-response parse+compile into a one-time process-wide cost. `classify`
-/// only needs `&self`, so a shared immutable instance is safe across concurrent fetches.
-static WAF_CLASSIFIER: LazyLock<TomlClassifier> = LazyLock::new(TomlClassifier::builtin);
-
-/// Decode `bytes` as UTF-8, moving the buffer directly into the returned `String`
-/// with no copy when it is already valid UTF-8. Falls back to lossy replacement —
-/// byte-identical to `String::from_utf8_lossy(&bytes).into_owned()` — when it is not.
-///
-/// ~keep `String::from_utf8_lossy(&bytes).into_owned()` always allocates a fresh
-/// buffer and copies into it, even on the (common) valid-UTF-8 path where the bytes
-/// could simply become the `String`'s own buffer. `String::from_utf8` validates and,
-/// on success, moves `bytes` in with no copy; on failure it hands the original bytes
-/// back via `FromUtf8Error::into_bytes`, so the lossy fallback reuses them instead of
-/// cloning. Only call this where the caller does not also need to keep `bytes` as a
-/// separate `Vec<u8>` afterward — callers that also need the raw bytes (e.g. for
-/// `body_bytes`) still need two independently owned buffers and gain nothing from
-/// moving one into the other.
-pub(crate) fn decode_body_lossy(bytes: Vec<u8>) -> String {
-    match String::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
-    }
-}
-
-/// Truncate `body` to at most `max_size` bytes without splitting a UTF-8 character.
-///
-/// `String::truncate` panics when the index is not a char boundary. `max_size` comes
-/// from `CrawlConfig::max_body_size`, so on any non-ASCII page an unlucky byte count
-/// would otherwise panic the crawl.
-pub(crate) fn truncate_body_at_char_boundary(body: &mut String, max_size: usize) {
-    if body.len() <= max_size {
-        return;
-    }
-    let mut boundary = max_size;
-    while boundary > 0 && !body.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    body.truncate(boundary);
-}
-
-/// Re-decode `body_bytes` using `charset` when it names a recognized non-UTF-8 encoding.
-///
-/// ~keep Shared by the scrape path (`scrape.rs`) and the crawl path
-/// (`engine/crawl_loop.rs`) so both apply the charset `detect_charset` reports instead
-/// of only reporting it. `resp.body`/`fetch.body` is always a `String::from_utf8_lossy`
-/// decode of the raw bytes (see `read_body_bounded` callers in this file and in
-/// `tower/service.rs`); for any non-UTF-8/us-ascii charset that lossy decode has
-/// already replaced every non-ASCII byte with U+FFFD, so callers must re-decode from
-/// `body_bytes` rather than post-process the lossy string.
-///
-/// Returns `None` — meaning "keep the caller's existing lossy-UTF-8 body" — when
-/// `charset` is `"utf-8"`/`"us-ascii"`, is not a label `encoding_rs` recognizes, or
-/// decoding hit unmappable sequences (an unreliable decode is worse than the lossy
-/// fallback, which at least round-trips the ASCII-safe portion of the page).
-pub(crate) fn redecode_with_charset(charset: &str, body_bytes: &[u8]) -> Option<String> {
-    if charset == "utf-8" || charset == "us-ascii" {
-        return None;
-    }
-    let encoding = encoding_rs::Encoding::for_label(charset.as_bytes())?;
-    let (decoded, _, had_errors) = encoding.decode(body_bytes);
-    if had_errors { None } else { Some(decoded.into_owned()) }
-}
-
-/// Safety ceiling on a response body when `max_body_size` is unset.
-///
-/// ~keep reqwest is built with gzip and brotli, and `Response::chunk` yields
-/// *decompressed* bytes, so an unset cap let a few hundred compressed bytes expand to
-/// gigabytes in memory. 100 MiB sits far above any real HTML page while still bounding
-/// the process; the document path applies its own, smaller
-/// [`crate::document::DEFAULT_DOCUMENT_MAX_SIZE`] before this is reached.
-pub(crate) const DEFAULT_MAX_BODY_SIZE: usize = 100 * 1024 * 1024;
-
-/// The body cap actually enforced for `config`.
-///
-/// ~keep Resolved here rather than in `CrawlConfig::default` so it cannot be bypassed:
-/// a config deserialized from JSON, or built by a language binding that omits the field,
-/// gets `None` for the field regardless of what `Default` says. Every fetch path routes
-/// through this, so the ceiling holds for all of them. A caller who genuinely wants an
-/// unbounded read opts in explicitly with a large `max_body_size`.
-pub(crate) fn effective_max_body_size(config: &CrawlConfig) -> Option<usize> {
-    Some(config.max_body_size.unwrap_or(DEFAULT_MAX_BODY_SIZE))
-}
-
-/// Read a response body in bounded chunks, stopping once more than `max_size` bytes
-/// have been received. Returns the bytes read together with whether the read stopped
-/// early because the cap was hit (as opposed to a natural end-of-body).
-///
-/// ~keep `resp.bytes()` buffers the *entire* body — including whatever reqwest's
-/// transparent gzip/brotli decompression produces — before `max_body_size` truncation
-/// ever runs downstream, so a decompression bomb (e.g. a 10 GB gzip response behind a
-/// 1 MB cap) still allocates its full decompressed size. Reading chunk-by-chunk via
-/// `Response::chunk` (available without the `stream` cargo feature, unlike
-/// `bytes_stream`) and stopping as soon as the cap is crossed bounds peak memory to
-/// roughly `max_size` plus one chunk width, regardless of the declared or true
-/// decompressed size — the cap is enforced while reading, not after the fact.
-///
-/// When `max_size` is `None`, reads to completion exactly as `resp.bytes()` would.
-///
-/// Takes `resp` by value: every call site reads the body as its last operation on the
-/// response before returning or moving on to the next redirect hop, and the native
-/// implementation needs `&mut` access to `Response::chunk` internally.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) async fn read_body_bounded(
-    mut resp: reqwest::Response,
-    max_size: Option<usize>,
-) -> Result<(Vec<u8>, bool), reqwest::Error> {
-    let mut buf: Vec<u8> = Vec::with_capacity(max_size.unwrap_or(8192).min(1 << 20));
-    while let Some(chunk) = resp.chunk().await? {
-        buf.extend_from_slice(&chunk);
-        if let Some(max_size) = max_size
-            && buf.len() > max_size
-        {
-            return Ok((buf, true));
-        }
-    }
-    Ok((buf, false))
-}
-
-/// wasm32 fallback: the browser-`fetch`-backed `reqwest::Response` on this target does
-/// not expose `Response::chunk` (only `bytes()`, which reads to completion, or
-/// `bytes_stream()`, which requires the `stream` cargo feature this crate does not
-/// enable). The memory-exhaustion threat this bounds — a malicious server streaming an
-/// unbounded decompression bomb at a long-running native crawler process — does not
-/// apply the same way inside a browser's sandboxed wasm runtime, so this reads to
-/// completion and always reports `hit_cap = false`; callers still apply
-/// `max_body_size` truncation to the result afterwards, matching prior wasm behavior.
-#[cfg(target_arch = "wasm32")]
-pub(crate) async fn read_body_bounded(
-    resp: reqwest::Response,
-    _max_size: Option<usize>,
-) -> Result<(Vec<u8>, bool), reqwest::Error> {
-    Ok((resp.bytes().await?.to_vec(), false))
-}
-
-/// Read a response body via [`read_body_bounded`] and lossily decode it as UTF-8,
-/// returning an empty string on any read error.
-///
-/// Used by WAF-classification paths that only need best-effort body text and already
-/// tolerate a missing body (they previously used `resp.text().await.unwrap_or_default()`,
-/// which has the same unbounded-memory problem `read_body_bounded` fixes).
-pub(crate) async fn read_text_bounded(resp: reqwest::Response, max_size: Option<usize>) -> String {
-    match read_body_bounded(resp, max_size).await {
-        Ok((bytes, _)) => decode_body_lossy(bytes),
-        Err(_) => String::new(),
-    }
 }
 
 /// An HTTP response with status, headers, and body content.
@@ -222,6 +82,90 @@ pub struct HttpResponse {
     pub screenshot: Option<Vec<u8>>,
 }
 
+/// Everything a fetch needs that does not change from one redirect hop to the next.
+struct FetchContext<'a> {
+    url: &'a str,
+    config: &'a CrawlConfig,
+    extra_headers: &'a HashMap<String, String>,
+    client: &'a reqwest::Client,
+    initial_url: &'a url::Url,
+}
+
+/// What one hop produced: a redirect target still to follow, or a finished response.
+///
+/// ~keep Not boxed despite the variant size gap: `Complete` carries the value `http_fetch`
+/// ~keep returns, which was already moved by value out of this code before the hop loop was
+/// ~keep split out. Boxing it to satisfy the size-ratio lint would add a heap allocation to
+/// ~keep every successful fetch and buy nothing back.
+#[allow(clippy::large_enum_variant)]
+enum HopOutcome {
+    Redirect(url::Url),
+    Complete(HttpResponse),
+}
+
+/// Where a 3xx response points.
+enum RedirectTarget {
+    /// The `Location` header, resolved against the URL that served the redirect.
+    Follow(url::Url),
+    /// A `Location` that does not resolve to a URL; the 3xx is returned as the response.
+    Unresolvable,
+}
+
+/// Response metadata captured before the body is consumed.
+struct ResponseHead {
+    status: u16,
+    content_type: String,
+    final_url: String,
+    headers: HeaderMap,
+}
+
+impl ResponseHead {
+    fn from_response(resp: &reqwest::Response) -> Self {
+        Self {
+            status: resp.status().as_u16(),
+            content_type: resp
+                .headers()
+                .get_all(CONTENT_TYPE)
+                .iter()
+                .next_back()
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_owned(),
+            final_url: resp.url().to_string(),
+            headers: resp.headers().clone(),
+        }
+    }
+
+    fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    fn content_length(&self) -> Option<usize> {
+        self.headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+    }
+
+    fn into_response(
+        self,
+        body: String,
+        body_bytes: Vec<u8>,
+        headers_map: HashMap<String, Vec<String>>,
+    ) -> HttpResponse {
+        HttpResponse {
+            status: self.status,
+            content_type: self.content_type,
+            body,
+            body_bytes,
+            headers: headers_map,
+            browser_extras: None,
+            final_url: self.final_url,
+            screenshot: None,
+        }
+    }
+}
+
 /// Perform a single HTTP GET request with the given configuration.
 ///
 /// Handles user-agent, authentication, custom headers, error status codes,
@@ -241,774 +185,324 @@ pub(crate) async fn http_fetch(
         .await
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
 
+    let context = FetchContext {
+        url,
+        config,
+        extra_headers,
+        client,
+        initial_url: &initial_url,
+    };
     let mut current_url = initial_url.clone();
-    let mut final_url_str: String;
     let mut redirects_followed: usize = 0;
 
     loop {
-        // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
-        let mut req = client.get(current_url.to_string()).timeout(config.request_timeout);
+        let next_url = match fetch_one_hop(&context, &current_url).await? {
+            HopOutcome::Complete(response) => return Ok(response),
+            HopOutcome::Redirect(next_url) => next_url,
+        };
 
-        if let Some(ref ua) = config.user_agent {
-            req = req.header(USER_AGENT, ua.as_str());
-        } else {
-            req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
+        if let Err(e) = validate_url(&next_url, &config.ssrf).await {
+            return Err(CrawlError::ssrf_violation(&next_url, e.to_string()));
         }
 
-        // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
-        // ~keep strip-credentials-on-cross-host behaviour never runs and we must do it here:
-        // ~keep an open redirect off an authenticated origin would otherwise hand the
-        // ~keep configured Authorization header straight to the redirect target.
-        if same_host(&initial_url, &current_url) {
-            match config.auth {
-                Some(AuthConfig::Basic {
-                    ref username,
-                    ref password,
-                }) => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                Some(AuthConfig::Bearer { ref token }) => {
-                    req = req.bearer_auth(token);
-                }
-                Some(AuthConfig::Header { ref name, ref value }) => {
-                    req = req.header(name.as_str(), value.as_str());
-                }
-                None => {}
+        redirects_followed += 1;
+        // ~keep `CrawlConfig.max_redirects` is the single effective redirect-hop bound for
+        // every GET, matching `follow_redirects` in `engine/crawl_loop.rs`. It is the only
+        // one of the two redirect-count fields exposed by the builder (see
+        // `types/builder.rs::max_redirects`); `SsrfPolicy.max_redirects` is kept only for
+        // backward-compatible (de)serialization of the SSRF policy shape (it is part of the
+        // fixtures/schema.json contract) and is not read at runtime -- SSRF safety itself is
+        // unaffected because every redirect target is still validated by `validate_url` above.
+        if redirects_followed > config.max_redirects {
+            return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
+        }
+
+        current_url = next_url;
+    }
+}
+
+/// Fetch `current_url` once, without following any redirect it returns.
+async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Result<HopOutcome, CrawlError> {
+    let resp = send_hop_request(context, current_url).await?;
+    let head = ResponseHead::from_response(&resp);
+
+    if (300..400).contains(&head.status) {
+        match redirect_target(current_url, &head.headers) {
+            Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
+            Some(RedirectTarget::Unresolvable) => {
+                return Ok(HopOutcome::Complete(
+                    unresolvable_redirect_response(context.config, resp, head).await,
+                ));
             }
-        } else if config.auth.is_some() {
+            None => {}
+        }
+    }
+
+    // ~keep Computed lazily and cached below rather than unconditionally up front: most
+    // non-2xx statuses (404, 429, 500, ...) return before ever needing a header map, so
+    // building one here would add an allocation to paths that previously had none.
+    let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
+
+    if head.status == 403 {
+        return Err(forbidden_error(context.config, resp, &head, &mut headers_map_cache).await);
+    }
+    if let Some(error) = terminal_status_error(head.status, context.url) {
+        return Err(error);
+    }
+
+    // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
+    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
+    if let Some(header_vendor) = header_only_waf_vendor(&head, &mut headers_map_cache) {
+        let config = context.config;
+        return Err(body_confirmed_waf_error(config, resp, &head, header_vendor, &mut headers_map_cache).await);
+    }
+
+    let expected_len = head.content_length();
+    let body_bytes = read_validated_body(context.config, resp, expected_len).await?;
+    let body = String::from_utf8_lossy(&body_bytes).into_owned();
+
+    // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
+    if let Some(vendor) = body_waf_vendor(&head, &body, &body_bytes, &mut headers_map_cache) {
+        return Err(CrawlError::WafBlocked {
+            message: format!("waf/blocked detected on 2xx (body): {vendor}"),
+            vendor,
+        });
+    }
+
+    // ~keep Reuses the cached header map (built at most once above) instead of walking
+    // `headers` a third time; falls back to a fresh build only for the statuses that
+    // never populated the cache (anything outside 200..300 and not explicitly matched
+    // above, e.g. 206 or an unlisted 4xx/5xx that falls through to no terminal error).
+    let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&head.headers));
+    Ok(HopOutcome::Complete(head.into_response(body, body_bytes, headers_map)))
+}
+
+/// Build and send the GET for one hop.
+async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) -> Result<reqwest::Response, CrawlError> {
+    // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
+    let mut req = context
+        .client
+        .get(current_url.to_string())
+        .timeout(context.config.request_timeout);
+
+    if let Some(ref ua) = context.config.user_agent {
+        req = req.header(USER_AGENT, ua.as_str());
+    } else {
+        req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
+    }
+
+    req = apply_auth(req, context, current_url);
+
+    for (k, v) in &context.config.custom_headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    for (k, v) in context.extra_headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+
+    req.send().await.map_err(classify_reqwest_error)
+}
+
+/// Attach the configured credentials, but only while the hop is still on the origin they
+/// were configured for.
+///
+/// ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
+/// ~keep strip-credentials-on-cross-host behaviour never runs and we must do it here:
+/// ~keep an open redirect off an authenticated origin would otherwise hand the
+/// ~keep configured Authorization header straight to the redirect target.
+fn apply_auth(
+    req: reqwest::RequestBuilder,
+    context: &FetchContext<'_>,
+    current_url: &url::Url,
+) -> reqwest::RequestBuilder {
+    if !same_host(context.initial_url, current_url) {
+        if context.config.auth.is_some() {
             tracing::debug!(
-                origin = initial_url.host_str().unwrap_or(""),
+                origin = context.initial_url.host_str().unwrap_or(""),
                 target = current_url.host_str().unwrap_or(""),
                 "withholding configured credentials from a cross-host redirect hop"
             );
         }
+        return req;
+    }
 
-        for (k, v) in &config.custom_headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
-        for (k, v) in extra_headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
-        let resp = req.send().await.map_err(classify_reqwest_error)?;
-
-        let status = resp.status().as_u16();
-        final_url_str = resp.url().to_string();
-
-        let content_type = resp
-            .headers()
-            .get_all(CONTENT_TYPE)
-            .iter()
-            .next_back()
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_owned();
-
-        let headers = resp.headers().clone();
-
-        if (300..400).contains(&status) {
-            let location_header = headers
-                .get(reqwest::header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string);
-
-            if let Some(location) = location_header {
-                let next_url = match current_url.join(&location) {
-                    Ok(u) => u,
-                    Err(_) => {
-                        let (body_bytes_vec, _) = read_body_bounded(resp, effective_max_body_size(config))
-                            .await
-                            .unwrap_or_default();
-                        let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
-                        let headers_map = build_headers_map(&headers);
-                        return Ok(HttpResponse {
-                            status,
-                            content_type,
-                            body,
-                            body_bytes: body_bytes_vec,
-                            headers: headers_map,
-                            browser_extras: None,
-                            final_url: final_url_str,
-                            screenshot: None,
-                        });
-                    }
-                };
-
-                if let Err(e) = validate_url(&next_url, &config.ssrf).await {
-                    return Err(CrawlError::ssrf_violation(&next_url, e.to_string()));
-                }
-
-                redirects_followed += 1;
-                // ~keep `CrawlConfig.max_redirects` is the single effective redirect-hop bound for
-                // every GET, matching `follow_redirects` in `engine/crawl_loop.rs`. It is the only
-                // one of the two redirect-count fields exposed by the builder (see
-                // `types/builder.rs::max_redirects`); `SsrfPolicy.max_redirects` is kept only for
-                // backward-compatible (de)serialization of the SSRF policy shape (it is part of the
-                // fixtures/schema.json contract) and is not read at runtime — SSRF safety itself is
-                // unaffected because every redirect target is still validated by `validate_url` below.
-                if redirects_followed > config.max_redirects {
-                    return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
-                }
-
-                current_url = next_url;
-                continue;
-            }
-        }
-
-        // ~keep Computed lazily and cached below rather than unconditionally up front: most
-        // non-2xx statuses (404, 429, 500, ...) return before ever needing a header map, so
-        // building one here would add an allocation to paths that previously had none.
-        let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
-
-        match status {
-            401 => return Err(CrawlError::unauthorized("unauthorized")),
-            403 => {
-                let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-                let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
-                let partial_response = build_partial_response(status, &body, headers_map);
-                let classifier = &WAF_CLASSIFIER;
-                if let Ok(Some(signal)) = classifier.classify(&partial_response) {
-                    return Err(CrawlError::WafBlocked {
-                        vendor: signal.vendor.clone(),
-                        message: format!("waf/blocked detected: {}", signal.vendor),
-                    });
-                }
-                return Err(CrawlError::forbidden("forbidden"));
-            }
-            404 => return Err(CrawlError::not_found(format!("not_found: {url}"))),
-            408 => return Err(CrawlError::timeout("timeout: request timed out")),
-            410 => return Err(CrawlError::gone("gone")),
-            429 => return Err(CrawlError::rate_limited("rate_limited")),
-            500 => return Err(CrawlError::server_error("server_error")),
-            502 => return Err(CrawlError::bad_gateway("bad_gateway")),
-            503 => {
-                return Err(CrawlError::server_error(format!(
-                    "server_error: {SERVICE_UNAVAILABLE_SUFFIX}"
-                )));
-            }
-            504 => {
-                return Err(CrawlError::server_error(format!(
-                    "server_error: {GATEWAY_TIMEOUT_SUFFIX}"
-                )));
-            }
-            _ => {}
-        }
-
-        // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
-        // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
-        if (200..300).contains(&status) {
-            let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
-            let headers_only_response = build_partial_response(status, "", headers_map);
-            let classifier = &WAF_CLASSIFIER;
-            if let Ok(Some(signal)) = classifier.classify(&headers_only_response) {
-                let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-                let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
-                let partial_response = build_partial_response(status, &body, headers_map);
-                let vendor = classifier
-                    .classify(&partial_response)
-                    .ok()
-                    .flatten()
-                    .map(|s| s.vendor)
-                    .unwrap_or(signal.vendor);
-                return Err(CrawlError::WafBlocked {
-                    message: format!("waf/blocked detected on 2xx (header): {vendor}"),
-                    vendor,
-                });
-            }
-        }
-
-        let expected_len = headers
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok());
-
-        let (body_bytes_vec, hit_cap) =
-            read_body_bounded(resp, effective_max_body_size(config))
-                .await
-                .map_err(|e| {
-                    let chain = error_chain_string(&e);
-                    let is_body_error = chain.contains("content-length")
-                        || chain.contains("truncate")
-                        || chain.contains("incomplete")
-                        || chain.contains("end of file")
-                        || chain.contains("body error")
-                        || chain.contains("body from connection")
-                        || chain.contains("decoding response body")
-                        || chain.contains("error decoding");
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let is_body_error = is_body_error || e.is_body();
-                    if is_body_error {
-                        let message = format!("data_loss: {e}");
-                        CrawlError::data_loss_with_source(message, e)
-                    } else {
-                        classify_reqwest_error(e)
-                    }
-                })?;
-
-        // ~keep A capped read stopping short of `content-length` is expected (that is the
-        // point of `max_body_size`), not evidence of a truncated/failed transfer.
-        if !hit_cap
-            && let Some(expected) = expected_len
-            && body_bytes_vec.len() < expected
-            && expected - body_bytes_vec.len() > 100
-        {
-            return Err(CrawlError::data_loss(format!(
-                "data_loss: expected {expected} bytes, got {}",
-                body_bytes_vec.len()
-            )));
-        }
-
-        let body = String::from_utf8_lossy(&body_bytes_vec).into_owned();
-
-        // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
-        if (200..300).contains(&status) {
-            let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&headers));
-            let partial_response = build_partial_response_with_bytes(status, &body_bytes_vec, &body, headers_map);
-            let classifier = &WAF_CLASSIFIER;
-            if let Ok(Some(signal)) = classifier.classify(&partial_response) {
-                return Err(CrawlError::WafBlocked {
-                    vendor: signal.vendor.clone(),
-                    message: format!("waf/blocked detected on 2xx (body): {}", signal.vendor),
-                });
-            }
-        }
-
-        // ~keep Reuses the cached header map (built at most once above) instead of walking
-        // `headers` a third time; falls back to a fresh build only for the statuses that
-        // never populated the cache (anything outside 200..300 and not explicitly matched
-        // above, e.g. 206 or an unlisted 4xx/5xx that falls through to `_ => {}`).
-        let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&headers));
-
-        return Ok(HttpResponse {
-            status,
-            content_type,
-            body,
-            body_bytes: body_bytes_vec,
-            headers: headers_map,
-            browser_extras: None,
-            final_url: final_url_str,
-            screenshot: None,
-        });
+    match context.config.auth {
+        Some(AuthConfig::Basic {
+            ref username,
+            ref password,
+        }) => req.basic_auth(username, Some(password)),
+        Some(AuthConfig::Bearer { ref token }) => req.bearer_auth(token),
+        Some(AuthConfig::Header { ref name, ref value }) => req.header(name.as_str(), value.as_str()),
+        None => req,
     }
 }
 
-/// Identity of the `reqwest::Client` configuration knobs that legitimately vary per
-/// fetch — timeout, cookie jar, proxy, and auth — used to key the shared client cache
-/// in [`build_client`] so that requests sharing an identity reuse one connection pool
-/// instead of paying a fresh TCP/TLS handshake on every call.
-///
-/// Auth is included even though it is applied as a per-request header (not baked into
-/// the `reqwest::Client` itself) because a shared client's cookie jar (when
-/// `cookies_enabled`) must not be reused across distinct credentials — otherwise two
-/// concurrent sessions to the same host with different auth would leak session cookies
-/// between them.
-///
-/// Runtime identity is included because hyper drives each pooled connection with a task
-/// spawned on the runtime that built the client. When that runtime is dropped the
-/// connection task dies, but the client stays in this process-global cache, so a caller
-/// on a new runtime would check out a dead connection and fail mid-request. Keying on the
-/// runtime keeps each one's pool to itself; a cold entry costs a handshake, not
-/// correctness. `Handle::try_current()` is `Err` outside a runtime, which is its own
-/// stable identity. ~keep
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct ClientCacheKey {
-    runtime: Option<tokio::runtime::Id>,
-    timeout_micros: u128,
-    cookies_enabled: bool,
-    proxy: String,
-    auth: String,
-    ssrf: String,
+/// Resolve a 3xx response's `Location` header against the URL that served it.
+fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<RedirectTarget> {
+    let location = headers
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)?;
+
+    Some(match current_url.join(&location) {
+        Ok(next_url) => RedirectTarget::Follow(next_url),
+        Err(_) => RedirectTarget::Unresolvable,
+    })
 }
 
-impl ClientCacheKey {
-    fn from_config(config: &CrawlConfig) -> Self {
-        Self {
-            runtime: tokio::runtime::Handle::try_current().map(|handle| handle.id()).ok(),
-            timeout_micros: config.request_timeout.as_micros(),
-            cookies_enabled: config.cookies_enabled,
-            proxy: proxy_identity(config),
-            auth: auth_identity(config),
-            ssrf: ssrf_identity(config),
-        }
+/// Return a 3xx whose `Location` could not be resolved as the response itself.
+async fn unresolvable_redirect_response(
+    config: &CrawlConfig,
+    resp: reqwest::Response,
+    head: ResponseHead,
+) -> HttpResponse {
+    let (body_bytes, _) = read_body_bounded(resp, effective_max_body_size(config))
+        .await
+        .unwrap_or_default();
+    let body = String::from_utf8_lossy(&body_bytes).into_owned();
+    let headers_map = build_headers_map(&head.headers);
+    head.into_response(body, body_bytes, headers_map)
+}
+
+/// Classify a 403: a WAF block when the body fingerprints, a plain forbidden otherwise.
+async fn forbidden_error(
+    config: &CrawlConfig,
+    resp: reqwest::Response,
+    head: &ResponseHead,
+    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
+) -> CrawlError {
+    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
+    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+    match waf::waf_vendor_from_body(head.status, &body, headers_map) {
+        Some(vendor) => CrawlError::WafBlocked {
+            message: format!("waf/blocked detected: {vendor}"),
+            vendor,
+        },
+        None => CrawlError::forbidden("forbidden"),
     }
 }
 
-/// Encode the part of `config`'s SSRF policy that is baked into the client's DNS resolver.
-///
-/// ~keep The resolver captures the policy at build time, so two configs with different
-/// policies must not share a cached client — otherwise the first caller's policy would
-/// silently govern the second's connections. Only `deny_private` and `allowlist` reach the
-/// resolver: `scheme_allowlist` and `max_redirects` are enforced in `validate_url` against
-/// the URL, never during resolution, so folding them in would fragment the cache for
-/// nothing.
-fn ssrf_identity(config: &CrawlConfig) -> String {
-    format!("{}:{:?}", config.ssrf.deny_private, config.ssrf.allowlist)
+/// The error a status ends the fetch with, for every status that ends it without
+/// needing the response body. 403 is handled separately because it reads the body.
+fn terminal_status_error(status: u16, url: &str) -> Option<CrawlError> {
+    Some(match status {
+        401 => CrawlError::unauthorized("unauthorized"),
+        404 => CrawlError::not_found(format!("not_found: {url}")),
+        408 => CrawlError::timeout("timeout: request timed out"),
+        410 => CrawlError::gone("gone"),
+        429 => CrawlError::rate_limited("rate_limited"),
+        500 => CrawlError::server_error("server_error"),
+        502 => CrawlError::bad_gateway("bad_gateway"),
+        503 => CrawlError::server_error(format!("server_error: {SERVICE_UNAVAILABLE_SUFFIX}")),
+        504 => CrawlError::server_error(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")),
+        _ => return None,
+    })
 }
 
-/// Encode `config`'s proxy configuration as an opaque identity string.
-///
-/// A `ProxyProvider` is a trait object with no `Eq`/`Hash` impl, so its identity is its
-/// `Arc` data address — two `CrawlConfig`s sharing the same provider `Arc` (the normal
-/// case: one engine, cloned config) resolve to the same key.
-fn proxy_identity(config: &CrawlConfig) -> String {
-    if let Some(ref provider) = config.proxy_provider {
-        format!("provider:{:p}", std::sync::Arc::as_ptr(provider))
-    } else if let Some(ref proxy) = config.proxy {
-        format!(
-            "static:{}:{}:{}",
-            proxy.url,
-            proxy.username.as_deref().unwrap_or(""),
-            proxy.password.as_deref().unwrap_or("")
-        )
-    } else {
-        "none".to_owned()
+/// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
+fn header_only_waf_vendor(
+    head: &ResponseHead,
+    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
+) -> Option<String> {
+    if !head.is_success() {
+        return None;
+    }
+    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+    waf::waf_vendor_from_body(head.status, "", headers_map)
+}
+
+/// Re-run classification over the body of a 2xx its headers already flagged, preferring
+/// the vendor the body names and falling back to the header-derived one.
+async fn body_confirmed_waf_error(
+    config: &CrawlConfig,
+    resp: reqwest::Response,
+    head: &ResponseHead,
+    header_vendor: String,
+    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
+) -> CrawlError {
+    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
+    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+    let vendor = waf::waf_vendor_from_body(head.status, &body, headers_map).unwrap_or(header_vendor);
+    CrawlError::WafBlocked {
+        message: format!("waf/blocked detected on 2xx (header): {vendor}"),
+        vendor,
     }
 }
 
-/// Encode `config`'s auth configuration as an opaque identity string.
-fn auth_identity(config: &CrawlConfig) -> String {
-    match &config.auth {
-        Some(AuthConfig::Basic { username, password }) => format!("basic:{username}:{password}"),
-        Some(AuthConfig::Bearer { token }) => format!("bearer:{token}"),
-        Some(AuthConfig::Header { name, value }) => format!("header:{name}:{value}"),
-        None => "none".to_owned(),
+/// The WAF vendor a 2xx's already-read body fingerprints.
+fn body_waf_vendor(
+    head: &ResponseHead,
+    body: &str,
+    body_bytes: &[u8],
+    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
+) -> Option<String> {
+    if !head.is_success() {
+        return None;
     }
+    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+    waf::waf_vendor_from_bytes(head.status, body_bytes, body, headers_map)
 }
 
-/// Process-wide cache of built `reqwest::Client`s, keyed by [`ClientCacheKey`].
-///
-/// ~keep `build_client` is called on the hot fetch path (once per tier attempt in
-/// `engine/mod.rs::run_tier`), so without this cache every HTTP request pays a fresh
-/// TCP/TLS handshake and gets no connection-pool reuse. `reqwest::Client` is
-/// `Arc`-backed internally, so cloning a cached entry is cheap, and each distinct
-/// proxy/auth/timeout/cookie identity still gets its own client rather than one client
-/// silently serving unrelated sessions (see [`ClientCacheKey`]).
-fn client_cache() -> &'static Mutex<HashMap<ClientCacheKey, reqwest::Client>> {
-    static CACHE: OnceLock<Mutex<HashMap<ClientCacheKey, reqwest::Client>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Shortfall below the declared `content-length` that is read as a truncated transfer
+/// rather than as ordinary framing slack.
+const BODY_SHORTFALL_TOLERANCE_BYTES: usize = 100;
 
-/// Upper bound on distinct cached clients.
-///
-/// ~keep An unbounded cache is a slow leak: a long-lived process that rotates proxies
-/// or per-tenant auth mints a new identity per rotation and never releases the old
-/// client — nor the provider `Arc` captured inside it. Past this many entries the cache
-/// is cleared wholesale rather than evicted by recency; entries are interchangeable
-/// (rebuilding one costs a handshake, not correctness), so tracking access order would
-/// buy nothing for the extra state.
-const MAX_CACHED_CLIENTS: usize = 64;
+/// Read the response body under the configured cap and reject a short transfer.
+async fn read_validated_body(
+    config: &CrawlConfig,
+    resp: reqwest::Response,
+    expected_len: Option<usize>,
+) -> Result<Vec<u8>, CrawlError> {
+    let (body_bytes, hit_cap) = read_body_bounded(resp, effective_max_body_size(config))
+        .await
+        .map_err(classify_body_read_error)?;
 
-/// Whether a cached client already exists for `config`'s identity. Test-only
-/// introspection for verifying [`build_client`]'s caching behavior.
-#[cfg(test)]
-pub(crate) fn client_cache_contains(config: &CrawlConfig) -> bool {
-    let key = ClientCacheKey::from_config(config);
-    client_cache()
-        .lock()
-        .map(|cache| cache.contains_key(&key))
-        .unwrap_or(false)
-}
-
-/// Build a `reqwest::Client` with the given configuration (redirect policy, timeout, cookies, proxy).
-///
-/// Returns a cached, cheaply-cloned client when one matching this configuration's
-/// [`ClientCacheKey`] already exists; otherwise builds one and caches it for reuse.
-#[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
-    let key = ClientCacheKey::from_config(config);
-    if let Ok(cache) = client_cache().lock()
-        && let Some(client) = cache.get(&key)
+    // ~keep A capped read stopping short of `content-length` is expected (that is the
+    // point of `max_body_size`), not evidence of a truncated/failed transfer.
+    if !hit_cap
+        && let Some(expected) = expected_len
+        && body_bytes.len() < expected
+        && expected - body_bytes.len() > BODY_SHORTFALL_TOLERANCE_BYTES
     {
-        return Ok(client.clone());
-    }
-
-    let mut builder = reqwest::Client::builder();
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        builder = builder
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(config.request_timeout);
-    }
-
-    // ~keep `cookie_provider`, not `cookie_store(true)`: reqwest's default jar loads no
-    // public-suffix list, so a host may set Domain= to a shared multi-tenant suffix
-    // (herokuapp.com, github.io, a bare TLD). One client is reused across a whole crawl
-    // that can span hosts, so that would be a supercookie leak between unrelated tenants.
-    #[cfg(not(target_arch = "wasm32"))]
-    if config.cookies_enabled {
-        builder = builder.cookie_provider(std::sync::Arc::new(crate::net::cookie::PolicyCookieStore::default()));
-    }
-
-    // ~keep `proxy_provider` takes precedence over static proxy so reqwest can rotate per request.
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(provider) = config.proxy_provider.clone() {
-        let proxy = reqwest::Proxy::custom(move |url| {
-            let host = url.host_str().unwrap_or("");
-            // ~keep `None` here is the provider deliberately routing this host direct
-            // (a no-proxy list), not a failure — so it is not logged.
-            let cfg = provider.next_proxy(host)?;
-
-            // ~keep `Proxy::custom` can only answer Some/None: there is no channel to
-            // fail the request, and `None` means "connect directly". A malformed proxy
-            // URL therefore silently becomes an egress-control bypass — the one outcome
-            // an operator most needs to know about — so it is logged at ERROR. Failing
-            // closed is not reachable from inside this closure.
-            //
-            // ~keep The offending URL is deliberately NOT logged: `redact_url_credentials`
-            // returns its input unchanged when the input does not parse, which is exactly
-            // the case here — so naming it would print any embedded `user:pass@` verbatim.
-            let Ok(mut parsed) = reqwest::Url::parse(&cfg.url) else {
-                tracing::error!(
-                    target_host = %host,
-                    "proxy provider returned an unparseable URL; connecting DIRECTLY, bypassing the proxy"
-                );
-                return None;
-            };
-
-            if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
-                // ~keep Deliberately still proxied when the credentials cannot be
-                // attached: the proxy answers 407 and the request fails visibly, whereas
-                // returning `None` would send the traffic direct and defeat egress
-                // control outright. The louder failure is the safer one.
-                if parsed.set_username(user).is_err() || parsed.set_password(Some(pass)).is_err() {
-                    tracing::error!(
-                        target_host = %host,
-                        proxy_url = %crate::net::redact_url_credentials(&cfg.url),
-                        "proxy URL does not accept credentials; connecting through the proxy unauthenticated"
-                    );
-                }
-            }
-            Some(parsed)
-        });
-        builder = builder.proxy(proxy);
-    } else if let Some(ref proxy_config) = config.proxy {
-        let mut proxy = reqwest::Proxy::all(&proxy_config.url)
-            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
-        if let (Some(user), Some(pass)) = (&proxy_config.username, &proxy_config.password) {
-            proxy = proxy.basic_auth(user, pass);
-        }
-        builder = builder.proxy(proxy);
-    }
-
-    // ~keep Closes the DNS-rebinding TOCTOU: `validate_url` resolves the host and checks
-    // the answers, then hyper resolves it *again* to connect, so the checked addresses are
-    // not the connected ones. `PolicyResolver` re-checks inside the resolution hyper
-    // actually uses, leaving no second lookup to disagree with the first.
-    //
-    // Skipped whenever a proxy is configured, because hyper then resolves the *proxy*
-    // host rather than the target: the policy would be applied to the wrong name (a proxy
-    // on a private address is a normal, previously-working setup), and the target's
-    // resolution happens at the proxy, out of this process's reach, so client-side
-    // pinning cannot be achieved through a proxy at all. `validate_url`'s own pre-check
-    // still runs on the target in that case.
-    #[cfg(not(target_arch = "wasm32"))]
-    if config.proxy_provider.is_none() && config.proxy.is_none() {
-        builder = builder.dns_resolver(std::sync::Arc::new(crate::net::resolver::PolicyResolver::new(
-            config.ssrf.clone(),
+        return Err(CrawlError::data_loss(format!(
+            "data_loss: expected {expected} bytes, got {}",
+            body_bytes.len()
         )));
     }
 
-    let client = builder
-        .build()
-        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
-
-    if let Ok(mut cache) = client_cache().lock() {
-        if cache.len() >= MAX_CACHED_CLIENTS {
-            tracing::debug!(
-                cached = cache.len(),
-                cap = MAX_CACHED_CLIENTS,
-                "HTTP client cache full, clearing"
-            );
-            cache.clear();
-        }
-        cache.insert(key, client.clone());
-    }
-
-    Ok(client)
+    Ok(body_bytes)
 }
 
-/// Substring appended to a `CrawlError::ServerError` message for a 503 response.
-///
-/// ~keep `CrawlError::ServerError` carries a single free-form `String` with no numeric
-/// status field (see `error.rs`), so 500, 503, and 504 all raise the same enum variant.
-/// `should_retry_status` matches on this substring to tell them apart when deciding
-/// which `retry_codes` entry governs a given failure — without it, configuring a retry
-/// for one of the three silently also retried (or failed to retry) the other two.
-const SERVICE_UNAVAILABLE_SUFFIX: &str = "service unavailable";
+/// Tell a truncated or failed body transfer apart from any other reqwest failure.
+fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
+    let chain = error_chain_string(&e);
+    let is_body_error = chain.contains("content-length")
+        || chain.contains("truncate")
+        || chain.contains("incomplete")
+        || chain.contains("end of file")
+        || chain.contains("body error")
+        || chain.contains("body from connection")
+        || chain.contains("decoding response body")
+        || chain.contains("error decoding");
+    #[cfg(not(target_arch = "wasm32"))]
+    let is_body_error = is_body_error || e.is_body();
 
-/// Substring appended to a `CrawlError::ServerError` message for a 504 response.
-/// See [`SERVICE_UNAVAILABLE_SUFFIX`] for why this disambiguation is needed.
-const GATEWAY_TIMEOUT_SUFFIX: &str = "gateway timeout";
-
-/// Decide whether `error` should trigger a retry, given the configured `retry_codes`.
-///
-/// Each configured status code retries exactly the failures that produced it: 500 only
-/// retries a plain `ServerError`, 503 only a `ServerError` carrying
-/// [`SERVICE_UNAVAILABLE_SUFFIX`], 504 only one carrying [`GATEWAY_TIMEOUT_SUFFIX`], 502
-/// only `BadGateway`, 408 only `Timeout`, and 429 only `RateLimited`. Any other error
-/// (including statuses not covered by `retry_codes`) never retries.
-fn should_retry_status(error: &CrawlError, retry_codes: &[u16]) -> bool {
-    match error {
-        CrawlError::ServerError { message: msg, .. } if msg.contains(GATEWAY_TIMEOUT_SUFFIX) => {
-            retry_codes.contains(&504)
-        }
-        CrawlError::ServerError { message: msg, .. } if msg.contains(SERVICE_UNAVAILABLE_SUFFIX) => {
-            retry_codes.contains(&503)
-        }
-        CrawlError::ServerError { .. } => retry_codes.contains(&500),
-        CrawlError::BadGateway { .. } => retry_codes.contains(&502),
-        CrawlError::Timeout { .. } => retry_codes.contains(&408),
-        CrawlError::RateLimited { .. } => retry_codes.contains(&429),
-        _ => false,
+    if is_body_error {
+        let message = format!("data_loss: {e}");
+        CrawlError::data_loss_with_source(message, e)
+    } else {
+        classify_reqwest_error(e)
     }
-}
-
-/// First retry delay, doubled on each subsequent attempt.
-const RETRY_BACKOFF_BASE_MS: u64 = 100;
-
-/// Upper bound on the backoff doubling exponent.
-///
-/// ~keep `retry_count` is caller-supplied and unbounded, so an uncapped `1 << attempt`
-/// ~keep panics on overflow in debug builds and silently wraps to a near-zero delay in
-/// ~keep release — defeating backoff exactly when a server is asking us to slow down.
-/// ~keep 100ms << 13 is ~13.6 minutes, already far past a useful retry delay.
-const MAX_RETRY_BACKOFF_SHIFT: u32 = 13;
-
-/// Fetch a URL with retry logic based on configuration.
-///
-/// Retries on server errors and rate limiting if the corresponding status codes
-/// are included in `config.retry_codes`. Uses exponential backoff between retries,
-/// capped at [`MAX_RETRY_BACKOFF_SHIFT`] doublings.
-pub(crate) async fn fetch_with_retry(
-    url: &str,
-    config: &CrawlConfig,
-    extra_headers: &std::collections::HashMap<String, String>,
-    client: &reqwest::Client,
-) -> Result<HttpResponse, CrawlError> {
-    let retries = config.retry_count;
-    let retry_codes = config.retry_codes.clone();
-
-    let mut last_err = None;
-    for attempt in 0..=retries {
-        match http_fetch(url, config, extra_headers, client).await {
-            Ok(resp) => return Ok(resp),
-            Err(e) => {
-                let should_retry = should_retry_status(&e, &retry_codes);
-                if should_retry && attempt < retries {
-                    let shift = u32::try_from(attempt)
-                        .unwrap_or(MAX_RETRY_BACKOFF_SHIFT)
-                        .min(MAX_RETRY_BACKOFF_SHIFT);
-                    let delay = Duration::from_millis(RETRY_BACKOFF_BASE_MS << shift);
-                    tokio::time::sleep(delay).await;
-                    last_err = Some(e);
-                    continue;
-                }
-                return Err(e);
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| CrawlError::other("retry exhausted")))
-}
-
-/// Extract cookies from a `HashMap<String, Vec<String>>` of response headers.
-///
-/// Looks for the `"set-cookie"` key and parses each value as an individual
-/// Set-Cookie header, preserving all cookies from the response.
-///
-/// `host` is the host that sent the response; a cookie whose `Domain=` attribute fails
-/// [`validate_cookie_domain`] (cross-origin spoof or public-suffix) is dropped entirely
-/// rather than accepted with the attribute stripped, matching [`crate::net::cookie::PolicyCookieStore`]'s
-/// policy for the same headers on the plain-HTTP path. These cookies feed
-/// `browser::page_fetch`'s `prior_cookies`, which are replayed into a page's CDP session,
-/// so an unvalidated `Domain=` here would let one crawled origin plant a cookie for another.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn extract_cookies_from_hashmap(
-    host: &str,
-    headers: &std::collections::HashMap<String, Vec<String>>,
-) -> Vec<CookieInfo> {
-    let mut cookies = Vec::new();
-    if let Some(values) = headers.get("set-cookie") {
-        for raw in values {
-            let parts: Vec<&str> = raw.split(';').collect();
-            if let Some(nv) = parts.first()
-                && let Some((name, value)) = nv.split_once('=')
-            {
-                let mut cookie = CookieInfo {
-                    name: name.trim().to_owned(),
-                    value: value.trim().to_owned(),
-                    domain: None,
-                    path: None,
-                };
-                let mut domain_rejected = false;
-                for attr in &parts[1..] {
-                    let attr = attr.trim().to_lowercase();
-                    if let Some(d) = attr.strip_prefix("domain=") {
-                        match validate_cookie_domain(host, d) {
-                            Ok(()) => cookie.domain = Some(d.to_owned()),
-                            Err(e) => {
-                                tracing::warn!(
-                                    host = %host,
-                                    cookie.name = %cookie.name,
-                                    error = %e,
-                                    "dropping cookie with invalid Set-Cookie domain"
-                                );
-                                domain_rejected = true;
-                                break;
-                            }
-                        }
-                    } else if let Some(p) = attr.strip_prefix("path=") {
-                        cookie.path = Some(p.to_owned());
-                    }
-                }
-                if !domain_rejected {
-                    cookies.push(cookie);
-                }
-            }
-        }
-    }
-    cookies
-}
-
-/// Extract response metadata from a `HashMap<String, Vec<String>>` of headers.
-pub(crate) fn extract_response_meta_from_hashmap(
-    headers: &std::collections::HashMap<String, Vec<String>>,
-) -> ResponseMeta {
-    ResponseMeta {
-        etag: headers.get("etag").and_then(|v| v.first().cloned()),
-        last_modified: headers.get("last-modified").and_then(|v| v.first().cloned()),
-        cache_control: headers.get("cache-control").and_then(|v| v.first().cloned()),
-        server: headers.get("server").and_then(|v| v.first().cloned()),
-        x_powered_by: headers.get("x-powered-by").and_then(|v| v.first().cloned()),
-        content_language: headers.get("content-language").and_then(|v| v.first().cloned()),
-        content_encoding: headers.get("content-encoding").and_then(|v| v.first().cloned()),
-    }
-}
-
-/// Build a `HashMap<String, Vec<String>>` of lowercase header names to values from a
-/// `reqwest::HeaderMap`, dropping values that aren't valid UTF-8 (mirrors the header
-/// filtering `HttpResponse.headers` has always applied on this path).
-fn build_headers_map(headers: &HeaderMap) -> HashMap<String, Vec<String>> {
-    let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
-    for (name, value) in headers.iter() {
-        if let Ok(v) = value.to_str() {
-            headers_map
-                .entry(name.as_str().to_lowercase())
-                .or_default()
-                .push(v.to_string());
-        }
-    }
-    headers_map
-}
-
-/// Build a partial [`HttpResponse`] from a pre-built header map + body string.
-///
-/// Used in the early-exit detection paths where we need to pass a response
-/// to [`crate::types::WafClassifier::classify`] before the full
-/// [`HttpResponse`] struct is assembled.
-fn build_partial_response(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> HttpResponse {
-    let body_bytes = body.as_bytes().to_vec();
-    build_partial_response_with_bytes(status, &body_bytes, body, headers_map)
-}
-
-/// Build a partial [`HttpResponse`] with a pre-computed byte vec and a pre-built header map.
-///
-/// ~keep Takes an already-built `headers_map` (rather than a `reqwest::HeaderMap` it
-/// rebuilds internally) so callers checking WAF signals at multiple points for the same
-/// response — `http_fetch`'s header-only and body checks — can build the map once and
-/// share it instead of re-walking `HeaderMap` and re-lowercasing every header name per check.
-fn build_partial_response_with_bytes(
-    status: u16,
-    body_bytes: &[u8],
-    body: &str,
-    headers_map: &HashMap<String, Vec<String>>,
-) -> HttpResponse {
-    HttpResponse {
-        status,
-        content_type: String::new(),
-        body: body.to_string(),
-        body_bytes: body_bytes.to_vec(),
-        headers: headers_map.clone(),
-        browser_extras: None,
-        final_url: String::new(),
-        screenshot: None,
-    }
-}
-
-/// Identify the WAF vendor from server header value and body content.
-///
-/// Delegates to [`TomlClassifier::builtin`]. Kept for backward compatibility
-/// with callers in `tower/service.rs`.
-///
-/// Callers are all gated behind `#[cfg(not(target_arch = "wasm32"))]`; the
-/// function is gated here to keep the wasm build warning-free under `-D warnings`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn detect_waf_vendor(server: &str, body: &str) -> String {
-    let body_bytes = body.as_bytes().to_vec();
-    let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
-    if !server.is_empty() {
-        headers_map
-            .entry("server".to_string())
-            .or_default()
-            .push(server.to_string());
-    }
-    let response = HttpResponse {
-        status: 403,
-        content_type: String::new(),
-        body: body.to_string(),
-        body_bytes,
-        headers: headers_map,
-        browser_extras: None,
-        final_url: String::new(),
-        screenshot: None,
-    };
-    WAF_CLASSIFIER
-        .classify(&response)
-        .ok()
-        .flatten()
-        .map(|s| s.vendor)
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Returns true if `response` is a WAF block.
-///
-/// Delegates to [`TomlClassifier::builtin`]. Kept for backward compatibility
-/// with callers outside `http_fetch` (e.g. the browser backend).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String, Vec<String>>) -> bool {
-    let body_bytes = body.as_bytes().to_vec();
-    let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
-    for (k, values) in headers {
-        headers_map.insert(k.to_lowercase(), values.clone());
-    }
-    if !server.is_empty() {
-        headers_map
-            .entry("server".to_string())
-            .or_default()
-            .push(server.to_string());
-    }
-    let response = HttpResponse {
-        status: 403,
-        content_type: String::new(),
-        body: body.to_string(),
-        body_bytes,
-        headers: headers_map,
-        browser_extras: None,
-        final_url: String::new(),
-        screenshot: None,
-    };
-    WAF_CLASSIFIER.classify(&response).ok().flatten().is_some()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::net::ssrf::SsrfPolicy;
-    use crate::types::ProxyConfig;
+    use std::time::Duration;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
     #[tokio::test]
     async fn http_fetch_enforces_config_timeout_without_client_default() {
         const REQUEST_TIMEOUT: Duration = Duration::from_millis(50);
@@ -1097,108 +591,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn decode_body_lossy_matches_from_utf8_lossy_for_valid_utf8() {
-        let bytes = "héllo wörld".as_bytes().to_vec();
-        let expected = String::from_utf8_lossy(&bytes).into_owned();
-        assert_eq!(
-            decode_body_lossy(bytes.clone()),
-            expected,
-            "the move fast-path must produce the same String as the lossy path for valid UTF-8"
-        );
-    }
-
-    #[test]
-    fn decode_body_lossy_is_byte_identical_to_from_utf8_lossy_for_invalid_utf8() {
-        // ~keep Deliberately invalid UTF-8: a lone continuation byte (0x80) followed by a
-        // truncated 2-byte sequence (0xC3 with no continuation), surrounded by valid ASCII.
-        // Regression target: `decode_body_lossy`'s fallback must replicate
-        // `String::from_utf8_lossy`'s replacement behavior exactly, not just avoid panicking.
-        let bytes: Vec<u8> = vec![b'a', b'b', 0x80, b'c', 0xC3, b'd', b'e'];
-        let expected = String::from_utf8_lossy(&bytes).into_owned();
-        let actual = decode_body_lossy(bytes.clone());
-        assert_eq!(
-            actual, expected,
-            "invalid UTF-8 must decode identically to String::from_utf8_lossy, got {actual:?} vs {expected:?}"
-        );
-        assert!(
-            actual.contains('\u{FFFD}'),
-            "the invalid bytes must be replaced with U+FFFD, got {actual:?}"
-        );
-    }
-
-    #[test]
-    fn truncate_body_never_splits_a_utf8_character() {
-        // ~keep Regression: String::truncate panics on a non-char-boundary index, and
-        // max_body_size is user-supplied, so any non-ASCII page could panic the crawl.
-        let original = "héllo wörld";
-        for max_size in 0..=original.len() {
-            let mut body = original.to_string();
-            truncate_body_at_char_boundary(&mut body, max_size);
-            assert!(
-                body.len() <= max_size,
-                "truncation to {max_size} produced {} bytes",
-                body.len()
-            );
-            assert!(
-                original.starts_with(&body),
-                "truncation to {max_size} must yield a prefix, got {body:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn truncate_body_leaves_short_bodies_untouched() {
-        let mut body = "abc".to_string();
-        truncate_body_at_char_boundary(&mut body, 100);
-        assert_eq!(body, "abc", "a body under the limit must not be modified");
-    }
-
-    #[test]
-    fn redecode_with_charset_decodes_windows_1252_bytes_exactly() {
-        // ~keep Real Windows-1252 bytes for "café €100" (verified via Python's `str.encode`).
-        // A UTF-8-lossy decode of these bytes would replace 0xE9 and 0x80 with U+FFFD.
-        let bytes: &[u8] = &[0x63, 0x61, 0x66, 0xE9, 0x20, 0x80, 0x31, 0x30, 0x30];
-        let decoded = redecode_with_charset("windows-1252", bytes);
-        assert_eq!(
-            decoded,
-            Some("café €100".to_owned()),
-            "windows-1252 bytes must decode to the exact original string, got {decoded:?}"
-        );
-    }
-
-    #[test]
-    fn redecode_with_charset_decodes_shift_jis_bytes_exactly() {
-        // ~keep Real Shift_JIS bytes for "日本語 テスト" (verified via Python's `str.encode`).
-        let bytes: &[u8] = &[
-            0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, 0x20, 0x83, 0x65, 0x83, 0x58, 0x83, 0x67,
-        ];
-        let decoded = redecode_with_charset("shift_jis", bytes);
-        assert_eq!(
-            decoded,
-            Some("日本語 テスト".to_owned()),
-            "shift_jis bytes must decode to the exact original string, got {decoded:?}"
-        );
-    }
-
-    #[test]
-    fn redecode_with_charset_is_a_noop_for_utf8() {
-        let decoded = redecode_with_charset("utf-8", "hello".as_bytes());
-        assert_eq!(
-            decoded, None,
-            "utf-8 must be a no-op (caller keeps its existing lossy body), got {decoded:?}"
-        );
-    }
-
-    #[test]
-    fn redecode_with_charset_returns_none_for_unrecognized_label() {
-        let decoded = redecode_with_charset("not-a-real-charset", b"hello");
-        assert_eq!(
-            decoded, None,
-            "an unrecognized charset label must not panic and must return None, got {decoded:?}"
-        );
-    }
-
     /// Regression test: `http_fetch`'s internal redirect loop used to enforce
     /// `config.ssrf.max_redirects` (a `u8` with no public builder setter, default 5)
     /// instead of the builder-settable `config.max_redirects`, so `.max_redirects(N)`
@@ -1237,90 +629,6 @@ mod tests {
         assert!(
             matches!(err, CrawlError::SsrfPolicyViolation { ref reason, .. } if reason == "too many redirects"),
             "expected a too-many-redirects SsrfPolicyViolation, got {err:?}"
-        );
-    }
-
-    fn server_error(suffix: &str) -> CrawlError {
-        CrawlError::server_error(format!("server_error: {suffix}"))
-    }
-
-    #[test]
-    fn retry_codes_distinguish_the_three_server_error_statuses() {
-        // ~keep Regression: `CrawlError::ServerError` carries a free-form String with no
-        // status field, so 500, 503 and 504 all raise the same variant. Matching on the
-        // variant alone meant configuring a retry for one silently governed all three.
-        // The negative cases below are the ones that fail against the old code — a test
-        // asserting only the positive direction would pass either way.
-        let only_500 = [500_u16];
-        assert!(
-            should_retry_status(&server_error("internal"), &only_500),
-            "a plain 500 must retry when 500 is configured"
-        );
-        assert!(
-            !should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_500),
-            "a 503 must NOT retry when only 500 is configured"
-        );
-        assert!(
-            !should_retry_status(&server_error(GATEWAY_TIMEOUT_SUFFIX), &only_500),
-            "a 504 must NOT retry when only 500 is configured"
-        );
-
-        let only_503 = [503_u16];
-        assert!(
-            should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_503),
-            "a 503 must retry when 503 is configured"
-        );
-        assert!(
-            !should_retry_status(&server_error("internal"), &only_503),
-            "a plain 500 must NOT retry when only 503 is configured"
-        );
-
-        let only_504 = [504_u16];
-        assert!(
-            should_retry_status(&server_error(GATEWAY_TIMEOUT_SUFFIX), &only_504),
-            "a 504 must retry when 504 is configured"
-        );
-        assert!(
-            !should_retry_status(&server_error(SERVICE_UNAVAILABLE_SUFFIX), &only_504),
-            "a 503 must NOT retry when only 504 is configured"
-        );
-    }
-
-    #[test]
-    fn retry_codes_502_408_and_429_match_their_own_errors_only() {
-        // ~keep Regression: [502, 504, 408] passed validate() but retried on nothing,
-        // because the matcher never mapped those codes to a CrawlError variant at all.
-        let cases: [(u16, CrawlError); 3] = [
-            (502, CrawlError::bad_gateway("bad gateway")),
-            (408, CrawlError::timeout("timeout")),
-            (429, CrawlError::rate_limited("slow down")),
-        ];
-
-        for (code, error) in &cases {
-            assert!(
-                should_retry_status(error, &[*code]),
-                "{code} must retry its own error, got no retry for {error:?}"
-            );
-            for (other, _) in &cases {
-                if other != code {
-                    assert!(
-                        !should_retry_status(error, &[*other]),
-                        "{error:?} must NOT retry when only {other} is configured"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn retry_codes_never_retry_an_unconfigured_or_unrelated_error() {
-        assert!(
-            !should_retry_status(&server_error("internal"), &[]),
-            "an empty retry_codes list must never retry"
-        );
-        assert!(
-            !should_retry_status(&CrawlError::not_found("missing"), &[500, 502, 503, 504, 408, 429]),
-            "a 404 must not retry even with every retryable code configured"
         );
     }
 
@@ -1389,413 +697,162 @@ mod tests {
         );
         assert_eq!(resp.status, 200, "final status must be 200, got {}", resp.status);
     }
-
+    /// Characterization for the status dispatch `fetch_one_hop` performs: every status
+    /// that ends a fetch without reading the body maps to one specific error. ~keep
     #[tokio::test]
-    async fn read_body_bounded_stops_reading_once_max_size_is_exceeded() {
-        let mock = MockServer::start().await;
+    async fn http_fetch_maps_each_body_free_terminal_status_to_its_own_error() {
+        /// (status, the variant it must raise, a fragment its message must carry).
+        type StatusCase = (u16, fn(&CrawlError) -> bool, &'static str);
 
-        // ~keep A ~5 MB response with max_size(1024) proves the reader stops early —
-        // simulates the "declared/actual size exceeds the cap" scenario without
-        // needing a real decompression bomb for this specific unit test.
-        let full_size = 5 * 1024 * 1024;
-        Mock::given(method("GET"))
-            .and(path("/big"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'a'; full_size]))
-            .mount(&mock)
-            .await;
+        let cases: &[StatusCase] = &[
+            (401, |e| matches!(e, CrawlError::Unauthorized { .. }), "unauthorized"),
+            (404, |e| matches!(e, CrawlError::NotFound { .. }), "not_found"),
+            (408, |e| matches!(e, CrawlError::Timeout { .. }), "timeout"),
+            (410, |e| matches!(e, CrawlError::Gone { .. }), "gone"),
+            (429, |e| matches!(e, CrawlError::RateLimited { .. }), "rate_limited"),
+            (500, |e| matches!(e, CrawlError::ServerError { .. }), "server_error"),
+            (502, |e| matches!(e, CrawlError::BadGateway { .. }), "bad_gateway"),
+            (
+                503,
+                |e| matches!(e, CrawlError::ServerError { .. }),
+                SERVICE_UNAVAILABLE_SUFFIX,
+            ),
+            (
+                504,
+                |e| matches!(e, CrawlError::ServerError { .. }),
+                GATEWAY_TIMEOUT_SUFFIX,
+            ),
+        ];
 
-        let mut config = CrawlConfig::default();
-        config.ssrf.deny_private = false;
-        let client = build_client(&config).expect("client must build");
-        let url = format!("{}/big", mock.uri());
-        let resp = client.get(&url).send().await.expect("request must succeed");
+        for (status, is_expected_variant, message_fragment) in cases {
+            let error = fetch_status(*status, ResponseTemplate::new(*status)).await;
+            assert!(
+                is_expected_variant(&error),
+                "status {status} produced the wrong error variant: {error:?}"
+            );
+            assert!(
+                error.to_string().contains(message_fragment),
+                "status {status} message must contain {message_fragment:?}, got: {error}"
+            );
+        }
+    }
 
-        let max_size = 1024usize;
-        let (bytes, hit_cap) = read_body_bounded(resp, Some(max_size))
-            .await
-            .expect("bounded read must not error");
-
-        assert!(hit_cap, "hit_cap must be true once the body exceeds max_size");
+    /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
+    #[tokio::test]
+    async fn http_fetch_reports_a_plain_403_as_forbidden() {
+        let error = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
         assert!(
-            bytes.len() < full_size / 100,
-            "bounded read must stop far short of the full {full_size}-byte body, got {} bytes",
-            bytes.len()
-        );
-        assert!(
-            bytes.len() > max_size,
-            "the chunk that crosses the cap should still be included, got {} bytes",
-            bytes.len()
+            matches!(error, CrawlError::Forbidden { .. }),
+            "expected Forbidden, got {error:?}"
         );
     }
 
-    /// Security regression: a gzip decompression bomb (~5 MB decompressed from a few
-    /// hundred compressed bytes) behind a small `max_body_size` must not allocate
-    /// anywhere near its full decompressed size. `read_body_bounded` reads
-    /// `Response::chunk`-by-chunk (decompressed by reqwest's transparent gzip layer as
-    /// it streams) and stops as soon as the cap is crossed, rather than buffering the
-    /// entire decompressed body via `resp.bytes()` before any cap is applied.
+    /// A 403 whose body fingerprints must name the vendor the corpus identifies. ~keep
     #[tokio::test]
-    async fn read_body_bounded_caps_a_decompression_bomb() {
-        let mock = MockServer::start().await;
-
-        let decompressed_size = 5 * 1024 * 1024;
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-        std::io::Write::write_all(&mut encoder, &vec![b'a'; decompressed_size]).expect("gzip write must succeed");
-        let compressed = encoder.finish().expect("gzip finish must succeed");
+    async fn http_fetch_reports_a_waf_block_when_a_403_body_fingerprints() {
+        let error = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
         assert!(
-            compressed.len() < 10_000,
-            "test fixture must actually compress well (highly repetitive input), got {} bytes",
-            compressed.len()
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
+            "expected a cloudflare WafBlocked, got {error:?}"
         );
+        assert!(
+            error.to_string().contains("waf/blocked detected: cloudflare"),
+            "unexpected message: {error}"
+        );
+    }
 
+    /// A 2xx whose headers alone fingerprint is a WAF interstitial, reported before the
+    /// body is treated as page content. ~keep
+    #[tokio::test]
+    async fn http_fetch_reports_a_header_waf_block_on_a_2xx() {
+        let error = fetch_status(
+            200,
+            ResponseTemplate::new(200)
+                .append_header("x-datadome", "protected")
+                .set_body_string("<html></html>"),
+        )
+        .await;
+        assert!(
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "datadome"),
+            "expected a datadome WafBlocked, got {error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("waf/blocked detected on 2xx (header): datadome"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// A 2xx that only fingerprints once its body is read is reported as a body block.
+    #[tokio::test]
+    async fn http_fetch_reports_a_body_waf_block_on_a_2xx() {
+        let error = fetch_status(
+            200,
+            ResponseTemplate::new(200).set_body_string("<html>cf-chl- x</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
+            "expected a cloudflare WafBlocked, got {error:?}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("waf/blocked detected on 2xx (body): cloudflare"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// A 3xx whose `Location` does not resolve to a URL is returned as the response
+    /// rather than followed or rejected. ~keep
+    #[tokio::test]
+    async fn http_fetch_returns_a_3xx_with_an_unresolvable_location_as_the_response() {
+        let mock = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/bomb"))
+            .and(path("/here"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-encoding", "gzip")
-                    .set_body_raw(compressed, "application/octet-stream"),
+                ResponseTemplate::new(302)
+                    .append_header("location", "http://")
+                    .set_body_string("moved"),
             )
             .mount(&mock)
             .await;
 
-        let mut config = CrawlConfig::default();
-        config.ssrf.deny_private = false;
+        let config = permissive_config();
         let client = build_client(&config).expect("client must build");
-        let url = format!("{}/bomb", mock.uri());
-        let resp = client.get(&url).send().await.expect("request must succeed");
-
-        let max_size = 1024usize;
-        let (bytes, hit_cap) = read_body_bounded(resp, Some(max_size))
+        let response = http_fetch(&format!("{}/here", mock.uri()), &config, &HashMap::new(), &client)
             .await
-            .expect("bounded read must not error");
+            .expect("an unresolvable Location must not fail the fetch");
 
-        assert!(
-            hit_cap,
-            "hit_cap must be true once the decompressed body exceeds max_size"
-        );
-        assert!(
-            bytes.len() < decompressed_size / 100,
-            "bounded read must stop far short of the bomb's full decompressed size \
-             ({decompressed_size} bytes), got {} bytes",
-            bytes.len()
-        );
+        assert_eq!(response.status, 302, "the 3xx itself must be returned");
+        assert_eq!(response.body, "moved", "its body must be read");
     }
 
-    #[test]
-    fn an_unset_body_cap_resolves_to_the_safety_ceiling() {
-        let config = CrawlConfig {
-            max_body_size: None,
-            ..CrawlConfig::default()
-        };
-        assert_eq!(
-            effective_max_body_size(&config),
-            Some(DEFAULT_MAX_BODY_SIZE),
-            "an unset cap must resolve to the ceiling, not to an unbounded read"
-        );
-    }
-
-    #[test]
-    fn an_explicit_body_cap_is_passed_through_untouched() {
-        let config = CrawlConfig {
-            max_body_size: Some(4096),
-            ..CrawlConfig::default()
-        };
-        assert_eq!(
-            effective_max_body_size(&config),
-            Some(4096),
-            "an explicit cap must win over the ceiling, in both directions"
-        );
-
-        let unbounded_by_opt_in = CrawlConfig {
-            max_body_size: Some(DEFAULT_MAX_BODY_SIZE * 4),
-            ..CrawlConfig::default()
-        };
-        assert_eq!(
-            effective_max_body_size(&unbounded_by_opt_in),
-            Some(DEFAULT_MAX_BODY_SIZE * 4),
-            "raising the cap above the ceiling is the documented opt-in for large bodies"
-        );
-    }
-
-    #[test]
-    fn build_client_reuses_cached_client_for_matching_config() {
-        // ~keep A distinct, unlikely-to-collide timeout so this test's cache entry
-        // cannot already be populated by another test running in parallel.
-        let config = CrawlConfig {
-            request_timeout: Duration::from_millis(918_273),
-            ..CrawlConfig::default()
-        };
-        assert!(
-            !client_cache_contains(&config),
-            "precondition failed: another test already cached this exact config identity"
-        );
-
-        let _first = build_client(&config).expect("first build must succeed");
-        assert!(
-            client_cache_contains(&config),
-            "build_client must populate the cache after building a client"
-        );
-
-        let _second = build_client(&config).expect("second build with the same config must succeed");
-        assert!(
-            client_cache_contains(&config),
-            "the cache entry must still be present after a second build with a matching identity"
-        );
-    }
-
-    /// Join an error with every error in its `source()` chain.
-    ///
-    /// ~keep reqwest reports a resolver refusal as a generic connect error and keeps the
-    /// underlying cause only in the chain, so the policy reason is invisible to `Display`
-    /// on the outermost error alone.
-    fn error_chain(error: &dyn std::error::Error) -> String {
-        let mut parts = vec![error.to_string()];
-        let mut current = error.source();
-        while let Some(cause) = current {
-            parts.push(cause.to_string());
-            current = cause.source();
-        }
-        parts.join(" / ")
-    }
-
-    /// The end-to-end proof that [`build_client`] actually installs [`PolicyResolver`].
-    ///
-    /// ~keep The resolver's own unit tests exercise it in isolation, so all of them still
-    /// pass if the `dns_resolver` call is dropped from `build_client`. This one fails,
-    /// because it goes through a real client and asserts on what the connection did.
-    #[tokio::test]
-    async fn build_client_enforces_the_ssrf_policy_during_dns_resolution() {
-        let config = CrawlConfig {
-            request_timeout: Duration::from_millis(918_276),
-            ssrf: SsrfPolicy {
-                deny_private: true,
-                ..SsrfPolicy::default()
-            },
-            ..CrawlConfig::default()
-        };
-        let client = build_client(&config).expect("client must build");
-
-        // ~keep Port 1 is never listening, so a request that got past the resolver would
-        // fail with a connection-refused error instead — a different message, which is
-        // exactly what distinguishes "policy enforced" from "policy absent" here.
-        let error = client
-            .get("http://localhost:1/")
-            .send()
-            .await
-            .expect_err("localhost resolves to loopback and must be refused by the policy");
-
-        let chain = error_chain(&error);
-        assert!(
-            chain.contains("denied by SSRF policy: loopback"),
-            "expected the resolver to refuse the loopback answer, got: {chain}"
-        );
-    }
-
-    #[tokio::test]
-    async fn build_client_skips_the_policy_resolver_when_a_proxy_is_configured() {
-        let config = CrawlConfig {
-            request_timeout: Duration::from_millis(918_277),
-            proxy: Some(ProxyConfig {
-                url: "http://127.0.0.1:1".to_owned(),
-                ..ProxyConfig::default()
-            }),
-            ssrf: SsrfPolicy {
-                deny_private: true,
-                ..SsrfPolicy::default()
-            },
-            ..CrawlConfig::default()
-        };
-        let client = build_client(&config).expect("client must build");
-
-        let error = client
-            .get("http://localhost:1/")
-            .send()
-            .await
-            .expect_err("the proxy is not listening, so the request must fail");
-
-        let chain = error_chain(&error);
-        assert!(
-            !chain.contains("denied by SSRF policy"),
-            "hyper resolves the proxy host, not the target, so the policy must not be \
-             applied during resolution here; got: {chain}"
-        );
-    }
-
-    #[test]
-    fn build_client_uses_distinct_cache_entries_for_distinct_ssrf_policies() {
-        let permissive = CrawlConfig {
-            request_timeout: Duration::from_millis(918_278),
+    fn permissive_config() -> CrawlConfig {
+        CrawlConfig {
             ssrf: SsrfPolicy {
                 deny_private: false,
                 ..SsrfPolicy::default()
             },
             ..CrawlConfig::default()
-        };
-        let restrictive = CrawlConfig {
-            request_timeout: Duration::from_millis(918_278),
-            ssrf: SsrfPolicy {
-                deny_private: true,
-                ..SsrfPolicy::default()
-            },
-            ..CrawlConfig::default()
-        };
-
-        let _permissive_client = build_client(&permissive).expect("permissive client must build");
-        assert!(
-            !client_cache_contains(&restrictive),
-            "a client built under deny_private=false must not be served to a deny_private=true \
-             config — its resolver carries the permissive policy"
-        );
-
-        let _restrictive_client = build_client(&restrictive).expect("restrictive client must build");
-        assert!(
-            client_cache_contains(&permissive) && client_cache_contains(&restrictive),
-            "both policies must hold their own cache entry"
-        );
+        }
     }
 
-    /// A `reqwest::Client` cached on one tokio runtime must not be handed to another.
-    ///
-    /// ~keep hyper drives each pooled connection with a task spawned on the runtime that
-    /// created it, so when that runtime is dropped the connection dies while the client
-    /// stays in this process-global cache. A later caller on a new runtime then checks out
-    /// a corpse and fails mid-request -- as `error sending request` if it dies during send,
-    /// or `error decoding response body` (classified `DataLoss`) if it dies during
-    /// `resp.chunk()`. Neither is retryable, since `retry_count` defaults to 0 and
-    /// `should_retry_status` only matches status-derived variants. Measured in a standalone
-    /// harness at ~8.5% of requests across 28 short-lived runtimes; 0% once the cache key
-    /// carries runtime identity. Every consumer's `#[tokio::test]` suite is this shape.
-    ///
-    /// SCOPE: this asserts cache-key differentiation, which is the mechanism, and it fails
-    /// 100% of the time without the fix. It deliberately does NOT reproduce the mid-flight
-    /// request failure -- that reproduction is statistical (~8.5%), and a test that passes
-    /// 91% of the time on broken code is worse than no test, because it reads as a pass.
-    /// A deterministic version would have to block a pooled connection's task until after
-    /// its runtime is dropped, which reqwest exposes no hook for.
-    #[test]
-    fn build_client_uses_distinct_cache_entries_across_tokio_runtimes() {
-        let config = CrawlConfig {
-            request_timeout: Duration::from_millis(918_276),
-            ..CrawlConfig::default()
-        };
-        assert!(
-            !client_cache_contains(&config),
-            "precondition failed: another test already cached this exact config identity"
-        );
+    /// Fetch a single mocked response and return the error it produced.
+    async fn fetch_status(status: u16, template: ResponseTemplate) -> CrawlError {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(template)
+            .mount(&mock)
+            .await;
 
-        let runtime_a = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime a must build");
-        runtime_a.block_on(async {
-            let _client = build_client(&config).expect("client must build on runtime a");
-            assert!(
-                client_cache_contains(&config),
-                "building on runtime a must cache that runtime's identity"
-            );
-        });
-        drop(runtime_a);
-
-        let runtime_b = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime b must build");
-        runtime_b.block_on(async {
-            assert!(
-                !client_cache_contains(&config),
-                "a client cached on a since-dropped runtime must not be reused on a new one: \
-                 its pooled connections are driven by tasks that died with that runtime"
-            );
-        });
-    }
-
-    #[test]
-    fn build_client_uses_distinct_cache_entries_for_distinct_timeouts() {
-        let config_a = CrawlConfig {
-            request_timeout: Duration::from_millis(918_274),
-            ..CrawlConfig::default()
-        };
-        let config_b = CrawlConfig {
-            request_timeout: Duration::from_millis(918_275),
-            ..CrawlConfig::default()
-        };
-
-        let _a = build_client(&config_a).expect("client a must build");
-        assert!(
-            client_cache_contains(&config_a),
-            "config_a's identity must be cached after building it"
-        );
-        assert!(
-            !client_cache_contains(&config_b),
-            "building a client for config_a must not also cache config_b's distinct identity"
-        );
-    }
-
-    /// Build a `set-cookie` headers `HashMap` with a single raw `Set-Cookie` value, as
-    /// `extract_cookies_from_hashmap` expects to receive from the fetch layer.
-    fn set_cookie_headers(raw: &str) -> std::collections::HashMap<String, Vec<String>> {
-        std::collections::HashMap::from([("set-cookie".to_owned(), vec![raw.to_owned()])])
-    }
-
-    #[test]
-    fn extract_cookies_drops_cross_origin_domain_spoof() {
-        // ~keep The literal attack: a response from evil.example claims Domain=victim.example.
-        let headers = set_cookie_headers("session=stolen; Domain=victim.example; Path=/");
-        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
-        assert!(
-            cookies.is_empty(),
-            "a cookie whose Domain does not domain-match the response host must be dropped, got {cookies:?}"
-        );
-    }
-
-    #[test]
-    fn extract_cookies_drops_known_public_suffix_domain() {
-        let headers = set_cookie_headers("session=stolen; Domain=herokuapp.com");
-        let cookies = extract_cookies_from_hashmap("evil-tenant.herokuapp.com", &headers);
-        assert!(
-            cookies.is_empty(),
-            "a cookie scoped to a public-suffix Domain must be dropped, got {cookies:?}"
-        );
-    }
-
-    #[test]
-    fn extract_cookies_keeps_host_only_cookie() {
-        let headers = set_cookie_headers("session=abc123; Path=/");
-        let cookies = extract_cookies_from_hashmap("example.com", &headers);
-        assert_eq!(
-            cookies.len(),
-            1,
-            "a host-only cookie (no Domain attribute) must be kept"
-        );
-        assert_eq!(cookies[0].name, "session");
-        assert_eq!(cookies[0].value, "abc123");
-        assert_eq!(cookies[0].domain, None);
-    }
-
-    #[test]
-    fn extract_cookies_keeps_legitimate_parent_domain_widening() {
-        let headers = set_cookie_headers("session=abc123; Domain=example.com");
-        let cookies = extract_cookies_from_hashmap("api.example.com", &headers);
-        assert_eq!(
-            cookies.len(),
-            1,
-            "a Domain that domain-matches its own registrable parent must be kept"
-        );
-        assert_eq!(cookies[0].domain, Some("example.com".to_owned()));
-    }
-
-    #[test]
-    fn extract_cookies_drops_only_the_offending_cookie_in_a_mixed_batch() {
-        let headers = std::collections::HashMap::from([(
-            "set-cookie".to_owned(),
-            vec!["good=1; Path=/".to_owned(), "bad=2; Domain=victim.example".to_owned()],
-        )]);
-        let cookies = extract_cookies_from_hashmap("evil.example", &headers);
-        assert_eq!(
-            cookies.len(),
-            1,
-            "only the spoofed cookie must be dropped, got {cookies:?}"
-        );
-        assert_eq!(cookies[0].name, "good");
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .map(|_| ())
+            .expect_err(&format!("status {status} must produce an error"))
     }
 }

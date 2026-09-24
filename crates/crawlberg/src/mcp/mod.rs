@@ -32,7 +32,9 @@ pub mod format;
 mod outputs;
 mod params;
 mod server;
+mod tool_result;
+mod transport;
 
 #[cfg(feature = "mcp-http")]
-pub use server::start_mcp_http_server;
-pub use server::{CrawlbergHttpMcpService, start_mcp_server, start_mcp_server_with_config, streamable_http_service};
+pub use transport::start_mcp_http_server;
+pub use transport::{CrawlbergHttpMcpService, start_mcp_server, start_mcp_server_with_config, streamable_http_service};

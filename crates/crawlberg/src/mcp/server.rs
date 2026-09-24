@@ -1,60 +1,21 @@
 //! Crawlberg MCP server implementation.
 //!
-//! This module provides the main MCP server struct and startup functions.
+//! This module provides the MCP server struct and its tool methods; transport
+//! startup lives in [`super::transport`].
 
 use rmcp::{
-    RoleServer, ServerHandler, ServiceExt,
+    RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::*,
     service::RequestContext,
     task_manager::{TaskExit, TaskManager, TaskOptions},
     tool, tool_handler, tool_router,
-    transport::stdio,
 };
 
 use crate::engine::CrawlEngineBuilder;
 use crate::types::CrawlConfig;
 
-/// Validate that a URL is non-empty and uses http(s) scheme.
-fn validate_url(url: &str) -> Result<(), rmcp::ErrorData> {
-    if url.is_empty() {
-        return Err(rmcp::ErrorData::invalid_params("url is required", None));
-    }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(rmcp::ErrorData::invalid_params(
-            "url must start with http:// or https://",
-            None,
-        ));
-    }
-    Ok(())
-}
-
-/// Parse the optional format parameter, defaulting to "markdown".
-fn parse_format(format: &Option<String>) -> &str {
-    match format.as_deref() {
-        Some(f) if f.eq_ignore_ascii_case("json") => "json",
-        _ => "markdown",
-    }
-}
-
-/// Build a tool result carrying both a human-readable text block and the
-/// machine-readable `structuredContent` (SEP-2106).
-///
-/// `structured` is the JSON value clients can consume programmatically; `text`
-/// is the same information rendered for humans (markdown or pretty JSON). The
-/// `format` parameter selects the text representation only — `structuredContent`
-/// is always populated so schema-aware clients get typed output regardless.
-fn structured_success(structured: serde_json::Value, text: String) -> CallToolResult {
-    let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
-    result.structured_content = Some(structured);
-    result
-}
-
-/// Serialize a value into `structuredContent`, mapping failures to an MCP error.
-fn to_structured<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, rmcp::ErrorData> {
-    serde_json::to_value(value)
-        .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to serialize structured content: {e}"), None))
-}
+use super::tool_result::{parse_format, structured_success, to_structured, validate_url};
 
 /// Crawlberg MCP server.
 ///
@@ -693,184 +654,6 @@ impl Default for CrawlbergMcp {
     }
 }
 
-/// Start the Crawlberg MCP server with default configuration.
-///
-/// This function initializes and runs the MCP server using stdio transport.
-/// It will block until the server is shut down.
-///
-/// # Errors
-///
-/// Returns an error if the server fails to start or encounters a fatal error.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use crawlberg::start_mcp_server;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-///     start_mcp_server().await?;
-///     Ok(())
-/// }
-/// ```
-pub async fn start_mcp_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    start_mcp_server_with_config(CrawlConfig::default()).await
-}
-
-/// Start MCP server with custom crawl configuration.
-///
-/// This variant allows specifying a custom crawl configuration
-/// instead of using defaults.
-pub async fn start_mcp_server_with_config(config: CrawlConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let service = CrawlbergMcp::with_config(config).serve(stdio()).await?;
-    service.waiting().await?;
-    Ok(())
-}
-
-/// Start a dedicated MCP server over the Streamable HTTP transport, exposing
-/// the MCP endpoint at `/mcp`.
-///
-/// This serves *only* the MCP transport — unlike [`crate::serve_api`], it mounts
-/// no REST API routes. It backs `crawlberg mcp --http`. The transport is
-/// stateless (SEP-2567) and supports the SEP-2663 Tasks extension across
-/// requests via a shared task store. Blocks until the server shuts down.
-///
-/// # Errors
-///
-/// Returns an error if `host` is not a valid IP address, the address cannot be
-/// bound, requires authentication that isn't configured (see
-/// [`mcp_http_allow_insecure_bind`]), or the server encounters a fatal error
-/// while running.
-#[cfg(feature = "mcp-http")]
-pub async fn start_mcp_http_server(
-    host: &str,
-    port: u16,
-    config: CrawlConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use std::net::{IpAddr, SocketAddr};
-
-    let ip: IpAddr = host
-        .parse()
-        .map_err(|e| format!("invalid host address '{host}': {e}"))?;
-
-    // ~keep This is a second, independent HTTP listener alongside the REST API
-    // ~keep (see `api::startup::ensure_bind_is_safe` for the same policy there):
-    // ~keep an unauthenticated crawler reachable from the network is an abuse
-    // ~keep vector, so a non-loopback bind requires a token or an explicit opt-out.
-    let auth_token = mcp_http_auth_token();
-    if auth_token.is_none() && !ip.is_loopback() && !mcp_http_allow_insecure_bind() {
-        return Err(format!(
-            "refusing to bind {ip} without authentication: set {token_env}, bind to a loopback \
-             address (127.0.0.1/::1), or set {allow_env}=1 to explicitly opt out",
-            token_env = crate::api::AUTH_TOKEN_ENV,
-            allow_env = crate::api::ALLOW_INSECURE_BIND_ENV,
-        )
-        .into());
-    }
-
-    let addr = SocketAddr::new(ip, port);
-    let mut app = axum::Router::new().nest_service("/mcp", streamable_http_service(config));
-    if let Some(token) = auth_token {
-        app = app.layer(axum::middleware::from_fn(move |req, next| {
-            let token = token.clone();
-            require_mcp_bearer_token(token, req, next)
-        }));
-    }
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| format!("failed to bind {addr}: {e}"))?;
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-
-/// Read [`crate::api::AUTH_TOKEN_ENV`] for the standalone MCP HTTP transport.
-/// Shares the same env var (and hence the same credential) as the REST API's
-/// auth, since both are HTTP surfaces exposing the same crawl engine.
-#[cfg(feature = "mcp-http")]
-fn mcp_http_auth_token() -> Option<std::sync::Arc<str>> {
-    std::env::var(crate::api::AUTH_TOKEN_ENV)
-        .ok()
-        .filter(|token| !token.is_empty())
-        .map(std::sync::Arc::from)
-}
-
-/// Read [`crate::api::ALLOW_INSECURE_BIND_ENV`]. Accepts `1` or `true` (case-insensitive).
-#[cfg(feature = "mcp-http")]
-fn mcp_http_allow_insecure_bind() -> bool {
-    std::env::var(crate::api::ALLOW_INSECURE_BIND_ENV)
-        .map(|value| value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-/// Enforce the configured bearer token on every request to the standalone MCP
-/// HTTP transport (`crawlberg mcp --http`), mirroring the REST API's check.
-#[cfg(feature = "mcp-http")]
-async fn require_mcp_bearer_token(
-    token: std::sync::Arc<str>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-
-    let provided = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-
-    match provided {
-        Some(candidate) if candidate.as_bytes() == token.as_bytes() => next.run(req).await,
-        _ => (axum::http::StatusCode::UNAUTHORIZED, "missing or invalid bearer token").into_response(),
-    }
-}
-
-/// Concrete type of the Streamable HTTP MCP service produced by
-/// [`streamable_http_service`].
-pub type CrawlbergHttpMcpService = rmcp::transport::streamable_http_server::StreamableHttpService<
-    CrawlbergMcp,
-    rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
->;
-
-/// Build a Streamable HTTP MCP service that can be mounted onto an axum/tower
-/// router (for example at `/mcp`).
-///
-/// The returned value is a [`tower::Service`](rmcp::transport::streamable_http_server::StreamableHttpService)
-/// and exposes the same nine tools as the stdio server. Each HTTP session gets a
-/// fresh [`CrawlbergMcp`] backed by `config`, with sessions tracked in-memory
-/// via rmcp's `LocalSessionManager`.
-pub fn streamable_http_service(config: CrawlConfig) -> CrawlbergHttpMcpService {
-    use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    };
-
-    // Share one task store across the per-request instances the service
-    // materializes, so SEP-2663 tasks survive across a client's `tools/call` →
-    // `tasks/get` request sequence even without a session.
-    let task_manager = TaskManager::new();
-
-    // SEP-2567: serve statelessly. Modern (2026-07-28+) clients are always
-    // stateless; disabling legacy session mode drops per-session state for
-    // older clients too. `json_response` returns plain `application/json` for
-    // request/response tools and transparently falls back to SSE when a handler
-    // needs to stream, so it stays compatible with tasks and progress.
-    let mut http_config = StreamableHttpServerConfig::default();
-    http_config.legacy_session_mode = false;
-    http_config.json_response = true;
-
-    StreamableHttpService::new(
-        move || {
-            Ok::<_, std::io::Error>(CrawlbergMcp::with_config_and_tasks(
-                config.clone(),
-                task_manager.clone(),
-            ))
-        },
-        std::sync::Arc::new(LocalSessionManager::default()),
-        http_config,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,7 +731,24 @@ mod tests {
     fn output_schemas_do_not_drift_from_structured_content() {
         let tools = CrawlbergMcp::new().tool_router.list_all();
 
-        let object_cases: Vec<(&str, serde_json::Value)> = vec![
+        for (name, sample) in object_output_samples() {
+            assert_serialized_matches_schema(name, &output_schema_of(&tools, name), &sample);
+        }
+
+        for (name, sample) in [
+            ("batch_scrape", batch_scrape_sample()),
+            ("batch_crawl", batch_crawl_sample()),
+        ] {
+            let item_schema = resolve_item_schema(&output_schema_of(&tools, name));
+            for element in sample.as_array().expect("batch output sample must be an array") {
+                assert_serialized_matches_schema(name, &item_schema, element);
+            }
+        }
+    }
+
+    /// One serialized `structuredContent` sample per object-returning tool.
+    fn object_output_samples() -> Vec<(&'static str, serde_json::Value)> {
+        vec![
             (
                 "scrape",
                 serde_json::to_value(crate::types::ScrapeResult::default()).unwrap(),
@@ -996,12 +796,12 @@ mod tests {
                 })
                 .unwrap(),
             ),
-        ];
-        for (name, sample) in &object_cases {
-            assert_serialized_matches_schema(name, &output_schema_of(&tools, name), sample);
-        }
+        ]
+    }
 
-        let batch_scrape_sample = serde_json::to_value(vec![
+    /// Serialized `structuredContent` for `batch_scrape`: one success, one failure.
+    fn batch_scrape_sample() -> serde_json::Value {
+        serde_json::to_value(vec![
             crate::mcp::outputs::BatchScrapeItem {
                 url: "https://a.com".to_string(),
                 ok: true,
@@ -1015,13 +815,12 @@ mod tests {
                 error: Some("boom".to_string()),
             },
         ])
-        .unwrap();
-        let scrape_item_schema = resolve_item_schema(&output_schema_of(&tools, "batch_scrape"));
-        for element in batch_scrape_sample.as_array().unwrap() {
-            assert_serialized_matches_schema("batch_scrape", &scrape_item_schema, element);
-        }
+        .unwrap()
+    }
 
-        let batch_crawl_sample = serde_json::to_value(vec![
+    /// Serialized `structuredContent` for `batch_crawl`: one success, one failure.
+    fn batch_crawl_sample() -> serde_json::Value {
+        serde_json::to_value(vec![
             crate::mcp::outputs::BatchCrawlItem {
                 url: "https://a.com".to_string(),
                 ok: true,
@@ -1035,11 +834,7 @@ mod tests {
                 error: Some("boom".to_string()),
             },
         ])
-        .unwrap();
-        let crawl_item_schema = resolve_item_schema(&output_schema_of(&tools, "batch_crawl"));
-        for element in batch_crawl_sample.as_array().unwrap() {
-            assert_serialized_matches_schema("batch_crawl", &crawl_item_schema, element);
-        }
+        .unwrap()
     }
 
     /// The advertised `outputSchema` JSON object for a tool by name.

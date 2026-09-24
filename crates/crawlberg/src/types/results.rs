@@ -265,23 +265,44 @@ pub struct CrawlResult {
     pub normalized_urls: Vec<String>,
 }
 
+/// Everything [`CrawlResult::new`] needs to assemble a finished crawl.
+///
+/// ~keep A struct rather than seven positional arguments: `redirect_count`/`was_skipped`
+/// ~keep and the two `Vec`s sat next to each other, so a transposed pair at a call site
+/// ~keep type-checked and silently reported the wrong crawl.
+pub(crate) struct CrawlOutcome {
+    /// The pages the crawl collected, in visit order.
+    pub(crate) pages: Vec<CrawlPageResult>,
+    /// The seed's URL after redirects.
+    pub(crate) final_url: String,
+    /// How many redirects the seed took.
+    pub(crate) redirect_count: usize,
+    /// Whether any page was skipped (binary or PDF content, or a refused seed).
+    pub(crate) was_skipped: bool,
+    /// A crawl-level failure, if one stopped the seed.
+    pub(crate) error: Option<String>,
+    /// Cookies collected across the crawl.
+    pub(crate) cookies: Vec<CookieInfo>,
+    /// Whether every page stayed on the seed's domain.
+    pub(crate) stayed_on_domain: bool,
+}
+
 impl CrawlResult {
-    /// Create a new `CrawlResult` with the given fields.
+    /// Create a new `CrawlResult` from a finished crawl.
     ///
-    /// `normalized_urls` is accepted for caller compatibility but no longer
-    /// stored: it duplicated `CrawlPageResult.normalized_url` on every page.
-    /// See [`CrawlResult::unique_normalized_urls`].
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        pages: Vec<CrawlPageResult>,
-        final_url: String,
-        redirect_count: usize,
-        was_skipped: bool,
-        error: Option<String>,
-        cookies: Vec<CookieInfo>,
-        stayed_on_domain: bool,
-        _normalized_urls: Vec<String>,
-    ) -> Self {
+    /// The deprecated `normalized_urls` field is always left empty: it duplicated
+    /// `CrawlPageResult.normalized_url` on every page. See
+    /// [`CrawlResult::unique_normalized_urls`].
+    pub(crate) fn new(outcome: CrawlOutcome) -> Self {
+        let CrawlOutcome {
+            pages,
+            final_url,
+            redirect_count,
+            was_skipped,
+            error,
+            cookies,
+            stayed_on_domain,
+        } = outcome;
         let browser_used = pages.iter().any(|p| p.browser_used);
         #[allow(deprecated)]
         Self {
@@ -316,7 +337,7 @@ impl CrawlResult {
 
 #[cfg(test)]
 mod crawl_result_tests {
-    use super::{CookieInfo, CrawlPageResult, CrawlResult};
+    use super::{CookieInfo, CrawlOutcome, CrawlPageResult, CrawlResult};
 
     fn page_with_normalized_url(normalized_url: &str) -> CrawlPageResult {
         CrawlPageResult {
@@ -327,20 +348,19 @@ mod crawl_result_tests {
 
     #[test]
     fn unique_normalized_urls_counts_distinct_pages_and_ignores_duplicates() {
-        let result = CrawlResult::new(
-            vec![
+        let result = CrawlResult::new(CrawlOutcome {
+            pages: vec![
                 page_with_normalized_url("https://example.com/a"),
                 page_with_normalized_url("https://example.com/b"),
                 page_with_normalized_url("https://example.com/a"),
             ],
-            "https://example.com/".to_owned(),
-            0,
-            false,
-            None,
-            Vec::<CookieInfo>::new(),
-            true,
-            Vec::new(),
-        );
+            final_url: "https://example.com/".to_owned(),
+            redirect_count: 0,
+            was_skipped: false,
+            error: None,
+            cookies: Vec::<CookieInfo>::new(),
+            stayed_on_domain: true,
+        });
 
         assert_eq!(
             result.unique_normalized_urls(),
@@ -351,16 +371,15 @@ mod crawl_result_tests {
 
     #[test]
     fn unique_normalized_urls_is_zero_when_pages_is_empty() {
-        let result = CrawlResult::new(
-            Vec::new(),
-            "https://example.com/".to_owned(),
-            0,
-            false,
-            None,
-            Vec::<CookieInfo>::new(),
-            true,
-            Vec::new(),
-        );
+        let result = CrawlResult::new(CrawlOutcome {
+            pages: Vec::new(),
+            final_url: "https://example.com/".to_owned(),
+            redirect_count: 0,
+            was_skipped: false,
+            error: None,
+            cookies: Vec::<CookieInfo>::new(),
+            stayed_on_domain: true,
+        });
 
         assert_eq!(
             result.unique_normalized_urls(),
@@ -370,18 +389,17 @@ mod crawl_result_tests {
     }
 
     #[test]
-    fn new_does_not_populate_the_deprecated_normalized_urls_field_even_when_given_input() {
+    fn new_leaves_the_deprecated_normalized_urls_field_empty() {
         #[allow(deprecated)]
-        let result = CrawlResult::new(
-            vec![page_with_normalized_url("https://example.com/a")],
-            "https://example.com/".to_owned(),
-            0,
-            false,
-            None,
-            Vec::<CookieInfo>::new(),
-            true,
-            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
-        );
+        let result = CrawlResult::new(CrawlOutcome {
+            pages: vec![page_with_normalized_url("https://example.com/a")],
+            final_url: "https://example.com/".to_owned(),
+            redirect_count: 0,
+            was_skipped: false,
+            error: None,
+            cookies: Vec::<CookieInfo>::new(),
+            stayed_on_domain: true,
+        });
 
         #[allow(deprecated)]
         let normalized_urls = &result.normalized_urls;

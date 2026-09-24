@@ -35,5 +35,8 @@ pub use results::{
     ActionResult, BrowserExtras, CachedPage, CrawlPageResult, CrawlResult, DownloadedDocument, InteractionResult,
     MapResult, MarkdownResult, ScrapeResult, SitemapUrl,
 };
+// ~keep Crate-internal: `CrawlOutcome` is `CrawlResult::new`'s parameter struct, not part of
+// ~keep the binding surface alef generates from this module.
+pub(crate) use results::CrawlOutcome;
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::{BatchCrawlStreamRequest, CrawlStreamRequest};

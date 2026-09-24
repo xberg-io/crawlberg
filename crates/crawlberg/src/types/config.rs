@@ -6,383 +6,34 @@ use serde::{Deserialize, Serialize};
 
 use super::AssetCategory;
 use super::dispatch::DispatchProfile;
+use crate::error::CrawlError;
 use crate::net::SsrfPolicy;
 
-/// Metadata about an LLM extraction pass.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct ExtractionMeta {
-    /// Estimated cost of the LLM call in USD.
-    pub cost: Option<f64>,
-    /// Number of prompt (input) tokens consumed.
-    pub prompt_tokens: Option<u64>,
-    /// Number of completion (output) tokens generated.
-    pub completion_tokens: Option<u64>,
-    /// The model identifier used for extraction.
-    pub model: Option<String>,
-    /// Number of content chunks sent to the LLM.
-    pub chunks_processed: usize,
-}
+/// Upper bound accepted for `CrawlConfig::max_depth`.
+const MAX_CRAWL_DEPTH: usize = 100;
 
-/// When to use the headless browser fallback.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserMode {
-    /// Automatically detect when JS rendering is needed and fall back to browser.
-    #[default]
-    Auto,
-    /// Always use the browser for every request.
-    Always,
-    /// Never use the browser fallback.
-    Never,
-    /// Always use the browser with all stealth surfaces enabled.
-    ///
-    /// Behaves like [`Always`](BrowserMode::Always) for escalation purposes
-    /// (every request is routed through the browser tier), but additionally
-    /// enables:
-    ///
-    /// - browser JavaScript stealth patches
-    /// - native-backend TLS fingerprint spoofing
-    /// - stealth-aware default user-agent when no explicit UA is set
-    /// - 1920×1080 viewport override
-    ///
-    /// Use this instead of setting the now-removed `BrowserConfig.stealth`
-    /// boolean field.
-    Stealth,
-}
+/// Upper bound accepted for `CrawlConfig::max_redirects`.
+const MAX_REDIRECT_HOPS: usize = 100;
 
-/// Wait strategy for browser page rendering.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserWait {
-    /// Wait until network activity is idle.
-    #[default]
-    NetworkIdle,
-    /// Wait for a specific CSS selector to appear in the DOM.
-    Selector,
-    /// Wait for a fixed duration after navigation.
-    Fixed,
-}
+/// Proxy URL schemes reqwest can build a proxy from.
+const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
 
-/// Browser backend used for JavaScript rendering.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BrowserBackend {
-    /// Existing Chromium/CDP backend powered by chromiumoxide.
-    #[default]
-    Chromiumoxide,
-    /// Crawlberg-owned native browser backend derived from Obscura.
-    Native,
-}
+/// Range a `CrawlConfig::retry_codes` entry must fall in to be a real HTTP status code.
+const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
+mod credentials;
+mod primitives;
+mod sections;
 
-/// Opt-in encoding applied to a downloaded document's bytes for callers who need the
-/// content available in a serializable field rather than reading it from disk.
-///
-/// `None` (the `CrawlConfig.document_content_encoding` default) produces neither — unlike
-/// screenshots, base64-encoding a document by default would duplicate an already
-/// up-to-`document_max_size` buffer (50 MB default) in memory per document.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DocumentContentEncoding {
-    /// Populate `DownloadedDocument.content_base64` with a base64-encoded copy.
-    Base64,
-}
+// ~keep These names are the binding-generator surface (`crates/crawlberg-{wasm,node,py,php,ffi}`)
+// ~keep and are re-exported from `crate::types`; the submodule split must stay invisible to them.
+pub use credentials::{AuthConfig, ProxyConfig};
+pub use primitives::{
+    BrowserBackend, BrowserMode, BrowserWait, ContentFilterKind, CrawlStrategyKind, DocumentContentEncoding,
+    ExtractionMeta,
+};
+pub use sections::{BrowserConfig, ContentConfig};
 
-/// Traversal order for a crawl.
-///
-/// Selects both the queue discipline and the selection strategy, because global order is a
-/// property of the frontier: the engine hands its bounded selection window to the strategy, so
-/// a strategy alone can only reorder URLs that have already been dequeued.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum CrawlStrategyKind {
-    /// Breadth-first: a FIFO frontier visits every URL at one depth before the next.
-    #[default]
-    Bfs,
-    /// Depth-first: a LIFO frontier descends into a page's children before its siblings.
-    Dfs,
-    /// Highest-priority-first within the selection window, scored by `CrawlStrategy::score_url`.
-    BestFirst,
-    /// Like `BestFirst`, but stops once newly crawled pages stop contributing new terms.
-    Adaptive,
-}
-
-/// Content filter applied to each crawled page before it reaches the result.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum ContentFilterKind {
-    /// Keep only pages scoring at or above `bm25_threshold` for `bm25_query`.
-    Bm25,
-}
-
-pub(crate) mod duration_ms {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
-        d.as_millis().serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
-        let ms = u64::deserialize(d)?;
-        Ok(Duration::from_millis(ms))
-    }
-}
-
-pub(crate) mod option_duration_ms {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S: Serializer>(d: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
-        d.map(|d| d.as_millis() as u64).serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
-        let ms: Option<u64> = Option::deserialize(d)?;
-        Ok(ms.map(Duration::from_millis))
-    }
-}
-
-/// Proxy configuration for HTTP requests.
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProxyConfig {
-    /// Proxy URL (e.g. "http://proxy:8080", "socks5://proxy:1080").
-    pub url: String,
-    /// Optional username for proxy authentication.
-    pub username: Option<String>,
-    /// Optional password for proxy authentication.
-    pub password: Option<String>,
-}
-
-impl std::fmt::Debug for ProxyConfig {
-    /// Redacted: the derived `Debug` would print `password` verbatim, and `url` may
-    /// itself carry `user:pass@` userinfo. Any `tracing::debug!(?proxy, ...)` or
-    /// `{:?}` capture would leak it into logs. Shows the redacted URL and the username,
-    /// but only whether a password is set — never the password itself.
-    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
-    // binding representation, so without this the surface fails generation with
-    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
-    #[cfg_attr(alef, alef(skip))]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProxyConfig")
-            .field("url", &crate::net::redact_url_credentials(&self.url))
-            .field("username", &self.username)
-            .field("password", &self.password.as_ref().map(|_| "***"))
-            .finish()
-    }
-}
-
-/// Authentication configuration.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, tag = "type")]
-pub enum AuthConfig {
-    /// HTTP Basic authentication.
-    #[serde(rename = "basic")]
-    Basic {
-        /// Username sent in the `Authorization: Basic` header.
-        username: String,
-        /// Password sent in the `Authorization: Basic` header.
-        password: String,
-    },
-    /// Bearer token authentication.
-    #[serde(rename = "bearer")]
-    Bearer {
-        /// Token sent in the `Authorization: Bearer` header.
-        token: String,
-    },
-    /// Custom authentication header.
-    #[serde(rename = "header")]
-    Header {
-        /// HTTP header name to set on each request.
-        name: String,
-        /// HTTP header value to send.
-        value: String,
-    },
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self::Basic {
-            username: String::new(),
-            password: String::new(),
-        }
-    }
-}
-
-impl std::fmt::Debug for AuthConfig {
-    /// Redacted: the derived `Debug` would print `password`, `token`, and `value` (the
-    /// header value carrying the secret) verbatim, and any `tracing::debug!(?auth, ...)`
-    /// or `{:?}` capture would leak it into logs. Shows which variant is configured and
-    /// whether its secret field is non-empty, never the secret's contents.
-    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
-    // binding representation, so without this the surface fails generation with
-    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
-    #[cfg_attr(alef, alef(skip))]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Basic { username, password } => f
-                .debug_struct("Basic")
-                .field("username", username)
-                .field("password", &(!password.is_empty()).then_some("***"))
-                .finish(),
-            Self::Bearer { token } => f
-                .debug_struct("Bearer")
-                .field("token", &(!token.is_empty()).then_some("***"))
-                .finish(),
-            Self::Header { name, value } => f
-                .debug_struct("Header")
-                .field("name", name)
-                .field("value", &(!value.is_empty()).then_some("***"))
-                .finish(),
-        }
-    }
-}
-
-/// Content extraction and conversion configuration.
-///
-/// Controls how HTML is converted to the output format. Uses
-/// html-to-markdown-rs as the conversion engine for all formats
-/// (markdown, plain text, djot).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ContentConfig {
-    /// Output format: `"markdown"` (default), `"plain"`, `"djot"`.
-    pub output_format: String,
-    /// Preprocessing aggressiveness: `"minimal"`, `"standard"` (default), `"aggressive"`.
-    ///
-    /// - Minimal: only scripts/styles removed.
-    /// - Standard: also removes nav, nav-hinted headers/footers/asides, forms.
-    /// - Aggressive: removes all footers/asides unconditionally.
-    pub preprocessing_preset: String,
-    /// Remove navigation elements (nav, breadcrumbs, menus). Default: `true`.
-    pub remove_navigation: bool,
-    /// Remove form elements. Default: `true`.
-    pub remove_forms: bool,
-    /// HTML tag names to strip (render children only, remove the tag wrapper).
-    /// Default: `[]`.
-    #[serde(default)]
-    pub strip_tags: Vec<String>,
-    /// HTML tag names to preserve as raw HTML in output.
-    #[serde(default)]
-    pub preserve_tags: Vec<String>,
-    /// CSS selectors for elements to exclude entirely (element + all content).
-    ///
-    /// Unlike `strip_tags` (which removes the wrapper but keeps children),
-    /// excluded elements and all descendants are dropped. Supports CSS selectors:
-    /// `.class`, `#id`, `[attribute]`, compound selectors.
-    ///
-    /// Default: `["noscript"]`. `<noscript>` fallback content (no-JS notices,
-    /// tracking pixels, GTM iframes) is meant for browsers with JavaScript
-    /// disabled, not for a markdown reader, and `strip_tags` cannot drop it —
-    /// on `preprocessing_preset: "standard"` (crawlberg's only path) it only
-    /// removes the wrapper and still renders the children. ~keep
-    ///
-    /// Example: `[".cookie-banner", "#ad-container", "[role='complementary']"]`
-    pub exclude_selectors: Vec<String>,
-    /// Skip image elements in output. Default: `false`.
-    pub skip_images: bool,
-    /// Max DOM traversal depth. Prevents stack overflow on deeply nested HTML.
-    pub max_depth: Option<usize>,
-    /// Enable line wrapping. Default: `false`.
-    pub wrap: bool,
-    /// Wrap width when `wrap` is enabled. Default: `80`.
-    pub wrap_width: usize,
-    /// Include document structure tree in output. Default: `true`.
-    pub include_document_structure: bool,
-}
-
-impl Default for ContentConfig {
-    fn default() -> Self {
-        Self {
-            output_format: "markdown".to_owned(),
-            preprocessing_preset: "standard".to_owned(),
-            remove_navigation: true,
-            remove_forms: true,
-            strip_tags: Vec::new(),
-            preserve_tags: Vec::new(),
-            exclude_selectors: vec!["noscript".to_owned()],
-            skip_images: false,
-            max_depth: None,
-            wrap: false,
-            wrap_width: 80,
-            include_document_structure: true,
-        }
-    }
-}
-
-/// Browser fallback configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct BrowserConfig {
-    /// When to use the headless browser fallback.
-    pub mode: BrowserMode,
-    /// Browser backend used to render JavaScript-heavy pages.
-    pub backend: BrowserBackend,
-    /// CDP WebSocket endpoint for connecting to an external browser instance.
-    pub endpoint: Option<String>,
-    /// Timeout for browser page load and rendering (in milliseconds when serialized).
-    #[serde(with = "duration_ms")]
-    pub timeout: Duration,
-    /// Wait strategy after browser navigation.
-    pub wait: BrowserWait,
-    /// CSS selector to wait for when `wait` is `Selector`.
-    pub wait_selector: Option<String>,
-    /// Extra time to wait after the wait condition is met.
-    #[serde(default, with = "option_duration_ms")]
-    pub extra_wait: Option<Duration>,
-    /// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.
-    /// Native backend supports http/https only (no SOCKS5).
-    #[serde(default)]
-    pub proxy: Option<ProxyConfig>,
-    /// URL patterns to block before the network request fires. Supports `*`
-    /// wildcards. Useful for skipping ads/analytics/large images. Honored by
-    /// `BrowserBackend::Native`; chromiumoxide ignores this field today.
-    #[serde(default)]
-    pub block_url_patterns: Vec<String>,
-    /// JavaScript snippet evaluated after navigation completes.
-    ///
-    /// Scraping captures the native backend result in `ScrapeResult.browser.eval_result`.
-    /// Interactions run this script before page actions on both browser backends but do
-    /// not include the script result in `InteractionResult`.
-    #[serde(default)]
-    pub eval_script: Option<String>,
-    /// User-agent used when fetching robots.txt. Defaults to `BrowserConfig.user_agent`
-    /// (or crawlberg's default) if unset. Native only.
-    #[serde(default)]
-    pub robots_user_agent: Option<String>,
-    /// Capture the full network event stream into the result. Default false
-    /// (only the document event is captured). Native only.
-    #[serde(default)]
-    pub capture_network_events: bool,
-    /// Enable session affinity: reuse chromiumoxide Pages for same-domain
-    /// requests so cookies + fingerprint + solved challenges persist.
-    /// Default: true. When false, each request gets a fresh Page.
-    pub session_affinity: bool,
-}
-
-impl Default for BrowserConfig {
-    fn default() -> Self {
-        Self {
-            mode: BrowserMode::Auto,
-            backend: BrowserBackend::Chromiumoxide,
-            endpoint: None,
-            timeout: Duration::from_secs(30),
-            wait: BrowserWait::default(),
-            wait_selector: None,
-            extra_wait: None,
-            proxy: None,
-            block_url_patterns: Vec::new(),
-            eval_script: None,
-            robots_user_agent: None,
-            capture_network_events: false,
-            session_affinity: true,
-        }
-    }
-}
+pub(crate) use primitives::duration_ms;
 
 /// Configuration for crawl, scrape, and map operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -680,12 +331,35 @@ impl CrawlConfig {
     }
 
     /// Validate the configuration, returning an error if any values are invalid.
+    ///
+    /// The first violation wins, so the order these checks run in is observable behaviour.
+    /// `validate_reports_violations_in_a_fixed_order` pins it. ~keep
     pub fn validate(&self) -> Result<(), crate::error::CrawlError> {
-        use crate::error::CrawlError;
+        self.validate_max_concurrent()?;
+        self.validate_content_filter()?;
+        self.validate_browser_wait()?;
+        self.validate_traversal_limits()?;
+        self.ssrf
+            .validate_scheme_allowlist()
+            .map_err(CrawlError::invalid_config)?;
+        self.validate_max_body_size()?;
+        self.validate_proxy()?;
+        self.validate_auth()?;
+        self.validate_path_patterns()?;
+        self.validate_retry_codes()?;
+        self.validate_request_timeout()?;
+        self.validate_browser_endpoint()?;
+        Ok(())
+    }
 
+    fn validate_max_concurrent(&self) -> Result<(), CrawlError> {
         if let Some(0) = self.max_concurrent {
             return Err(CrawlError::invalid_config("max_concurrent must be > 0"));
         }
+        Ok(())
+    }
+
+    fn validate_content_filter(&self) -> Result<(), CrawlError> {
         // ~keep Reject rather than fall back to keeping every page: a filter that silently
         // does nothing looks identical to one that matched everything.
         if self.content_filter == Some(ContentFilterKind::Bm25) && self.bm25_query.is_none() {
@@ -693,16 +367,24 @@ impl CrawlConfig {
                 "bm25_query is required when content_filter is bm25",
             ));
         }
+        Ok(())
+    }
+
+    fn validate_browser_wait(&self) -> Result<(), CrawlError> {
         if self.browser.wait == BrowserWait::Selector && self.browser.wait_selector.is_none() {
             return Err(CrawlError::invalid_config(
                 "browser.wait_selector required when browser.wait is Selector",
             ));
         }
+        Ok(())
+    }
+
+    fn validate_traversal_limits(&self) -> Result<(), CrawlError> {
         if let Some(max_depth) = self.max_depth
-            && max_depth > 100
+            && max_depth > MAX_CRAWL_DEPTH
         {
             return Err(CrawlError::invalid_config(format!(
-                "max_depth must be <= 100 (got {max_depth})"
+                "max_depth must be <= {MAX_CRAWL_DEPTH} (got {max_depth})"
             )));
         }
         if let Some(max_pages) = self.max_pages
@@ -710,43 +392,57 @@ impl CrawlConfig {
         {
             return Err(CrawlError::invalid_config("max_pages must be > 0"));
         }
-        if self.max_redirects > 100 {
-            return Err(CrawlError::invalid_config("max_redirects must be <= 100"));
+        if self.max_redirects > MAX_REDIRECT_HOPS {
+            return Err(CrawlError::invalid_config(format!(
+                "max_redirects must be <= {MAX_REDIRECT_HOPS}"
+            )));
         }
-        self.ssrf
-            .validate_scheme_allowlist()
-            .map_err(CrawlError::invalid_config)?;
+        Ok(())
+    }
+
+    fn validate_max_body_size(&self) -> Result<(), CrawlError> {
         if let Some(max_body_size) = self.max_body_size
             && max_body_size == 0
         {
             return Err(CrawlError::invalid_config("max_body_size must be > 0"));
         }
-        if let Some(ref proxy) = self.proxy {
-            let parsed = url::Url::parse(&proxy.url)
-                .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
-            let scheme = parsed.scheme();
-            if !matches!(scheme, "http" | "https" | "socks5" | "socks5h") {
-                return Err(CrawlError::invalid_config(format!(
-                    "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
-                )));
-            }
+        Ok(())
+    }
+
+    fn validate_proxy(&self) -> Result<(), CrawlError> {
+        let Some(ref proxy) = self.proxy else {
+            return Ok(());
+        };
+        let parsed = url::Url::parse(&proxy.url)
+            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
+        let scheme = parsed.scheme();
+        if !SUPPORTED_PROXY_SCHEMES.contains(&scheme) {
+            return Err(CrawlError::invalid_config(format!(
+                "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
+            )));
         }
-        if let Some(ref auth) = self.auth {
-            match auth {
-                AuthConfig::Basic { username, .. } if username.is_empty() => {
-                    return Err(CrawlError::invalid_config("auth.basic.username must not be empty"));
-                }
-                AuthConfig::Bearer { token } if token.is_empty() => {
-                    return Err(CrawlError::invalid_config("auth.bearer.token must not be empty"));
-                }
-                AuthConfig::Header { name, value } if name.is_empty() || value.is_empty() => {
-                    return Err(CrawlError::invalid_config(
-                        "auth.header.name and auth.header.value must not be empty",
-                    ));
-                }
-                _ => {}
+        Ok(())
+    }
+
+    fn validate_auth(&self) -> Result<(), CrawlError> {
+        let Some(ref auth) = self.auth else {
+            return Ok(());
+        };
+        match auth {
+            AuthConfig::Basic { username, .. } if username.is_empty() => {
+                Err(CrawlError::invalid_config("auth.basic.username must not be empty"))
             }
+            AuthConfig::Bearer { token } if token.is_empty() => {
+                Err(CrawlError::invalid_config("auth.bearer.token must not be empty"))
+            }
+            AuthConfig::Header { name, value } if name.is_empty() || value.is_empty() => Err(
+                CrawlError::invalid_config("auth.header.name and auth.header.value must not be empty"),
+            ),
+            _ => Ok(()),
         }
+    }
+
+    fn validate_path_patterns(&self) -> Result<(), CrawlError> {
         for pattern in &self.include_paths {
             regex::Regex::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid include_path regex '{pattern}': {e}")))?;
@@ -755,14 +451,26 @@ impl CrawlConfig {
             regex::Regex::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid exclude_path regex '{pattern}': {e}")))?;
         }
+        Ok(())
+    }
+
+    fn validate_retry_codes(&self) -> Result<(), CrawlError> {
         for &code in &self.retry_codes {
-            if !(100..=599).contains(&code) {
+            if !HTTP_STATUS_CODE_RANGE.contains(&code) {
                 return Err(CrawlError::invalid_config(format!("invalid retry code: {code}")));
             }
         }
+        Ok(())
+    }
+
+    fn validate_request_timeout(&self) -> Result<(), CrawlError> {
         if self.request_timeout.is_zero() {
             return Err(CrawlError::invalid_config("request_timeout must be > 0"));
         }
+        Ok(())
+    }
+
+    fn validate_browser_endpoint(&self) -> Result<(), CrawlError> {
         if let Some(ref endpoint) = self.browser.endpoint
             && !endpoint.starts_with("ws://")
             && !endpoint.starts_with("wss://")
@@ -826,6 +534,110 @@ mod tests {
             "setting one browser field must not turn off session_affinity, documented as default true"
         );
     }
+
+    /// Characterization: `validate` reports the FIRST violation, and the order it checks
+    /// rules in is observable behaviour — a config that breaks several rules gets exactly one
+    /// message, and which one depends on the check order. Pinned here so the order survives
+    /// any restructuring of `validate`. ~keep
+    #[test]
+    fn validate_reports_violations_in_a_fixed_order() {
+        let mut config = maximally_invalid_config();
+
+        for (position, (fragment, repair)) in ORDERED_VIOLATIONS.iter().enumerate() {
+            let error = config
+                .validate()
+                .expect_err(&format!("violation {position} ({fragment}) must still be reported"))
+                .to_string();
+            assert!(
+                error.contains(fragment),
+                "violation {position}: expected an error containing {fragment:?}, got: {error}"
+            );
+            repair(&mut config);
+        }
+
+        config.validate().expect("every violation has been repaired");
+    }
+
+    /// Repairs the violation its table entry names, so the next check becomes reachable.
+    type ConfigRepair = fn(&mut CrawlConfig);
+
+    /// A config that breaks every rule `validate` enforces, at once.
+    fn maximally_invalid_config() -> CrawlConfig {
+        let mut config = CrawlConfig {
+            max_concurrent: Some(0),
+            content_filter: Some(ContentFilterKind::Bm25),
+            bm25_query: None,
+            max_depth: Some(101),
+            max_pages: Some(0),
+            max_redirects: 101,
+            max_body_size: Some(0),
+            proxy: Some(ProxyConfig {
+                url: "ftp://proxy.internal:2121".into(),
+                ..Default::default()
+            }),
+            auth: Some(AuthConfig::Bearer { token: String::new() }),
+            include_paths: vec!["(unclosed".into()],
+            exclude_paths: vec!["(unclosed".into()],
+            retry_codes: vec![999],
+            request_timeout: Duration::ZERO,
+            browser: BrowserConfig {
+                wait: BrowserWait::Selector,
+                wait_selector: None,
+                backend: BrowserBackend::Native,
+                endpoint: Some("http://not-websocket:3000".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.ssrf.scheme_allowlist = vec!["ftp".to_owned()];
+        config
+    }
+
+    /// Every violation `maximally_invalid_config` carries, in the order `validate` reports
+    /// them, each paired with the repair that unblocks the next one.
+    const ORDERED_VIOLATIONS: &[(&str, ConfigRepair)] = &[
+        ("max_concurrent must be > 0", |c| c.max_concurrent = Some(1)),
+        ("bm25_query is required when content_filter is bm25", |c| {
+            c.bm25_query = Some("query".to_owned())
+        }),
+        ("browser.wait_selector required when browser.wait is Selector", |c| {
+            c.browser.wait_selector = Some("#main".to_owned())
+        }),
+        ("max_depth must be <= 100 (got 101)", |c| c.max_depth = Some(100)),
+        ("max_pages must be > 0", |c| c.max_pages = Some(1)),
+        ("max_redirects must be <= 100", |c| c.max_redirects = 100),
+        ("ssrf.scheme_allowlist contains unsupported scheme 'ftp'", |c| {
+            c.ssrf.scheme_allowlist = vec!["https".to_owned()]
+        }),
+        ("max_body_size must be > 0", |c| c.max_body_size = Some(1)),
+        ("invalid proxy URL scheme 'ftp'", |c| {
+            c.proxy = Some(ProxyConfig {
+                url: "http://proxy.internal:8080".into(),
+                ..Default::default()
+            })
+        }),
+        ("auth.bearer.token must not be empty", |c| {
+            c.auth = Some(AuthConfig::Bearer {
+                token: "token".to_owned(),
+            })
+        }),
+        ("invalid include_path regex '(unclosed'", |c| {
+            c.include_paths = vec!["^/docs".to_owned()]
+        }),
+        ("invalid exclude_path regex '(unclosed'", |c| {
+            c.exclude_paths = vec!["^/private".to_owned()]
+        }),
+        ("invalid retry code: 999", |c| c.retry_codes = vec![503]),
+        ("request_timeout must be > 0", |c| {
+            c.request_timeout = Duration::from_secs(30)
+        }),
+        ("browser.endpoint must start with ws:// or wss://", |c| {
+            c.browser.endpoint = Some("ws://localhost:9222".to_owned())
+        }),
+        ("browser.endpoint is only supported by the chromiumoxide backend", |c| {
+            c.browser.backend = BrowserBackend::Chromiumoxide
+        }),
+    ];
 
     #[test]
     fn validate_rejects_http_browser_endpoint() {
