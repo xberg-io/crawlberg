@@ -37,6 +37,21 @@ pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlEr
         .collect()
 }
 
+/// Why a robots.txt fetch failed closed, and therefore how far the denial can be trusted.
+///
+/// ~keep The outcome cache is shared by every crawl on an engine handle, so a denial cached
+/// for one crawl denies all of them. A `Sustained` denial is the origin's own answer and
+/// retaining it is the intended backoff; a `Transient` one teaches nothing about the origin,
+/// so retaining it for as long would let a single DNS blip fail-closed unrelated crawls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RobotsDenial {
+    /// The origin answered and refused (429, 5xx, a WAF interstitial), or the request could
+    /// never have succeeded (an unparseable URL).
+    Sustained,
+    /// The origin was never reached at all: DNS, TLS, connect or read timeout.
+    Transient,
+}
+
 /// What a robots.txt fetch told us about crawling an origin.
 ///
 /// ~keep RFC 9309 section 2.3.1 distinguishes three cases that a bare `Option<RobotsRules>`
@@ -49,8 +64,9 @@ pub(crate) enum RobotsOutcome {
     Rules(RobotsRules),
     /// robots.txt is unavailable (4xx); every path is permitted.
     AllowAll,
-    /// robots.txt is unreachable; every path is denied. Carries the reason for reporting.
-    DisallowAll { reason: String },
+    /// robots.txt is unreachable; every path is denied. Carries the reason for reporting and
+    /// the denial's durability, which decides how long the outcome cache retains it.
+    DisallowAll { reason: String, denial: RobotsDenial },
 }
 
 impl RobotsOutcome {
@@ -77,10 +93,30 @@ impl RobotsOutcome {
         }
     }
 
+    /// Whether this outcome denies the origin over a condition that is expected to clear on
+    /// its own, rather than over an answer the origin actually gave.
+    ///
+    /// ~keep Only the engine's shared outcome cache reads this, and that module is native-only,
+    /// so on wasm32 this method -- and with it the `denial` field it is the sole reader of --
+    /// is unreachable and would trip `dead_code` under `-D warnings`.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "the only caller, engine::robots_cache, is native-only")
+    )]
+    pub(crate) fn is_transient_denial(&self) -> bool {
+        matches!(
+            self,
+            Self::DisallowAll {
+                denial: RobotsDenial::Transient,
+                ..
+            }
+        )
+    }
+
     /// The reason the whole origin is denied, if it is.
     pub(crate) fn disallow_all_reason(&self) -> Option<&str> {
         match self {
-            Self::DisallowAll { reason } => Some(reason),
+            Self::DisallowAll { reason, .. } => Some(reason),
             _ => None,
         }
     }
@@ -97,8 +133,20 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         | CrawlError::Unauthorized { .. }
         | CrawlError::Forbidden { .. }
         | CrawlError::Gone { .. } => RobotsOutcome::AllowAll,
+        // ~keep Also RFC 9309 2.3.1.4 "unreachable", but split out of the catch-all below: these
+        // four never reached the origin, so the denial reflects our side of the wire rather than
+        // anything the site said, and the cache is entitled to forget it quickly.
+        CrawlError::Timeout { .. }
+        | CrawlError::Connection { .. }
+        | CrawlError::Dns { .. }
+        | CrawlError::Ssl { .. } => RobotsOutcome::DisallowAll {
+            reason: error.to_string(),
+            denial: RobotsDenial::Transient,
+        },
         // ~keep Everything else is RFC 9309 2.3.1.4 "unreachable". The catch-all arm must be
-        // the closed one: fail-closed is only sound if an unrecognised failure denies.
+        // the closed one: fail-closed is only sound if an unrecognised failure denies. It is
+        // also the durable one, so an unrecognised failure does not additionally get the
+        // shortest memory of it.
         // `RateLimited` (429) lands here deliberately -- it is a 4xx that the RFC files under
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
@@ -108,6 +156,7 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
         _ => RobotsOutcome::DisallowAll {
             reason: error.to_string(),
+            denial: RobotsDenial::Sustained,
         },
     }
 }
@@ -139,6 +188,7 @@ pub(crate) async fn fetch_robots_outcome(
     let Ok(parsed) = Url::parse(url) else {
         return RobotsOutcome::DisallowAll {
             reason: format!("invalid URL: {url}"),
+            denial: RobotsDenial::Sustained,
         };
     };
     // ~keep `robots_url` uses `authority()`, which keeps a non-default port. Building this
@@ -148,6 +198,7 @@ pub(crate) async fn fetch_robots_outcome(
     match http_fetch(&robots_url, config, &std::collections::HashMap::new(), client).await {
         Ok(resp) if resp.status >= 500 => RobotsOutcome::DisallowAll {
             reason: format!("robots.txt returned HTTP {}", resp.status),
+            denial: RobotsDenial::Sustained,
         },
         Ok(resp) if resp.status >= 400 => RobotsOutcome::AllowAll,
         Ok(resp) => RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
@@ -229,6 +280,47 @@ mod tests {
     }
 
     #[test]
+    fn should_mark_the_denial_transient_when_the_origin_was_never_reached() {
+        // ~keep These four denials say nothing about the origin's policy, so the cache is
+        // entitled to forget them quickly; the assertion pins which errors qualify.
+        for error in [
+            CrawlError::timeout("timeout"),
+            CrawlError::connection("connection"),
+            CrawlError::dns("dns"),
+            CrawlError::ssl("ssl"),
+        ] {
+            assert!(
+                outcome_for_fetch_error(&error).is_transient_denial(),
+                "{error} never reached the origin and must not pin a long-lived denial"
+            );
+        }
+    }
+
+    #[test]
+    fn should_mark_the_denial_sustained_when_the_origin_refused() {
+        // ~keep The negative control for the split above: a refusal the origin actually issued,
+        // and any failure we do not recognise, must keep the full backoff.
+        for error in [
+            CrawlError::rate_limited("rate_limited"),
+            CrawlError::server_error("server_error"),
+            CrawlError::bad_gateway("bad_gateway"),
+            CrawlError::data_loss("data_loss"),
+            CrawlError::other("other"),
+            CrawlError::WafBlocked {
+                vendor: "cloudflare".to_owned(),
+                message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
+            },
+        ] {
+            let outcome = outcome_for_fetch_error(&error);
+            assert!(is_disallow_all(&outcome), "{error} must still fail closed");
+            assert!(
+                !outcome.is_transient_denial(),
+                "{error} is the origin's own answer and must serve the full backoff"
+            );
+        }
+    }
+
+    #[test]
     fn should_allow_every_path_when_robots_txt_is_unavailable() {
         assert!(RobotsOutcome::AllowAll.allows("/anything"));
         assert!(RobotsOutcome::AllowAll.rules().is_none());
@@ -239,6 +331,7 @@ mod tests {
     fn should_deny_every_path_when_robots_txt_is_unreachable() {
         let outcome = RobotsOutcome::DisallowAll {
             reason: "boom".to_owned(),
+            denial: RobotsDenial::Sustained,
         };
         assert!(!outcome.allows("/"), "disallow-all must deny even the root path");
         assert_eq!(outcome.disallow_all_reason(), Some("boom"));

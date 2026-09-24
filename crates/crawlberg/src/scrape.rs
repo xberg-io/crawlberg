@@ -46,7 +46,7 @@ pub(crate) async fn scrape_from_crawl_response(
                 crawl_delay = rules.crawl_delay;
             }
             RobotsOutcome::AllowAll => {}
-            RobotsOutcome::DisallowAll { reason } => {
+            RobotsOutcome::DisallowAll { reason, .. } => {
                 tracing::warn!(
                     url = %url,
                     reason = %reason,
