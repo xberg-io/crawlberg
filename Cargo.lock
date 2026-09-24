@@ -407,7 +407,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-harness"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1177,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1233,14 +1233,14 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bindings-common"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
 ]
 
 [[package]]
 name = "crawlberg-browser"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-bypass"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "async-trait",
  "crawlberg",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-cli"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "clap",
  "crawlberg",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-dart"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
  "flutter_rust_bridge",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-ffi"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ahash",
  "cbindgen",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-jni"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-node"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
  "futures-util",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-php"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
  "ext-php-rs",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-py"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
  "futures",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-swift"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ahash",
  "async-trait",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "crawlberg-wasm"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crawlberg",
  "futures",

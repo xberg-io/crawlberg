@@ -4,6 +4,81 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-24
+
+A wasm and kotlin_android correctness release. A wasm engine handle was unusable after one call,
+and the kotlin_android e2e suite had never once completed a run. Both traced to the binding
+generator, so the fixes arrive via Alef 0.96.0.
+
+### Fixed
+
+- **A wasm engine handle survives more than one call.** Every generated wasm entry point took
+  `WasmCrawlEngineHandle` by value, and wasm-bindgen's glue for a by-value exported struct calls
+  `__destroy_into_raw()` on it, nulling the JS object's pointer. A second `scrape()` on the same
+  engine threw `null pointer passed to rust`, and `batchScrape` consumed the handle identically —
+  it only appeared to work because callers used it once. The core API always took a reference and
+  the binding body immediately re-borrowed, so the move bought nothing; the Node binding has always
+  emitted `&JsCrawlEngineHandle` from the same IR. The emitted `.d.ts` is unchanged, so no
+  JavaScript or TypeScript caller needs editing. (#56)
+
+- **Transient robots.txt failures no longer block unrelated crawls for five minutes.** Sharing the
+  robots outcome cache across crawls made one `DisallowAll` fail-closed for every crawl of that
+  origin and user-agent for the full TTL, and the cache could not tell a DNS blip from a WAF
+  interstitial. Timeout, connection, DNS and TLS failures never reached the origin and now expire
+  after 15 seconds; 5xx, 429 and WAF blocks keep the full five minutes, because backing off there
+  is the intended behaviour. The catch-all stays durable, so an unrecognised failure does not get
+  both fail-closed and the shortest memory of it. (#55)
+
+- **The kotlin_android e2e suite completes.** It had never finished a run: a hung native call ran
+  to the job's 90-minute cap, which GitHub records as `cancelled` rather than `failure`, so the job
+  read as green while testing nothing. Once it completed, 23 failures surfaced that had been latent
+  throughout. Generated stream tests deserialized the raw fixture blob into a request DTO that did
+  not declare those fields; sealed-class serialization dropped the `type` discriminator, so the
+  native layer rejected every `interact` call; and generated enums lacked the wire-value
+  `toString()` the assertions compare against. The suite now also logs failures with stack traces
+  and times itself out well inside the job cap.
+
+- **The shell formatting CI job runs.** It invoked `shfmt`, which no runner image ships and nothing
+  installed, and had exited 127 on every run since 2026-09-15.
+
+### Changed
+
+- **Alef pin moved from 0.93.1 to 0.96.0**, carrying the generator fixes above.
+
+- **`alef.toml` now lists the modules alef parses for the API surface.** The `[[crates]] sources`
+  paths are read as files and scanned for type definitions; alef does not walk the module graph, so
+  a `pub use` re-export left behind by a file split is invisible to it. `path_mappings` gained
+  entries for the same reason: alef derives a type's import path from the file it was found in,
+  which after a split is not where the crate re-exports it.
+
+### Notes for wasm callers
+
+`config.content.skipImages = true` does not work, and never did. wasm-bindgen's getter returns a
+detached clone, so the natural idiom mutates a throwaway. Read, modify and assign back:
+
+```js
+const c = config.content;
+c.skipImages = true;
+config.content = c;
+```
+
+The setter consumes its argument, so build a fresh one for the next edit. The same applies to
+`ssrf`, `auth`, `browser` and `proxy`.
+
+### Internal
+
+- `CrawlConfig.content` now has end-to-end coverage. Of 267 fixtures exactly two set it, one with
+  an empty assertion list and the other asserting only batch counts, so a `content` that was
+  ignored entirely passed green in all sixteen generated language suites. Two matched fixtures now
+  pin it from opposite directions, and a Rust-level test asserts the same without depending on
+  regenerated suites.
+
+- The size and complexity baseline (#42) goes from 83 findings across 44 files to seven entries,
+  each with a stated reason rather than left as debt. Behaviour-preserving throughout: no public or
+  crate-visible item changed name, signature, module path or field set. Several of the functions
+  restructured had no test that called them at all, so characterization tests were captured against
+  the original implementations first.
+
 ## [1.7.1] - 2026-09-16
 
 A release-tooling fix. 1.7.0's Java artifact never reached Maven Central; this version carries the
