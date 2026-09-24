@@ -75,6 +75,98 @@ fn raw_to_fixture(raw: ScrapeFixtureRaw) -> ScrapeFixture {
     fixture
 }
 
+/// Read an already-downloaded dataset file and return its fixture count.
+///
+/// # Errors
+///
+/// Returns [`Error::Dataset`] if the file cannot be read or its contents are
+/// not a valid JSON array of [`ScrapeFixture`] values.
+fn load_existing_dataset(output_path: &Path) -> Result<usize> {
+    eprintln!(
+        "scrape-evals: {} already exists, skipping download (use --force to re-download)",
+        output_path.display()
+    );
+    let existing = std::fs::read_to_string(output_path).map_err(|error| {
+        Error::Dataset(format!(
+            "failed to read existing dataset file {}: {error}",
+            output_path.display()
+        ))
+    })?;
+    let fixtures: Vec<ScrapeFixture> = serde_json::from_str(&existing).map_err(|error| {
+        Error::Dataset(format!(
+            "existing dataset file at {} is malformed (possibly from an interrupted download); \
+             re-run with --force to re-download: {error}",
+            output_path.display()
+        ))
+    })?;
+    Ok(fixtures.len())
+}
+
+/// Build the HTTP client used to talk to the HuggingFace datasets-server API.
+///
+/// # Errors
+///
+/// Returns [`Error::Dataset`] if the client cannot be constructed.
+fn build_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("crawlberg-benchmark-harness/1.0")
+        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| Error::Dataset(format!("failed to build HTTP client: {error}")))
+}
+
+/// Fetch every page of the dataset from the HuggingFace datasets-server API,
+/// writing progress to `partial_path` after each page.
+///
+/// # Errors
+///
+/// Returns [`Error::Dataset`] on HTTP or partial-file write failures, and
+/// [`Error::Json`] if a page response cannot be deserialized.
+async fn fetch_all_pages(client: &reqwest::Client, partial_path: &Path) -> Result<Vec<ScrapeFixture>> {
+    let mut all_fixtures: Vec<ScrapeFixture> = Vec::new();
+    let mut offset: u64 = 0;
+    let mut total_rows: Option<u64> = None;
+
+    loop {
+        let url = format!("{DATASET_API_BASE}&offset={offset}&length={PAGE_SIZE}");
+
+        eprintln!("scrape-evals: fetching rows {offset}–{} ...", offset + PAGE_SIZE - 1);
+
+        let body = fetch_with_retry(client, &url, MAX_PAGE_RETRIES).await?;
+        let page: HfResponse = serde_json::from_str(&body).map_err(|error| {
+            Error::Dataset(format!(
+                "failed to deserialize HuggingFace API response at offset {offset}: {error}"
+            ))
+        })?;
+
+        if total_rows.is_none()
+            && let Some(n) = page.num_rows_total
+        {
+            total_rows = Some(n);
+            eprintln!("scrape-evals: {n} rows total");
+        }
+
+        let fetched = page.rows.len() as u64;
+        all_fixtures.extend(page.rows.into_iter().map(|wrapper| raw_to_fixture(wrapper.row)));
+
+        let partial_json = serde_json::to_string_pretty(&all_fixtures)?;
+        std::fs::write(partial_path, partial_json).map_err(|error| {
+            Error::Dataset(format!(
+                "failed to write partial dataset to {}: {error}",
+                partial_path.display()
+            ))
+        })?;
+
+        offset += fetched;
+
+        if fetched == 0 || offset >= total_rows.unwrap_or(u64::MAX) {
+            break;
+        }
+    }
+
+    Ok(all_fixtures)
+}
+
 /// Download the scrape-evals dataset from the HuggingFace datasets-server API.
 ///
 /// Fetches all rows in pages of 100 and converts them to [`ScrapeFixture`]
@@ -94,31 +186,10 @@ pub async fn download_scrape_evals(output_dir: &Path, force: bool) -> Result<usi
     let output_path = output_dir.join(OUTPUT_FILENAME);
 
     if output_path.exists() && !force {
-        eprintln!(
-            "scrape-evals: {} already exists, skipping download (use --force to re-download)",
-            output_path.display()
-        );
-        let existing = std::fs::read_to_string(&output_path).map_err(|error| {
-            Error::Dataset(format!(
-                "failed to read existing dataset file {}: {error}",
-                output_path.display()
-            ))
-        })?;
-        let fixtures: Vec<ScrapeFixture> = serde_json::from_str(&existing).map_err(|error| {
-            Error::Dataset(format!(
-                "existing dataset file at {} is malformed (possibly from an interrupted download); \
-                 re-run with --force to re-download: {error}",
-                output_path.display()
-            ))
-        })?;
-        return Ok(fixtures.len());
+        return load_existing_dataset(&output_path);
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent("crawlberg-benchmark-harness/1.0")
-        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .build()
-        .map_err(|error| Error::Dataset(format!("failed to build HTTP client: {error}")))?;
+    let client = build_http_client()?;
 
     std::fs::create_dir_all(output_dir).map_err(|error| {
         Error::Dataset(format!(
@@ -128,47 +199,7 @@ pub async fn download_scrape_evals(output_dir: &Path, force: bool) -> Result<usi
     })?;
 
     let partial_path = output_dir.join(PARTIAL_FILENAME);
-
-    let mut all_fixtures: Vec<ScrapeFixture> = Vec::new();
-    let mut offset: u64 = 0;
-    let mut total_rows: Option<u64> = None;
-
-    loop {
-        let url = format!("{DATASET_API_BASE}&offset={offset}&length={PAGE_SIZE}");
-
-        eprintln!("scrape-evals: fetching rows {offset}–{} ...", offset + PAGE_SIZE - 1);
-
-        let body = fetch_with_retry(&client, &url, MAX_PAGE_RETRIES).await?;
-        let page: HfResponse = serde_json::from_str(&body).map_err(|error| {
-            Error::Dataset(format!(
-                "failed to deserialize HuggingFace API response at offset {offset}: {error}"
-            ))
-        })?;
-
-        if total_rows.is_none()
-            && let Some(n) = page.num_rows_total
-        {
-            total_rows = Some(n);
-            eprintln!("scrape-evals: {n} rows total");
-        }
-
-        let fetched = page.rows.len() as u64;
-        all_fixtures.extend(page.rows.into_iter().map(|wrapper| raw_to_fixture(wrapper.row)));
-
-        let partial_json = serde_json::to_string_pretty(&all_fixtures)?;
-        std::fs::write(&partial_path, partial_json).map_err(|error| {
-            Error::Dataset(format!(
-                "failed to write partial dataset to {}: {error}",
-                partial_path.display()
-            ))
-        })?;
-
-        offset += fetched;
-
-        if fetched == 0 || offset >= total_rows.unwrap_or(u64::MAX) {
-            break;
-        }
-    }
+    let all_fixtures = fetch_all_pages(&client, &partial_path).await?;
 
     if all_fixtures.is_empty() {
         let _ = std::fs::remove_file(&partial_path);

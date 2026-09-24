@@ -22,7 +22,7 @@ use crate::quality::compute_scrape_quality;
 use crate::stats::{calculate_variance, percentile_r7, sanitize_f64};
 use crate::types::{
     DurationStatistics, ErrorKind, ExecutionMode, IterationResult, PerformanceMetrics, ReachabilityResult,
-    ScrapeBenchmarkResult, ScrapeFixture,
+    ScrapeBenchmarkResult, ScrapeFixture, ScrapeQualityMetrics,
 };
 
 /// Orchestrates warmup and benchmark iterations for a set of fixtures.
@@ -92,13 +92,54 @@ impl BenchmarkRunner {
         let mut monitor = ResourceMonitor::new();
         monitor.start(Duration::from_millis(10)).await;
 
-        let mut iteration_records: Vec<Vec<IterationResult>> =
-            vec![Vec::with_capacity(total_iterations); fixture_count];
-
-        let mut last_outputs: Vec<Option<crate::adapter::ScrapeOutput>> = vec![None; fixture_count];
-
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
+        let cached_html_map = self.build_cached_html_map();
 
+        let run_start = Instant::now();
+        let (iteration_records, last_outputs) = self
+            .run_all_iterations(total_iterations, fixture_count, semaphore, cached_html_map)
+            .await;
+
+        monitor.stop();
+        let resource_metrics = monitor.metrics().await;
+
+        info!("collecting results");
+        let results = self.collect_results(&iteration_records, &last_outputs, &resource_metrics);
+
+        if self.config.save_cache
+            && let Some(ref mut cache) = self.cache
+        {
+            save_responses_to_cache(cache, &self.fixtures, &last_outputs);
+        }
+
+        self.adapter.teardown().await?;
+
+        let elapsed_secs = run_start.elapsed().as_secs_f64();
+        let throughput = if elapsed_secs > 0.0 {
+            fixture_count as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+
+        info!(
+            fixtures = fixture_count,
+            throughput_pages_per_sec = throughput,
+            "benchmark run complete"
+        );
+
+        let fixture_outputs: Vec<(String, Option<crate::adapter::ScrapeOutput>)> = self
+            .fixtures
+            .iter()
+            .zip(last_outputs)
+            .map(|(f, o)| (f.id.clone(), o))
+            .collect();
+
+        Ok((results, fixture_outputs))
+    }
+
+    /// Build a URL→HTML lookup from the HTML cache, warning if cached mode
+    /// will need to fall back to live fetches for uncached fixtures.
+    fn build_cached_html_map(&self) -> Arc<AHashMap<String, String>> {
         let cached_html_map: AHashMap<String, String> = self
             .fixtures
             .iter()
@@ -128,9 +169,23 @@ impl BenchmarkRunner {
             }
         }
 
-        let cached_html_map = Arc::new(cached_html_map);
+        Arc::new(cached_html_map)
+    }
 
-        let run_start = Instant::now();
+    /// Run all warmup and benchmark iterations.
+    ///
+    /// Returns per-fixture iteration records (warmup iterations discarded)
+    /// alongside the last successful output captured for each fixture.
+    async fn run_all_iterations(
+        &self,
+        total_iterations: usize,
+        fixture_count: usize,
+        semaphore: Arc<Semaphore>,
+        cached_html_map: Arc<AHashMap<String, String>>,
+    ) -> (Vec<Vec<IterationResult>>, Vec<Option<crate::adapter::ScrapeOutput>>) {
+        let mut iteration_records: Vec<Vec<IterationResult>> =
+            vec![Vec::with_capacity(total_iterations); fixture_count];
+        let mut last_outputs: Vec<Option<crate::adapter::ScrapeOutput>> = vec![None; fixture_count];
 
         for iteration in 0..total_iterations {
             let is_warmup = iteration < self.config.warmup_iterations;
@@ -168,58 +223,36 @@ impl BenchmarkRunner {
             }
         }
 
-        monitor.stop();
-        let resource_metrics = monitor.metrics().await;
+        (iteration_records, last_outputs)
+    }
 
-        info!("collecting results");
-
-        let mut results = Vec::with_capacity(fixture_count);
+    /// Build the final [`ScrapeBenchmarkResult`] list from collected iteration
+    /// records and per-fixture last outputs.
+    fn collect_results(
+        &self,
+        iteration_records: &[Vec<IterationResult>],
+        last_outputs: &[Option<crate::adapter::ScrapeOutput>],
+        resource_metrics: &ResourceMetrics,
+    ) -> Vec<ScrapeBenchmarkResult> {
+        let mut results = Vec::with_capacity(self.fixtures.len());
 
         for (fixture_idx, fixture) in self.fixtures.iter().enumerate() {
             let records = &iteration_records[fixture_idx];
             let output = last_outputs[fixture_idx].as_ref();
 
-            let result = build_result(
+            let result = build_result(BuildResultArgs {
                 fixture,
-                self.adapter.name(),
+                framework: self.adapter.name(),
                 records,
-                output,
-                &resource_metrics,
-                self.config.execution_mode,
-                self.config.measure_quality,
-            );
+                last_output: output,
+                resource_metrics,
+                execution_mode: self.config.execution_mode,
+                measure_quality: self.config.measure_quality,
+            });
             results.push(result);
         }
 
-        if self.config.save_cache
-            && let Some(ref mut cache) = self.cache
-        {
-            save_responses_to_cache(cache, &self.fixtures, &last_outputs);
-        }
-
-        self.adapter.teardown().await?;
-
-        let elapsed_secs = run_start.elapsed().as_secs_f64();
-        let throughput = if elapsed_secs > 0.0 {
-            fixture_count as f64 / elapsed_secs
-        } else {
-            0.0
-        };
-
-        info!(
-            fixtures = fixture_count,
-            throughput_pages_per_sec = throughput,
-            "benchmark run complete"
-        );
-
-        let fixture_outputs: Vec<(String, Option<crate::adapter::ScrapeOutput>)> = self
-            .fixtures
-            .iter()
-            .zip(last_outputs)
-            .map(|(f, o)| (f.id.clone(), o))
-            .collect();
-
-        Ok((results, fixture_outputs))
+        results
     }
 
     /// Run one iteration across all fixtures concurrently (limited by the shared semaphore).
@@ -299,24 +332,22 @@ impl BenchmarkRunner {
     }
 }
 
-/// Aggregate per-iteration records into a [`ScrapeBenchmarkResult`].
-fn build_result(
-    fixture: &ScrapeFixture,
-    framework: &str,
-    records: &[IterationResult],
-    last_output: Option<&crate::adapter::ScrapeOutput>,
-    resource_metrics: &ResourceMetrics,
+/// Inputs needed to aggregate one fixture's iteration records into a
+/// [`ScrapeBenchmarkResult`], grouped to keep [`build_result`] within the
+/// parameter-count limit.
+struct BuildResultArgs<'a> {
+    fixture: &'a ScrapeFixture,
+    framework: &'a str,
+    records: &'a [IterationResult],
+    last_output: Option<&'a crate::adapter::ScrapeOutput>,
+    resource_metrics: &'a ResourceMetrics,
     execution_mode: ExecutionMode,
     measure_quality: bool,
-) -> ScrapeBenchmarkResult {
-    let success = records.iter().any(|r| r.success);
-    let error_message = records
-        .iter()
-        .filter_map(|r| r.error.as_deref())
-        .next_back()
-        .map(str::to_owned);
-    let error_kind = classify_error(error_message.as_deref());
+}
 
+/// Compute mean duration and, when possible, full [`DurationStatistics`] from
+/// the successful subset of `records`.
+fn duration_statistics_for(records: &[IterationResult]) -> (f64, Option<DurationStatistics>) {
     let mut durations: Vec<f64> = records.iter().filter(|r| r.success).map(|r| r.duration_ms).collect();
 
     let mean_duration_ms = if durations.is_empty() {
@@ -343,47 +374,104 @@ fn build_result(
         None
     };
 
-    let (status_code, browser_used, js_render_hint, content_size, quality, reachability) =
-        if let Some(output) = last_output {
-            let quality = if measure_quality {
-                if let Some(content) = output.content.as_deref() {
-                    compute_scrape_quality(content, fixture.truth_text.as_deref(), fixture.lie_text.as_deref())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+    (mean_duration_ms, statistics)
+}
 
-            let reachability = if !fixture.verify_selectors.is_empty() || !fixture.verify_text.is_empty() {
-                Some(crate::verify::verify_content(fixture, output))
-            } else {
-                None
-            };
-
-            (
-                Some(output.status_code),
-                output.browser_used,
-                output.js_render_hint,
-                output.content_size,
-                quality,
-                reachability,
-            )
+/// Derive per-fixture output fields plus quality and reachability metrics
+/// from the last successful scrape output, or fixture-only defaults when no
+/// output was captured.
+#[allow(clippy::type_complexity)]
+fn last_output_fields(
+    fixture: &ScrapeFixture,
+    last_output: Option<&crate::adapter::ScrapeOutput>,
+    measure_quality: bool,
+) -> (
+    Option<u16>,
+    bool,
+    bool,
+    usize,
+    Option<ScrapeQualityMetrics>,
+    Option<ReachabilityResult>,
+) {
+    let Some(output) = last_output else {
+        let reachability = if !fixture.verify_selectors.is_empty() || !fixture.verify_text.is_empty() {
+            Some(ReachabilityResult {
+                verified: false,
+                selectors_found: 0,
+                selectors_total: fixture.verify_selectors.len(),
+                text_found: 0,
+                text_total: fixture.verify_text.len(),
+                is_false_positive: false,
+            })
         } else {
-            let reachability = if !fixture.verify_selectors.is_empty() || !fixture.verify_text.is_empty() {
-                Some(ReachabilityResult {
-                    verified: false,
-                    selectors_found: 0,
-                    selectors_total: fixture.verify_selectors.len(),
-                    text_found: 0,
-                    text_total: fixture.verify_text.len(),
-                    is_false_positive: false,
-                })
-            } else {
-                None
-            };
-            (None, false, false, 0, None, reachability)
+            None
         };
+        return (None, false, false, 0, None, reachability);
+    };
+
+    let quality = if measure_quality {
+        if let Some(content) = output.content.as_deref() {
+            compute_scrape_quality(content, fixture.truth_text.as_deref(), fixture.lie_text.as_deref())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let reachability = if !fixture.verify_selectors.is_empty() || !fixture.verify_text.is_empty() {
+        Some(crate::verify::verify_content(fixture, output))
+    } else {
+        None
+    };
+
+    (
+        Some(output.status_code),
+        output.browser_used,
+        output.js_render_hint,
+        output.content_size,
+        quality,
+        reachability,
+    )
+}
+
+/// Compute p50/p95/p99 memory usage in bytes from per-iteration records.
+fn memory_percentiles(records: &[IterationResult]) -> (u64, u64, u64) {
+    if records.is_empty() {
+        return (0, 0, 0);
+    }
+
+    let mut memory_samples: Vec<f64> = records.iter().map(|r| r.memory_bytes as f64).collect();
+    let p50 = crate::stats::percentile_r7(&mut memory_samples, 0.5).unwrap_or(0.0) as u64;
+    let p95 = crate::stats::percentile_r7(&mut memory_samples, 0.95).unwrap_or(0.0) as u64;
+    let p99 = crate::stats::percentile_r7(&mut memory_samples, 0.99).unwrap_or(0.0) as u64;
+    (p50, p95, p99)
+}
+
+/// Aggregate per-iteration records into a [`ScrapeBenchmarkResult`].
+fn build_result(args: BuildResultArgs<'_>) -> ScrapeBenchmarkResult {
+    let BuildResultArgs {
+        fixture,
+        framework,
+        records,
+        last_output,
+        resource_metrics,
+        execution_mode,
+        measure_quality,
+    } = args;
+
+    let success = records.iter().any(|r| r.success);
+    let error_message = records
+        .iter()
+        .filter_map(|r| r.error.as_deref())
+        .next_back()
+        .map(str::to_owned);
+    let error_kind = classify_error(error_message.as_deref());
+
+    let (mean_duration_ms, statistics) = duration_statistics_for(records);
+
+    let (status_code, browser_used, js_render_hint, content_size, quality, reachability) =
+        last_output_fields(fixture, last_output, measure_quality);
 
     let throughput = if mean_duration_ms > 0.0 {
         1_000.0 / mean_duration_ms
@@ -392,15 +480,7 @@ fn build_result(
     };
 
     let peak_memory_bytes = records.iter().map(|r| r.memory_bytes).max().unwrap_or(0);
-    let (p50_memory_bytes, p95_memory_bytes, p99_memory_bytes) = if records.is_empty() {
-        (0, 0, 0)
-    } else {
-        let mut memory_samples: Vec<f64> = records.iter().map(|r| r.memory_bytes as f64).collect();
-        let p50 = crate::stats::percentile_r7(&mut memory_samples, 0.5).unwrap_or(0.0) as u64;
-        let p95 = crate::stats::percentile_r7(&mut memory_samples, 0.95).unwrap_or(0.0) as u64;
-        let p99 = crate::stats::percentile_r7(&mut memory_samples, 0.99).unwrap_or(0.0) as u64;
-        (p50, p95, p99)
-    };
+    let (p50_memory_bytes, p95_memory_bytes, p99_memory_bytes) = memory_percentiles(records);
 
     let metrics = PerformanceMetrics {
         peak_memory_bytes,
@@ -592,15 +672,15 @@ mod tests {
             category: None,
         };
 
-        let result = build_result(
-            &fixture,
-            "test-adapter",
-            &[],
-            None,
-            &zeroed_resource_metrics(),
-            ExecutionMode::Cached,
-            false,
-        );
+        let result = build_result(BuildResultArgs {
+            fixture: &fixture,
+            framework: "test-adapter",
+            records: &[],
+            last_output: None,
+            resource_metrics: &zeroed_resource_metrics(),
+            execution_mode: ExecutionMode::Cached,
+            measure_quality: false,
+        });
 
         assert!(!result.success);
         assert_eq!(result.error_kind, ErrorKind::None);
@@ -631,15 +711,15 @@ mod tests {
             memory_bytes: 0,
         }];
 
-        let result = build_result(
-            &fixture,
-            "test-adapter",
-            &records,
-            None,
-            &zeroed_resource_metrics(),
-            ExecutionMode::Cached,
-            false,
-        );
+        let result = build_result(BuildResultArgs {
+            fixture: &fixture,
+            framework: "test-adapter",
+            records: &records,
+            last_output: None,
+            resource_metrics: &zeroed_resource_metrics(),
+            execution_mode: ExecutionMode::Cached,
+            measure_quality: false,
+        });
 
         assert!(result.success);
         assert!((result.duration_ms - 123.0).abs() < 1e-9);
@@ -673,15 +753,15 @@ mod tests {
             memory_bytes: 0,
         }];
 
-        let result = build_result(
-            &fixture,
-            "test-adapter",
-            &records,
-            None,
-            &zeroed_resource_metrics(),
-            ExecutionMode::Live,
-            false,
-        );
+        let result = build_result(BuildResultArgs {
+            fixture: &fixture,
+            framework: "test-adapter",
+            records: &records,
+            last_output: None,
+            resource_metrics: &zeroed_resource_metrics(),
+            execution_mode: ExecutionMode::Live,
+            measure_quality: false,
+        });
 
         assert!(!result.success);
         assert_eq!(result.error_kind, ErrorKind::Timeout);

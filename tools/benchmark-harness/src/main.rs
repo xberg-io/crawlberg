@@ -184,6 +184,28 @@ enum Commands {
     },
 }
 
+/// Arguments for the `run` subcommand, grouped into a single struct so
+/// [`cmd_run`] stays within the parameter-count limit. Field names and types
+/// mirror the `Commands::Run` clap variant exactly.
+struct RunArgs {
+    fixtures: PathBuf,
+    mode: CliExecutionMode,
+    browser_backend: CliBrowserBackend,
+    frameworks: Vec<String>,
+    output: PathBuf,
+    max_concurrent: usize,
+    rate_limit_ms: u64,
+    timeout: u64,
+    warmup: usize,
+    iterations: usize,
+    measure_quality: bool,
+    save_cache: bool,
+    cache_dir: PathBuf,
+    shard: Option<String>,
+    filter: Option<String>,
+    preset: String,
+}
+
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -213,7 +235,7 @@ fn main() -> ExitCode {
             shard,
             filter,
             preset,
-        } => cmd_run(
+        } => cmd_run(RunArgs {
             fixtures,
             mode,
             browser_backend,
@@ -230,7 +252,7 @@ fn main() -> ExitCode {
             shard,
             filter,
             preset,
-        ),
+        }),
         Commands::Profile {
             fixtures,
             output,
@@ -329,31 +351,10 @@ fn cmd_download(_dataset: String, output: PathBuf, force: bool) -> benchmark_har
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cmd_run(
-    fixtures: PathBuf,
-    mode: CliExecutionMode,
-    browser_backend: CliBrowserBackend,
-    frameworks: Vec<String>,
-    output: PathBuf,
-    max_concurrent: usize,
-    rate_limit_ms: u64,
-    timeout: u64,
-    warmup: usize,
-    iterations: usize,
-    measure_quality: bool,
-    save_cache: bool,
-    cache_dir: PathBuf,
-    shard: Option<String>,
-    filter: Option<String>,
-    preset: String,
-) -> benchmark_harness::Result<()> {
-    let execution_mode = match mode {
-        CliExecutionMode::Live => ExecutionMode::Live,
-        CliExecutionMode::Cached => ExecutionMode::Cached,
-    };
-
-    for framework in &frameworks {
+/// Warn about any requested framework other than `crawlberg-native`, the only
+/// framework this harness currently supports.
+fn warn_unknown_frameworks(frameworks: &[String]) {
+    for framework in frameworks {
         if framework != "crawlberg-native" {
             tracing::warn!(
                 framework = %framework,
@@ -361,35 +362,51 @@ fn cmd_run(
             );
         }
     }
+}
 
-    let parsed_shard = shard.as_deref().map(parse_shard).transpose()?;
+/// Build the [`BenchmarkConfig`] for a `run` invocation from its CLI arguments.
+fn build_run_config(
+    args: &RunArgs,
+    execution_mode: ExecutionMode,
+    parsed_shard: Option<(usize, usize)>,
+) -> BenchmarkConfig {
+    let dataset_name = args.fixtures.file_stem().and_then(|s| s.to_str()).map(str::to_owned);
 
-    let dataset_name = fixtures.file_stem().and_then(|s| s.to_str()).map(str::to_owned);
-
-    let config = BenchmarkConfig {
-        output_dir: output.clone(),
+    BenchmarkConfig {
+        output_dir: args.output.clone(),
         execution_mode,
-        max_concurrent,
-        rate_limit_ms,
-        timeout: Duration::from_secs(timeout),
-        warmup_iterations: warmup,
-        benchmark_iterations: iterations,
-        measure_quality,
-        save_cache,
-        cache_dir: cache_dir.clone(),
+        max_concurrent: args.max_concurrent,
+        rate_limit_ms: args.rate_limit_ms,
+        timeout: Duration::from_secs(args.timeout),
+        warmup_iterations: args.warmup,
+        benchmark_iterations: args.iterations,
+        measure_quality: args.measure_quality,
+        save_cache: args.save_cache,
+        cache_dir: args.cache_dir.clone(),
         shard: parsed_shard,
-        filter: filter.clone(),
+        filter: args.filter.clone(),
         dataset_name,
-    };
+    }
+}
 
+/// Load, filter, and shard the fixture set for a `run` invocation.
+///
+/// # Errors
+///
+/// Returns [`benchmark_harness::Error::Fixture`] if no fixtures remain after
+/// filtering, and propagates load/filter errors from [`benchmark_harness::fixture::FixtureManager`].
+fn load_run_fixtures(
+    args: &RunArgs,
+    parsed_shard: Option<(usize, usize)>,
+) -> benchmark_harness::Result<benchmark_harness::fixture::FixtureManager> {
     let mut fm = benchmark_harness::fixture::FixtureManager::new();
-    if fixtures.is_dir() {
-        fm.load_directory(&fixtures)?;
+    if args.fixtures.is_dir() {
+        fm.load_directory(&args.fixtures)?;
     } else {
-        fm.load(&fixtures)?;
+        fm.load(&args.fixtures)?;
     }
 
-    if let Some(ref f) = filter {
+    if let Some(ref f) = args.filter {
         fm.filter_url(f)?;
     }
     if let Some((idx, total)) = parsed_shard {
@@ -402,15 +419,54 @@ fn cmd_run(
         ));
     }
 
+    Ok(fm)
+}
+
+/// Aggregate and persist the results of a `run` invocation, printing the
+/// summary and output-location messages.
+///
+/// # Errors
+///
+/// Returns [`benchmark_harness::Error`] if writing results or fixture outputs fails.
+fn write_run_outputs(
+    output: &std::path::Path,
+    results: &[benchmark_harness::ScrapeBenchmarkResult],
+    fixture_entries: &[benchmark_harness::ScrapeFixture],
+    fixture_outputs: &[(String, Option<benchmark_harness::adapter::ScrapeOutput>)],
+    config: &BenchmarkConfig,
+    adapter_name: &str,
+) -> benchmark_harness::Result<()> {
+    let output_data = benchmark_harness::output::aggregate_results(results, fixture_entries, config, adapter_name);
+    benchmark_harness::output::write_results(output, &output_data)?;
+    benchmark_harness::output::write_fixture_outputs(output, results, fixture_outputs, fixture_entries)?;
+    benchmark_harness::output::print_summary(&output_data);
+
+    eprintln!("Results written to {}", output.join("results.json").display());
+    eprintln!("Fixture outputs written to {}", output.join("fixtures").display());
+    Ok(())
+}
+
+fn cmd_run(args: RunArgs) -> benchmark_harness::Result<()> {
+    let execution_mode = match args.mode {
+        CliExecutionMode::Live => ExecutionMode::Live,
+        CliExecutionMode::Cached => ExecutionMode::Cached,
+    };
+
+    warn_unknown_frameworks(&args.frameworks);
+
+    let parsed_shard = args.shard.as_deref().map(parse_shard).transpose()?;
+    let config = build_run_config(&args, execution_mode, parsed_shard);
+
+    let fm = load_run_fixtures(&args, parsed_shard)?;
     eprintln!("Loaded {} fixtures", fm.len());
 
-    let cache = if execution_mode == ExecutionMode::Cached || save_cache {
-        Some(benchmark_harness::cache::HtmlCache::open(&cache_dir)?)
+    let cache = if execution_mode == ExecutionMode::Cached || args.save_cache {
+        Some(benchmark_harness::cache::HtmlCache::open(&args.cache_dir)?)
     } else {
         None
     };
 
-    let crawl_config = crawl_config_for_backend(&preset, browser_backend, max_concurrent)?;
+    let crawl_config = crawl_config_for_backend(&args.preset, args.browser_backend, args.max_concurrent)?;
     let adapter: Arc<dyn benchmark_harness::adapter::ScrapeAdapter> = Arc::new(
         benchmark_harness::adapters::native::NativeAdapter::with_config(crawl_config)?,
     );
@@ -427,14 +483,14 @@ fn cmd_run(
         .map_err(|e| benchmark_harness::Error::Config(format!("failed to create tokio runtime: {e}")))?;
     let (results, fixture_outputs) = rt.block_on(runner.run())?;
 
-    let output_data = benchmark_harness::output::aggregate_results(&results, &fixture_entries, &config, adapter.name());
-    benchmark_harness::output::write_results(&output, &output_data)?;
-    benchmark_harness::output::write_fixture_outputs(&output, &results, &fixture_outputs, &fixture_entries)?;
-    benchmark_harness::output::print_summary(&output_data);
-
-    eprintln!("Results written to {}", output.join("results.json").display());
-    eprintln!("Fixture outputs written to {}", output.join("fixtures").display());
-    Ok(())
+    write_run_outputs(
+        &args.output,
+        &results,
+        &fixture_entries,
+        &fixture_outputs,
+        &config,
+        adapter.name(),
+    )
 }
 
 fn cmd_profile(

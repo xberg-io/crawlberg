@@ -15,11 +15,30 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import Final
 
 try:
     import tomllib
 except ImportError:
     import tomli as tomllib  # type: ignore[import-untyped]
+
+
+# ~keep Order is load-bearing: it fixes the `members` order in the generated vendor/Cargo.toml,
+# ~keep which is why the copy list and the members list are one constant rather than two.
+CRATE_SOURCES: Final[tuple[tuple[str, str], ...]] = (
+    ("crates/crawlberg", "crawlberg"),
+    ("crates/crawlberg-ffi", "crawlberg-ffi"),
+    ("crates/crawlberg-tesseract", "crawlberg-tesseract"),
+    ("crates/crawlberg-paddle-ocr", "crawlberg-paddle-ocr"),
+    ("crates/crawlberg-pdfium-render", "crawlberg-pdfium-render"),
+    ("vendor/rb-sys", "rb-sys"),
+)
+
+VENDORED_CRATE_NAMES: Final[tuple[str, ...]] = tuple(dest_name for _, dest_name in CRATE_SOURCES)
+
+BUILD_ARTIFACT_DIRS: Final[tuple[str, ...]] = (".fastembed_cache", "target")
+
+TEMP_FILE_PATTERNS: Final[tuple[str, ...]] = ("*.swp", "*.bak", "*.tmp", "*~")
 
 
 def get_repo_root() -> Path:
@@ -212,18 +231,7 @@ def generate_vendor_cargo_toml(
 
     deps_str = "\n".join(deps_lines)
 
-    members = [
-        name
-        for name in [
-            "crawlberg",
-            "crawlberg-ffi",
-            "crawlberg-tesseract",
-            "crawlberg-paddle-ocr",
-            "crawlberg-pdfium-render",
-            "rb-sys",
-        ]
-        if name in copied_crates
-    ]
+    members = [name for name in VENDORED_CRATE_NAMES if name in copied_crates]
     members_str = ", ".join(f'"{m}"' for m in members)
 
     vendor_toml = f"""[workspace]
@@ -250,29 +258,13 @@ homepage = "https://crawlberg.dev"
         f.write(vendor_toml)
 
 
-def main() -> None:
-    """Main vendoring function."""
-    repo_root: Path = get_repo_root()
+def clean_vendor_dir(vendor_base: Path) -> None:
+    """Remove previously vendored crate directories and the generated workspace manifest.
 
-    print("=== Vendoring crawlberg core crate ===")
-
-    workspace_deps: dict[str, object] = get_workspace_deps(repo_root)
-    core_version: str = get_workspace_version(repo_root)
-
-    print(f"Core version: {core_version}")
-    print(f"Workspace dependencies: {len(workspace_deps)}")
-
-    vendor_base: Path = repo_root / "packages" / "ruby" / "vendor"
-
-    crate_names = [
-        "crawlberg",
-        "crawlberg-ffi",
-        "crawlberg-tesseract",
-        "crawlberg-paddle-ocr",
-        "crawlberg-pdfium-render",
-        "rb-sys",
-    ]
-    for name in crate_names:
+    Args:
+        vendor_base: The packages/ruby/vendor directory
+    """
+    for name in VENDORED_CRATE_NAMES:
         crate_path = vendor_base / name
         if crate_path.exists():
             shutil.rmtree(crate_path)
@@ -281,19 +273,19 @@ def main() -> None:
         vendor_cargo.unlink()
     print("Cleaned vendor crate directories")
 
-    vendor_base.mkdir(parents=True, exist_ok=True)
 
-    crates_to_copy: list[tuple[str, str]] = [
-        ("crates/crawlberg", "crawlberg"),
-        ("crates/crawlberg-ffi", "crawlberg-ffi"),
-        ("crates/crawlberg-tesseract", "crawlberg-tesseract"),
-        ("crates/crawlberg-paddle-ocr", "crawlberg-paddle-ocr"),
-        ("crates/crawlberg-pdfium-render", "crawlberg-pdfium-render"),
-        ("vendor/rb-sys", "rb-sys"),
-    ]
+def copy_crates(repo_root: Path, vendor_base: Path) -> list[str]:
+    """Copy each source crate into the vendor directory.
 
+    Args:
+        repo_root: Repository root directory
+        vendor_base: The packages/ruby/vendor directory
+
+    Returns:
+        The vendored names of the crates that were copied successfully.
+    """
     copied_crates: list[str] = []
-    for src_rel, dest_name in crates_to_copy:
+    for src_rel, dest_name in CRATE_SOURCES:
         src: Path = repo_root / src_rel
         dest: Path = vendor_base / dest_name
         if src.exists():
@@ -305,24 +297,42 @@ def main() -> None:
                 print(f"Warning: Failed to copy {dest_name}: {e}", file=sys.stderr)
         else:
             print(f"Warning: Source directory not found: {src_rel}")
+    return copied_crates
 
-    artifact_dirs: list[str] = [".fastembed_cache", "target"]
-    temp_patterns: list[str] = ["*.swp", "*.bak", "*.tmp", "*~"]
 
+def remove_build_artifacts(vendor_base: Path, copied_crates: list[str]) -> None:
+    """Delete build output directories and editor temp files from the copied crates.
+
+    Args:
+        vendor_base: The packages/ruby/vendor directory
+        copied_crates: List of crates that were successfully copied
+    """
     for crate_dir in copied_crates:
         crate_path: Path = vendor_base / crate_dir
         if crate_path.exists():
-            for artifact_dir in artifact_dirs:
+            for artifact_dir in BUILD_ARTIFACT_DIRS:
                 artifact: Path = crate_path / artifact_dir
                 if artifact.exists():
                     shutil.rmtree(artifact)
 
-            for pattern in temp_patterns:
+            for pattern in TEMP_FILE_PATTERNS:
                 for f in crate_path.rglob(pattern):
                     f.unlink()
 
     print("Cleaned build artifacts")
 
+
+def rewrite_crate_manifests(
+    vendor_base: Path, copied_crates: list[str], core_version: str, workspace_deps: dict[str, object]
+) -> None:
+    """Replace workspace inheritance in each copied crate's Cargo.toml with literal values.
+
+    Args:
+        vendor_base: The packages/ruby/vendor directory
+        copied_crates: List of crates that were successfully copied
+        core_version: Core version string
+        workspace_deps: Workspace dependencies from Cargo.toml
+    """
     for crate_dir in copied_crates:
         crate_toml = vendor_base / crate_dir / "Cargo.toml"
         if crate_toml.exists():
@@ -346,69 +356,105 @@ def main() -> None:
             replace_workspace_deps_in_toml(crate_toml, workspace_deps)
             print(f"Updated {crate_dir}/Cargo.toml")
 
-    if "crawlberg-ffi" in copied_crates and "crawlberg" in copied_crates:
-        ffi_toml = vendor_base / "crawlberg-ffi" / "Cargo.toml"
-        if ffi_toml.exists():
-            with open(ffi_toml) as f:
-                content = f.read()
 
-            content = re.sub(
-                r'(crawlberg = \{) (?:(?:path|version) = "[^"]*", )?', r'\1 path = "../crawlberg", ', content
-            )
+def rewrite_ffi_manifest(vendor_base: Path, copied_crates: list[str]) -> None:
+    """Point the vendored crawlberg-ffi crate at the vendored crawlberg crate by path.
 
-            with open(ffi_toml, "w") as f:
-                f.write(content)
+    Args:
+        vendor_base: The packages/ruby/vendor directory
+        copied_crates: List of crates that were successfully copied
+    """
+    if "crawlberg-ffi" not in copied_crates or "crawlberg" not in copied_crates:
+        return
 
-    if "crawlberg" in copied_crates:
-        crawlberg_toml = vendor_base / "crawlberg" / "Cargo.toml"
-        if crawlberg_toml.exists():
-            with open(crawlberg_toml) as f:
-                content = f.read()
+    ffi_toml = vendor_base / "crawlberg-ffi" / "Cargo.toml"
+    if not ffi_toml.exists():
+        return
 
-            if "crawlberg-tesseract" in copied_crates:
-                content = re.sub(
-                    r'crawlberg-tesseract = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
-                    'crawlberg-tesseract = { path = "../crawlberg-tesseract", optional = true }',
-                    content,
-                )
-            if "crawlberg-paddle-ocr" in copied_crates:
-                content = re.sub(
-                    r'crawlberg-paddle-ocr = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
-                    'crawlberg-paddle-ocr = { path = "../crawlberg-paddle-ocr", optional = true }',
-                    content,
-                )
-            if "crawlberg-pdfium-render" in copied_crates:
-                content = re.sub(
-                    r'pdfium-render = \{ package = "crawlberg-pdfium-render", (?:path = "[^"]*", )?version = "[^"]*"',
-                    'pdfium-render = { package = "crawlberg-pdfium-render", path = "../crawlberg-pdfium-render"',
-                    content,
-                )
+    with open(ffi_toml) as f:
+        content = f.read()
 
-            with open(crawlberg_toml, "w") as f:
-                f.write(content)
+    content = re.sub(r'(crawlberg = \{) (?:(?:path|version) = "[^"]*", )?', r'\1 path = "../crawlberg", ', content)
 
-    generate_vendor_cargo_toml(repo_root, workspace_deps, core_version, copied_crates)
-    print("Generated vendor/Cargo.toml")
+    with open(ffi_toml, "w") as f:
+        f.write(content)
 
-    native_toml = repo_root / "packages" / "ruby" / "ext" / "crawlberg_rb" / "native" / "Cargo.toml"
-    if native_toml.exists():
-        with open(native_toml) as f:
-            content = f.read()
 
+def rewrite_crawlberg_manifest(vendor_base: Path, copied_crates: list[str]) -> None:
+    """Point the vendored crawlberg crate at its vendored optional sibling crates by path.
+
+    Args:
+        vendor_base: The packages/ruby/vendor directory
+        copied_crates: List of crates that were successfully copied
+    """
+    if "crawlberg" not in copied_crates:
+        return
+
+    crawlberg_toml = vendor_base / "crawlberg" / "Cargo.toml"
+    if not crawlberg_toml.exists():
+        return
+
+    with open(crawlberg_toml) as f:
+        content = f.read()
+
+    if "crawlberg-tesseract" in copied_crates:
         content = re.sub(
-            r'path = "\.\./\.\./\.\./\.\./\.\./crates/crawlberg"', 'path = "../../../vendor/crawlberg"', content
+            r'crawlberg-tesseract = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
+            'crawlberg-tesseract = { path = "../crawlberg-tesseract", optional = true }',
+            content,
         )
+    if "crawlberg-paddle-ocr" in copied_crates:
         content = re.sub(
-            r'path = "\.\./\.\./\.\./\.\./\.\./crates/crawlberg-ffi"',
-            'path = "../../../vendor/crawlberg-ffi"',
+            r'crawlberg-paddle-ocr = \{ (?:path = "[^"]*", )?version = "[^"]*", optional = true \}',
+            'crawlberg-paddle-ocr = { path = "../crawlberg-paddle-ocr", optional = true }',
+            content,
+        )
+    if "crawlberg-pdfium-render" in copied_crates:
+        content = re.sub(
+            r'pdfium-render = \{ package = "crawlberg-pdfium-render", (?:path = "[^"]*", )?version = "[^"]*"',
+            'pdfium-render = { package = "crawlberg-pdfium-render", path = "../crawlberg-pdfium-render"',
             content,
         )
 
-        with open(native_toml, "w") as f:
-            f.write(content)
+    with open(crawlberg_toml, "w") as f:
+        f.write(content)
 
-        print("Updated native extension Cargo.toml to use vendored crates")
 
+def rewrite_native_extension_manifest(repo_root: Path) -> None:
+    """Repoint the Ruby native extension's Cargo.toml at the vendored crates.
+
+    Args:
+        repo_root: Repository root directory
+    """
+    native_toml = repo_root / "packages" / "ruby" / "ext" / "crawlberg_rb" / "native" / "Cargo.toml"
+    if not native_toml.exists():
+        return
+
+    with open(native_toml) as f:
+        content = f.read()
+
+    content = re.sub(
+        r'path = "\.\./\.\./\.\./\.\./\.\./crates/crawlberg"', 'path = "../../../vendor/crawlberg"', content
+    )
+    content = re.sub(
+        r'path = "\.\./\.\./\.\./\.\./\.\./crates/crawlberg-ffi"',
+        'path = "../../../vendor/crawlberg-ffi"',
+        content,
+    )
+
+    with open(native_toml, "w") as f:
+        f.write(content)
+
+    print("Updated native extension Cargo.toml to use vendored crates")
+
+
+def report_summary(core_version: str, copied_crates: list[str]) -> None:
+    """Print the closing vendoring report.
+
+    Args:
+        core_version: Core version string
+        copied_crates: List of crates that were successfully copied
+    """
     print(f"\nVendoring complete (core version: {core_version})")
     print(f"Copied crates: {', '.join(sorted(copied_crates))}")
 
@@ -422,6 +468,42 @@ def main() -> None:
             print("  - rb-sys from crates.io")
     else:
         print("Warning: Some required crates were not copied. Check for missing source directories.")
+
+
+def main() -> None:
+    """Main vendoring function."""
+    repo_root: Path = get_repo_root()
+
+    print("=== Vendoring crawlberg core crate ===")
+
+    workspace_deps: dict[str, object] = get_workspace_deps(repo_root)
+    core_version: str = get_workspace_version(repo_root)
+
+    print(f"Core version: {core_version}")
+    print(f"Workspace dependencies: {len(workspace_deps)}")
+
+    vendor_base: Path = repo_root / "packages" / "ruby" / "vendor"
+
+    clean_vendor_dir(vendor_base)
+
+    vendor_base.mkdir(parents=True, exist_ok=True)
+
+    copied_crates: list[str] = copy_crates(repo_root, vendor_base)
+
+    remove_build_artifacts(vendor_base, copied_crates)
+
+    rewrite_crate_manifests(vendor_base, copied_crates, core_version, workspace_deps)
+
+    rewrite_ffi_manifest(vendor_base, copied_crates)
+
+    rewrite_crawlberg_manifest(vendor_base, copied_crates)
+
+    generate_vendor_cargo_toml(repo_root, workspace_deps, core_version, copied_crates)
+    print("Generated vendor/Cargo.toml")
+
+    rewrite_native_extension_manifest(repo_root)
+
+    report_summary(core_version, copied_crates)
 
 
 if __name__ == "__main__":
