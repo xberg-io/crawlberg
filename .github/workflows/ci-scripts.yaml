@@ -26,6 +26,13 @@ env:
   # it is how a workflow ends up reading as pinned while installing whatever the release API
   # served that morning.
   BATS_VERSION: "1.14.0"
+  # ~keep The `format` job below shells out to a bare `shfmt`, which no runner image ships and
+  # nothing here used to install: the job died with exit 127 ("executable file not found in
+  # $PATH") on every run from 2026-09-15 onward and was red, unnoticed, for nine days. Pinned
+  # rather than "latest" for the same reason BATS_VERSION is: shfmt's default indentation is
+  # tabs and the tree is a fixed point of THIS version, so a silent upgrade reformats every
+  # file under scripts/tests and turns the check red on bytes nobody touched.
+  SHFMT_VERSION: "3.14.1"
 
 jobs:
   bats:
@@ -66,6 +73,29 @@ jobs:
 
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
+
+      # ~keep No org action wraps shfmt and it is not on the runner image, so the binary is
+      # fetched directly from its own release. `poly fmt --check` does NOT cover these files --
+      # measured, not assumed: tab-indenting scripts/tests/bats/lib_common.bats to spaces makes
+      # `shfmt -d` emit a 59-line diff while poly still reports "All formatted", because poly
+      # does not classify `.bats` as shell. This step is load-bearing, not a duplicate of CI Lint.
+      - name: Install shfmt
+        run: |
+          set -euo pipefail
+          url="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          curl -fsSL "$url" -o /usr/local/bin/shfmt
+          chmod +x /usr/local/bin/shfmt
+          # ~keep Assert the binary runs and is the pinned build. Without this a 404 saved as a
+          # 0-byte file would surface later as a confusing parse error rather than a clear one.
+          # The leading "v" is stripped before comparing: shfmt's own release binaries print
+          # "v3.14.1" while a distro/homebrew build prints "3.14.1", and pinning the assertion
+          # to either spelling makes this step fail for a reason that has nothing to do with
+          # formatting.
+          installed="$(shfmt --version | tr -d 'v')"
+          [ "$installed" = "${SHFMT_VERSION}" ] || {
+            echo "expected shfmt ${SHFMT_VERSION}, got '${installed}'" >&2
+            exit 1
+          }
 
       - name: Check shell formatting
         run: task lint:shell
