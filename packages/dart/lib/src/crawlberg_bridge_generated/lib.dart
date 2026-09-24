@@ -67,6 +67,9 @@ Future<BatchCrawlResults> batchCrawl({
   required List<String> urls,
 }) => RustLib.instance.api.crateBatchCrawl(engine: engine, urls: urls);
 
+Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
+    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
+
 Future<ExtractionMeta> createExtractionMetaFromJson({required String json}) =>
     RustLib.instance.api.crateCreateExtractionMetaFromJson(json: json);
 
@@ -78,9 +81,6 @@ Future<ContentConfig> createContentConfigFromJson({required String json}) =>
 
 Future<BrowserConfig> createBrowserConfigFromJson({required String json}) =>
     RustLib.instance.api.crateCreateBrowserConfigFromJson(json: json);
-
-Future<CrawlConfig> createCrawlConfigFromJson({required String json}) =>
-    RustLib.instance.api.crateCreateCrawlConfigFromJson(json: json);
 
 Future<BrowserExtras> createBrowserExtrasFromJson({required String json}) =>
     RustLib.instance.api.crateCreateBrowserExtrasFromJson(json: json);

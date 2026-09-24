@@ -42,6 +42,7 @@
     "c/content/content-204-no-content.md",
     "c/content/content-binary-skip.md",
     "c/content/content-charset-iso8859.md",
+    "c/content/content-default-preset.md",
     "c/content/content-empty-body.md",
     "c/content/content-gzip-compressed.md",
     "c/content/content-large-page-limit.md",
@@ -299,6 +300,7 @@
     "csharp/content/content-204-no-content.md",
     "csharp/content/content-binary-skip.md",
     "csharp/content/content-charset-iso8859.md",
+    "csharp/content/content-default-preset.md",
     "csharp/content/content-empty-body.md",
     "csharp/content/content-gzip-compressed.md",
     "csharp/content/content-large-page-limit.md",
@@ -565,6 +567,7 @@
     "dart/content/content-204-no-content.md",
     "dart/content/content-binary-skip.md",
     "dart/content/content-charset-iso8859.md",
+    "dart/content/content-default-preset.md",
     "dart/content/content-empty-body.md",
     "dart/content/content-gzip-compressed.md",
     "dart/content/content-large-page-limit.md",
@@ -823,6 +826,7 @@
     "elixir/content/content-204-no-content.md",
     "elixir/content/content-binary-skip.md",
     "elixir/content/content-charset-iso8859.md",
+    "elixir/content/content-default-preset.md",
     "elixir/content/content-empty-body.md",
     "elixir/content/content-gzip-compressed.md",
     "elixir/content/content-large-page-limit.md",
@@ -1086,6 +1090,7 @@
     "go/content/content-204-no-content.md",
     "go/content/content-binary-skip.md",
     "go/content/content-charset-iso8859.md",
+    "go/content/content-default-preset.md",
     "go/content/content-empty-body.md",
     "go/content/content-gzip-compressed.md",
     "go/content/content-large-page-limit.md",
@@ -1352,6 +1357,7 @@
     "java/content/content-204-no-content.md",
     "java/content/content-binary-skip.md",
     "java/content/content-charset-iso8859.md",
+    "java/content/content-default-preset.md",
     "java/content/content-empty-body.md",
     "java/content/content-gzip-compressed.md",
     "java/content/content-large-page-limit.md",
@@ -1618,6 +1624,7 @@
     "kotlin-android/content/content-204-no-content.md",
     "kotlin-android/content/content-binary-skip.md",
     "kotlin-android/content/content-charset-iso8859.md",
+    "kotlin-android/content/content-default-preset.md",
     "kotlin-android/content/content-empty-body.md",
     "kotlin-android/content/content-gzip-compressed.md",
     "kotlin-android/content/content-large-page-limit.md",
@@ -1884,6 +1891,7 @@
     "php/content/content-204-no-content.md",
     "php/content/content-binary-skip.md",
     "php/content/content-charset-iso8859.md",
+    "php/content/content-default-preset.md",
     "php/content/content-empty-body.md",
     "php/content/content-gzip-compressed.md",
     "php/content/content-large-page-limit.md",
@@ -2150,6 +2158,7 @@
     "python/content/content-204-no-content.md",
     "python/content/content-binary-skip.md",
     "python/content/content-charset-iso8859.md",
+    "python/content/content-default-preset.md",
     "python/content/content-empty-body.md",
     "python/content/content-gzip-compressed.md",
     "python/content/content-large-page-limit.md",
@@ -2416,6 +2425,7 @@
     "ruby/content/content-204-no-content.md",
     "ruby/content/content-binary-skip.md",
     "ruby/content/content-charset-iso8859.md",
+    "ruby/content/content-default-preset.md",
     "ruby/content/content-empty-body.md",
     "ruby/content/content-gzip-compressed.md",
     "ruby/content/content-large-page-limit.md",
@@ -2682,6 +2692,7 @@
     "rust/content/content-204-no-content.md",
     "rust/content/content-binary-skip.md",
     "rust/content/content-charset-iso8859.md",
+    "rust/content/content-default-preset.md",
     "rust/content/content-empty-body.md",
     "rust/content/content-gzip-compressed.md",
     "rust/content/content-large-page-limit.md",
@@ -2940,6 +2951,7 @@
     "swift/content/content-204-no-content.md",
     "swift/content/content-binary-skip.md",
     "swift/content/content-charset-iso8859.md",
+    "swift/content/content-default-preset.md",
     "swift/content/content-empty-body.md",
     "swift/content/content-gzip-compressed.md",
     "swift/content/content-large-page-limit.md",
@@ -3203,6 +3215,7 @@
     "typescript/content/content-204-no-content.md",
     "typescript/content/content-binary-skip.md",
     "typescript/content/content-charset-iso8859.md",
+    "typescript/content/content-default-preset.md",
     "typescript/content/content-empty-body.md",
     "typescript/content/content-gzip-compressed.md",
     "typescript/content/content-large-page-limit.md",
@@ -3469,6 +3482,7 @@
     "wasm/content/content-204-no-content.md",
     "wasm/content/content-binary-skip.md",
     "wasm/content/content-charset-iso8859.md",
+    "wasm/content/content-default-preset.md",
     "wasm/content/content-empty-body.md",
     "wasm/content/content-gzip-compressed.md",
     "wasm/content/content-large-page-limit.md",
@@ -3718,6 +3732,7 @@
     "zig/content/content-204-no-content.md",
     "zig/content/content-binary-skip.md",
     "zig/content/content-charset-iso8859.md",
+    "zig/content/content-default-preset.md",
     "zig/content/content-empty-body.md",
     "zig/content/content-gzip-compressed.md",
     "zig/content/content-large-page-limit.md",
@@ -4428,6 +4443,18 @@
         "language": "c"
       },
       "path": "c/content/content-charset-iso8859.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "c"
+      },
+      "path": "c/content/content-default-preset.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -7512,6 +7539,18 @@
         "language": "csharp"
       },
       "path": "csharp/content/content-charset-iso8859.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "csharp"
+      },
+      "path": "csharp/content/content-default-preset.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -10712,6 +10751,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "dart"
+      },
+      "path": "dart/content/content-default-preset.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "dart"
       },
@@ -13800,6 +13851,18 @@
         "language": "elixir"
       },
       "path": "elixir/content/content-charset-iso8859.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "elixir"
+      },
+      "path": "elixir/content/content-default-preset.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -16956,6 +17019,18 @@
         "language": "go"
       },
       "path": "go/content/content-charset-iso8859.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "go"
+      },
+      "path": "go/content/content-default-preset.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -20156,6 +20231,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "java"
+      },
+      "path": "java/content/content-default-preset.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "java"
       },
@@ -23340,6 +23427,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/content/content-charset-iso8859.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/content/content-default-preset.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -26540,6 +26639,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "php"
+      },
+      "path": "php/content/content-default-preset.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "php"
       },
@@ -29732,6 +29843,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "python"
+      },
+      "path": "python/content/content-default-preset.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "python"
       },
@@ -32916,6 +33039,18 @@
         "language": "ruby"
       },
       "path": "ruby/content/content-charset-iso8859.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "ruby"
+      },
+      "path": "ruby/content/content-default-preset.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -36219,6 +36354,21 @@
         "language": "rust"
       },
       "path": "rust/content/content-charset-iso8859.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "rust"
+      },
+      "path": "rust/content/content-default-preset.md",
       "language": "rust",
       "target": "rust",
       "session": "rust",
@@ -39948,6 +40098,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "swift"
+      },
+      "path": "swift/content/content-default-preset.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "swift"
       },
@@ -43096,6 +43258,18 @@
         "language": "node"
       },
       "path": "typescript/content/content-charset-iso8859.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "node"
+      },
+      "path": "typescript/content/content-default-preset.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -46296,6 +46470,18 @@
     },
     {
       "key": {
+        "fixture_id": "content_default_preset",
+        "language": "wasm"
+      },
+      "path": "wasm/content/content-default-preset.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "content_empty_body",
         "language": "wasm"
       },
@@ -49276,6 +49462,18 @@
         "language": "zig"
       },
       "path": "zig/content/content-charset-iso8859.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "content_default_preset",
+        "language": "zig"
+      },
+      "path": "zig/content/content-default-preset.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -54366,6 +54564,66 @@
     },
     {
       "fixture_id": "content_charset_iso8859",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_default_preset",
       "language": "zig"
     },
     {
@@ -70124,6 +70382,66 @@
     },
     {
       "fixture_id": "content_charset_iso8859",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "c"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "go"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "java"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "node"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "php"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "python"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "content_default_preset",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "content_default_preset",
       "language": "zig"
     },
     {
