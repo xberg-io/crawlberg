@@ -675,9 +675,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         builder = builder
             .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
             .env("OS_ACTIVITY_MODE", "disable");
-        for arg in crate::browser_pool::safe_default_args() {
-            builder = builder.arg(arg);
-        }
+        builder = crate::browser_pool::apply_default_args(builder);
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;

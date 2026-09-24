@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -31,8 +31,18 @@ const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// - `--metrics-recording-only` → "unknown command"
 ///
 /// We detect snap chromium at runtime and return a filtered set when detected.
+///
+/// ~keep This is the single source of every launch path's default Chrome flags
+/// ~keep (`browser.rs`, `browser_pool.rs`, `interact/chromiumoxide.rs` all call this
+/// ~keep function; none of them keeps its own copy of the list). The returned strings are
+/// ~keep already run through `chrome_arg_key`, so every caller can hand them straight to
+/// ~keep chromiumoxide's `BrowserConfig::arg` without re-stripping the `--`. Normalizing
+/// ~keep here, once, means a fourth launch path can't reintroduce the double-dash bug
+/// ~keep (see `chrome_args.rs`) by forgetting to call `chrome_arg_key` itself.
+/// ~keep Caller-supplied `chrome_args` config entries do not come through this function
+/// ~keep and still need their own `chrome_arg_key` call at the call site.
 pub(crate) fn safe_default_args() -> Vec<&'static str> {
-    let all_args = vec![
+    let mut all_args = vec![
         "--disable-background-networking",
         "--enable-features=NetworkService,NetworkServiceInProcess",
         "--disable-background-timer-throttling",
@@ -56,9 +66,20 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
         "--lang=en_US",
     ];
 
+    // ~keep macOS shows a blocking "wants to use your confidential information stored in
+    // ~keep Chrome Safe Storage" prompt unless told to use a mock keychain instead.
+    // ~keep `--use-mock-keychain` (Chromium's `kUseMockKeychain`) is defined and consumed only
+    // ~keep in the macOS os_crypt backend that reads the login keychain; on Linux and Windows
+    // ~keep Chrome's os_crypt backend never looks at this switch, so passing it there is a
+    // ~keep no-op, not a behavior change. Gate it here anyway rather than relying on that
+    // ~keep upstream no-op, so this list documents its own platform scope.
+    if cfg!(target_os = "macos") {
+        all_args.push("--use-mock-keychain");
+    }
+
     let is_snap = std::path::Path::new("/snap/chromium/current/usr/bin/chromium").exists();
 
-    if is_snap {
+    let filtered: Vec<&'static str> = if is_snap {
         all_args
             .into_iter()
             .filter(|&arg| {
@@ -73,7 +94,24 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
             .collect()
     } else {
         all_args
+    };
+
+    filtered.into_iter().map(chrome_arg_key).collect()
+}
+
+/// Push every entry of [`safe_default_args`] onto `builder`.
+///
+/// ~keep All three launch paths (`browser.rs`, `browser_pool.rs`,
+/// ~keep `interact/chromiumoxide.rs`) call this instead of looping over
+/// ~keep `safe_default_args()` themselves, so the loop that hands flags to
+/// ~keep chromiumoxide exists exactly once. A fourth launch path gets the fix
+/// ~keep by calling this function; it cannot reintroduce the double-dash bug by
+/// ~keep writing its own loop and forgetting to normalize.
+pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserConfigBuilder {
+    for arg in safe_default_args() {
+        builder = builder.arg(arg);
     }
+    builder
 }
 
 /// Configuration for a [`BrowserPool`].
@@ -334,9 +372,7 @@ impl BrowserPool {
             builder = builder
                 .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
                 .env("OS_ACTIVITY_MODE", "disable");
-            for arg in safe_default_args() {
-                builder = builder.arg(chrome_arg_key(arg));
-            }
+            builder = apply_default_args(builder);
             for arg in &self.config.chrome_args {
                 builder = builder.arg(chrome_arg_key(arg.as_str()));
             }
@@ -465,5 +501,66 @@ mod tests {
         pool.shutdown().await;
         let result = pool.acquire_page().await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
+        // chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an
+        // already-`--`-prefixed entry would render as `----...` and Chrome discards
+        // it as an unknown flag (see chrome_args.rs).
+        for arg in safe_default_args() {
+            let rendered = format!("--{arg}");
+            assert!(!rendered.starts_with("----"), "double-prefixed flag: {rendered}");
+        }
+    }
+
+    #[test]
+    fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
+        let args = safe_default_args();
+        if cfg!(target_os = "macos") {
+            assert!(
+                args.contains(&"use-mock-keychain"),
+                "missing --use-mock-keychain on macOS"
+            );
+        } else {
+            assert!(
+                !args.contains(&"use-mock-keychain"),
+                "use-mock-keychain should be macOS-only"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_default_args_produces_normalized_flags() {
+        let builder = apply_default_args(BrowserConfig::builder());
+        let debug = format!("{builder:?}");
+        assert!(
+            !debug.contains("----"),
+            "double-prefixed flag reached the builder: {debug}"
+        );
+        if cfg!(target_os = "macos") {
+            assert!(
+                debug.contains("use-mock-keychain"),
+                "builder is missing use-mock-keychain: {debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_launch_path_uses_the_shared_apply_default_args_helper() {
+        // ~keep Structural guard for the double-dash regression (see chrome_args.rs and
+        // ~keep safe_default_args' doc comment): every Chrome launch path must route
+        // ~keep through `apply_default_args` instead of looping over `safe_default_args()`
+        // ~keep (or a hand-rolled copy of it) itself, so it can't forget to normalize.
+        for (path, src) in [
+            ("browser.rs", include_str!("browser.rs")),
+            ("browser_pool.rs", include_str!("browser_pool.rs")),
+            ("interact/chromiumoxide.rs", include_str!("interact/chromiumoxide.rs")),
+        ] {
+            assert!(
+                src.contains("apply_default_args("),
+                "{path} does not call the shared apply_default_args helper"
+            );
+        }
     }
 }

@@ -9,7 +9,6 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -416,9 +415,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             .new_headless_mode()
             .user_data_dir(&user_data_dir)
             .disable_default_args();
-        for arg in safe_default_args() {
-            builder = builder.arg(chrome_arg_key(arg));
-        }
+        builder = crate::browser_pool::apply_default_args(builder);
         if let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) {
             // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
             // ~keep `----proxy-server=...` and the proxy was silently never applied.
@@ -435,48 +432,5 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
                 Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
             }
         }
-    }
-}
-
-fn safe_default_args() -> Vec<&'static str> {
-    let all_args = vec![
-        "--disable-background-networking",
-        "--enable-features=NetworkService,NetworkServiceInProcess",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-breakpad",
-        "--disable-client-side-phishing-detection",
-        "--disable-component-extensions-with-background-pages",
-        "--disable-default-apps",
-        "--disable-dev-shm-usage",
-        "--disable-features=TranslateUI",
-        "--disable-hang-monitor",
-        "--disable-ipc-flooding-protection",
-        "--disable-popup-blocking",
-        "--disable-prompt-on-repost",
-        "--disable-renderer-backgrounding",
-        "--disable-sync",
-        "--force-color-profile=srgb",
-        "--metrics-recording-only",
-        "--no-first-run",
-        "--password-store=basic",
-        "--lang=en_US",
-    ];
-
-    if std::path::Path::new("/snap/chromium/current/usr/bin/chromium").exists() {
-        all_args
-            .into_iter()
-            .filter(|&arg| {
-                !matches!(
-                    arg,
-                    "--disable-background-networking"
-                        | "--enable-features=NetworkService,NetworkServiceInProcess"
-                        | "--disable-background-timer-throttling"
-                        | "--metrics-recording-only"
-                )
-            })
-            .collect()
-    } else {
-        all_args
     }
 }
