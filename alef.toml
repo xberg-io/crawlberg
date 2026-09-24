@@ -588,6 +588,10 @@ traineddata = "traineddata"
 ".alef-ownership.toml" = ["file-too-long"]
 ".github/workflows/publish.yaml" = ["file-too-long"]
 "CHANGELOG.md" = ["file-too-long"]
+# ~keep The docs-site mirror of CHANGELOG.md, kept in sync by hand. It was missing from this list
+# ~keep while the original was on it, so `poly lint .` reported it on every run; both files grow
+# ~keep by the same entry at every release, so they belong here on the same footing.
+"docs-site/src/content/docs/changelog.md" = ["file-too-long"]
 "alef.toml" = ["file-too-long"]
 "crates/crawlberg-browser/src/js/ops.rs" = ["too-many-parameters"]
 "crates/crawlberg/src/browser.rs" = ["too-many-parameters"]
