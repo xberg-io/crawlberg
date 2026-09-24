@@ -79,7 +79,10 @@ csharp = "record"
 reference_output = "docs-site/src/content/docs/reference"
 
 [workspace.docs.cli]
-sources = ["crates/crawlberg-cli/src/main.rs"]
+# ~keep The clap types (Cli, Commands, the per-subcommand Args structs) live in cli.rs; main.rs
+# ~keep holds only the dispatch. Both are listed because this is a file-level parse, not a module
+# ~keep graph walk -- see the note on [[crates]] sources. ~keep
+sources = ["crates/crawlberg-cli/src/main.rs", "crates/crawlberg-cli/src/cli.rs"]
 
 [workspace.docs.mcp]
 sources = ["crates/crawlberg/src/mcp/server.rs"]
@@ -581,9 +584,6 @@ traineddata = "traineddata"
 ]
 "crates/crawlberg-cli/src/main.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
 "crates/crawlberg/src/browser.rs" = ["cyclomatic-complexity", "function-too-long", "too-many-parameters"]
-"crates/crawlberg/src/defaults/rate_limiter.rs" = ["nesting-too-deep"]
-"crates/crawlberg/src/document.rs" = ["function-too-long"]
-"crates/crawlberg/src/engine/builder.rs" = ["function-too-long"]
 "crates/crawlberg/src/engine/crawl_loop.rs" = [
   "cyclomatic-complexity",
   "file-too-long",
@@ -596,13 +596,7 @@ traineddata = "traineddata"
   "function-too-long",
   "nesting-too-deep",
 ]
-"crates/crawlberg/src/html/detection.rs" = ["cyclomatic-complexity"]
-"crates/crawlberg/src/html/images.rs" = ["function-too-long"]
-"crates/crawlberg/src/html/json_ld.rs" = ["nesting-too-deep"]
-"crates/crawlberg/src/html/metadata.rs" = ["function-too-long", "nesting-too-deep"]
 "crates/crawlberg/src/http.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long", "nesting-too-deep"]
-"crates/crawlberg/src/interact/chromiumoxide.rs" = ["function-too-long"]
-"crates/crawlberg/src/interact/validation.rs" = ["function-too-long"]
 "crates/crawlberg/src/map.rs" = ["cyclomatic-complexity", "function-too-long", "nesting-too-deep"]
 "crates/crawlberg/src/mcp/server.rs" = ["file-too-long", "function-too-long"]
 "crates/crawlberg/src/native_browser.rs" = ["function-too-long"]
@@ -611,11 +605,8 @@ traineddata = "traineddata"
 "crates/crawlberg/src/robots.rs" = ["cyclomatic-complexity", "function-too-long"]
 "crates/crawlberg/src/scrape.rs" = ["function-too-long"]
 "crates/crawlberg/src/sitemap.rs" = ["function-too-long", "nesting-too-deep", "too-many-parameters"]
-"crates/crawlberg/src/stealth.rs" = ["function-too-long"]
-"crates/crawlberg/src/tower/service.rs" = ["function-too-long"]
 "crates/crawlberg/src/types/config.rs" = ["cyclomatic-complexity", "file-too-long", "function-too-long"]
 "crates/crawlberg/src/types/results.rs" = ["too-many-parameters"]
-"crates/crawlberg/src/waf/rules.rs" = ["function-too-long"]
 "plugin/.ai-rulez/opencode/index.js" = ["function-too-long"]
 "scripts/ci/ruby/vendor-crawlberg-core.py" = ["function-too-long"]
 "tools/benchmark-harness/src/dataset.rs" = ["function-too-long"]
@@ -892,8 +883,18 @@ traineddata = "traineddata"
 [[crates]]
 name = "crawlberg"
 core_import = "crawlberg"
+# ~keep These are parsed as FILES, not as a module graph: alef reads each path and extracts the
+# ~keep type and enum definitions written in it. A `pub use` re-export does not stand in for the
+# ~keep definition, so splitting one of these files means listing its new siblings here too.
+# ~keep Missing one is not a soft failure -- `alef generate` aborts with "[crates.include].types
+# ~keep matched no type or enum in crate `crawlberg`", which fails CI Rust's `alef verify` and
+# ~keep every regen. `cargo check --workspace` stays green throughout, because Rust resolves the
+# ~keep re-exports perfectly well; only regeneration notices.
 sources = [
   "crates/crawlberg/src/types/config.rs",
+  "crates/crawlberg/src/types/config/primitives.rs",
+  "crates/crawlberg/src/types/config/credentials.rs",
+  "crates/crawlberg/src/types/config/sections.rs",
   "crates/crawlberg/src/types/results.rs",
   "crates/crawlberg/src/types/discovery.rs",
   "crates/crawlberg/src/types/metadata.rs",
@@ -903,10 +904,18 @@ sources = [
   "crates/crawlberg/src/citations.rs",
   "crates/crawlberg/src/bindings.rs",
   "crates/crawlberg/src/net/ssrf.rs",
+  "crates/crawlberg/src/net/ssrf/policy.rs",
+  "crates/crawlberg/src/net/ssrf/matcher.rs",
+  "crates/crawlberg/src/net/ssrf/error.rs",
 ]
 version_from = "Cargo.toml"
 workspace_root = "."
-path_mappings = { "crawlberg::citations" = "crawlberg", "crawlberg::bindings" = "crawlberg" }
+# ~keep alef derives a type's import path from the FILE it was found in, not from where the crate
+# ~keep actually re-exports it. Splitting types/config.rs into submodules therefore made it emit
+# ~keep `crawlberg::config::sections::BrowserConfig`, which is not a real path and does not
+# ~keep compile -- the crate re-exports all of these at the root. Every entry below maps a derived
+# ~keep path back to the real one. Add one whenever a listed source file is split.
+path_mappings = { "crawlberg::citations" = "crawlberg", "crawlberg::bindings" = "crawlberg", "crawlberg::config::primitives" = "crawlberg", "crawlberg::config::credentials" = "crawlberg", "crawlberg::config::sections" = "crawlberg" }
 features = ["interact", "browser-chromiumoxide"]
 
 [crates.python]
@@ -1501,11 +1510,20 @@ function = "scrape"
 [crates.e2e.call.overrides.wasm]
 handle_config_type = "WasmCrawlConfig"
 
+# ~keep Every nested config object a generated wasm test writes to must be listed here. The
+# wasm-bindgen getter for such a field returns a DETACHED clone, so the direct idiom
+# `engineConfig.ssrf.denyPrivate = false` mutates a throwaway and is silently discarded; only a
+# read-modify-write-back assignment takes effect, and that is what this list makes the emitter
+# produce. `ssrf` was missing until 1.7.2, so that exact line appeared 215 times across
+# e2e/wasm/tests and was a no-op in every one -- masked because the suite sets
+# CRAWLBERG_ALLOW_PRIVATE_NETWORK, which flips the same field by another route. Adding a nested
+# config object to a fixture without adding it here reintroduces a silently-ignored setting.
 [crates.e2e.call.overrides.wasm.nested_types]
 auth = "WasmAuthConfig"
 browser = "WasmBrowserConfig"
 content = "WasmContentConfig"
 proxy = "WasmProxyConfig"
+ssrf = "WasmSsrfPolicy"
 
 [crates.e2e.call.overrides.brew]
 function = "scrape"

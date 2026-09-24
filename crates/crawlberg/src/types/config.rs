@@ -332,8 +332,13 @@ impl CrawlConfig {
 
     /// Validate the configuration, returning an error if any values are invalid.
     ///
-    /// The first violation wins, so the order these checks run in is observable behaviour.
-    /// `validate_reports_violations_in_a_fixed_order` pins it. ~keep
+    /// Only the first violation encountered is reported, not every one, so fixing a rejected
+    /// configuration can surface a further error on the next attempt.
+    // ~keep Everything above is copied verbatim into all sixteen generated language bindings, so
+    // ~keep it says what a caller in any language observes and nothing about Rust. The
+    // ~keep maintenance facts live here instead: the sequence of checks below IS that observable
+    // ~keep order, and `validate_reports_violations_in_a_fixed_order` walks all 16 violations to
+    // ~keep pin it, so reordering these calls will fail that test rather than slip through.
     pub fn validate(&self) -> Result<(), crate::error::CrawlError> {
         self.validate_max_concurrent()?;
         self.validate_content_filter()?;
