@@ -73,7 +73,7 @@ The setter consumes its argument, so build a fresh one for the next edit. The sa
   pin it from opposite directions, and a Rust-level test asserts the same without depending on
   regenerated suites.
 
-- The size and complexity baseline (#42) goes from 83 findings across 44 files to seven entries,
+- The size and complexity baseline (#42) goes from 83 findings across 44 files to eight entries,
   each with a stated reason rather than left as debt. Behaviour-preserving throughout: no public or
   crate-visible item changed name, signature, module path or field set. Several of the functions
   restructured had no test that called them at all, so characterization tests were captured against
