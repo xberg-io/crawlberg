@@ -121,7 +121,7 @@ async-trait = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
-serial_test = "3"
+serial_test = "4"
 tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

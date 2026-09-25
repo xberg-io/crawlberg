@@ -64,6 +64,11 @@ criterion = { version = "0.8", features = ["html_reports"] }
 # this workspace -- that file -- and every use there is in service of those traits, so
 # upgrading to 0.38 would split the dep graph and break the impls for no gain. Revisit only
 # when a selectors release picks up cssparser 0.38.
+# ~keep `cargo upgrade --exclude cssparser` DOES NOT HONOUR THE EXCLUSION. Verified with
+# ~keep cargo-edit-upgrade 0.13.13 on 2026-09-25: the run footer printed `excluded: cssparser`
+# ~keep and the requirement was rewritten to "0.38" anyway, in the same invocation. Always
+# ~keep `git diff -- Cargo.toml` after a `cargo upgrade` and re-pin this line by hand; the
+# ~keep tool's own report of what it skipped is not evidence.
 cssparser = "0.37"
 dashmap = "6"
 deno_core = "0.412"
@@ -83,7 +88,7 @@ html5ever = "0.40"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
-liter-llm = { version = "2.0", features = ["native-http"] }
+liter-llm = { version = "2.1", features = ["native-http"] }
 markup5ever = "0.40"
 memchr = "2"
 minijinja = "2"
@@ -95,18 +100,27 @@ notify = "8"
 # (0.33 -> ^0.32, 0.34 -> ^0.33), so bumping either side alone puts two `opentelemetry`
 # versions in the graph and breaks cross-service propagator injection.
 #
-# Held at 0.32/0.33 by `liter-llm`, not by this workspace: its `otel` feature requires
-# `opentelemetry ^0.32` in every published version through 2.0.3, while `crates/crawlberg`
-# depends on `opentelemetry` unconditionally. Bumping here therefore resolves BOTH 0.32 and
-# 0.33 whenever the `otel` feature is on. `cargo check --all-features` still passes in that
-# state -- the only thing that detects it is reading the lockfile for duplicate versions, so
-# verify with `cargo tree -i opentelemetry@<old>` rather than a build.
-# Unblocked by liter-llm 2.1.0 (already on 0.33/0.34, unpublished as of 2026-09-25); then
-# xberg-enterprise must follow before cloud consumes a crawlberg release carrying the bump.
-opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
-opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace", "metrics"] }
-opentelemetry-semantic-conventions = "0.32"
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+# `liter-llm` is the sixth member of that set: its `otel` feature pins one `opentelemetry`
+# minor (2.0.x -> ^0.32, 2.1.x -> ^0.33) while `crates/crawlberg` depends on `opentelemetry`
+# unconditionally, so a bump here without a matching `liter-llm` floor resolves BOTH minors.
+# That state is a duplicate resolution, not a type error: it was reproduced deliberately on
+# 2026-09-25 by holding `liter-llm` at 2.0.3 with these four at 0.33, and
+# `cargo check --workspace --all-features` exited 0 while the lock carried 0.32 AND 0.33.
+# So a green build is NOT evidence here. The gate is
+# `cargo tree -p crawlberg --no-default-features --features ai,otel -i opentelemetry@<old>`
+# failing to match, paired with the same command at `@<new>` succeeding -- the positive
+# control is required, because the negative alone also "passes" for a typo or an absent
+# package. `--features otel` without `ai` is vacuous: `otel = ["liter-llm?/otel"]` is a
+# weak-dep activation and turns on nothing unless `ai` brings `liter-llm` in.
+#
+# The `liter-llm = "2.1"` floor below is load-bearing for CONSUMERS, not for this lock:
+# `^2.0` also resolves 2.1.0 here, but it lets a downstream lock hold 2.0.3 and reintroduce
+# the split in their graph. xberg-enterprise still pins 0.32/0.33 and must follow before
+# cloud consumes a crawlberg release carrying this bump.
+opentelemetry = { version = "0.33", features = ["trace", "metrics"] }
+opentelemetry-otlp = { version = "0.33", features = ["grpc-tonic", "trace", "metrics"] }
+opentelemetry-semantic-conventions = "0.33"
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
 png = "0.18"
 precomputed-hash = "0.1"
 proptest = "1"
@@ -145,7 +159,7 @@ tower-http = { version = "0.7", features = [
 ] }
 tracing = "0.1"
 # ~keep Moves as one set with the `opentelemetry*` pins above; 0.34 requires opentelemetry ^0.33.
-tracing-opentelemetry = "0.33"
+tracing-opentelemetry = "0.34"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "6", features = ["axum_extras"] }
