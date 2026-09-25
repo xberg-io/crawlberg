@@ -453,6 +453,10 @@ impl PooledPage {
     /// [`BrowserSessionPool`](crate::browser_session_pool::BrowserSessionPool)
     /// for reuse, or simply to keep the page+permit alive across a caller's
     /// `.await` boundary instead of dropping them at the end of an expression.
+    // ~keep Gated on `browser`, like its only callers in browser.rs and the session pool it hands
+    // ~keep off to. This module is compiled under the narrower `browser-chromiumoxide`, where the
+    // ~keep method has no caller and would be dead code.
+    #[cfg(feature = "browser")]
     pub(crate) fn into_parts(mut self) -> (chromiumoxide::Page, Option<OwnedSemaphorePermit>) {
         let page = self.page.take().expect("page already taken via close()");
         let permit = self._permit.take();

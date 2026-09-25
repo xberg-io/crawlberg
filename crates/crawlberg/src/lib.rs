@@ -19,7 +19,11 @@ pub mod budget;
 #[cfg(feature = "browser-chromiumoxide")]
 mod chrome_args;
 pub(crate) mod citations;
-#[cfg(feature = "browser")]
+// ~keep Gated on `browser-chromiumoxide`, not `browser`, to match its callers: the interact
+// ~keep launcher (interact/chromiumoxide.rs) is gated on the narrower feature and calls
+// ~keep apply_stealth_patches, so a `browser-chromiumoxide`-only build compiled this module out
+// ~keep from under a live call site and failed to build. No CI job exercised that feature set.
+#[cfg(feature = "browser-chromiumoxide")]
 mod stealth;
 
 pub(crate) mod defaults;
