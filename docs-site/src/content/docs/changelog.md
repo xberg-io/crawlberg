@@ -14,7 +14,12 @@ construction.
 
 ### Upgrading
 
-Three changes can affect an existing setup:
+Four changes can affect an existing setup:
+
+- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
+  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
+  relied on reaching a loopback or private address through `interact()` must now opt in
+  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
 
 - **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
   cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
@@ -51,9 +56,7 @@ Three changes can affect an existing setup:
 
 - **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
   host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
-  decision is now one helper shared by both crawl loops. Investigating this also showed that
-  `stay_on_domain` has never had an observable effect either; that needs its own decision and is
-  tracked as #72. (#60)
+  decision is now one helper shared by both crawl loops. (#60)
 - **A redirect on a discovered link was not followed.** Only the start URL resolved its redirect
   chain; a discovered link answering 3xx was reported as a page with an empty body and its target
   was never requested. Frontier fetches now resolve redirects with robots, `exclude_paths` and SSRF
@@ -73,6 +76,22 @@ Three changes can affect an existing setup:
   prefix that chromiumoxide prefixes again, so Chrome received `----no-first-run` and ignored it.
   On macOS a crawl no longer shows a keychain prompt, because `--use-mock-keychain` is now among
   the defaults and actually applied. (#59)
+- **Cross-host document links stopped being followed.** The fix for #60 applied the host-scope
+  rule to every link type, but `classify_link` matches a file extension *before* it compares hosts,
+  so a cross-host `.pdf`/`.docx`/`.zip` link is a document link rather than an external one, and
+  every earlier version followed it by default. Documents served from a CDN or object store were
+  silently dropped. They are followed again, and this settles what `stay_on_domain` means: it
+  governs document links, which is the one thing it has ever actually done. Its `false` default is
+  unchanged, so no existing configuration behaves differently. (#72)
+- **`interact()` enforced no SSRF policy on its default backend.** Neither the pre-flight URL check
+  nor the per-request interception that `scrape()` and `crawl()` apply was installed, so
+  `ssrf.deny_private` — on by default — had no effect, and a page could reach loopback, private
+  ranges or cloud instance metadata from the crawler's network position. The native backend was
+  never affected. Both defences are now in place, validated once for both backends. Pre-existing
+  rather than introduced here. (#74)
+- **`crawl()` ignored `remove_tags`.** The setting was folded into the markdown converter's exclude
+  selectors on the scrape path only, so a crawl kept elements a scrape of the same page removed.
+  Both paths now share one merged configuration. Pre-existing rather than introduced here.
 - **`browser-chromiumoxide` without `browser` did not compile.** The interact launcher called into a
   module gated on the wider feature. No CI job built that configuration; one now builds all
   fifteen. (#70)
@@ -84,10 +103,17 @@ Three changes can affect an existing setup:
 ### Changed
 
 - Repinned Alef to 0.96.2, which corrects two defects in the generated Python bindings.
-- Upgraded `deno_core`, `utoipa` to 6, and `saphyr`, and refreshed the lockfile. `cssparser` stays
-  at 0.37 because `selectors` still requires it, and the OpenTelemetry stack stays at 0.32/0.33
-  because every published `liter-llm` requires `opentelemetry ^0.32`; bumping it resolves two
-  versions at once whenever the `otel` feature is on, which a build does not catch.
+- Upgraded `deno_core`, `utoipa` to 6 and `saphyr`, then upgraded the OpenTelemetry stack to 0.33
+  (`tracing-opentelemetry` 0.34) once `liter-llm` 2.1.0 published with a matching floor, along with
+  `serial_test` 4 and `sysinfo` 0.39. OpenTelemetry 0.33 needed no source change. `cssparser` stays
+  at 0.37 because `selectors` 0.40 still requires it.
+
+  Two things are worth recording for anyone repeating this. Before `liter-llm` 2.1, bumping
+  OpenTelemetry resolved **both** 0.32 and 0.33 whenever the `otel` feature was on, and
+  `cargo check --workspace --all-features` exited 0 in that state — a split graph is a duplicate
+  resolution, not a type error, so only reading the lockfile detects it. And `opentelemetry-otlp`
+  0.33 turns export retries on by default (exponential backoff with jitter, three retries);
+  `init_otlp` does not configure a `RetryPolicy`.
 - CI now builds every feature configuration, and runs the binding-parity gate when `alef.toml`
   changes — it was the only workflow whose path filter omitted the file while being the only place
   that gate runs.
