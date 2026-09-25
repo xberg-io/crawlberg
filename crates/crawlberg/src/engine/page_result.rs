@@ -4,7 +4,7 @@ use tokio::task::JoinSet;
 use url::Url;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FALLBACK_URL, FetchResult, LoopContext, ParentPage};
+use super::crawl_state::{CrawlState, FALLBACK_URL, FetchOutcome, FetchResult, LoopContext, ParentPage};
 use super::redirect::url_host;
 use crate::error::CrawlError;
 use crate::http::extract_cookies_from_hashmap;
@@ -24,7 +24,7 @@ impl CrawlEngine {
         mut fetch: FetchResult,
         state: &mut CrawlState,
         context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchResult, (FrontierEntry, CrawlError)>>,
+        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     ) -> Result<bool, CrawlError> {
         let page_url = fetch.entry.url.clone();
         let depth = fetch.entry.depth;
@@ -51,16 +51,13 @@ impl CrawlEngine {
             state.was_skipped = true;
         }
 
-        let page_parsed = Url::parse(&page_url).unwrap_or_else(|_| FALLBACK_URL.clone());
-        let domain = page_parsed.host_str().unwrap_or("");
-        let norm_url = normalize_url(&page_url);
-        let stayed_on_domain = domain == context.base_host;
+        let (final_url, page_parsed, norm_url, stayed_on_domain) = resolved_page_location(&fetch, context.base_host);
 
-        self.discover_links_if_allowed(&fetch, &page_url, page_was_skipped, context, state)
+        self.discover_links_if_allowed(&fetch, &final_url, page_was_skipped, context, state)
             .await?;
 
         let (downloaded_document, markdown) = self
-            .derive_page_content(&page_url, &page_parsed, &fetch, &body, page_was_skipped)
+            .derive_page_content(&final_url, &page_parsed, &fetch, &body, page_was_skipped)
             .await;
 
         let page = CrawlPageResult {
@@ -85,6 +82,8 @@ impl CrawlEngine {
             extraction_meta: None,
             downloaded_document,
             browser_used: fetch.browser_used,
+            final_url,
+            redirect_count: fetch.redirect_count,
         };
 
         let page = match self.content_filter.filter(page).await? {
@@ -196,7 +195,7 @@ impl CrawlEngine {
         page: CrawlPageResult,
         state: &mut CrawlState,
         context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchResult, (FrontierEntry, CrawlError)>>,
+        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     ) -> bool {
         self.strategy.on_page_processed(&page);
         let _ = self.store.store_crawl_page(&page.url, &page).await;
@@ -240,4 +239,20 @@ impl CrawlEngine {
 
         false
     }
+}
+
+/// Where this fetch's content actually came from, and what it implies for the page.
+///
+/// ~keep `final_url` is where the content actually came from -- equal to `fetch.entry.url`
+/// ~keep unless the fetch redirected. Domain checks, link discovery's base URL, and the
+/// ~keep downloaded-document record all use it, so a redirected page's relative links
+/// ~keep resolve against the origin that served them rather than the URL originally
+/// ~keep requested.
+fn resolved_page_location(fetch: &FetchResult, base_host: &str) -> (String, Url, String, bool) {
+    let final_url = fetch.final_url.clone();
+    let page_parsed = Url::parse(&final_url).unwrap_or_else(|_| FALLBACK_URL.clone());
+    let domain = page_parsed.host_str().unwrap_or("");
+    let norm_url = normalize_url(&final_url);
+    let stayed_on_domain = domain == base_host;
+    (final_url, page_parsed, norm_url, stayed_on_domain)
 }

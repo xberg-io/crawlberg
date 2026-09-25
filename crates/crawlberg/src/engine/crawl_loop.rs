@@ -28,7 +28,7 @@ use crate::traits::*;
 use crate::types::*;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FetchResult, LoopContext, blocking_extract_page};
+use super::crawl_state::{CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page};
 use super::redirect::{PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host};
 
 /// Map [`BrowserMode`] to a stable string label for telemetry.
@@ -87,14 +87,17 @@ impl CrawlEngine {
         let mut state = CrawlState::new(capacity, is_streaming);
         let start_time = Instant::now();
 
-        let exclude_regexes: Vec<Regex> = compile_regexes(&self.config.exclude_paths)?;
+        // ~keep `Arc` rather than `Vec`: every spawned frontier fetch builds its own
+        // ~keep task-local `RedirectPolicy` (see `fetch_and_extract`) and needs a cheap,
+        // ~keep `'static` clone of this list to do it.
+        let exclude_regexes: Arc<[Regex]> = compile_regexes(&self.config.exclude_paths)?.into();
         let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
 
         // ~keep robots.txt is read before anything goes on the wire, and the policy travels
         // into the redirect resolution below rather than bracketing it. A redirect can leave
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
-        let mut policy = RedirectPolicy::new(self, &client, &exclude_regexes);
+        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref());
         let seed = self
             .resolve_initial_redirects(url, max_redirects, &mut state, &mut policy)
             .await;
@@ -130,7 +133,7 @@ impl CrawlEngine {
         let mut preloaded = Some((final_url.clone(), seed.final_response, seed.browser_used));
 
         let context = LoopContext {
-            exclude_regexes: &exclude_regexes,
+            exclude_regexes: Arc::clone(&exclude_regexes),
             include_regexes: &include_regexes,
             robots: &robots,
             base_host: &base_host,
@@ -579,13 +582,29 @@ impl CrawlEngine {
             drive.in_flight.push(entry.clone());
 
             let preloaded_response = take_preloaded_response(preloaded, &entry.url);
-
-            drive
-                .join_set
-                .spawn(fetch_and_extract(engine, entry, preloaded_response, permit));
+            Self::spawn_fetch(drive, engine, entry, preloaded_response, permit, context);
         }
 
         Ok(())
+    }
+
+    /// Hand one fetch to the `JoinSet`, cloning what it needs to outlive this call.
+    fn spawn_fetch(
+        drive: &mut LoopDrive<'_>,
+        engine: CrawlEngine,
+        entry: FrontierEntry,
+        preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+        context: &LoopContext<'_>,
+    ) {
+        let exclude_regexes = Arc::clone(&context.exclude_regexes);
+        drive.join_set.spawn(fetch_and_extract(
+            engine,
+            entry,
+            preloaded_response,
+            permit,
+            exclude_regexes,
+        ));
     }
 
     /// Whether the page budget still admits another fetch.
@@ -618,16 +637,21 @@ impl CrawlEngine {
     /// Fold one finished fetch into the crawl, reporting whether it is the one that ends it.
     async fn absorb_fetch_result(
         &self,
-        result: Result<Result<FetchResult, (FrontierEntry, CrawlError)>, tokio::task::JoinError>,
+        result: Result<Result<FetchOutcome, (FrontierEntry, CrawlError)>, tokio::task::JoinError>,
         drive: &mut LoopDrive<'_>,
         state: &mut CrawlState,
         context: &LoopContext<'_>,
     ) -> Result<bool, CrawlError> {
         match result {
-            Ok(Ok(fetch)) => {
+            Ok(Ok(FetchOutcome::Fetched(fetch))) => {
                 retire_in_flight(drive.in_flight, &fetch.entry.url);
-                self.process_fetch_result(fetch, state, context, &mut drive.join_set)
+                self.process_fetch_result(*fetch, state, context, &mut drive.join_set)
                     .await
+            }
+            Ok(Ok(FetchOutcome::Skipped(entry))) => {
+                retire_in_flight(drive.in_flight, &entry.url);
+                state.urls_filtered += 1;
+                Ok(false)
             }
             Ok(Err((entry, error))) => {
                 retire_in_flight(drive.in_flight, &entry.url);
@@ -665,7 +689,7 @@ impl CrawlEngine {
 
     /// Check whether a URL should be fetched based on path filters and robots.txt.
     fn should_fetch_url(&self, entry: &FrontierEntry, context: &LoopContext<'_>, urls_filtered: &mut usize) -> bool {
-        let exclude_regexes = context.exclude_regexes;
+        let exclude_regexes: &[Regex] = &context.exclude_regexes;
         let include_regexes = context.include_regexes;
         let robots = context.robots;
         let page_parsed = match Url::parse(&entry.url) {
@@ -717,7 +741,7 @@ struct LoopDrive<'a> {
     window: &'a mut Vec<FrontierEntry>,
     /// Entries whose fetch task is running, kept so an early exit can return them.
     in_flight: &'a mut Vec<FrontierEntry>,
-    join_set: JoinSet<Result<FetchResult, (FrontierEntry, CrawlError)>>,
+    join_set: JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     semaphore: Arc<Semaphore>,
     max_concurrent: usize,
     /// Whether the frontier may still hold work; cleared when a refill comes up short.
@@ -779,23 +803,48 @@ fn take_preloaded_response(
     }
 }
 
-/// Fetch one URL and run its HTML extraction off the runtime thread.
+/// Fetch one URL, following any redirect it answers with, and run HTML extraction off the
+/// runtime thread.
 ///
 /// `permit` is held for the whole task so the semaphore bounds concurrent fetches.
+///
+/// ~keep A frontier entry is resolved through `follow_redirects` exactly like the seed is,
+/// ~keep with a task-local `RedirectPolicy` built fresh here rather than shared across the
+/// ~keep crawl: the policy's per-origin robots memoization is redundant with -- and no faster
+/// ~keep than -- `CrawlEngine::robots_cache`, which every task already shares, so a fresh
+/// ~keep policy per task needs no cross-task synchronization to stay correct.
 async fn fetch_and_extract(
     engine: CrawlEngine,
     entry: FrontierEntry,
     preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
     permit: tokio::sync::OwnedSemaphorePermit,
-) -> Result<FetchResult, (FrontierEntry, CrawlError)> {
+    exclude_regexes: Arc<[Regex]>,
+) -> Result<FetchOutcome, (FrontierEntry, CrawlError)> {
     let _permit = permit;
 
-    let (resp, browser_used) = match preloaded_response {
-        Some(preloaded) => preloaded,
-        None => engine
-            .fetch_response(&entry.url, None)
-            .await
-            .map_err(|e| (entry.clone(), e))?,
+    let (resp, browser_used, final_url, redirect_count) = match preloaded_response {
+        // ~keep The seed's redirect chain was already resolved before the loop started; its
+        // ~keep frontier entry URL is already the post-redirect final URL (see `seed_frontier`).
+        Some((resp, browser_used)) => (resp, browser_used, entry.url.clone(), 0),
+        None => {
+            let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
+            let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref());
+            let max_redirects = engine.config.max_redirects;
+            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy)).await {
+                Ok(RedirectResolution::Fetched(outcome)) => (
+                    outcome.final_response,
+                    outcome.browser_used,
+                    outcome.final_url,
+                    outcome.redirect_count,
+                ),
+                // ~keep Refused only by a per-hop policy check (robots, exclude_paths, or a
+                // ~keep dedup collision with a page already claimed elsewhere) -- the same
+                // ~keep silent rejection `should_fetch_url` already applies to a frontier entry
+                // ~keep the policy rejects before it is ever spawned.
+                Ok(RedirectResolution::Refused { .. }) => return Ok(FetchOutcome::Skipped(entry)),
+                Err(e) => return Err((entry.clone(), e)),
+            }
+        }
     };
 
     let status_code = resp.status;
@@ -804,7 +853,10 @@ async fn fetch_and_extract(
     let body = resp.body;
     let body_bytes = resp.body_bytes;
 
-    let url_for_extract = entry.url.clone();
+    // ~keep The base URL for extraction is where the content actually came from. Using the
+    // ~keep original `entry.url` here would resolve every relative link/asset on a redirected
+    // ~keep page against the wrong origin.
+    let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
 
     let page_ext = tokio::task::spawn_blocking(move || {
@@ -813,7 +865,7 @@ async fn fetch_and_extract(
     .await
     .map_err(|e| (entry.clone(), CrawlError::other(format!("extraction task failed: {e}"))))?;
 
-    Ok(FetchResult {
+    Ok(FetchOutcome::Fetched(Box::new(FetchResult {
         entry,
         status_code,
         content_type,
@@ -824,6 +876,8 @@ async fn fetch_and_extract(
         is_binary: page_ext.is_binary,
         is_pdf: page_ext.is_pdf,
         detected_charset: page_ext.detected_charset,
+        final_url,
+        redirect_count,
         browser_used,
-    })
+    })))
 }

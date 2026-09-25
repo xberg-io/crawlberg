@@ -16,7 +16,7 @@
 				"headers": {
 					"content-type": "text/html; charset=utf-8"
 				},
-				"body_inline": "<html><body><a href=\"/page1\">Page 1</a></body></html>"
+				"body_inline": "<html><body><a href=\"/page1\">Page 1</a><a href=\"https://docs.example.com/page1\">Subdomain page 1</a></body></html>"
 			},
 			{
 				"path": "/page1",
@@ -30,6 +30,7 @@
 		],
 		"config": {
 			"max_depth": 1,
+			"stay_on_domain": true,
 			"allow_subdomains": true,
 			"respect_robots_txt": false
 		}

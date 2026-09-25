@@ -230,6 +230,14 @@ pub struct CrawlPageResult {
     pub downloaded_document: Option<DownloadedDocument>,
     /// Whether the browser fallback was used to fetch this page.
     pub browser_used: bool,
+    /// The URL this page's content was actually fetched from, after following any HTTP,
+    /// `Refresh` header, or `<meta http-equiv="refresh">` redirect `url` pointed at.
+    /// Equal to `url` when the fetch did not redirect.
+    #[serde(default)]
+    pub final_url: String,
+    /// Redirect hops taken to reach `final_url` from `url`.
+    #[serde(default)]
+    pub redirect_count: usize,
 }
 
 /// The result of a multi-page crawl operation.

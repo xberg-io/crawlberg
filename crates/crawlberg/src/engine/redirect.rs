@@ -15,7 +15,7 @@ use crate::helpers::{default_robots_user_agent, fetch_robots_outcome, find_ascii
 use crate::html::detect_meta_refresh;
 use crate::html::is_html_content;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
-use crate::normalize::resolve_redirect;
+use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
 /// Outcome of a [`follow_redirects`] call.
 pub(crate) struct RedirectOutcome {
@@ -130,10 +130,20 @@ impl<'a> RedirectPolicy<'a> {
 
     /// Decide whether the crawl may request `url`.
     ///
+    /// `is_redirect_hop` is `true` once at least one redirect has already been followed in
+    /// this chain -- i.e. `url` is a hop the chain landed on, not the chain's own starting
+    /// URL. Only then is `url` checked against the frontier's seen-set: the starting URL was
+    /// already claimed by whichever discovery step enqueued it, so checking it here would
+    /// refuse every chain as a "duplicate" of itself.
+    ///
     /// `Ok(None)` admits it, `Ok(Some(refusal))` refuses it, and `Err` is an engine failure
     /// (a rate-limiter backend error), which is not a policy decision and must not be
     /// reported as one.
-    pub(super) async fn admits(&mut self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
+    pub(super) async fn admits(
+        &mut self,
+        url: &str,
+        is_redirect_hop: bool,
+    ) -> Result<Option<PolicyRefusal>, CrawlError> {
         // ~keep A URL this cannot parse is refused, not admitted. Letting it through would
         // ~keep skip robots entirely on the strength of a parse failure, and this is the
         // ~keep component that decides whether a request may go out at all -- the same
@@ -189,6 +199,11 @@ impl<'a> RedirectPolicy<'a> {
                 reason,
             }));
         }
+
+        if is_redirect_hop && let Some(refusal) = self.claim_redirect_target(url).await? {
+            return Ok(Some(refusal));
+        }
+
         // ~keep Published once per origin, after the origin is admitted and before the
         // ~keep request this call precedes. The call this replaces ran once for the seed
         // ~keep before the chain and once for a changed final origin; doing it here covers
@@ -199,6 +214,22 @@ impl<'a> RedirectPolicy<'a> {
             self.engine.apply_crawl_delay(outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
+        Ok(None)
+    }
+
+    /// Claim `url` -- a redirect hop, never the chain's own starting URL -- against the
+    /// frontier's seen-set.
+    ///
+    /// ~keep Deduplicates against the frontier's own seen-set rather than a set local to this
+    /// ~keep policy: a page reachable both directly (its own frontier entry) and via a
+    /// ~keep redirect must be requested once, and the frontier is the one place both paths
+    /// ~keep already agree on what "seen" means.
+    async fn claim_redirect_target(&self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
+        let dedup_key = normalize_url_for_dedup(url);
+        if self.engine.frontier.is_seen(&dedup_key).await? {
+            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
+        }
+        self.engine.frontier.mark_seen(&dedup_key).await?;
         Ok(None)
     }
 
@@ -273,7 +304,7 @@ pub(crate) async fn follow_redirects(
     let mut browser_used = false;
     loop {
         if let Some(policy) = policy.as_deref_mut()
-            && let Some(refusal) = policy.admits(&chain.current_url).await?
+            && let Some(refusal) = policy.admits(&chain.current_url, chain.redirect_count > 0).await?
         {
             return Ok(RedirectResolution::Refused {
                 refusal,

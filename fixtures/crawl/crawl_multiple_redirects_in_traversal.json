@@ -30,7 +30,14 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>New A</h1></body></html>"
+				"body_inline": "<html><body><h1>New A</h1><a href=\"/deeper-a\">Deeper A</a></body></html>"
+			},
+			{
+				"path": "/deeper-a",
+				"headers": {
+					"content-type": "text/html"
+				},
+				"body_inline": "<html><body><h1>Deeper A</h1></body></html>"
 			},
 			{
 				"path": "/old-b",
@@ -46,19 +53,26 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>New B</h1></body></html>"
+				"body_inline": "<html><body><h1>New B</h1><a href=\"/deeper-b\">Deeper B</a></body></html>"
+			},
+			{
+				"path": "/deeper-b",
+				"headers": {
+					"content-type": "text/html"
+				},
+				"body_inline": "<html><body><h1>Deeper B</h1></body></html>"
 			}
 		],
 		"config": {
-			"max_depth": 1,
+			"max_depth": 2,
 			"max_concurrent": 1
 		}
 	},
 	"assertions": [
 		{
-			"type": "greater_than_or_equal",
+			"type": "equals",
 			"field": "pages.length",
-			"value": 1
+			"value": 5
 		}
 	]
 }

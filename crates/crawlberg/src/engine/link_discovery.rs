@@ -6,6 +6,7 @@ use url::Url;
 use super::CrawlEngine;
 use super::DEFAULT_MAX_LINKS_PER_PAGE;
 use super::crawl_state::{CrawlState, LoopContext, ParentPage};
+use super::link_scope::{LinkScopePolicy, link_in_scope};
 use crate::error::CrawlError;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, strip_fragment};
@@ -27,11 +28,8 @@ impl CrawlEngine {
     /// Called only when the caller has already determined that discovery is appropriate
     /// (i.e. `follow_document_urls` is satisfied for in-document-context pages).
     ///
-    /// `LinkType::Internal` links are always enqueued.
-    /// `LinkType::Document` links are enqueued when either:
-    ///   * parent_doc_depth == 0 (HTML page discovering document URLs — original behaviour),
-    ///   * OR `follow_document_urls` is true AND the child doc_depth does not exceed
-    ///     `document_url_depth` (if set).
+    /// Scope (link type, doc-depth policy, and host/subdomain policy) is decided by
+    /// [`super::link_scope::link_in_scope`] — see there for the exact rules.
     ///
     /// SSRF validation is applied at enqueue time with bounded concurrency (16 concurrent
     /// DNS lookups). URLs that fail validation are logged as warnings and not enqueued.
@@ -72,35 +70,17 @@ impl CrawlEngine {
             }
 
             let is_doc_link = link.link_type == LinkType::Document;
-
-            if link.link_type != LinkType::Internal && !is_doc_link {
-                continue;
-            }
-
-            // ~keep Document pages can discover more documents only within follow_document_urls/depth policy.
-            if is_doc_link && parent_doc_depth > 0 {
-                if !self.config.follow_document_urls {
-                    continue;
-                }
-                let child_doc_depth = parent_doc_depth + 1;
-                if let Some(max_doc_depth) = self.config.document_url_depth
-                    && child_doc_depth > max_doc_depth
-                {
-                    continue;
-                }
-            }
-
             let link_url = strip_fragment(&link.url);
 
-            if self.config.stay_on_domain
-                && let Ok(lu) = Url::parse(&link_url)
-            {
-                let link_host = lu.host_str().unwrap_or("");
-                if link_host != context.base_host
-                    && (!self.config.allow_subdomains || !link_host.ends_with(context.base_host_suffix))
-                {
-                    continue;
-                }
+            let scope_policy = LinkScopePolicy {
+                follow_document_urls: self.config.follow_document_urls,
+                document_url_depth: self.config.document_url_depth,
+                allow_subdomains: self.config.allow_subdomains,
+                base_host: context.base_host,
+                base_host_suffix: context.base_host_suffix,
+            };
+            if !link_in_scope(link, &link_url, parent_doc_depth, &scope_policy) {
+                continue;
             }
 
             let child_depth = parent.depth + 1;

@@ -30,19 +30,26 @@
 				"headers": {
 					"content-type": "text/html"
 				},
-				"body_inline": "<html><body><h1>New Page</h1></body></html>"
+				"body_inline": "<html><body><h1>New Page</h1><a href=\"/deeper\">Deeper</a></body></html>"
+			},
+			{
+				"path": "/deeper",
+				"headers": {
+					"content-type": "text/html"
+				},
+				"body_inline": "<html><body><h1>Deeper Page</h1></body></html>"
 			}
 		],
 		"config": {
-			"max_depth": 1,
+			"max_depth": 2,
 			"max_concurrent": 1
 		}
 	},
 	"assertions": [
 		{
-			"type": "greater_than_or_equal",
+			"type": "equals",
 			"field": "pages.length",
-			"value": 1
+			"value": 3
 		}
 	]
 }

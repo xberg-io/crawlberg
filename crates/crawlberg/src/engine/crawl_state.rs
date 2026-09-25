@@ -1,6 +1,7 @@
 //! The in-progress state of one crawl, and the blocking page extraction that feeds it.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use tl::ParserOptions;
@@ -28,7 +29,10 @@ pub(super) static FALLBACK_URL: std::sync::LazyLock<Url> =
 /// `discover_and_enqueue_links`: each hand-off repeated the same list, so adding one
 /// input meant editing four signatures and four call sites in lockstep.
 pub(super) struct LoopContext<'a> {
-    pub(super) exclude_regexes: &'a [Regex],
+    /// ~keep `Arc` rather than a borrowed slice: `fetch_and_extract` is spawned into a
+    /// ~keep `JoinSet` and must own a redirect-hop policy of its own (see `FetchResult`'s
+    /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of the exclude list.
+    pub(super) exclude_regexes: Arc<[Regex]>,
     pub(super) include_regexes: &'a [Regex],
     pub(super) robots: &'a RobotsOutcome,
     pub(super) base_host: &'a str,
@@ -63,6 +67,25 @@ pub(super) struct FetchResult {
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
     pub(super) browser_used: bool,
+    /// The URL this fetch actually landed on, after following any redirects `entry.url`
+    /// pointed at. Equal to `entry.url` when nothing redirected.
+    pub(super) final_url: String,
+    /// Redirect hops taken to reach `final_url` from `entry.url`.
+    pub(super) redirect_count: usize,
+}
+
+/// What a spawned frontier fetch produced.
+///
+/// ~keep A redirect hop refused by policy (robots, `exclude_paths`, or a dedup collision with
+/// ~keep a page already claimed elsewhere) is not a fetch failure -- it is exactly the outcome
+/// ~keep `should_fetch_url` already reports silently for a frontier entry the policy rejects
+/// ~keep before ever spawning it. `Skipped` carries that same silence forward for a rejection
+/// ~keep discovered only after the fetch was already running.
+pub(super) enum FetchOutcome {
+    Fetched(Box<FetchResult>),
+    /// A redirect hop was refused by policy (robots, `exclude_paths`, or a dedup collision).
+    /// Carries the frontier entry back so the driving loop can retire it from `in_flight`.
+    Skipped(FrontierEntry),
 }
 
 /// Result of blocking HTML extraction within a fetch task.

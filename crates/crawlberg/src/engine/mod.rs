@@ -13,6 +13,7 @@ mod dispatch;
 mod fetch;
 #[cfg(not(target_arch = "wasm32"))]
 mod link_discovery;
+mod link_scope;
 #[cfg(not(target_arch = "wasm32"))]
 mod page_result;
 #[cfg(not(target_arch = "wasm32"))]

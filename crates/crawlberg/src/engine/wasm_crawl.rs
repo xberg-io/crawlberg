@@ -7,6 +7,7 @@
 
 #![cfg(any(target_arch = "wasm32", test))]
 
+use super::link_scope::{LinkScopePolicy, link_in_scope};
 use super::{CrawlEngine, DEFAULT_MAX_LINKS_PER_PAGE, take_selected};
 use crate::error::CrawlError;
 use crate::telemetry::attributes::URL_FULL;
@@ -48,13 +49,18 @@ impl CrawlEngine {
             extraction_meta: scrape.extraction_meta,
             downloaded_document: scrape.downloaded_document,
             browser_used: scrape.browser_used,
+            // ~keep The browser's own `fetch` already followed redirects (see `scrape`'s
+            // ~keep wasm32 path), so `scrape.final_url` is this page's post-redirect URL and
+            // ~keep there is no separate per-hop count to report here.
+            final_url: scrape.final_url,
+            redirect_count: 0,
         }
     }
 
     /// Crawl a website starting from `url`.
     ///
     /// Implements a sequential BFS/strategy-driven crawl loop. Follows links discovered
-    /// during scraping and applies `max_depth`, `max_pages`, `stay_on_domain`,
+    /// during scraping and applies `max_depth`, `max_pages`, host scope,
     /// `allow_subdomains`, `include_paths`, `exclude_paths`, and the configured
     /// `CrawlStrategy`. No concurrency primitives are used — each page is awaited
     /// sequentially, which is correct for the wasm single-threaded executor.
@@ -302,12 +308,15 @@ impl CrawlEngine {
                 break;
             }
 
-            if !self.link_is_followable(link, entry) {
-                continue;
-            }
-
             let link_url = crate::normalize::strip_fragment(&link.url);
-            if !self.link_is_on_seed_domain(&link_url, plan) {
+            let scope_policy = LinkScopePolicy {
+                follow_document_urls: self.config.follow_document_urls,
+                document_url_depth: self.config.document_url_depth,
+                allow_subdomains: self.config.allow_subdomains,
+                base_host: &plan.base_host,
+                base_host_suffix: &plan.base_host_suffix,
+            };
+            if !link_in_scope(link, &link_url, entry.doc_depth, &scope_policy) {
                 continue;
             }
 
@@ -321,45 +330,6 @@ impl CrawlEngine {
         }
 
         Ok(())
-    }
-
-    /// Whether `link`'s type and the page's document context allow following it.
-    fn link_is_followable(&self, link: &LinkInfo, entry: &FrontierEntry) -> bool {
-        let is_doc_link = link.link_type == LinkType::Document;
-        if link.link_type != LinkType::Internal && !is_doc_link {
-            return false;
-        }
-
-        // ~keep Document pages can discover more documents only within follow_document_urls/depth policy.
-        if is_doc_link && entry.doc_depth > 0 {
-            if !self.config.follow_document_urls {
-                return false;
-            }
-            let child_doc_depth = entry.doc_depth + 1;
-            if let Some(max_doc_depth) = self.config.document_url_depth
-                && child_doc_depth > max_doc_depth
-            {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Whether `stay_on_domain` admits `link_url`.
-    ///
-    /// ~keep A link whose URL does not parse is admitted, matching the original loop: the
-    /// ~keep host check ran only inside `if let Ok(..)`, so an unparsable link fell through
-    /// ~keep to dedup and let the fetch report the failure instead.
-    fn link_is_on_seed_domain(&self, link_url: &str, plan: &SequentialPlan) -> bool {
-        if !self.config.stay_on_domain {
-            return true;
-        }
-        let Ok(parsed) = url::Url::parse(link_url) else {
-            return true;
-        };
-        let link_host = parsed.host_str().unwrap_or("");
-        link_host == plan.base_host || (self.config.allow_subdomains && link_host.ends_with(&plan.base_host_suffix))
     }
 
     /// Push one discovered link, reporting whether it was new to the frontier.
@@ -739,7 +709,115 @@ mod tests {
         );
     }
 
-    /// `stay_on_domain` is on by default: an off-host link is never enqueued.
+    /// Regression coverage for crawlberg#60 on the sequential (wasm) loop: a subdomain link
+    /// must be followed when `allow_subdomains` is true.
+    ///
+    /// ~keep Uses `*.localhost`, not a fabricated hostname: this positive case needs a real,
+    /// reachable second host to prove the link is actually followed rather than merely not
+    /// rejected. RFC 6761 §6.3 requires every conformant resolver to resolve `*.localhost` to
+    /// the loopback address without any network traffic, unlike a public-DNS trick such as
+    /// nip.io. The negative cases below use a fabricated `*.example.invalid` host instead,
+    /// since a rejected link never reaches DNS resolution (see their own doc comments).
+    #[tokio::test]
+    #[serial_test::serial(engine_tracing_callsites)]
+    async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true() {
+        let mock = MockServer::start().await;
+        let port = mock.address().port();
+        mount_html(
+            &mock,
+            "/",
+            &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+        )
+        .await;
+        mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+        let base = format!("http://localhost:{port}");
+        let engine = engine_with(permissive(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            ..CrawlConfig::default()
+        }));
+
+        let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+        assert_eq!(
+            result.pages.len(),
+            2,
+            "a subdomain link must be followed when allow_subdomains is true, got pages: {:?}",
+            result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+        );
+    }
+
+    /// The same subdomain link must NOT be followed when `allow_subdomains` is false.
+    ///
+    /// ~keep A rejected link is dropped before SSRF validation ever resolves DNS, so a
+    /// fabricated, unregistered hostname (RFC 2606's `.invalid`) is safe here — no network
+    /// access happens for it either way.
+    #[tokio::test]
+    #[serial_test::serial(engine_tracing_callsites)]
+    async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false() {
+        let mock = MockServer::start().await;
+        mount_html(
+            &mock,
+            "/",
+            r#"<html><body><a href="https://sub.example.invalid/a">A</a></body></html>"#,
+        )
+        .await;
+        let base = mock.uri();
+        let engine = engine_with(permissive(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: false,
+            ..CrawlConfig::default()
+        }));
+
+        let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+        assert_eq!(
+            result.pages.len(),
+            1,
+            "a subdomain link must not be followed when allow_subdomains is false, got pages: {:?}",
+            result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+        );
+    }
+
+    /// An unrelated host is never enqueued by a default-configured crawl.
+    ///
+    /// ~keep This pins the additive contract of the crawlberg#60 fix. The host is deliberately
+    /// unresolvable (`.invalid`, RFC 2606): scope rejects it before SSRF validation would
+    /// resolve anything, so the test needs no DNS. `stay_on_domain` is not an input -- see
+    /// `link_scope::host_in_scope` and crawlberg#72.
+    #[tokio::test]
+    #[serial_test::serial(engine_tracing_callsites)]
+    async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
+        let mock = MockServer::start().await;
+        let port = mock.address().port();
+        mount_html(
+            &mock,
+            "/",
+            &format!(r#"<html><body><a href="http://unrelated.invalid:{port}/a">A</a></body></html>"#),
+        )
+        .await;
+        let base = format!("http://localhost:{port}");
+        let engine = engine_with(permissive(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        }));
+
+        let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+        assert_eq!(
+            result.pages.len(),
+            1,
+            "an unrelated host must not be followed, got pages: {:?}",
+            result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+        );
+    }
+
+    /// An off-host link is never enqueued: the seed host and, with `allow_subdomains`, its
+    /// subdomains are the only hosts a crawl follows. ~keep `stay_on_domain` is NOT what
+    /// enforces this and never has -- see `link_scope::host_in_scope` and crawlberg#72.
     #[tokio::test]
     #[serial_test::serial(engine_tracing_callsites)]
     async fn sequential_crawl_stays_on_the_seed_host() {
@@ -763,7 +841,7 @@ mod tests {
         assert_eq!(
             visited(&result, &base),
             vec!["/".to_owned(), "/a".to_owned()],
-            "an off-host link must not be enqueued while stay_on_domain holds"
+            "an off-host link must not be enqueued"
         );
     }
 
