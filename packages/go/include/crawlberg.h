@@ -848,6 +848,20 @@ char *cberg_browser_config_endpoint(CBERGAlefHandle handle);
 uint64_t cberg_browser_config_timeout(CBERGAlefHandle handle);
 
 /**
+ * Get the `overall_timeout` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_browser_config_overall_timeout(CBERGAlefHandle handle);
+
+/**
+ * Get the `shutdown_timeout` field from a `BrowserConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_browser_config_shutdown_timeout(CBERGAlefHandle handle);
+
+/**
  * Get the `wait` field from a `BrowserConfig`.
  * A non-null returned handle is owned by the caller.
  * It must be freed with `cberg_browser_wait_free`.
@@ -1211,6 +1225,13 @@ uintptr_t cberg_content_config_wrap_width(CBERGAlefHandle handle);
 int32_t cberg_content_config_include_document_structure(CBERGAlefHandle handle);
 
 /**
+ * Get the `extract_metadata` field from a `ContentConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_content_config_extract_metadata(CBERGAlefHandle handle);
+
+/**
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
@@ -1481,6 +1502,36 @@ char *cberg_crawl_config_include_paths(CBERGAlefHandle handle);
 char *cberg_crawl_config_exclude_paths(CBERGAlefHandle handle);
 
 /**
+ * Get the `path_patterns_match_query` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_path_patterns_match_query(CBERGAlefHandle handle);
+
+/**
+ * Get the `dedup_include_query` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_dedup_include_query(CBERGAlefHandle handle);
+
+/**
+ * Get the `strip_tracking_params` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_strip_tracking_params(CBERGAlefHandle handle);
+
+/**
+ * Get the `tracking_params` field from a `CrawlConfig`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_config_tracking_params(CBERGAlefHandle handle);
+
+/**
  * Get the `custom_headers` field from a `CrawlConfig`.
  * A non-null returned pointer is owned by the caller.
  * It must be freed with `cberg_free_string`.
@@ -1538,6 +1589,27 @@ uintptr_t cberg_crawl_config_retry_count(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_crawl_config_retry_codes(CBERGAlefHandle handle);
+
+/**
+ * Get the `retry_initial_delay_ms` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_crawl_config_retry_initial_delay_ms(CBERGAlefHandle handle);
+
+/**
+ * Get the `retry_max_delay_ms` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uint64_t cberg_crawl_config_retry_max_delay_ms(CBERGAlefHandle handle);
+
+/**
+ * Get the `rate_limit_jitter_ratio` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+double cberg_crawl_config_rate_limit_jitter_ratio(CBERGAlefHandle handle);
 
 /**
  * Get the `cookies_enabled` field from a `CrawlConfig`.
@@ -1835,6 +1907,9 @@ CBERGAlefHandle cberg_crawl_config_default(void);
 
 /**
  * Validate the configuration, returning an error if any values are invalid.
+ *
+ * Only the first violation encountered is reported, not every one, so fixing a rejected
+ * configuration can surface a further error on the next attempt.
  * \note SAFETY: Caller must ensure all pointer arguments are valid or null. Returned pointers must be
  * freed with the appropriate free function.
  */
@@ -2080,6 +2155,22 @@ CBERGAlefHandle cberg_crawl_page_result_downloaded_document(CBERGAlefHandle hand
  * Pointer must be a valid handle returned by this library.
  */
 int32_t cberg_crawl_page_result_browser_used(CBERGAlefHandle handle);
+
+/**
+ * Get the `final_url` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_page_result_final_url(CBERGAlefHandle handle);
+
+/**
+ * Get the `redirect_count` field from a `CrawlPageResult`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+uintptr_t cberg_crawl_page_result_redirect_count(CBERGAlefHandle handle);
 
 /**
  * Create a `CrawlResult` from a JSON string. Returns null on failure.

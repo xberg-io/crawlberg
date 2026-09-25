@@ -1894,6 +1894,8 @@ const _: fn() = || {
         let _: crate::BrowserBackend = BrowserConfig.backend;
         let _: Option<String> = BrowserConfig.endpoint;
         let _: i64 = BrowserConfig.timeout;
+        let _: i64 = BrowserConfig.overall_timeout;
+        let _: i64 = BrowserConfig.shutdown_timeout;
         let _: crate::BrowserWait = BrowserConfig.wait;
         let _: Option<String> = BrowserConfig.wait_selector;
         let _: Option<i64> = BrowserConfig.extra_wait;
@@ -1935,6 +1937,7 @@ const _: fn() = || {
         let _: bool = ContentConfig.wrap;
         let _: i64 = ContentConfig.wrap_width;
         let _: bool = ContentConfig.include_document_structure;
+        let _: bool = ContentConfig.extract_metadata;
     }
     {
         let CookieInfo = None::<crate::CookieInfo>.unwrap();
@@ -1960,12 +1963,19 @@ const _: fn() = || {
         let _: bool = CrawlConfig.allow_subdomains;
         let _: Vec<String> = CrawlConfig.include_paths;
         let _: Vec<String> = CrawlConfig.exclude_paths;
+        let _: bool = CrawlConfig.path_patterns_match_query;
+        let _: bool = CrawlConfig.dedup_include_query;
+        let _: bool = CrawlConfig.strip_tracking_params;
+        let _: Vec<String> = CrawlConfig.tracking_params;
         let _: std::collections::HashMap<String, String> = CrawlConfig.custom_headers;
         let _: i64 = CrawlConfig.request_timeout;
         let _: Option<i64> = CrawlConfig.rate_limit_ms;
         let _: i64 = CrawlConfig.max_redirects;
         let _: i64 = CrawlConfig.retry_count;
         let _: Vec<i64> = CrawlConfig.retry_codes;
+        let _: i64 = CrawlConfig.retry_initial_delay_ms;
+        let _: i64 = CrawlConfig.retry_max_delay_ms;
+        let _: f64 = CrawlConfig.rate_limit_jitter_ratio;
         let _: bool = CrawlConfig.cookies_enabled;
         let _: Option<crate::AuthConfig> = CrawlConfig.auth;
         let _: Option<i64> = CrawlConfig.max_body_size;
@@ -2089,6 +2099,8 @@ const _: fn() = || {
         let _: Option<crate::ExtractionMeta> = CrawlPageResult.extraction_meta;
         let _: Option<crate::DownloadedDocument> = CrawlPageResult.downloaded_document;
         let _: bool = CrawlPageResult.browser_used;
+        let _: String = CrawlPageResult.final_url;
+        let _: i64 = CrawlPageResult.redirect_count;
     }
     {
         let CrawlResult = None::<crate::CrawlResult>.unwrap();
@@ -2612,6 +2624,8 @@ impl SseDecode for crate::BrowserConfig {
         let mut var_backend = <crate::BrowserBackend>::sse_decode(deserializer);
         let mut var_endpoint = <Option<String>>::sse_decode(deserializer);
         let mut var_timeout = <i64>::sse_decode(deserializer);
+        let mut var_overallTimeout = <i64>::sse_decode(deserializer);
+        let mut var_shutdownTimeout = <i64>::sse_decode(deserializer);
         let mut var_wait = <crate::BrowserWait>::sse_decode(deserializer);
         let mut var_waitSelector = <Option<String>>::sse_decode(deserializer);
         let mut var_extraWait = <Option<i64>>::sse_decode(deserializer);
@@ -2626,6 +2640,8 @@ impl SseDecode for crate::BrowserConfig {
             backend: var_backend,
             endpoint: var_endpoint,
             timeout: var_timeout,
+            overall_timeout: var_overallTimeout,
+            shutdown_timeout: var_shutdownTimeout,
             wait: var_wait,
             wait_selector: var_waitSelector,
             extra_wait: var_extraWait,
@@ -2721,6 +2737,7 @@ impl SseDecode for crate::ContentConfig {
         let mut var_wrap = <bool>::sse_decode(deserializer);
         let mut var_wrapWidth = <i64>::sse_decode(deserializer);
         let mut var_includeDocumentStructure = <bool>::sse_decode(deserializer);
+        let mut var_extractMetadata = <bool>::sse_decode(deserializer);
         return crate::ContentConfig {
             output_format: var_outputFormat,
             preprocessing_preset: var_preprocessingPreset,
@@ -2734,6 +2751,7 @@ impl SseDecode for crate::ContentConfig {
             wrap: var_wrap,
             wrap_width: var_wrapWidth,
             include_document_structure: var_includeDocumentStructure,
+            extract_metadata: var_extractMetadata,
         };
     }
 }
@@ -2783,12 +2801,19 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_allowSubdomains = <bool>::sse_decode(deserializer);
         let mut var_includePaths = <Vec<String>>::sse_decode(deserializer);
         let mut var_excludePaths = <Vec<String>>::sse_decode(deserializer);
+        let mut var_pathPatternsMatchQuery = <bool>::sse_decode(deserializer);
+        let mut var_dedupIncludeQuery = <bool>::sse_decode(deserializer);
+        let mut var_stripTrackingParams = <bool>::sse_decode(deserializer);
+        let mut var_trackingParams = <Vec<String>>::sse_decode(deserializer);
         let mut var_customHeaders = <std::collections::HashMap<String, String>>::sse_decode(deserializer);
         let mut var_requestTimeout = <i64>::sse_decode(deserializer);
         let mut var_rateLimitMs = <Option<i64>>::sse_decode(deserializer);
         let mut var_maxRedirects = <i64>::sse_decode(deserializer);
         let mut var_retryCount = <i64>::sse_decode(deserializer);
         let mut var_retryCodes = <Vec<i64>>::sse_decode(deserializer);
+        let mut var_retryInitialDelayMs = <i64>::sse_decode(deserializer);
+        let mut var_retryMaxDelayMs = <i64>::sse_decode(deserializer);
+        let mut var_rateLimitJitterRatio = <f64>::sse_decode(deserializer);
         let mut var_cookiesEnabled = <bool>::sse_decode(deserializer);
         let mut var_auth = <Option<crate::AuthConfig>>::sse_decode(deserializer);
         let mut var_maxBodySize = <Option<i64>>::sse_decode(deserializer);
@@ -2831,12 +2856,19 @@ impl SseDecode for crate::CrawlConfig {
             allow_subdomains: var_allowSubdomains,
             include_paths: var_includePaths,
             exclude_paths: var_excludePaths,
+            path_patterns_match_query: var_pathPatternsMatchQuery,
+            dedup_include_query: var_dedupIncludeQuery,
+            strip_tracking_params: var_stripTrackingParams,
+            tracking_params: var_trackingParams,
             custom_headers: var_customHeaders,
             request_timeout: var_requestTimeout,
             rate_limit_ms: var_rateLimitMs,
             max_redirects: var_maxRedirects,
             retry_count: var_retryCount,
             retry_codes: var_retryCodes,
+            retry_initial_delay_ms: var_retryInitialDelayMs,
+            retry_max_delay_ms: var_retryMaxDelayMs,
+            rate_limit_jitter_ratio: var_rateLimitJitterRatio,
             cookies_enabled: var_cookiesEnabled,
             auth: var_auth,
             max_body_size: var_maxBodySize,
@@ -3017,6 +3049,8 @@ impl SseDecode for crate::CrawlPageResult {
         let mut var_extractionMeta = <Option<crate::ExtractionMeta>>::sse_decode(deserializer);
         let mut var_downloadedDocument = <Option<crate::DownloadedDocument>>::sse_decode(deserializer);
         let mut var_browserUsed = <bool>::sse_decode(deserializer);
+        let mut var_finalUrl = <String>::sse_decode(deserializer);
+        let mut var_redirectCount = <i64>::sse_decode(deserializer);
         return crate::CrawlPageResult {
             url: var_url,
             normalized_url: var_normalizedUrl,
@@ -3039,6 +3073,8 @@ impl SseDecode for crate::CrawlPageResult {
             extraction_meta: var_extractionMeta,
             downloaded_document: var_downloadedDocument,
             browser_used: var_browserUsed,
+            final_url: var_finalUrl,
+            redirect_count: var_redirectCount,
         };
     }
 }
@@ -4572,6 +4608,8 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::BrowserConfig> {
             self.0.backend.into_into_dart().into_dart(),
             self.0.endpoint.into_into_dart().into_dart(),
             self.0.timeout.into_into_dart().into_dart(),
+            self.0.overall_timeout.into_into_dart().into_dart(),
+            self.0.shutdown_timeout.into_into_dart().into_dart(),
             self.0.wait.into_into_dart().into_dart(),
             self.0.wait_selector.into_into_dart().into_dart(),
             self.0.extra_wait.into_into_dart().into_dart(),
@@ -4692,6 +4730,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ContentConfig> {
             self.0.wrap.into_into_dart().into_dart(),
             self.0.wrap_width.into_into_dart().into_dart(),
             self.0.include_document_structure.into_into_dart().into_dart(),
+            self.0.extract_metadata.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4754,12 +4793,19 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.allow_subdomains.into_into_dart().into_dart(),
             self.0.include_paths.into_into_dart().into_dart(),
             self.0.exclude_paths.into_into_dart().into_dart(),
+            self.0.path_patterns_match_query.into_into_dart().into_dart(),
+            self.0.dedup_include_query.into_into_dart().into_dart(),
+            self.0.strip_tracking_params.into_into_dart().into_dart(),
+            self.0.tracking_params.into_into_dart().into_dart(),
             self.0.custom_headers.into_into_dart().into_dart(),
             self.0.request_timeout.into_into_dart().into_dart(),
             self.0.rate_limit_ms.into_into_dart().into_dart(),
             self.0.max_redirects.into_into_dart().into_dart(),
             self.0.retry_count.into_into_dart().into_dart(),
             self.0.retry_codes.into_into_dart().into_dart(),
+            self.0.retry_initial_delay_ms.into_into_dart().into_dart(),
+            self.0.retry_max_delay_ms.into_into_dart().into_dart(),
+            self.0.rate_limit_jitter_ratio.into_into_dart().into_dart(),
             self.0.cookies_enabled.into_into_dart().into_dart(),
             self.0.auth.into_into_dart().into_dart(),
             self.0.max_body_size.into_into_dart().into_dart(),
@@ -4916,6 +4962,8 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlPageResult> {
             self.0.extraction_meta.into_into_dart().into_dart(),
             self.0.downloaded_document.into_into_dart().into_dart(),
             self.0.browser_used.into_into_dart().into_dart(),
+            self.0.final_url.into_into_dart().into_dart(),
+            self.0.redirect_count.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5760,6 +5808,8 @@ impl SseEncode for crate::BrowserConfig {
         <crate::BrowserBackend>::sse_encode(self.backend, serializer);
         <Option<String>>::sse_encode(self.endpoint, serializer);
         <i64>::sse_encode(self.timeout, serializer);
+        <i64>::sse_encode(self.overall_timeout, serializer);
+        <i64>::sse_encode(self.shutdown_timeout, serializer);
         <crate::BrowserWait>::sse_encode(self.wait, serializer);
         <Option<String>>::sse_encode(self.wait_selector, serializer);
         <Option<i64>>::sse_encode(self.extra_wait, serializer);
@@ -5848,6 +5898,7 @@ impl SseEncode for crate::ContentConfig {
         <bool>::sse_encode(self.wrap, serializer);
         <i64>::sse_encode(self.wrap_width, serializer);
         <bool>::sse_encode(self.include_document_structure, serializer);
+        <bool>::sse_encode(self.extract_metadata, serializer);
     }
 }
 
@@ -5894,12 +5945,19 @@ impl SseEncode for crate::CrawlConfig {
         <bool>::sse_encode(self.allow_subdomains, serializer);
         <Vec<String>>::sse_encode(self.include_paths, serializer);
         <Vec<String>>::sse_encode(self.exclude_paths, serializer);
+        <bool>::sse_encode(self.path_patterns_match_query, serializer);
+        <bool>::sse_encode(self.dedup_include_query, serializer);
+        <bool>::sse_encode(self.strip_tracking_params, serializer);
+        <Vec<String>>::sse_encode(self.tracking_params, serializer);
         <std::collections::HashMap<String, String>>::sse_encode(self.custom_headers, serializer);
         <i64>::sse_encode(self.request_timeout, serializer);
         <Option<i64>>::sse_encode(self.rate_limit_ms, serializer);
         <i64>::sse_encode(self.max_redirects, serializer);
         <i64>::sse_encode(self.retry_count, serializer);
         <Vec<i64>>::sse_encode(self.retry_codes, serializer);
+        <i64>::sse_encode(self.retry_initial_delay_ms, serializer);
+        <i64>::sse_encode(self.retry_max_delay_ms, serializer);
+        <f64>::sse_encode(self.rate_limit_jitter_ratio, serializer);
         <bool>::sse_encode(self.cookies_enabled, serializer);
         <Option<crate::AuthConfig>>::sse_encode(self.auth, serializer);
         <Option<i64>>::sse_encode(self.max_body_size, serializer);
@@ -6066,6 +6124,8 @@ impl SseEncode for crate::CrawlPageResult {
         <Option<crate::ExtractionMeta>>::sse_encode(self.extraction_meta, serializer);
         <Option<crate::DownloadedDocument>>::sse_encode(self.downloaded_document, serializer);
         <bool>::sse_encode(self.browser_used, serializer);
+        <String>::sse_encode(self.final_url, serializer);
+        <i64>::sse_encode(self.redirect_count, serializer);
     }
 }
 

@@ -2811,22 +2811,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 15)
+      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
       endpoint: dco_decode_opt_String(arr[2]),
       timeout: dco_decode_i_64(arr[3]),
-      wait: dco_decode_browser_wait(arr[4]),
-      waitSelector: dco_decode_opt_String(arr[5]),
-      extraWait: dco_decode_opt_box_autoadd_i_64(arr[6]),
-      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[7]),
-      blockUrlPatterns: dco_decode_list_String(arr[8]),
-      evalScript: dco_decode_opt_String(arr[9]),
-      robotsUserAgent: dco_decode_opt_String(arr[10]),
-      captureNetworkEvents: dco_decode_bool(arr[11]),
-      sessionAffinity: dco_decode_bool(arr[12]),
+      overallTimeout: dco_decode_i_64(arr[4]),
+      shutdownTimeout: dco_decode_i_64(arr[5]),
+      wait: dco_decode_browser_wait(arr[6]),
+      waitSelector: dco_decode_opt_String(arr[7]),
+      extraWait: dco_decode_opt_box_autoadd_i_64(arr[8]),
+      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[9]),
+      blockUrlPatterns: dco_decode_list_String(arr[10]),
+      evalScript: dco_decode_opt_String(arr[11]),
+      robotsUserAgent: dco_decode_opt_String(arr[12]),
+      captureNetworkEvents: dco_decode_bool(arr[13]),
+      sessionAffinity: dco_decode_bool(arr[14]),
     );
   }
 
@@ -2884,8 +2886,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ContentConfig dco_decode_content_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return ContentConfig(
       outputFormat: dco_decode_String(arr[0]),
       preprocessingPreset: dco_decode_String(arr[1]),
@@ -2899,6 +2901,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrap: dco_decode_bool(arr[9]),
       wrapWidth: dco_decode_i_64(arr[10]),
       includeDocumentStructure: dco_decode_bool(arr[11]),
+      extractMetadata: dco_decode_bool(arr[12]),
     );
   }
 
@@ -2926,8 +2929,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlConfig dco_decode_crawl_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 47)
-      throw Exception('unexpected arr length: expect 47 but see ${arr.length}');
+    if (arr.length != 54)
+      throw Exception('unexpected arr length: expect 54 but see ${arr.length}');
     return CrawlConfig(
       maxDepth: dco_decode_opt_box_autoadd_i_64(arr[0]),
       maxPages: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -2944,39 +2947,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       allowSubdomains: dco_decode_bool(arr[12]),
       includePaths: dco_decode_list_String(arr[13]),
       excludePaths: dco_decode_list_String(arr[14]),
-      customHeaders: dco_decode_Map_String_String_None(arr[15]),
-      requestTimeout: dco_decode_i_64(arr[16]),
-      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[17]),
-      maxRedirects: dco_decode_i_64(arr[18]),
-      retryCount: dco_decode_i_64(arr[19]),
-      retryCodes: dco_decode_list_prim_i_64_strict(arr[20]),
-      cookiesEnabled: dco_decode_bool(arr[21]),
-      auth: dco_decode_opt_box_autoadd_auth_config(arr[22]),
-      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[23]),
-      removeTags: dco_decode_list_String(arr[24]),
-      content: dco_decode_content_config(arr[25]),
-      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[26]),
-      mapSearch: dco_decode_opt_String(arr[27]),
-      downloadAssets: dco_decode_bool(arr[28]),
-      assetTypes: dco_decode_list_asset_category(arr[29]),
-      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[30]),
-      browser: dco_decode_browser_config(arr[31]),
-      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[32]),
-      userAgents: dco_decode_list_String(arr[33]),
-      captureScreenshot: dco_decode_bool(arr[34]),
-      followDocumentUrls: dco_decode_bool(arr[35]),
-      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[36]),
-      downloadDocuments: dco_decode_bool(arr[37]),
-      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[38]),
-      documentMimeTypes: dco_decode_list_String(arr[39]),
-      documentOutputDir: dco_decode_opt_String(arr[40]),
+      pathPatternsMatchQuery: dco_decode_bool(arr[15]),
+      dedupIncludeQuery: dco_decode_bool(arr[16]),
+      stripTrackingParams: dco_decode_bool(arr[17]),
+      trackingParams: dco_decode_list_String(arr[18]),
+      customHeaders: dco_decode_Map_String_String_None(arr[19]),
+      requestTimeout: dco_decode_i_64(arr[20]),
+      rateLimitMs: dco_decode_opt_box_autoadd_i_64(arr[21]),
+      maxRedirects: dco_decode_i_64(arr[22]),
+      retryCount: dco_decode_i_64(arr[23]),
+      retryCodes: dco_decode_list_prim_i_64_strict(arr[24]),
+      retryInitialDelayMs: dco_decode_i_64(arr[25]),
+      retryMaxDelayMs: dco_decode_i_64(arr[26]),
+      rateLimitJitterRatio: dco_decode_f_64(arr[27]),
+      cookiesEnabled: dco_decode_bool(arr[28]),
+      auth: dco_decode_opt_box_autoadd_auth_config(arr[29]),
+      maxBodySize: dco_decode_opt_box_autoadd_i_64(arr[30]),
+      removeTags: dco_decode_list_String(arr[31]),
+      content: dco_decode_content_config(arr[32]),
+      mapLimit: dco_decode_opt_box_autoadd_i_64(arr[33]),
+      mapSearch: dco_decode_opt_String(arr[34]),
+      downloadAssets: dco_decode_bool(arr[35]),
+      assetTypes: dco_decode_list_asset_category(arr[36]),
+      maxAssetSize: dco_decode_opt_box_autoadd_i_64(arr[37]),
+      browser: dco_decode_browser_config(arr[38]),
+      proxy: dco_decode_opt_box_autoadd_proxy_config(arr[39]),
+      userAgents: dco_decode_list_String(arr[40]),
+      captureScreenshot: dco_decode_bool(arr[41]),
+      followDocumentUrls: dco_decode_bool(arr[42]),
+      documentUrlDepth: dco_decode_opt_box_autoadd_i_64(arr[43]),
+      downloadDocuments: dco_decode_bool(arr[44]),
+      documentMaxSize: dco_decode_opt_box_autoadd_i_64(arr[45]),
+      documentMimeTypes: dco_decode_list_String(arr[46]),
+      documentOutputDir: dco_decode_opt_String(arr[47]),
       documentContentEncoding:
-          dco_decode_opt_box_autoadd_document_content_encoding(arr[41]),
-      warcOutput: dco_decode_opt_String(arr[42]),
-      browserProfile: dco_decode_opt_String(arr[43]),
-      saveBrowserProfile: dco_decode_bool(arr[44]),
-      ssrf: dco_decode_ssrf_policy(arr[45]),
-      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[46]),
+          dco_decode_opt_box_autoadd_document_content_encoding(arr[48]),
+      warcOutput: dco_decode_opt_String(arr[49]),
+      browserProfile: dco_decode_opt_String(arr[50]),
+      saveBrowserProfile: dco_decode_bool(arr[51]),
+      ssrf: dco_decode_ssrf_policy(arr[52]),
+      ssrfDenyPrivateExplicit: dco_decode_opt_box_autoadd_bool(arr[53]),
     );
   }
 
@@ -3057,8 +3067,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 21)
-      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
+    if (arr.length != 23)
+      throw Exception('unexpected arr length: expect 23 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -3083,6 +3093,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[19],
       ),
       browserUsed: dco_decode_bool(arr[20]),
+      finalUrl: dco_decode_String(arr[21]),
+      redirectCount: dco_decode_i_64(arr[22]),
     );
   }
 
@@ -4236,6 +4248,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_backend = sse_decode_browser_backend(deserializer);
     var var_endpoint = sse_decode_opt_String(deserializer);
     var var_timeout = sse_decode_i_64(deserializer);
+    var var_overallTimeout = sse_decode_i_64(deserializer);
+    var var_shutdownTimeout = sse_decode_i_64(deserializer);
     var var_wait = sse_decode_browser_wait(deserializer);
     var var_waitSelector = sse_decode_opt_String(deserializer);
     var var_extraWait = sse_decode_opt_box_autoadd_i_64(deserializer);
@@ -4250,6 +4264,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       backend: var_backend,
       endpoint: var_endpoint,
       timeout: var_timeout,
+      overallTimeout: var_overallTimeout,
+      shutdownTimeout: var_shutdownTimeout,
       wait: var_wait,
       waitSelector: var_waitSelector,
       extraWait: var_extraWait,
@@ -4323,6 +4339,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_wrap = sse_decode_bool(deserializer);
     var var_wrapWidth = sse_decode_i_64(deserializer);
     var var_includeDocumentStructure = sse_decode_bool(deserializer);
+    var var_extractMetadata = sse_decode_bool(deserializer);
     return ContentConfig(
       outputFormat: var_outputFormat,
       preprocessingPreset: var_preprocessingPreset,
@@ -4336,6 +4353,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       wrap: var_wrap,
       wrapWidth: var_wrapWidth,
       includeDocumentStructure: var_includeDocumentStructure,
+      extractMetadata: var_extractMetadata,
     );
   }
 
@@ -4383,12 +4401,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_allowSubdomains = sse_decode_bool(deserializer);
     var var_includePaths = sse_decode_list_String(deserializer);
     var var_excludePaths = sse_decode_list_String(deserializer);
+    var var_pathPatternsMatchQuery = sse_decode_bool(deserializer);
+    var var_dedupIncludeQuery = sse_decode_bool(deserializer);
+    var var_stripTrackingParams = sse_decode_bool(deserializer);
+    var var_trackingParams = sse_decode_list_String(deserializer);
     var var_customHeaders = sse_decode_Map_String_String_None(deserializer);
     var var_requestTimeout = sse_decode_i_64(deserializer);
     var var_rateLimitMs = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_maxRedirects = sse_decode_i_64(deserializer);
     var var_retryCount = sse_decode_i_64(deserializer);
     var var_retryCodes = sse_decode_list_prim_i_64_strict(deserializer);
+    var var_retryInitialDelayMs = sse_decode_i_64(deserializer);
+    var var_retryMaxDelayMs = sse_decode_i_64(deserializer);
+    var var_rateLimitJitterRatio = sse_decode_f_64(deserializer);
     var var_cookiesEnabled = sse_decode_bool(deserializer);
     var var_auth = sse_decode_opt_box_autoadd_auth_config(deserializer);
     var var_maxBodySize = sse_decode_opt_box_autoadd_i_64(deserializer);
@@ -4434,12 +4459,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       allowSubdomains: var_allowSubdomains,
       includePaths: var_includePaths,
       excludePaths: var_excludePaths,
+      pathPatternsMatchQuery: var_pathPatternsMatchQuery,
+      dedupIncludeQuery: var_dedupIncludeQuery,
+      stripTrackingParams: var_stripTrackingParams,
+      trackingParams: var_trackingParams,
       customHeaders: var_customHeaders,
       requestTimeout: var_requestTimeout,
       rateLimitMs: var_rateLimitMs,
       maxRedirects: var_maxRedirects,
       retryCount: var_retryCount,
       retryCodes: var_retryCodes,
+      retryInitialDelayMs: var_retryInitialDelayMs,
+      retryMaxDelayMs: var_retryMaxDelayMs,
+      rateLimitJitterRatio: var_rateLimitJitterRatio,
       cookiesEnabled: var_cookiesEnabled,
       auth: var_auth,
       maxBodySize: var_maxBodySize,
@@ -4588,6 +4620,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_browserUsed = sse_decode_bool(deserializer);
+    var var_finalUrl = sse_decode_String(deserializer);
+    var var_redirectCount = sse_decode_i_64(deserializer);
     return CrawlPageResult(
       url: var_url,
       normalizedUrl: var_normalizedUrl,
@@ -4610,6 +4644,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       extractionMeta: var_extractionMeta,
       downloadedDocument: var_downloadedDocument,
       browserUsed: var_browserUsed,
+      finalUrl: var_finalUrl,
+      redirectCount: var_redirectCount,
     );
   }
 
@@ -6175,6 +6211,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_browser_backend(self.backend, serializer);
     sse_encode_opt_String(self.endpoint, serializer);
     sse_encode_i_64(self.timeout, serializer);
+    sse_encode_i_64(self.overallTimeout, serializer);
+    sse_encode_i_64(self.shutdownTimeout, serializer);
     sse_encode_browser_wait(self.wait, serializer);
     sse_encode_opt_String(self.waitSelector, serializer);
     sse_encode_opt_box_autoadd_i_64(self.extraWait, serializer);
@@ -6242,6 +6280,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.wrap, serializer);
     sse_encode_i_64(self.wrapWidth, serializer);
     sse_encode_bool(self.includeDocumentStructure, serializer);
+    sse_encode_bool(self.extractMetadata, serializer);
   }
 
   @protected
@@ -6283,12 +6322,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.allowSubdomains, serializer);
     sse_encode_list_String(self.includePaths, serializer);
     sse_encode_list_String(self.excludePaths, serializer);
+    sse_encode_bool(self.pathPatternsMatchQuery, serializer);
+    sse_encode_bool(self.dedupIncludeQuery, serializer);
+    sse_encode_bool(self.stripTrackingParams, serializer);
+    sse_encode_list_String(self.trackingParams, serializer);
     sse_encode_Map_String_String_None(self.customHeaders, serializer);
     sse_encode_i_64(self.requestTimeout, serializer);
     sse_encode_opt_box_autoadd_i_64(self.rateLimitMs, serializer);
     sse_encode_i_64(self.maxRedirects, serializer);
     sse_encode_i_64(self.retryCount, serializer);
     sse_encode_list_prim_i_64_strict(self.retryCodes, serializer);
+    sse_encode_i_64(self.retryInitialDelayMs, serializer);
+    sse_encode_i_64(self.retryMaxDelayMs, serializer);
+    sse_encode_f_64(self.rateLimitJitterRatio, serializer);
     sse_encode_bool(self.cookiesEnabled, serializer);
     sse_encode_opt_box_autoadd_auth_config(self.auth, serializer);
     sse_encode_opt_box_autoadd_i_64(self.maxBodySize, serializer);
@@ -6433,6 +6479,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_bool(self.browserUsed, serializer);
+    sse_encode_String(self.finalUrl, serializer);
+    sse_encode_i_64(self.redirectCount, serializer);
   }
 
   @protected

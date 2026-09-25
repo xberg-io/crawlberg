@@ -163,6 +163,7 @@
     "c/markdown/markdown-fit-content.md",
     "c/markdown/markdown-headings-and-paragraphs.md",
     "c/markdown/markdown-links-converted.md",
+    "c/markdown/markdown-no-frontmatter.md",
     "c/markdown/markdown-with-citations.md",
     "c/metadata/metadata-article-times.md",
     "c/metadata/metadata-favicons.md",
@@ -422,6 +423,7 @@
     "csharp/markdown/markdown-fit-content.md",
     "csharp/markdown/markdown-headings-and-paragraphs.md",
     "csharp/markdown/markdown-links-converted.md",
+    "csharp/markdown/markdown-no-frontmatter.md",
     "csharp/markdown/markdown-with-citations.md",
     "csharp/metadata/metadata-article-times.md",
     "csharp/metadata/metadata-favicons.md",
@@ -689,6 +691,7 @@
     "dart/markdown/markdown-fit-content.md",
     "dart/markdown/markdown-headings-and-paragraphs.md",
     "dart/markdown/markdown-links-converted.md",
+    "dart/markdown/markdown-no-frontmatter.md",
     "dart/markdown/markdown-with-citations.md",
     "dart/metadata/metadata-article-times.md",
     "dart/metadata/metadata-favicons.md",
@@ -947,6 +950,7 @@
     "elixir/markdown/markdown-fit-content.md",
     "elixir/markdown/markdown-headings-and-paragraphs.md",
     "elixir/markdown/markdown-links-converted.md",
+    "elixir/markdown/markdown-no-frontmatter.md",
     "elixir/markdown/markdown-with-citations.md",
     "elixir/metadata/metadata-article-times.md",
     "elixir/metadata/metadata-favicons.md",
@@ -1212,6 +1216,7 @@
     "go/markdown/markdown-fit-content.md",
     "go/markdown/markdown-headings-and-paragraphs.md",
     "go/markdown/markdown-links-converted.md",
+    "go/markdown/markdown-no-frontmatter.md",
     "go/markdown/markdown-with-citations.md",
     "go/metadata/metadata-article-times.md",
     "go/metadata/metadata-favicons.md",
@@ -1479,6 +1484,7 @@
     "java/markdown/markdown-fit-content.md",
     "java/markdown/markdown-headings-and-paragraphs.md",
     "java/markdown/markdown-links-converted.md",
+    "java/markdown/markdown-no-frontmatter.md",
     "java/markdown/markdown-with-citations.md",
     "java/metadata/metadata-article-times.md",
     "java/metadata/metadata-favicons.md",
@@ -1746,6 +1752,7 @@
     "kotlin-android/markdown/markdown-fit-content.md",
     "kotlin-android/markdown/markdown-headings-and-paragraphs.md",
     "kotlin-android/markdown/markdown-links-converted.md",
+    "kotlin-android/markdown/markdown-no-frontmatter.md",
     "kotlin-android/markdown/markdown-with-citations.md",
     "kotlin-android/metadata/metadata-article-times.md",
     "kotlin-android/metadata/metadata-favicons.md",
@@ -2013,6 +2020,7 @@
     "php/markdown/markdown-fit-content.md",
     "php/markdown/markdown-headings-and-paragraphs.md",
     "php/markdown/markdown-links-converted.md",
+    "php/markdown/markdown-no-frontmatter.md",
     "php/markdown/markdown-with-citations.md",
     "php/metadata/metadata-article-times.md",
     "php/metadata/metadata-favicons.md",
@@ -2280,6 +2288,7 @@
     "python/markdown/markdown-fit-content.md",
     "python/markdown/markdown-headings-and-paragraphs.md",
     "python/markdown/markdown-links-converted.md",
+    "python/markdown/markdown-no-frontmatter.md",
     "python/markdown/markdown-with-citations.md",
     "python/metadata/metadata-article-times.md",
     "python/metadata/metadata-favicons.md",
@@ -2547,6 +2556,7 @@
     "ruby/markdown/markdown-fit-content.md",
     "ruby/markdown/markdown-headings-and-paragraphs.md",
     "ruby/markdown/markdown-links-converted.md",
+    "ruby/markdown/markdown-no-frontmatter.md",
     "ruby/markdown/markdown-with-citations.md",
     "ruby/metadata/metadata-article-times.md",
     "ruby/metadata/metadata-favicons.md",
@@ -2814,6 +2824,7 @@
     "rust/markdown/markdown-fit-content.md",
     "rust/markdown/markdown-headings-and-paragraphs.md",
     "rust/markdown/markdown-links-converted.md",
+    "rust/markdown/markdown-no-frontmatter.md",
     "rust/markdown/markdown-with-citations.md",
     "rust/metadata/metadata-article-times.md",
     "rust/metadata/metadata-favicons.md",
@@ -3072,6 +3083,7 @@
     "swift/markdown/markdown-fit-content.md",
     "swift/markdown/markdown-headings-and-paragraphs.md",
     "swift/markdown/markdown-links-converted.md",
+    "swift/markdown/markdown-no-frontmatter.md",
     "swift/markdown/markdown-with-citations.md",
     "swift/metadata/metadata-article-times.md",
     "swift/metadata/metadata-favicons.md",
@@ -3337,6 +3349,7 @@
     "typescript/markdown/markdown-fit-content.md",
     "typescript/markdown/markdown-headings-and-paragraphs.md",
     "typescript/markdown/markdown-links-converted.md",
+    "typescript/markdown/markdown-no-frontmatter.md",
     "typescript/markdown/markdown-with-citations.md",
     "typescript/metadata/metadata-article-times.md",
     "typescript/metadata/metadata-favicons.md",
@@ -3603,6 +3616,7 @@
     "wasm/markdown/markdown-fit-content.md",
     "wasm/markdown/markdown-headings-and-paragraphs.md",
     "wasm/markdown/markdown-links-converted.md",
+    "wasm/markdown/markdown-no-frontmatter.md",
     "wasm/markdown/markdown-with-citations.md",
     "wasm/metadata/metadata-article-times.md",
     "wasm/metadata/metadata-favicons.md",
@@ -3853,6 +3867,7 @@
     "zig/markdown/markdown-fit-content.md",
     "zig/markdown/markdown-headings-and-paragraphs.md",
     "zig/markdown/markdown-links-converted.md",
+    "zig/markdown/markdown-no-frontmatter.md",
     "zig/markdown/markdown-with-citations.md",
     "zig/metadata/metadata-article-times.md",
     "zig/metadata/metadata-favicons.md",
@@ -5895,6 +5910,18 @@
         "language": "c"
       },
       "path": "c/markdown/markdown-links-converted.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "c"
+      },
+      "path": "c/markdown/markdown-no-frontmatter.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -9003,6 +9030,18 @@
         "language": "csharp"
       },
       "path": "csharp/markdown/markdown-links-converted.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "csharp"
+      },
+      "path": "csharp/markdown/markdown-no-frontmatter.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -12215,6 +12254,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "dart"
+      },
+      "path": "dart/markdown/markdown-no-frontmatter.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "dart"
       },
@@ -15303,6 +15354,18 @@
         "language": "elixir"
       },
       "path": "elixir/markdown/markdown-links-converted.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "elixir"
+      },
+      "path": "elixir/markdown/markdown-no-frontmatter.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18483,6 +18546,18 @@
         "language": "go"
       },
       "path": "go/markdown/markdown-links-converted.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "go"
+      },
+      "path": "go/markdown/markdown-no-frontmatter.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21695,6 +21770,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "java"
+      },
+      "path": "java/markdown/markdown-no-frontmatter.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "java"
       },
@@ -24891,6 +24978,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/markdown/markdown-links-converted.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/markdown/markdown-no-frontmatter.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28103,6 +28202,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "php"
+      },
+      "path": "php/markdown/markdown-no-frontmatter.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "php"
       },
@@ -31307,6 +31418,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "python"
+      },
+      "path": "python/markdown/markdown-no-frontmatter.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "python"
       },
@@ -34503,6 +34626,18 @@
         "language": "ruby"
       },
       "path": "ruby/markdown/markdown-links-converted.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "ruby"
+      },
+      "path": "ruby/markdown/markdown-no-frontmatter.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38157,6 +38292,21 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "rust"
+      },
+      "path": "rust/markdown/markdown-no-frontmatter.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:serde_json",
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "rust"
       },
@@ -41550,6 +41700,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "swift"
+      },
+      "path": "swift/markdown/markdown-no-frontmatter.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "swift"
       },
@@ -44722,6 +44884,18 @@
         "language": "node"
       },
       "path": "typescript/markdown/markdown-links-converted.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "node"
+      },
+      "path": "typescript/markdown/markdown-no-frontmatter.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -47922,6 +48096,18 @@
     },
     {
       "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "wasm"
+      },
+      "path": "wasm/markdown/markdown-no-frontmatter.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "markdown_with_citations",
         "language": "wasm"
       },
@@ -50914,6 +51100,18 @@
         "language": "zig"
       },
       "path": "zig/markdown/markdown-links-converted.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "markdown_no_frontmatter",
+        "language": "zig"
+      },
+      "path": "zig/markdown/markdown-no-frontmatter.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -61796,6 +61994,66 @@
     },
     {
       "fixture_id": "markdown_links_converted",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "c"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "go"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "java"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "node"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "php"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "python"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
       "language": "zig"
     },
     {
@@ -77614,6 +77872,66 @@
     },
     {
       "fixture_id": "markdown_links_converted",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "c"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "go"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "java"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "node"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "php"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "python"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "markdown_no_frontmatter",
       "language": "zig"
     },
     {

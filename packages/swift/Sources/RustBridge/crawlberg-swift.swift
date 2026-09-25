@@ -1028,8 +1028,8 @@ public class BrowserConfig: BrowserConfigRefMut {
     }
 }
 extension BrowserConfig {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ mode: BrowserMode, _ backend: BrowserBackend, _ endpoint: Optional<GenericIntoRustString>, _ timeout: UInt64, _ wait: BrowserWait, _ wait_selector: Optional<GenericIntoRustString>, _ extra_wait: Optional<UInt64>, _ proxy: Optional<ProxyConfig>, _ block_url_patterns: RustVec<GenericIntoRustString>, _ eval_script: Optional<GenericIntoRustString>, _ robots_user_agent: Optional<GenericIntoRustString>, _ capture_network_events: Bool, _ session_affinity: Bool) {
-        self.init(ptr: __swift_bridge__$BrowserConfig$new({mode.isOwned = false; return mode.ptr;}(), {backend.isOwned = false; return backend.ptr;}(), { if let rustString = optionalStringIntoRustString(endpoint) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), timeout, {wait.isOwned = false; return wait.ptr;}(), { if let rustString = optionalStringIntoRustString(wait_selector) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), extra_wait.intoFfiRepr(), { if let val = proxy { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = block_url_patterns; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(eval_script) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(robots_user_agent) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), capture_network_events, session_affinity))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ mode: BrowserMode, _ backend: BrowserBackend, _ endpoint: Optional<GenericIntoRustString>, _ timeout: UInt64, _ overall_timeout: UInt64, _ shutdown_timeout: UInt64, _ wait: BrowserWait, _ wait_selector: Optional<GenericIntoRustString>, _ extra_wait: Optional<UInt64>, _ proxy: Optional<ProxyConfig>, _ block_url_patterns: RustVec<GenericIntoRustString>, _ eval_script: Optional<GenericIntoRustString>, _ robots_user_agent: Optional<GenericIntoRustString>, _ capture_network_events: Bool, _ session_affinity: Bool) {
+        self.init(ptr: __swift_bridge__$BrowserConfig$new({mode.isOwned = false; return mode.ptr;}(), {backend.isOwned = false; return backend.ptr;}(), { if let rustString = optionalStringIntoRustString(endpoint) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), timeout, overall_timeout, shutdown_timeout, {wait.isOwned = false; return wait.ptr;}(), { if let rustString = optionalStringIntoRustString(wait_selector) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), extra_wait.intoFfiRepr(), { if let val = proxy { val.isOwned = false; return val.ptr } else { return nil } }(), { let val = block_url_patterns; val.isOwned = false; return val.ptr }(), { if let rustString = optionalStringIntoRustString(eval_script) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(robots_user_agent) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), capture_network_events, session_affinity))
     }
 }
 public class BrowserConfigRefMut: BrowserConfigRef {
@@ -1059,6 +1059,14 @@ extension BrowserConfigRef {
 
     public func timeout() -> UInt64 {
         __swift_bridge__$BrowserConfig$timeout(ptr)
+    }
+
+    public func overallTimeout() -> UInt64 {
+        __swift_bridge__$BrowserConfig$overall_timeout(ptr)
+    }
+
+    public func shutdownTimeout() -> UInt64 {
+        __swift_bridge__$BrowserConfig$shutdown_timeout(ptr)
     }
 
     public func wait() -> RustString {
@@ -1436,8 +1444,8 @@ public class ContentConfig: ContentConfigRefMut {
     }
 }
 extension ContentConfig {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool) {
-        self.init(ptr: __swift_bridge__$ContentConfig$new({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ output_format: GenericIntoRustString, _ preprocessing_preset: GenericIntoRustString, _ remove_navigation: Bool, _ remove_forms: Bool, _ strip_tags: RustVec<GenericIntoRustString>, _ preserve_tags: RustVec<GenericIntoRustString>, _ exclude_selectors: RustVec<GenericIntoRustString>, _ skip_images: Bool, _ max_depth: Optional<UInt>, _ wrap: Bool, _ wrap_width: UInt, _ include_document_structure: Bool, _ extract_metadata: Bool) {
+        self.init(ptr: __swift_bridge__$ContentConfig$new({ let rustString = output_format.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = preprocessing_preset.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), remove_navigation, remove_forms, { let val = strip_tags; val.isOwned = false; return val.ptr }(), { let val = preserve_tags; val.isOwned = false; return val.ptr }(), { let val = exclude_selectors; val.isOwned = false; return val.ptr }(), skip_images, max_depth.intoFfiRepr(), wrap, wrap_width, include_document_structure, extract_metadata))
     }
 }
 public class ContentConfigRefMut: ContentConfigRef {
@@ -1499,6 +1507,10 @@ extension ContentConfigRef {
 
     public func includeDocumentStructure() -> Bool {
         __swift_bridge__$ContentConfig$include_document_structure(ptr)
+    }
+
+    public func extractMetadata() -> Bool {
+        __swift_bridge__$ContentConfig$extract_metadata(ptr)
     }
 }
 extension ContentConfig: Vectorizable {
@@ -1734,6 +1746,22 @@ extension CrawlConfigRef {
         RustVec(ptr: __swift_bridge__$CrawlConfig$exclude_paths(ptr))
     }
 
+    public func pathPatternsMatchQuery() -> Bool {
+        __swift_bridge__$CrawlConfig$path_patterns_match_query(ptr)
+    }
+
+    public func dedupIncludeQuery() -> Bool {
+        __swift_bridge__$CrawlConfig$dedup_include_query(ptr)
+    }
+
+    public func stripTrackingParams() -> Bool {
+        __swift_bridge__$CrawlConfig$strip_tracking_params(ptr)
+    }
+
+    public func trackingParams() -> RustVec<RustString> {
+        RustVec(ptr: __swift_bridge__$CrawlConfig$tracking_params(ptr))
+    }
+
     public func customHeaders() -> RustString {
         RustString(ptr: __swift_bridge__$CrawlConfig$custom_headers(ptr))
     }
@@ -1756,6 +1784,18 @@ extension CrawlConfigRef {
 
     public func retryCodes() -> RustVec<UInt16> {
         RustVec(ptr: __swift_bridge__$CrawlConfig$retry_codes(ptr))
+    }
+
+    public func retryInitialDelayMs() -> UInt64 {
+        __swift_bridge__$CrawlConfig$retry_initial_delay_ms(ptr)
+    }
+
+    public func retryMaxDelayMs() -> UInt64 {
+        __swift_bridge__$CrawlConfig$retry_max_delay_ms(ptr)
+    }
+
+    public func rateLimitJitterRatio() -> Double {
+        __swift_bridge__$CrawlConfig$rate_limit_jitter_ratio(ptr)
     }
 
     public func cookiesEnabled() -> Bool {
@@ -1926,8 +1966,8 @@ public class CrawlPageResult: CrawlPageResultRefMut {
     }
 }
 extension CrawlPageResult {
-    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ normalized_url: GenericIntoRustString, _ status_code: UInt16, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ depth: UInt, _ stayed_on_domain: Bool, _ was_skipped: Bool, _ is_pdf: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ downloaded_document: Optional<DownloadedDocument>, _ browser_used: Bool) {
-        self.init(ptr: __swift_bridge__$CrawlPageResult$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = normalized_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), status_code, { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), depth, stayed_on_domain, was_skipped, is_pdf, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), browser_used))
+    public convenience init<GenericIntoRustString: IntoRustString>(_ url: GenericIntoRustString, _ normalized_url: GenericIntoRustString, _ status_code: UInt16, _ content_type: GenericIntoRustString, _ html: GenericIntoRustString, _ body_size: UInt, _ metadata: PageMetadata, _ links: RustVec<LinkInfo>, _ images: RustVec<ImageInfo>, _ feeds: RustVec<FeedInfo>, _ json_ld: RustVec<JsonLdEntry>, _ depth: UInt, _ stayed_on_domain: Bool, _ was_skipped: Bool, _ is_pdf: Bool, _ detected_charset: Optional<GenericIntoRustString>, _ markdown: Optional<MarkdownResult>, _ extracted_data: Optional<GenericIntoRustString>, _ extraction_meta: Optional<ExtractionMeta>, _ downloaded_document: Optional<DownloadedDocument>, _ browser_used: Bool, _ final_url: GenericIntoRustString, _ redirect_count: UInt) {
+        self.init(ptr: __swift_bridge__$CrawlPageResult$new({ let rustString = url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = normalized_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), status_code, { let rustString = content_type.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), { let rustString = html.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), body_size, {metadata.isOwned = false; return metadata.ptr;}(), { let val = links; val.isOwned = false; return val.ptr }(), { let val = images; val.isOwned = false; return val.ptr }(), { let val = feeds; val.isOwned = false; return val.ptr }(), { let val = json_ld; val.isOwned = false; return val.ptr }(), depth, stayed_on_domain, was_skipped, is_pdf, { if let rustString = optionalStringIntoRustString(detected_charset) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = markdown { val.isOwned = false; return val.ptr } else { return nil } }(), { if let rustString = optionalStringIntoRustString(extracted_data) { rustString.isOwned = false; return rustString.ptr } else { return nil } }(), { if let val = extraction_meta { val.isOwned = false; return val.ptr } else { return nil } }(), { if let val = downloaded_document { val.isOwned = false; return val.ptr } else { return nil } }(), browser_used, { let rustString = final_url.intoRustString(); rustString.isOwned = false; return rustString.ptr }(), redirect_count))
     }
 }
 public class CrawlPageResultRefMut: CrawlPageResultRef {
@@ -2025,6 +2065,14 @@ extension CrawlPageResultRef {
 
     public func browserUsed() -> Bool {
         __swift_bridge__$CrawlPageResult$browser_used(ptr)
+    }
+
+    public func finalUrl() -> RustString {
+        RustString(ptr: __swift_bridge__$CrawlPageResult$final_url(ptr))
+    }
+
+    public func redirectCount() -> UInt {
+        __swift_bridge__$CrawlPageResult$redirect_count(ptr)
     }
 }
 extension CrawlPageResult: Vectorizable {

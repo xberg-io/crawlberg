@@ -575,6 +575,23 @@ class BrowserConfig {
   /// Timeout for browser page load and rendering (in milliseconds when serialized).
   final PlatformInt64 timeout;
 
+  /// Overall deadline for a single browser fetch, covering browser launch (or
+  /// page acquisition from a shared pool), page setup, navigation, rendering,
+  /// and screenshot capture. Must exceed `timeout` to leave room for launch
+  /// and setup overhead; a fetch that has not returned within this deadline
+  /// fails with a timeout error (in milliseconds when serialized).
+  ///
+  /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
+  /// not counted against this deadline: an already-computed result is
+  /// delivered to the caller without waiting for the browser process to
+  /// exit.
+  final PlatformInt64 overallTimeout;
+
+  /// How long to wait for the browser process to close and exit cleanly
+  /// during teardown before the process is forcibly killed (in milliseconds
+  /// when serialized).
+  final PlatformInt64 shutdownTimeout;
+
   /// Wait strategy after browser navigation.
   final BrowserWait wait;
 
@@ -618,6 +635,8 @@ class BrowserConfig {
     required this.backend,
     this.endpoint,
     required this.timeout,
+    required this.overallTimeout,
+    required this.shutdownTimeout,
     required this.wait,
     this.waitSelector,
     this.extraWait,
@@ -635,6 +654,8 @@ class BrowserConfig {
       backend.hashCode ^
       endpoint.hashCode ^
       timeout.hashCode ^
+      overallTimeout.hashCode ^
+      shutdownTimeout.hashCode ^
       wait.hashCode ^
       waitSelector.hashCode ^
       extraWait.hashCode ^
@@ -654,6 +675,8 @@ class BrowserConfig {
           backend == other.backend &&
           endpoint == other.endpoint &&
           timeout == other.timeout &&
+          overallTimeout == other.overallTimeout &&
+          shutdownTimeout == other.shutdownTimeout &&
           wait == other.wait &&
           waitSelector == other.waitSelector &&
           extraWait == other.extraWait &&
@@ -851,6 +874,15 @@ class ContentConfig {
   /// Include document structure tree in output. Default: `true`.
   final bool includeDocumentStructure;
 
+  /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
+  /// `<head>`) to the markdown output. Default: `true`.
+  ///
+  /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
+  /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
+  /// is populated independently by `crate::html::metadata::extract_metadata` from the
+  /// parsed DOM, so turning this off does not lose any metadata field.
+  final bool extractMetadata;
+
   const ContentConfig({
     required this.outputFormat,
     required this.preprocessingPreset,
@@ -864,6 +896,7 @@ class ContentConfig {
     required this.wrap,
     required this.wrapWidth,
     required this.includeDocumentStructure,
+    required this.extractMetadata,
   });
 
   @override
@@ -879,7 +912,8 @@ class ContentConfig {
       maxDepth.hashCode ^
       wrap.hashCode ^
       wrapWidth.hashCode ^
-      includeDocumentStructure.hashCode;
+      includeDocumentStructure.hashCode ^
+      extractMetadata.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -897,7 +931,8 @@ class ContentConfig {
           maxDepth == other.maxDepth &&
           wrap == other.wrap &&
           wrapWidth == other.wrapWidth &&
-          includeDocumentStructure == other.includeDocumentStructure;
+          includeDocumentStructure == other.includeDocumentStructure &&
+          extractMetadata == other.extractMetadata;
 }
 
 /// Content filter applied to each crawled page before it reaches the result.
@@ -1003,6 +1038,30 @@ class CrawlConfig {
   /// Regex patterns for paths to exclude during crawling.
   final List<String> excludePaths;
 
+  /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
+  /// `path`. Defaults to `false`, matching path only: a pattern anchored with `$` (e.g.
+  /// `/feed/?$`) changes meaning once the query joins the matched text, so this must stay
+  /// opt-in rather than silently changing what an existing config matches.
+  final bool pathPatternsMatchQuery;
+
+  /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
+  /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
+  /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
+  /// query is fetched once.
+  final bool dedupIncludeQuery;
+
+  /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
+  /// fetched, and reported. Defaults to `false`, so no tracking parameters are stripped
+  /// unless explicitly enabled.
+  final bool stripTrackingParams;
+
+  /// Query parameter name patterns to strip when `strip_tracking_params` is `true`. A
+  /// pattern ending in `*` matches by prefix (`utm_*` matches `utm_source`, `utm_campaign`,
+  /// ...); any other pattern matches the parameter name exactly. Defaults to
+  /// `["utm_*", "fbclid", "gclid", "ref"]`, applied only once `strip_tracking_params` is
+  /// enabled.
+  final List<String> trackingParams;
+
   /// Custom HTTP headers to send with each request.
   final Map<String, String> customHeaders;
 
@@ -1016,11 +1075,23 @@ class CrawlConfig {
   /// Maximum number of redirects to follow.
   final PlatformInt64 maxRedirects;
 
-  /// Number of retry attempts for failed requests.
+  /// Number of retry attempts for failed requests. Bounded by [`MAX_RETRY_COUNT`].
   final PlatformInt64 retryCount;
 
   /// HTTP status codes that should trigger a retry.
   final Int64List retryCodes;
+
+  /// Initial delay, in milliseconds, before the first retry. Doubled on each
+  /// subsequent attempt (capped at `retry_max_delay_ms`). Defaults to 100ms.
+  final PlatformInt64 retryInitialDelayMs;
+
+  /// Upper bound, in milliseconds, on the exponential retry backoff. Defaults to 60s.
+  final PlatformInt64 retryMaxDelayMs;
+
+  /// Fraction of the per-domain rate-limit delay to randomly jitter by, in `[0.0, 1.0]`.
+  /// `0.0` (the default) applies no jitter and preserves the previous fixed-interval
+  /// behaviour; `0.1` jitters the delay by up to ±10%.
+  final double rateLimitJitterRatio;
 
   /// Whether to enable cookie handling.
   final bool cookiesEnabled;
@@ -1176,12 +1247,19 @@ class CrawlConfig {
     required this.allowSubdomains,
     required this.includePaths,
     required this.excludePaths,
+    required this.pathPatternsMatchQuery,
+    required this.dedupIncludeQuery,
+    required this.stripTrackingParams,
+    required this.trackingParams,
     required this.customHeaders,
     required this.requestTimeout,
     this.rateLimitMs,
     required this.maxRedirects,
     required this.retryCount,
     required this.retryCodes,
+    required this.retryInitialDelayMs,
+    required this.retryMaxDelayMs,
+    required this.rateLimitJitterRatio,
     required this.cookiesEnabled,
     this.auth,
     this.maxBodySize,
@@ -1227,12 +1305,19 @@ class CrawlConfig {
       allowSubdomains.hashCode ^
       includePaths.hashCode ^
       excludePaths.hashCode ^
+      pathPatternsMatchQuery.hashCode ^
+      dedupIncludeQuery.hashCode ^
+      stripTrackingParams.hashCode ^
+      trackingParams.hashCode ^
       customHeaders.hashCode ^
       requestTimeout.hashCode ^
       rateLimitMs.hashCode ^
       maxRedirects.hashCode ^
       retryCount.hashCode ^
       retryCodes.hashCode ^
+      retryInitialDelayMs.hashCode ^
+      retryMaxDelayMs.hashCode ^
+      rateLimitJitterRatio.hashCode ^
       cookiesEnabled.hashCode ^
       auth.hashCode ^
       maxBodySize.hashCode ^
@@ -1280,12 +1365,19 @@ class CrawlConfig {
           allowSubdomains == other.allowSubdomains &&
           includePaths == other.includePaths &&
           excludePaths == other.excludePaths &&
+          pathPatternsMatchQuery == other.pathPatternsMatchQuery &&
+          dedupIncludeQuery == other.dedupIncludeQuery &&
+          stripTrackingParams == other.stripTrackingParams &&
+          trackingParams == other.trackingParams &&
           customHeaders == other.customHeaders &&
           requestTimeout == other.requestTimeout &&
           rateLimitMs == other.rateLimitMs &&
           maxRedirects == other.maxRedirects &&
           retryCount == other.retryCount &&
           retryCodes == other.retryCodes &&
+          retryInitialDelayMs == other.retryInitialDelayMs &&
+          retryMaxDelayMs == other.retryMaxDelayMs &&
+          rateLimitJitterRatio == other.rateLimitJitterRatio &&
           cookiesEnabled == other.cookiesEnabled &&
           auth == other.auth &&
           maxBodySize == other.maxBodySize &&
@@ -1494,6 +1586,14 @@ class CrawlPageResult {
   /// Whether the browser fallback was used to fetch this page.
   final bool browserUsed;
 
+  /// The URL this page's content was actually fetched from, after following any HTTP,
+  /// `Refresh` header, or `<meta http-equiv="refresh">` redirect `url` pointed at.
+  /// Equal to `url` when the fetch did not redirect.
+  final String finalUrl;
+
+  /// Redirect hops taken to reach `final_url` from `url`.
+  final PlatformInt64 redirectCount;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1516,6 +1616,8 @@ class CrawlPageResult {
     this.extractionMeta,
     this.downloadedDocument,
     required this.browserUsed,
+    required this.finalUrl,
+    required this.redirectCount,
   });
 
   @override
@@ -1540,7 +1642,9 @@ class CrawlPageResult {
       extractedData.hashCode ^
       extractionMeta.hashCode ^
       downloadedDocument.hashCode ^
-      browserUsed.hashCode;
+      browserUsed.hashCode ^
+      finalUrl.hashCode ^
+      redirectCount.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1567,7 +1671,9 @@ class CrawlPageResult {
           extractedData == other.extractedData &&
           extractionMeta == other.extractionMeta &&
           downloadedDocument == other.downloadedDocument &&
-          browserUsed == other.browserUsed;
+          browserUsed == other.browserUsed &&
+          finalUrl == other.finalUrl &&
+          redirectCount == other.redirectCount;
 }
 
 /// The result of a multi-page crawl operation.
