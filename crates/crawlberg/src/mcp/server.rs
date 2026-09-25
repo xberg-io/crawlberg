@@ -626,7 +626,7 @@ impl ServerHandler for CrawlbergMcp {
         self.task_manager.cancel_task(&request.task_id)
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let capabilities = ServerCapabilities::builder().enable_tools().enable_tasks().build();
 
         let server_info = Implementation::new("crawlberg-mcp", env!("CARGO_PKG_VERSION"))

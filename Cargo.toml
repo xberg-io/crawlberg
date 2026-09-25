@@ -66,7 +66,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 # when a selectors release picks up cssparser 0.38.
 cssparser = "0.37"
 dashmap = "6"
-deno_core = "0.411"
+deno_core = "0.412"
 deno_error = "0.7"
 dirs = "7"
 encoding_rs = "0.8"
@@ -90,11 +90,19 @@ minijinja = "2"
 napi = { version = "3", default-features = false, features = ["napi8", "tokio_rt"] }
 napi-derive = "3"
 notify = "8"
-# OpenTelemetry stack. Pinned to match xberg-enterprise's workspace pins so cloud
-# can consume crawlberg spans/metrics without a duplicate global provider.
-# Held at 0.32: `tracing-opentelemetry` 0.32.1 still depends on `opentelemetry`
-# 0.31 internally, so bumping us further splits the dep graph and breaks
-# cross-service propagator injection (see xberg-enterprise Cargo.toml:89-91).
+# ~keep OpenTelemetry stack. These four and `tracing-opentelemetry` below move as ONE set:
+# each `tracing-opentelemetry` release depends on exactly one `opentelemetry` minor
+# (0.33 -> ^0.32, 0.34 -> ^0.33), so bumping either side alone puts two `opentelemetry`
+# versions in the graph and breaks cross-service propagator injection.
+#
+# Held at 0.32/0.33 by `liter-llm`, not by this workspace: its `otel` feature requires
+# `opentelemetry ^0.32` in every published version through 2.0.3, while `crates/crawlberg`
+# depends on `opentelemetry` unconditionally. Bumping here therefore resolves BOTH 0.32 and
+# 0.33 whenever the `otel` feature is on. `cargo check --all-features` still passes in that
+# state -- the only thing that detects it is reading the lockfile for duplicate versions, so
+# verify with `cargo tree -i opentelemetry@<old>` rather than a build.
+# Unblocked by liter-llm 2.1.0 (already on 0.33/0.34, unpublished as of 2026-09-25); then
+# xberg-enterprise must follow before cloud consumes a crawlberg release carrying the bump.
 opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace", "metrics"] }
 opentelemetry-semantic-conventions = "0.32"
@@ -136,10 +144,11 @@ tower-http = { version = "0.7", features = [
     "sensitive-headers",
 ] }
 tracing = "0.1"
+# ~keep Moves as one set with the `opentelemetry*` pins above; 0.34 requires opentelemetry ^0.33.
 tracing-opentelemetry = "0.33"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
-utoipa = { version = "5", features = ["axum_extras"] }
+utoipa = { version = "6", features = ["axum_extras"] }
 uuid = { version = "1.26", features = ["v4"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2"
