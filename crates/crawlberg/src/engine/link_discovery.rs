@@ -84,6 +84,7 @@ impl CrawlEngine {
                 follow_document_urls: self.config.follow_document_urls,
                 document_url_depth: self.config.document_url_depth,
                 allow_subdomains: self.config.allow_subdomains,
+                stay_on_domain: self.config.stay_on_domain,
                 base_host: context.base_host,
                 base_host_suffix: context.base_host_suffix,
             };
