@@ -257,7 +257,10 @@ async fn download_discovered_assets(
 
 /// The content config to convert markdown with: `config.content`, with any
 /// `remove_tags` folded in as additional exclude selectors.
-fn merged_content_config(config: &CrawlConfig) -> std::borrow::Cow<'_, crate::types::ContentConfig> {
+///
+/// Shared by every markdown-producing path (`scrape()` and the native `crawl()` engine) so
+/// `remove_tags` is honoured consistently; do not duplicate this decision elsewhere.
+pub(crate) fn merged_content_config(config: &CrawlConfig) -> std::borrow::Cow<'_, crate::types::ContentConfig> {
     if config.remove_tags.is_empty() {
         return std::borrow::Cow::Borrowed(&config.content);
     }

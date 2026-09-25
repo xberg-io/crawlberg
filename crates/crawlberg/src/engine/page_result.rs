@@ -157,7 +157,8 @@ impl CrawlEngine {
         let markdown = if page_was_skipped {
             None
         } else {
-            crate::markdown::convert_to_markdown(body, &self.config.content).await
+            let content_config = crate::scrape::merged_content_config(&self.config);
+            crate::markdown::convert_to_markdown(body, &content_config).await
         };
 
         (downloaded_document, markdown)
