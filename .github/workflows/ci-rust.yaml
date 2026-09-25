@@ -143,6 +143,51 @@ jobs:
         run: cargo check -p crawlberg --target wasm32-unknown-unknown --locked
         shell: bash
 
+  # ~keep Every feature-configuration bug this workflow has accumulated a step for was the
+  # ~keep same bug: a configuration nothing compiled. --all-features forces `browser` on,
+  # ~keep --no-default-features turns everything off, so the single-feature sets in between were
+  # ~keep never built -- which is how `browser-chromiumoxide` alone came to reference a `stealth`
+  # ~keep module gated on the wider `browser` (xberg-io/crawlberg#70) and stayed broken with a
+  # ~keep green CI. This generalises those one-off steps instead of adding another.
+  feature-combinations:
+    name: Feature combinations
+    if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free disk space
+        uses: xberg-io/actions/free-disk-space-linux@v1
+        with:
+          show-initial: "false"
+          show-final: "true"
+
+      - name: Setup Rust
+        uses: xberg-io/actions/setup-rust@v1
+        with:
+          cache-key-prefix: feature-combinations
+          use-sccache: "true"
+
+      - name: Install cargo-hack
+        run: cargo install cargo-hack --locked
+
+      # ~keep Scoped to -p crawlberg: it owns every feature flag, and a workspace-wide run would
+      # ~keep drag in ext-php-rs's `php` binary and the FFI/py build scripts for no extra
+      # ~keep coverage. --no-dev-deps keeps each configuration to a library build; the test
+      # ~keep targets are already covered by the --all-features clippy run in the `rust` job.
+      # ~keep No --locked: cargo-hack reruns cargo against crates/crawlberg/Cargo.toml directly
+      # ~keep and that rejects --locked with "cannot update the lock file", even though the lock
+      # ~keep comes back byte-identical. The diff check below is the stronger guarantee anyway --
+      # ~keep it fails on real drift rather than on cargo wanting write access.
+      - name: Clippy each feature
+        run: cargo hack clippy -p crawlberg --each-feature --no-dev-deps -- -D warnings
+        shell: bash
+
+      - name: Assert the lockfile did not drift
+        run: git diff --exit-code -- Cargo.lock
+        shell: bash
+
   validate-rust:
     name: Validate Rust
     if: github.repository == 'xberg-io/crawlberg' && github.actor != 'dependabot[bot]'
