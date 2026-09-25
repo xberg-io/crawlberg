@@ -56,9 +56,14 @@ impl DispatchPlan {
     fn from_config(config: &CrawlConfig) -> Self {
         let dispatch = config.dispatch.as_ref();
         let strategy = dispatch.map(|d| d.strategy).unwrap_or_default();
-        let retry_policy: DynRetryPolicy = dispatch
-            .and_then(|d| d.retry_policy.clone())
-            .unwrap_or_else(|| std::sync::Arc::new(crate::defaults::dispatch::SimpleRetryPolicy::new()));
+        let configured_retry_policy = dispatch.and_then(|d| d.retry_policy.clone());
+        // ~keep `from_config`, not `new()`: the default policy must derive `max_retries` from
+        // ~keep `config.retry_count` (and the backoff bounds from `retry_initial_delay_ms`/
+        // ~keep `retry_max_delay_ms`), or a caller's `retry_count=0` is silently overridden by
+        // ~keep `new()`'s hardcoded 3 retries — see crawlberg#68.
+        let using_default_retry_policy = configured_retry_policy.is_none();
+        let retry_policy: DynRetryPolicy = configured_retry_policy
+            .unwrap_or_else(|| std::sync::Arc::new(crate::defaults::dispatch::SimpleRetryPolicy::from_config(config)));
         let policy_name = retry_policy.name();
 
         // ~keep Demote BrowserOnly when BrowserMode::Never so the original HTTP/WAF error survives.
@@ -77,7 +82,21 @@ impl DispatchPlan {
             waf_classifier: dispatch.and_then(|d| d.waf_classifier.clone()),
             antibot_strategy: dispatch.and_then(|d| d.antibot_strategy.clone()),
             effective_strategy,
-            max_total: dispatch.map(|d| d.max_total_attempts).unwrap_or(10).max(1),
+            // ~keep When the default `SimpleRetryPolicy::from_config` is in play, `max_total`
+            // ~keep must never cap attempts below what `retry_count` asked for — the default
+            // ~keep `max_total_attempts` (10) would otherwise silently truncate a configured
+            // ~keep `retry_count` above 9. A caller-supplied custom `retry_policy` keeps the
+            // ~keep floor as-is: `max_total_attempts` is its safety valve against a policy that
+            // ~keep never returns `Stop`, and `retry_count` has no defined meaning to it.
+            max_total: {
+                let configured = dispatch.map(|d| d.max_total_attempts).unwrap_or(10).max(1);
+                if using_default_retry_policy {
+                    let retry_attempts = u32::try_from(config.retry_count).unwrap_or(u32::MAX).saturating_add(1);
+                    configured.max(retry_attempts)
+                } else {
+                    configured
+                }
+            },
             policy_name,
         }
     }

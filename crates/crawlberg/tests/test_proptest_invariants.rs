@@ -126,6 +126,11 @@ fn fixed_budget_concurrent_never_overdraws() {
     });
 }
 
+/// Matches the initial backoff `SimpleRetryPolicy::new()` and the old hardcoded
+/// `compute_backoff_ms` constant both used, so these invariants keep testing the same
+/// 100ms-doubling shape after `compute_backoff_ms` grew a configurable initial delay.
+const PROPTEST_INITIAL_BACKOFF_MS: u64 = 100;
+
 proptest! {
     /// C1: compute_backoff_ms is always <= max_backoff_ms.
     #[test]
@@ -133,10 +138,10 @@ proptest! {
         attempt in 0u32..32,
         max_backoff_ms in 1000u64..=60_000,
     ) {
-        let backoff = compute_backoff_ms(attempt, max_backoff_ms);
+        let backoff = compute_backoff_ms(attempt, PROPTEST_INITIAL_BACKOFF_MS, max_backoff_ms);
         prop_assert!(
             backoff <= max_backoff_ms,
-            "compute_backoff_ms({attempt}, {max_backoff_ms}) = {backoff} exceeds cap"
+            "compute_backoff_ms({attempt}, {PROPTEST_INITIAL_BACKOFF_MS}, {max_backoff_ms}) = {backoff} exceeds cap"
         );
     }
 
@@ -149,8 +154,8 @@ proptest! {
         attempt in 0u32..30,
         max_backoff_ms in 1000u64..=60_000,
     ) {
-        let this_backoff = compute_backoff_ms(attempt, max_backoff_ms);
-        let next_backoff = compute_backoff_ms(attempt + 1, max_backoff_ms);
+        let this_backoff = compute_backoff_ms(attempt, PROPTEST_INITIAL_BACKOFF_MS, max_backoff_ms);
+        let next_backoff = compute_backoff_ms(attempt + 1, PROPTEST_INITIAL_BACKOFF_MS, max_backoff_ms);
 
         prop_assert!(
             next_backoff >= this_backoff,

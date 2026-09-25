@@ -221,6 +221,7 @@ impl CrawlEngineBuilder {
         resolve_ssrf_deny_private(&mut config);
 
         let rate_limit_ms = config.rate_limit_ms.unwrap_or(DEFAULT_RATE_LIMIT_MS);
+        let rate_limit_jitter_ratio = config.rate_limit_jitter_ratio;
         #[cfg(not(target_arch = "wasm32"))]
         let ua_rotation = crate::tower::UaRotationLayer::new(config.user_agents.clone());
 
@@ -240,11 +241,9 @@ impl CrawlEngineBuilder {
         Ok(CrawlEngine {
             config,
             frontier: self.frontier.unwrap_or_else(|| default_frontier(crawl_strategy)),
-            rate_limiter: self.rate_limiter.unwrap_or_else(|| {
-                Arc::new(defaults::PerDomainThrottle::new(std::time::Duration::from_millis(
-                    rate_limit_ms,
-                )))
-            }),
+            rate_limiter: self
+                .rate_limiter
+                .unwrap_or_else(|| Arc::new(default_rate_limiter(rate_limit_ms, rate_limit_jitter_ratio))),
             store: self.store.unwrap_or_else(|| Arc::new(defaults::NoopStore)),
             event_emitter: self.event_emitter.unwrap_or_else(|| Arc::new(defaults::NoopEmitter)),
             strategy: self.strategy.unwrap_or_else(|| default_strategy(crawl_strategy)),
@@ -265,6 +264,16 @@ impl CrawlEngineBuilder {
             native_browser_executor,
         })
     }
+}
+
+/// Build the default per-domain throttle.
+///
+/// ~keep A named function rather than an inline closure so the config-to-throttle plumbing is
+/// ~keep directly assertable: `rate_limit_jitter_ratio` was added to `CrawlConfig` and to
+/// ~keep `PerDomainThrottle` while nothing joined them, so the setting parsed, validated and
+/// ~keep serialized while a live crawl silently got no jitter at all.
+fn default_rate_limiter(rate_limit_ms: u64, jitter_ratio: f64) -> defaults::PerDomainThrottle {
+    defaults::PerDomainThrottle::with_jitter_ratio(std::time::Duration::from_millis(rate_limit_ms), jitter_ratio)
 }
 
 /// Default per-domain throttle interval when `rate_limit_ms` is unset.
@@ -465,6 +474,50 @@ mod env_private_network_precedence_tests {
         assert!(
             deny_private_after_build_with_env(config, "true"),
             "ssrf_deny_private_explicit=Some(true) must survive CRAWLBERG_ALLOW_PRIVATE_NETWORK=true"
+        );
+    }
+}
+
+#[cfg(test)]
+mod rate_limiter_plumbing_tests {
+    use super::default_rate_limiter;
+    use crate::types::CrawlConfig;
+
+    // ~keep These assert the CONFIG-TO-THROTTLE PLUMBING, not the jitter maths (which is unit
+    // tested in defaults::rate_limiter). `rate_limit_jitter_ratio` was added to `CrawlConfig`,
+    // to the builder, to the fixture schema and to `PerDomainThrottle` while nothing joined the
+    // two ends, so it parsed, validated and serialized while a live crawl got no jitter at all.
+    // A timing-based test cannot tell that apart from jitter that happened to be small.
+    #[test]
+    fn configured_jitter_ratio_reaches_the_default_throttle() {
+        let config = CrawlConfig {
+            rate_limit_jitter_ratio: 0.25,
+            ..CrawlConfig::default()
+        };
+        let throttle = default_rate_limiter(100, config.rate_limit_jitter_ratio);
+        assert!(
+            (throttle.jitter_ratio() - 0.25).abs() < f64::EPSILON,
+            "rate_limit_jitter_ratio must reach the throttle the engine actually uses, got {}",
+            throttle.jitter_ratio()
+        );
+    }
+
+    #[test]
+    fn default_config_leaves_the_throttle_unjittered() {
+        let config = CrawlConfig::default();
+        let throttle = default_rate_limiter(100, config.rate_limit_jitter_ratio);
+        assert!(
+            (throttle.jitter_ratio() - 0.0).abs() < f64::EPSILON,
+            "an unset ratio must leave the throttle behaving exactly as before jitter existed"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_ratio_is_clamped_before_it_reaches_the_throttle() {
+        let throttle = default_rate_limiter(100, 5.0);
+        assert!(
+            (throttle.jitter_ratio() - 1.0).abs() < f64::EPSILON,
+            "a ratio above 1.0 must clamp, not scale a delay by 5x"
         );
     }
 }

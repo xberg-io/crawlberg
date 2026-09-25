@@ -148,6 +148,24 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Set the initial retry delay, in milliseconds, before the first retry.
+    pub fn retry_initial_delay_ms(mut self, value: u64) -> Self {
+        self.inner.retry_initial_delay_ms = value;
+        self
+    }
+
+    /// Set the upper bound, in milliseconds, on the exponential retry backoff.
+    pub fn retry_max_delay_ms(mut self, value: u64) -> Self {
+        self.inner.retry_max_delay_ms = value;
+        self
+    }
+
+    /// Set the fraction of the per-domain rate-limit delay to randomly jitter by.
+    pub fn rate_limit_jitter_ratio(mut self, value: f64) -> Self {
+        self.inner.rate_limit_jitter_ratio = value;
+        self
+    }
+
     /// Set whether cookie handling is enabled.
     pub fn cookies_enabled(mut self, value: bool) -> Self {
         self.inner.cookies_enabled = value;

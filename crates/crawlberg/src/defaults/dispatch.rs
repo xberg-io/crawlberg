@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use async_trait::async_trait;
 
 use crate::error::CrawlError;
-use crate::types::{AttemptOutcome, BudgetExhausted, EscalationBudget, EscalationReason, RetryDirective, RetryPolicy};
+use crate::types::{
+    AttemptOutcome, BudgetExhausted, CrawlConfig, EscalationBudget, EscalationReason, RetryDirective, RetryPolicy,
+};
 
 /// Per-error mapping with no learning. The simplest possible
 /// [`RetryPolicy`] — useful as a baseline and as a fallback when no
@@ -21,23 +23,45 @@ use crate::types::{AttemptOutcome, BudgetExhausted, EscalationBudget, Escalation
 /// |---|---|
 /// | `WafBlocked` | `Escalate { reason: WafBlocked }` |
 /// | `Forbidden` | `Escalate { reason: WafBlocked }` (403 treated as block) |
-/// | `RateLimited` | `Retry { backoff_ms: min(2^attempt * 100, max_backoff_ms) }` |
+/// | `RateLimited` | `Retry { backoff_ms: min(initial * 2^attempt, max_backoff_ms) }` |
 /// | `ServerError`, `BadGateway`, `Timeout` | `Retry` up to `max_retries`, then `Stop` |
 /// | `Dns`, `Ssl`, `Connection`, `InvalidConfig`, `Unsupported` | `Stop` (permanent) |
+/// | other, with a status in `retry_codes` | `Retry` up to `max_retries`, then `Stop` |
 /// | other | `Stop` |
 #[derive(Debug, Clone)]
 pub struct SimpleRetryPolicy {
     max_retries: u32,
     max_backoff_ms: u64,
+    initial_backoff_ms: u64,
+    retry_codes: Vec<u16>,
 }
 
 impl SimpleRetryPolicy {
-    /// Standard defaults: 3 retries, 60s backoff cap.
+    /// Standard defaults: 3 retries, 100ms initial backoff, 60s backoff cap.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             max_retries: 3,
             max_backoff_ms: 60_000,
+            initial_backoff_ms: 100,
+            retry_codes: Vec::new(),
+        }
+    }
+
+    /// Build the policy from a [`CrawlConfig`]: `max_retries` comes from `retry_count`,
+    /// the backoff bounds from `retry_initial_delay_ms`/`retry_max_delay_ms`, and successful
+    /// responses whose status is in `retry_codes` are retried the same as a retryable error.
+    ///
+    /// ~keep This is the fix for the case where `retry_count=0` still produced retries:
+    /// ~keep the dispatch loop previously always built `SimpleRetryPolicy::new()` (hardcoded
+    /// ~keep 3 retries) regardless of what the caller configured on `CrawlConfig`.
+    #[must_use]
+    pub fn from_config(config: &CrawlConfig) -> Self {
+        Self {
+            max_retries: u32::try_from(config.retry_count).unwrap_or(u32::MAX),
+            max_backoff_ms: config.retry_max_delay_ms,
+            initial_backoff_ms: config.retry_initial_delay_ms,
+            retry_codes: config.retry_codes.clone(),
         }
     }
 
@@ -54,6 +78,30 @@ impl SimpleRetryPolicy {
         self.max_backoff_ms = max_backoff_ms;
         self
     }
+
+    /// Override the initial (attempt-zero) backoff delay.
+    #[must_use]
+    pub const fn with_initial_backoff_ms(mut self, initial_backoff_ms: u64) -> Self {
+        self.initial_backoff_ms = initial_backoff_ms;
+        self
+    }
+
+    /// Decide what a successful (non-error) attempt means: retry only when its status is
+    /// one of `retry_codes` — a status that made it here was not classified as a
+    /// `CrawlError` (see `crate::tower::service::status_error`), so this is the only place
+    /// e.g. an unmapped 504 can still honour a configured `retry_codes` entry.
+    fn decide_success(&self, outcome: &AttemptOutcome) -> RetryDirective {
+        let Some(status) = outcome.status else {
+            return RetryDirective::Stop;
+        };
+        if self.retry_codes.contains(&status) && outcome.attempt < self.max_retries {
+            RetryDirective::Retry {
+                backoff_ms: compute_backoff_ms(outcome.attempt, self.initial_backoff_ms, self.max_backoff_ms),
+            }
+        } else {
+            RetryDirective::Stop
+        }
+    }
 }
 
 impl Default for SimpleRetryPolicy {
@@ -66,7 +114,7 @@ impl Default for SimpleRetryPolicy {
 impl RetryPolicy for SimpleRetryPolicy {
     async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
         let Some(ref error) = outcome.error else {
-            return RetryDirective::Stop;
+            return self.decide_success(outcome);
         };
         match error {
             CrawlError::WafBlocked { vendor, .. } => RetryDirective::Escalate {
@@ -84,7 +132,7 @@ impl RetryPolicy for SimpleRetryPolicy {
                 if outcome.attempt >= self.max_retries {
                     RetryDirective::Stop
                 } else {
-                    let backoff = compute_backoff_ms(outcome.attempt, self.max_backoff_ms);
+                    let backoff = compute_backoff_ms(outcome.attempt, self.initial_backoff_ms, self.max_backoff_ms);
                     RetryDirective::Retry { backoff_ms: backoff }
                 }
             }
@@ -109,14 +157,21 @@ impl RetryPolicy for SimpleRetryPolicy {
     }
 }
 
-/// Internal exponential backoff helper. Reachable from integration tests
-/// (proptest invariants) via the `#[doc(hidden)] pub use` in the crate
-/// root; not part of the public API surface and may change without a
-/// semver bump.
-#[doc(hidden)]
-pub fn compute_backoff_ms(attempt: u32, max_backoff_ms: u64) -> u64 {
+/// Exponential backoff, shared by every retry path in the crate (`SimpleRetryPolicy`, the
+/// wasm32 `http::retry::fetch_with_retry` loop): `min(initial_backoff_ms * 2^attempt,
+/// max_backoff_ms)`, saturating rather than overflowing on a large `attempt`.
+///
+/// ~keep The `#[doc(hidden)]` on this definition is removed deliberately: this used to be one
+/// ~keep of six independent backoff formulas in the crate (crawlberg#67), three of which
+/// ~keep disagreed on the base delay and two of which had no overflow cap at all. Converging on
+/// ~keep one function and one config surface (`retry_initial_delay_ms`/`retry_max_delay_ms`)
+/// ~keep makes it public, documented API rather than an internal implementation detail. Note:
+/// ~keep the `pub use defaults::compute_backoff_ms` re-export at the crate root (`lib.rs`)
+/// ~keep still carries its own separate `#[doc(hidden)]`, which governs the path callers
+/// ~keep actually see (`crawlberg::compute_backoff_ms`) — dropping that one too is a follow-up.
+pub fn compute_backoff_ms(attempt: u32, initial_backoff_ms: u64, max_backoff_ms: u64) -> u64 {
     let exp = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
-    exp.saturating_mul(100).min(max_backoff_ms)
+    exp.saturating_mul(initial_backoff_ms).min(max_backoff_ms)
 }
 
 /// [`EscalationBudget`] that always permits escalation. Used by default
@@ -368,9 +423,85 @@ mod tests {
 
     #[test]
     fn compute_backoff_ms_is_capped() {
-        assert_eq!(compute_backoff_ms(0, 1000), 100);
-        assert_eq!(compute_backoff_ms(1, 1000), 200);
-        assert_eq!(compute_backoff_ms(10, 1000), 1000);
-        assert_eq!(compute_backoff_ms(63, 1000), 1000);
+        assert_eq!(compute_backoff_ms(0, 100, 1000), 100);
+        assert_eq!(compute_backoff_ms(1, 100, 1000), 200);
+        assert_eq!(compute_backoff_ms(10, 100, 1000), 1000);
+        assert_eq!(compute_backoff_ms(63, 100, 1000), 1000);
+    }
+
+    #[test]
+    fn compute_backoff_ms_honours_a_configured_initial_delay() {
+        assert_eq!(compute_backoff_ms(0, 250, 10_000), 250);
+        assert_eq!(compute_backoff_ms(2, 250, 10_000), 1000);
+    }
+
+    #[test]
+    fn compute_backoff_ms_never_overflows_at_a_large_attempt() {
+        assert_eq!(compute_backoff_ms(1000, 100, 5_000), 5_000);
+    }
+
+    #[tokio::test]
+    async fn from_config_uses_retry_count_as_max_retries() {
+        let config = CrawlConfig {
+            retry_count: 0,
+            ..CrawlConfig::default()
+        };
+        let policy = SimpleRetryPolicy::from_config(&config);
+        let err = CrawlError::server_error("service unavailable");
+        let directive = policy.decide(&outcome_with_error(err, 0)).await;
+        assert_eq!(
+            directive,
+            RetryDirective::Stop,
+            "retry_count=0 must stop immediately instead of the old hardcoded 3 retries"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_config_retries_a_successful_response_whose_status_is_in_retry_codes() {
+        let config = CrawlConfig {
+            retry_count: 2,
+            retry_codes: vec![504],
+            ..CrawlConfig::default()
+        };
+        let policy = SimpleRetryPolicy::from_config(&config);
+        let outcome = AttemptOutcome {
+            attempt: 0,
+            url: Arc::from("https://example.com/"),
+            status: Some(504),
+            error: None,
+            waf_signal: None,
+            body_size: 0,
+            content_density: 0.0,
+            bytes_transferred: None,
+            previous_tier: Tier::Http,
+        };
+        let directive = policy.decide(&outcome).await;
+        assert!(
+            matches!(directive, RetryDirective::Retry { .. }),
+            "a 504 listed in retry_codes must retry even though it carries no CrawlError, got {directive:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_config_does_not_retry_a_successful_response_whose_status_is_not_in_retry_codes() {
+        let config = CrawlConfig {
+            retry_count: 2,
+            retry_codes: vec![],
+            ..CrawlConfig::default()
+        };
+        let policy = SimpleRetryPolicy::from_config(&config);
+        let outcome = AttemptOutcome {
+            attempt: 0,
+            url: Arc::from("https://example.com/"),
+            status: Some(504),
+            error: None,
+            waf_signal: None,
+            body_size: 0,
+            content_density: 0.0,
+            bytes_transferred: None,
+            previous_tier: Tier::Http,
+        };
+        let directive = policy.decide(&outcome).await;
+        assert_eq!(directive, RetryDirective::Stop);
     }
 }

@@ -10,6 +10,19 @@ use crate::error::CrawlError;
 use crate::time::Instant;
 use crate::traits::RateLimiter;
 
+/// A pseudo-random `[0.0, 1.0)` fraction, used to jitter the per-domain delay.
+///
+/// ~keep `getrandom` in this crate's non-wasm dependency graph is wasm32-only (see
+/// ~keep `Cargo.toml`), so there is no ready RNG. `ahash::RandomState` already carries OS
+/// ~keep randomness transitively for hash-flood resistance and re-seeds on every
+/// ~keep construction, so hashing anything (even a fixed `seed`) through a freshly built
+/// ~keep `RandomState` yields a different, well-distributed value per call without adding
+/// ~keep a new dependency purely for jitter.
+fn random_unit_fraction(seed: &str) -> f64 {
+    let hashed = ahash::RandomState::new().hash_one(seed);
+    (hashed as f64) / (u64::MAX as f64)
+}
+
 /// Maximum backoff duration for 429 responses.
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
@@ -123,20 +136,57 @@ impl ThrottleState {
 #[derive(Debug)]
 pub struct PerDomainThrottle {
     default_delay: Duration,
+    /// Fraction of the computed per-domain delay to randomly jitter by; see
+    /// [`PerDomainThrottle::with_jitter_ratio`]. `0.0` (the default) applies none.
+    jitter_ratio: f64,
     /// Per-domain state: last request time and optional crawl-delay override.
     state: Mutex<ThrottleState>,
 }
 
 impl PerDomainThrottle {
-    /// Create a new limiter with the given default delay between requests.
+    /// Create a new limiter with the given default delay between requests and no jitter.
     pub fn new(default_delay: Duration) -> Self {
+        Self::with_jitter_ratio(default_delay, 0.0)
+    }
+
+    /// Create a limiter that also jitters each computed per-domain delay by up to
+    /// `±jitter_ratio` (clamped to `[0.0, 1.0]`), so many concurrent crawlers hitting the
+    /// same domain don't all wake for their next request at the exact same instant.
+    #[must_use]
+    pub fn with_jitter_ratio(default_delay: Duration, jitter_ratio: f64) -> Self {
         Self {
             default_delay,
+            jitter_ratio: jitter_ratio.clamp(0.0, 1.0),
             state: Mutex::new(ThrottleState {
                 domains: AHashMap::new(),
                 last_sweep: Instant::now(),
             }),
         }
+    }
+
+    /// The jitter ratio in effect, after clamping to `[0.0, 1.0]`.
+    ///
+    /// ~keep Public rather than test-only: the repo forbids test-only methods on production
+    /// types, and a `pub(crate)` accessor used only from a `#[cfg(test)]` module is dead code in
+    /// the plain lib build. It also answers a real question a caller can otherwise only infer by
+    /// timing requests -- which is exactly how `rate_limit_jitter_ratio` came to be plumbed
+    /// nowhere without anything noticing.
+    #[must_use]
+    pub const fn jitter_ratio(&self) -> f64 {
+        self.jitter_ratio
+    }
+
+    /// Apply `jitter_ratio` to `duration`, scaling it by a factor in
+    /// `[1 - jitter_ratio, 1 + jitter_ratio]`. A `jitter_ratio` of `0.0` always returns
+    /// `duration` unchanged (`factor` is exactly `1.0`), so the default behaves exactly as
+    /// before jitter was added.
+    fn jitter(&self, duration: Duration, domain: &str) -> Duration {
+        if self.jitter_ratio <= 0.0 {
+            return duration;
+        }
+        let random_fraction = random_unit_fraction(domain);
+        let factor = (1.0 + self.jitter_ratio * random_fraction.mul_add(2.0, -1.0)).max(0.0);
+        Duration::from_secs_f64(duration.as_secs_f64() * factor)
     }
 }
 
@@ -164,7 +214,7 @@ impl RateLimiter for PerDomainThrottle {
             let elapsed = now.duration_since(domain_state.last_request);
 
             if elapsed < effective {
-                let duration = effective - elapsed;
+                let duration = self.jitter(effective - elapsed, domain);
                 domain_state.last_request = now + duration;
                 Some(duration)
             } else {
@@ -367,6 +417,43 @@ mod tests {
             1,
             "an expired entry must survive until a sweep is actually due, so the hot path stays O(1)"
         );
+    }
+
+    #[test]
+    fn jitter_ratio_zero_never_changes_the_duration() {
+        let throttle = PerDomainThrottle::new(DEFAULT);
+        for _ in 0..20 {
+            assert_eq!(
+                throttle.jitter(Duration::from_millis(400), "example.com"),
+                Duration::from_millis(400),
+                "jitter_ratio=0.0 must be a no-op"
+            );
+        }
+    }
+
+    #[test]
+    fn jitter_ratio_stays_within_the_configured_bound() {
+        let base = Duration::from_millis(1000);
+        let throttle = PerDomainThrottle::with_jitter_ratio(DEFAULT, 0.2);
+        let lower = base.mul_f64(0.8);
+        let upper = base.mul_f64(1.2);
+        for i in 0..50 {
+            let domain = format!("domain-{i}.example");
+            let jittered = throttle.jitter(base, &domain);
+            assert!(
+                jittered >= lower && jittered <= upper,
+                "jittered duration {jittered:?} must stay within [{lower:?}, {upper:?}]"
+            );
+        }
+    }
+
+    #[test]
+    fn jitter_ratio_is_clamped_to_one() {
+        // ~keep A ratio > 1.0 could otherwise scale the factor negative; `Duration::from_secs_f64`
+        // ~keep panics on a negative value, so the clamp in `with_jitter_ratio` must hold.
+        let throttle = PerDomainThrottle::with_jitter_ratio(DEFAULT, 5.0);
+        let jittered = throttle.jitter(Duration::from_millis(500), "example.com");
+        assert!(jittered <= Duration::from_millis(1000), "got {jittered:?}");
     }
 
     #[tokio::test]

@@ -5,7 +5,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use tower::Service;
 
@@ -28,14 +27,6 @@ impl HttpFetchService {
             config: Arc::new(config),
         }
     }
-}
-
-/// Check whether a `CrawlError` is retryable (server errors, rate limits, bad gateways).
-fn is_retryable(e: &CrawlError) -> bool {
-    matches!(
-        e,
-        CrawlError::ServerError { .. } | CrawlError::RateLimited { .. } | CrawlError::BadGateway { .. }
-    )
 }
 
 /// Helper to apply auth and custom headers to a request builder.
@@ -347,29 +338,16 @@ impl Service<CrawlRequest> for HttpFetchService {
         let client = self.client.clone();
         let config = self.config.clone();
 
-        Box::pin(async move {
-            let retry_count = config.retry_count;
-            let retry_codes = &config.retry_codes;
-
-            for attempt in 0..=retry_count {
-                match do_fetch(&client, &config, &req).await {
-                    Ok(resp) => {
-                        if retry_codes.contains(&resp.status) && attempt < retry_count {
-                            tokio::time::sleep(Duration::from_millis(100 * (1 << attempt))).await;
-                            continue;
-                        }
-                        return Ok(resp);
-                    }
-                    Err(e) if is_retryable(&e) && attempt < retry_count => {
-                        tokio::time::sleep(Duration::from_millis(100 * (1 << attempt))).await;
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-
-            Err(CrawlError::other("retry exhausted"))
-        })
+        // ~keep A single fetch attempt only: retries are owned by the dispatch loop
+        // ~keep (`engine::fetch::run_dispatch_loop`, via `SimpleRetryPolicy::from_config`), which
+        // ~keep re-invokes `run_tier` — and therefore this service — once per attempt, honouring
+        // ~keep `retry_count`/`retry_codes` exactly once. Previously this service ran its own
+        // ~keep `0..=retry_count` loop *inside* the dispatch loop's own retry loop, multiplying
+        // ~keep attempts (retry_count=4 produced 20 requests instead of 5). A direct
+        // ~keep `tower::Service` consumer of `HttpFetchService` that bypasses the dispatch loop
+        // ~keep now gets no retries at all; wrap it in its own retry middleware (e.g. a
+        // ~keep `tower::retry::Retry` layer) if it needs them.
+        Box::pin(async move { do_fetch(&client, &config, &req).await })
     }
 }
 

@@ -20,6 +20,20 @@ const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"
 
 /// Range a `CrawlConfig::retry_codes` entry must fall in to be a real HTTP status code.
 const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
+
+/// Upper bound accepted for `CrawlConfig::retry_count`.
+///
+/// ~keep `retry_count` is caller-supplied through every language binding and feeds
+/// ~keep `1 << attempt` (via `compute_backoff_ms`). Even at a bounded 100ms initial delay,
+/// ~keep attempt 30 alone is a 12.4-day sleep, so this exists to reject obviously-mistaken
+/// ~keep input rather than to model any real retry budget a crawl would want.
+const MAX_RETRY_COUNT: usize = 20;
+
+/// Default for `CrawlConfig::retry_initial_delay_ms`.
+const DEFAULT_RETRY_INITIAL_DELAY_MS: u64 = 100;
+
+/// Default for `CrawlConfig::retry_max_delay_ms`.
+const DEFAULT_RETRY_MAX_DELAY_MS: u64 = 60_000;
 mod credentials;
 mod primitives;
 mod sections;
@@ -97,11 +111,20 @@ pub struct CrawlConfig {
     pub rate_limit_ms: Option<u64>,
     /// Maximum number of redirects to follow.
     pub max_redirects: usize,
-    /// Number of retry attempts for failed requests.
+    /// Number of retry attempts for failed requests. Bounded by [`MAX_RETRY_COUNT`].
     pub retry_count: usize,
     /// HTTP status codes that should trigger a retry.
     #[serde(default)]
     pub retry_codes: Vec<u16>,
+    /// Initial delay, in milliseconds, before the first retry. Doubled on each
+    /// subsequent attempt (capped at `retry_max_delay_ms`). Defaults to 100ms.
+    pub retry_initial_delay_ms: u64,
+    /// Upper bound, in milliseconds, on the exponential retry backoff. Defaults to 60s.
+    pub retry_max_delay_ms: u64,
+    /// Fraction of the per-domain rate-limit delay to randomly jitter by, in `[0.0, 1.0]`.
+    /// `0.0` (the default) applies no jitter and preserves the previous fixed-interval
+    /// behaviour; `0.1` jitters the delay by up to ±10%.
+    pub rate_limit_jitter_ratio: f64,
     /// Whether to enable cookie handling.
     pub cookies_enabled: bool,
     /// Authentication configuration.
@@ -287,6 +310,9 @@ impl Default for CrawlConfig {
             max_redirects: 10,
             retry_count: 0,
             retry_codes: Vec::new(),
+            retry_initial_delay_ms: DEFAULT_RETRY_INITIAL_DELAY_MS,
+            retry_max_delay_ms: DEFAULT_RETRY_MAX_DELAY_MS,
+            rate_limit_jitter_ratio: 0.0,
             cookies_enabled: false,
             auth: None,
             max_body_size: None,
@@ -352,6 +378,7 @@ impl CrawlConfig {
         self.validate_auth()?;
         self.validate_path_patterns()?;
         self.validate_retry_codes()?;
+        self.validate_retry_count()?;
         self.validate_request_timeout()?;
         self.validate_browser_endpoint()?;
         Ok(())
@@ -464,6 +491,16 @@ impl CrawlConfig {
             if !HTTP_STATUS_CODE_RANGE.contains(&code) {
                 return Err(CrawlError::invalid_config(format!("invalid retry code: {code}")));
             }
+        }
+        Ok(())
+    }
+
+    fn validate_retry_count(&self) -> Result<(), CrawlError> {
+        if self.retry_count > MAX_RETRY_COUNT {
+            return Err(CrawlError::invalid_config(format!(
+                "retry_count must be <= {MAX_RETRY_COUNT} (got {})",
+                self.retry_count
+            )));
         }
         Ok(())
     }
@@ -584,6 +621,7 @@ mod tests {
             include_paths: vec!["(unclosed".into()],
             exclude_paths: vec!["(unclosed".into()],
             retry_codes: vec![999],
+            retry_count: MAX_RETRY_COUNT + 1,
             request_timeout: Duration::ZERO,
             browser: BrowserConfig {
                 wait: BrowserWait::Selector,
@@ -633,6 +671,9 @@ mod tests {
             c.exclude_paths = vec!["^/private".to_owned()]
         }),
         ("invalid retry code: 999", |c| c.retry_codes = vec![503]),
+        ("retry_count must be <= 20 (got 21)", |c| {
+            c.retry_count = MAX_RETRY_COUNT
+        }),
         ("request_timeout must be > 0", |c| {
             c.request_timeout = Duration::from_secs(30)
         }),
@@ -643,6 +684,29 @@ mod tests {
             c.browser.backend = BrowserBackend::Chromiumoxide
         }),
     ];
+
+    #[test]
+    fn validate_rejects_an_absurd_retry_count() {
+        let config = CrawlConfig {
+            retry_count: 1_000_000,
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("retry_count must be <= 20"),
+            "expected a retry_count bound error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_the_maximum_allowed_retry_count() {
+        let config = CrawlConfig {
+            retry_count: 20,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok(), "retry_count at the bound must be accepted");
+    }
 
     #[test]
     fn validate_rejects_http_browser_endpoint() {

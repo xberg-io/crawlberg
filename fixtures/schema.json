@@ -183,6 +183,22 @@
 						},
 						"retry_count": { "type": "integer", "minimum": 0 },
 						"retry_codes": { "type": "array", "items": { "type": "integer" } },
+						"retry_initial_delay_ms": {
+							"type": "integer",
+							"minimum": 0,
+							"description": "Initial delay in milliseconds before the first retry, doubled on each subsequent attempt. Defaults to 100"
+						},
+						"retry_max_delay_ms": {
+							"type": "integer",
+							"minimum": 0,
+							"description": "Upper bound in milliseconds on the exponential retry backoff. Defaults to 60000"
+						},
+						"rate_limit_jitter_ratio": {
+							"type": "number",
+							"minimum": 0,
+							"maximum": 1,
+							"description": "Fraction of the per-domain rate-limit delay to randomly jitter by. Defaults to 0 (no jitter)"
+						},
 						"remove_tags": {
 							"type": "array",
 							"items": { "type": "string" },
