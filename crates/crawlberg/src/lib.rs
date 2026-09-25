@@ -19,6 +19,11 @@ pub mod budget;
 #[cfg(feature = "browser-chromiumoxide")]
 mod chrome_args;
 pub(crate) mod citations;
+// ~keep Gated on `browser-chromiumoxide`, not `browser`: see the module's own `~keep` header
+// ~keep for why nesting it under `browser` would break a `browser-chromiumoxide`-only build
+// ~keep (xberg-io/crawlberg#74).
+#[cfg(feature = "browser-chromiumoxide")]
+mod ssrf_intercept;
 // ~keep Gated on `browser-chromiumoxide`, not `browser`, to match its callers: the interact
 // ~keep launcher (interact/chromiumoxide.rs) is gated on the narrower feature and calls
 // ~keep apply_stealth_patches, so a `browser-chromiumoxide`-only build compiled this module out

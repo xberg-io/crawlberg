@@ -10,9 +10,9 @@ use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::launch::resolve_default_user_agent;
-use super::ssrf_intercept::start_ssrf_interception;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
+use crate::ssrf_intercept::start_ssrf_interception;
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display

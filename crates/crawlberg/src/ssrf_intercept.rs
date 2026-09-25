@@ -3,6 +3,16 @@
 //! open: a browser follows redirects and client-side navigations internally, so
 //! without per-request interception a redirect to a private/metadata address
 //! would reach the network unchecked.
+//!
+//! ~keep A top-level module rather than nested under `browser`, so both chromiumoxide
+//! ~keep navigation call sites can reach it: `browser::navigation::page_fetch` (scrape/crawl)
+//! ~keep and `interact::chromiumoxide::navigate_and_wait` (xberg-io/crawlberg#74). `browser.rs`
+//! ~keep is gated on the wider `browser` feature (it pulls in `browser_profile`/
+//! ~keep `browser_session_pool`, which are `browser`-gated too), but `interact/chromiumoxide.rs`
+//! ~keep is gated on the narrower `browser-chromiumoxide`, so nesting this under `browser`
+//! ~keep would make it unreachable from a `browser-chromiumoxide`-only build. This module has
+//! ~keep no dependency on anything `browser`-gated, so it is gated on `browser-chromiumoxide`
+//! ~keep alone in `lib.rs`, matching both callers' actual requirement.
 
 use std::sync::{Arc, Mutex};
 
@@ -20,7 +30,7 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 /// request against the SSRF policy. Held alive across a navigation; consuming it
 /// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
 /// and reports the first request that was blocked.
-pub(super) struct SsrfInterceptGuard {
+pub(crate) struct SsrfInterceptGuard {
     page: chromiumoxide::Page,
     listener: tokio::task::JoinHandle<()>,
     blocked: Arc<Mutex<Option<(String, String)>>>,
@@ -29,7 +39,7 @@ pub(super) struct SsrfInterceptGuard {
 impl SsrfInterceptGuard {
     /// Disable interception, stop the listener, and return the first blocked
     /// `(url, reason)` observed during the navigation, if any.
-    pub(super) async fn finish(self) -> Option<(String, String)> {
+    pub(crate) async fn finish(self) -> Option<(String, String)> {
         let _ = self.page.execute(FetchDisableParams::default()).await;
         self.listener.abort();
         match self.blocked.lock() {
@@ -54,7 +64,7 @@ async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), Stri
 /// addresses (loopback, RFC1918, link-local, cloud metadata, non-http(s)
 /// schemes) are failed with `BlockedByClient` and the first one is recorded so
 /// the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
-pub(super) async fn start_ssrf_interception(
+pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
 ) -> Result<SsrfInterceptGuard, CrawlError> {

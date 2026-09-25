@@ -177,9 +177,15 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
     Ok(())
 }
 
+// ~keep Mirrors `browser::navigation::page_fetch`'s interception shape (xberg-io/crawlberg#74):
+// ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
+// ~keep redirects/client-side navigations internally, so per-request CDP interception is still
+// ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
 async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
     let timeout = config.browser.timeout;
-    tokio::time::timeout(timeout, async {
+    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf).await?;
+
+    let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
@@ -188,14 +194,42 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
             .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
         Ok::<(), CrawlError>(())
     })
-    .await
-    .map_err(|_| CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")))??;
+    .await;
+
+    let blocked = interceptor.finish().await;
+    resolve_navigation_outcome(navigation, blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
 
     Ok(())
+}
+
+/// Resolve navigation's timeout/error/SSRF-block outcome into a single result.
+///
+/// ~keep Mirrors `browser::navigation::resolve_navigation_outcome`: a request blocked by
+/// ~keep interception surfaces as `CrawlError::SsrfPolicyViolation`, taking priority over the
+/// ~keep generic navigation error Chrome reports for the same failed request (CDP's
+/// ~keep `BlockedByClient` typically surfaces to `page.goto` as an ordinary `net::ERR_FAILED`).
+fn resolve_navigation_outcome(
+    navigation: Result<Result<(), CrawlError>, tokio::time::error::Elapsed>,
+    blocked: Option<(String, String)>,
+    timeout: Duration,
+) -> Result<(), CrawlError> {
+    let navigation_error = match navigation {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => error,
+        Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
+    };
+    if let Some((blocked_url, reason)) = blocked {
+        return Err(CrawlError::SsrfPolicyViolation {
+            url: blocked_url,
+            reason,
+            source: None,
+        });
+    }
+    Err(navigation_error)
 }
 
 async fn wait_for_ready(

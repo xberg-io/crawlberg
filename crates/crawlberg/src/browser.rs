@@ -20,7 +20,6 @@ use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
 
 mod launch;
 mod navigation;
-mod ssrf_intercept;
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);

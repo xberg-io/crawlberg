@@ -10,8 +10,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use crawlberg::ScrollDirection;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
-use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
-use crawlberg::{CrawlError, PageAction, create_engine, interact, validate_actions};
+use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode};
+use crawlberg::{CrawlConfig, CrawlError, PageAction, SsrfPolicy, create_engine, interact, validate_actions};
 
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use wiremock::matchers::{method, path};
@@ -717,5 +717,58 @@ async fn no_chromiumoxide_backend_interact_returns_unsupported() {
     assert!(
         matches!(&result, Err(CrawlError::Unsupported { message, .. }) if message.contains("browser-chromiumoxide")),
         "expected Unsupported mentioning browser-chromiumoxide, got {result:?}"
+    );
+}
+
+/// The deny-side counterpart to `allow_private_config` above: explicit `SsrfPolicy::default()`
+/// rather than `CrawlConfig::default()`/`CrawlConfig::builder().build()`, both of which read
+/// `SsrfPolicy::from_env()` and so would make this test's denial depend on
+/// `CRAWLBERG_ALLOW_PRIVATE_NETWORK` in the ambient environment. Deny-private is pinned here
+/// regardless of env, for the same reason `allow_private_config` pins allow-private.
+fn deny_private_config() -> CrawlConfig {
+    CrawlConfig {
+        ssrf: SsrfPolicy::default(),
+        ..CrawlConfig::builder().build()
+    }
+}
+
+/// xberg-io/crawlberg#74: `interact()` on the default `BrowserBackend::Chromiumoxide` backend
+/// enforced no SSRF policy at all. This must fail on the pre-flight check in `interact::run`,
+/// before any browser is launched -- a literal IP keeps this hermetic (no DNS) and needs no
+/// Chrome binary, so it runs in CI on every platform regardless of which browser feature is
+/// compiled in.
+#[tokio::test]
+async fn interact_rejects_a_private_target_before_launching_any_browser() {
+    let engine = create_engine(Some(deny_private_config())).unwrap();
+
+    let result = interact(&engine, "http://127.0.0.1:9/", vec![PageAction::Scrape]).await;
+
+    assert!(
+        matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+        "a loopback target must be rejected by SSRF policy before any browser work, got {result:?}"
+    );
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("ssrf_policy_violation"),
+        "the hand-written e2e suites match on the literal `ssrf_policy_violation` string; got: {message}"
+    );
+}
+
+/// Same as above for a cloud-metadata address, the other address class the interception layer
+/// (`ssrf_intercept.rs`) names explicitly. Also needs no Chrome.
+#[tokio::test]
+async fn interact_rejects_a_cloud_metadata_target_before_launching_any_browser() {
+    let engine = create_engine(Some(deny_private_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        "http://169.254.169.254/latest/meta-data/",
+        vec![PageAction::Scrape],
+    )
+    .await;
+
+    assert!(
+        matches!(&result, Err(CrawlError::SsrfPolicyViolation { .. })),
+        "a cloud metadata target must be rejected by SSRF policy before any browser work, got {result:?}"
     );
 }
