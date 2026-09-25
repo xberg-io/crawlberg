@@ -577,6 +577,12 @@ jobs:
           package-dir: packages/python
           cibw-build: "cp310-*"
           upload-artifact: "false"
+          # ~keep Without an explicit target the wheel inherits the runner's SDK version, so a
+          # ~keep macos-15-intel build tags itself macosx_15_0_x86_64 and pip rejects it on
+          # ~keep everything older. 11.0 is deliberately not higher: it is already the arm64
+          # ~keep floor, so one value covers both runners and the published arm64 tag does not
+          # ~keep move. Sibling repos set this the same way (xberg 11.0, html-to-markdown 10.12).
+          cibw-environment-macos: 'MATURIN_BUILD_ARGS="" CARGO_BUILD_LOCKED=true MACOSX_DEPLOYMENT_TARGET=11.0'
 
       - uses: actions/upload-artifact@v7
         with:
