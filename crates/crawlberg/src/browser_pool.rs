@@ -1,7 +1,11 @@
 //! Browser pool for managing a persistent Chrome instance with bounded concurrency.
 //!
-//! This module is feature-gated behind `#[cfg(feature = "browser")]` at the module level
-//! in `lib.rs`. Do not add feature gates inside this file.
+//! ~keep This module is feature-gated behind `#[cfg(feature = "browser-chromiumoxide")]` at
+//! ~keep the module level in `lib.rs` (the narrower flag -- `browser` implies it, see the
+//! ~keep `~keep` there). One method compiled under this module, `PooledPage::into_parts`, is
+//! ~keep only called from code gated on the wider `browser` feature, so it carries its own
+//! ~keep `#[cfg(feature = "browser")]` inline with a `~keep` explaining why; that is the one
+//! ~keep sanctioned in-file feature gate, not a precedent for adding more.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -196,9 +200,13 @@ async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
 /// ~keep `Browser::wait` is a bare `child.wait().await` with no built-in limit, so a
 /// ~keep Chrome instance stuck behind a blocking OS dialog (observed: a macOS "wants to
 /// ~keep use your confidential information" keychain prompt) previously held this call
-/// ~keep open indefinitely. `Browser::close`/`wait`/`kill` are all documented no-ops when
-/// ~keep this `Browser` connected to an external process instead of spawning one, so this
-/// ~keep is safe to call unconditionally on every teardown path.
+/// ~keep open indefinitely. Only `wait`/`kill` are documented no-ops when this `Browser`
+/// ~keep connected to an external process (chromiumoxide 0.9.1, `src/browser/mod.rs`) --
+/// ~keep `close` is not: it sends a real CDP `Browser.close`. `launch_or_connect`
+/// ~keep (`browser/launch.rs`) uses `Browser::connect` whenever `config.browser.endpoint`
+/// ~keep is set, and this function is called unconditionally on every teardown path, so a
+/// ~keep `browser.endpoint`-configured crawl shuts down the caller's external Chrome on
+/// ~keep teardown. Pre-existing, tracked separately -- not fixed here.
 pub(crate) async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) {
     let closed = tokio::time::timeout(shutdown_timeout, async {
         let _ = browser.close().await;
