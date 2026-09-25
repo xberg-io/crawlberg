@@ -3,32 +3,31 @@
 //! This module is only compiled when the `browser` feature is enabled.
 
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chromiumoxide::Handler;
-use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams,
-};
-use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, SetCookieParams, SetExtraHttpHeadersParams};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-use chromiumoxide::page::ScreenshotParams;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
-use crate::browser_pool::BrowserPool;
+use self::launch::launch_or_connect;
+use self::navigation::page_fetch;
+use crate::browser_pool::{BrowserPool, close_browser_within};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::net::ssrf::{SsrfPolicy, validate_url};
+use crate::net::ssrf::validate_url;
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
-use crate::types::{AuthConfig, BrowserBackend, BrowserWait, CookieInfo, CrawlConfig};
+use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
+
+mod launch;
+mod navigation;
+mod ssrf_intercept;
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// How long to wait for the CDP handler task to wind down after a browser is
+/// closed, before abandoning it.
+const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
@@ -49,9 +48,9 @@ pub(crate) async fn browser_fetch(
         BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await,
         BrowserBackend::Native => {
             // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
-            // ~keep (`page_fetch` below); the native backend lives in the off-limits
-            // ~keep `crawlberg-browser` crate. Warn instead of silently dropping the request,
-            // ~keep matching the rest of `capture_screenshot`'s contract.
+            // ~keep (`page_fetch`, in `browser/navigation.rs`); the native backend lives in the
+            // ~keep off-limits `crawlberg-browser` crate. Warn instead of silently dropping the
+            // ~keep request, matching the rest of `capture_screenshot`'s contract.
             if config.capture_screenshot {
                 tracing::warn!(
                     "capture_screenshot is not supported by BrowserBackend::Native; \
@@ -119,13 +118,41 @@ async fn chromiumoxide_fetch_inner(
     }
 }
 
-/// How long to wait for the CDP handler task to wind down after a one-shot
-/// browser is closed, before abandoning it.
-const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Build the error returned when a browser fetch does not complete within
+/// `BrowserConfig::overall_timeout`.
+fn overall_deadline_error(overall_timeout: Duration) -> CrawlError {
+    CrawlError::browser_timeout(format!(
+        "browser fetch exceeded the overall deadline of {overall_timeout:?}"
+    ))
+}
 
 /// Fetch using a page borrowed from a shared [`BrowserPool`], returning the page
 /// to the session pool on success when session affinity is enabled.
+///
+/// The whole operation -- page acquisition, navigation, rendering, and the
+/// page close that follows -- is bounded by `BrowserConfig::overall_timeout`,
+/// closing the gap where an unbounded semaphore wait or an unbounded
+/// `page.close()` could hold a fetch open indefinitely.
 async fn pooled_fetch(
+    url: &str,
+    config: &CrawlConfig,
+    prior_cookies: Option<&[CookieInfo]>,
+    pool: &BrowserPool,
+    want_screenshot: bool,
+) -> Result<HttpResponse, CrawlError> {
+    let overall_timeout = config.browser.overall_timeout;
+    match tokio::time::timeout(
+        overall_timeout,
+        pooled_fetch_inner(url, config, prior_cookies, pool, want_screenshot),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(overall_deadline_error(overall_timeout)),
+    }
+}
+
+async fn pooled_fetch_inner(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
@@ -188,31 +215,60 @@ async fn pooled_fetch(
 }
 
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
+///
+/// `BrowserConfig::overall_timeout` bounds launch, page creation, navigation,
+/// rendering, and screenshot capture as a single deadline. Shutdown (closing
+/// the browser and waiting for its process to exit) runs afterward in the
+/// background, bounded by its own `BrowserConfig::shutdown_timeout`: a
+/// completed page result is returned to the caller without waiting for a
+/// Chrome process that refuses to exit.
 async fn one_shot_fetch(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
-    let (mut browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    let overall_timeout = config.browser.overall_timeout;
+    let shutdown_timeout = config.browser.shutdown_timeout;
+    let deadline = tokio::time::Instant::now() + overall_timeout;
+
+    let (mut browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await
+    {
+        Ok(Ok(launched)) => launched,
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Err(overall_deadline_error(overall_timeout)),
+    };
+
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let fetch_outcome = tokio::time::timeout(remaining, async {
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
 
-    let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
+        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
+        let _ = page.close().await;
+        result
+    })
+    .await;
 
-    let _ = page.close().await;
-    let _ = browser.close().await;
-    let _ = browser.wait().await;
-    drop(browser);
-    let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handler_handle).await;
+    let result = fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)));
 
-    if let Some(dir) = data_dir {
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    // ~keep Shutdown is spawned rather than awaited inline: a Chrome process stuck behind a
+    // ~keep blocking OS dialog (the originally reported case: a macOS keychain prompt) must
+    // ~keep not hold up delivery of a result that was already computed above.
+    // ~keep `close_browser_within` still bounds close()/wait() by `shutdown_timeout` and
+    // ~keep force-kills the process on expiry, so this background task always finishes.
+    tokio::spawn(async move {
+        close_browser_within(&mut browser, shutdown_timeout).await;
+        drop(browser);
+        let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handler_handle).await;
+        if let Some(dir) = data_dir {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        }
+    });
 
     result
 }
@@ -239,777 +295,4 @@ async fn native_fetch(
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
     ))
-}
-
-/// Active CDP Fetch-domain interception that re-validates every browser-issued
-/// request against the SSRF policy. Held alive across a navigation; consuming it
-/// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
-/// and reports the first request that was blocked.
-struct SsrfInterceptGuard {
-    page: chromiumoxide::Page,
-    listener: tokio::task::JoinHandle<()>,
-    blocked: Arc<Mutex<Option<(String, String)>>>,
-}
-
-impl SsrfInterceptGuard {
-    /// Disable interception, stop the listener, and return the first blocked
-    /// `(url, reason)` observed during the navigation, if any.
-    async fn finish(self) -> Option<(String, String)> {
-        let _ = self.page.execute(FetchDisableParams::default()).await;
-        self.listener.abort();
-        match self.blocked.lock() {
-            Ok(mut slot) => slot.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        }
-    }
-}
-
-/// Enable CDP Fetch interception on `page`, validating every intercepted request
-/// URL against `policy` before Chrome connects. Requests resolving to blocked
-/// addresses (loopback, RFC1918, link-local, cloud metadata, non-http(s)
-/// schemes) are failed with `BlockedByClient` and the first one is recorded so
-/// the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
-///
-/// This closes the residual gap left by the pre-navigation seed check: the
-/// browser follows 3xx redirects and client-side navigations internally, so
-/// without per-request interception a redirect or `location` change to a
-/// private/metadata address would reach the network unchecked.
-/// Decide whether an intercepted request URL is permitted by the SSRF policy.
-/// Returns `Err(reason)` when the request must be failed at the CDP layer. This
-/// is the per-request decision applied to every browser-issued request.
-async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), String> {
-    match url::Url::parse(request_url) {
-        Ok(parsed) => validate_url(&parsed, policy).await.map_err(|e| e.to_string()),
-        Err(e) => Err(format!("invalid URL: {e}")),
-    }
-}
-
-async fn start_ssrf_interception(
-    page: &chromiumoxide::Page,
-    policy: &SsrfPolicy,
-) -> Result<SsrfInterceptGuard, CrawlError> {
-    let mut events = page
-        .event_listener::<EventRequestPaused>()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
-
-    page.execute(FetchEnableParams::default())
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
-
-    let blocked: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
-    let listener_page = page.clone();
-    let listener_policy = policy.clone();
-    let listener_blocked = Arc::clone(&blocked);
-
-    let listener = tokio::spawn(async move {
-        while let Some(event) = events.next().await {
-            let request_id = event.request_id.clone();
-            let request_url = event.request.url.clone();
-
-            match ssrf_verdict(&request_url, &listener_policy).await {
-                Ok(()) => {
-                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
-                }
-                Err(reason) => {
-                    if let Ok(mut slot) = listener_blocked.lock()
-                        && slot.is_none()
-                    {
-                        *slot = Some((request_url, reason));
-                    }
-                    let _ = listener_page
-                        .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
-                        .await;
-                }
-            }
-        }
-    });
-
-    Ok(SsrfInterceptGuard {
-        page: page.clone(),
-        listener,
-        blocked,
-    })
-}
-
-/// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
-/// the final HTML. The caller provides the page; this function does not
-/// create or close it.
-async fn page_fetch(
-    url: &str,
-    config: &CrawlConfig,
-    page: &chromiumoxide::Page,
-    prior_cookies: Option<&[CookieInfo]>,
-    want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
-    let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
-
-    if stealth {
-        crate::stealth::apply_stealth_patches(page).await;
-    }
-
-    apply_user_agent(page, config, stealth).await?;
-
-    if stealth && let Err(e) = set_viewport(page, STEALTH_VIEWPORT_WIDTH, STEALTH_VIEWPORT_HEIGHT).await {
-        return Err(CrawlError::browser_error(format!("failed to set viewport: {e}")));
-    }
-
-    apply_prior_cookies(page, prior_cookies).await;
-    apply_extra_headers(page, config).await?;
-
-    let timeout = config.browser.timeout;
-
-    let interceptor = start_ssrf_interception(page, &config.ssrf).await?;
-
-    let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
-
-        wait_for_ready(page, config)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("wait failed: {e}")))?;
-
-        Ok::<(), CrawlError>(())
-    })
-    .await;
-
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
-
-    if let Some(extra) = config.browser.extra_wait {
-        tokio::time::sleep(extra).await;
-    }
-
-    let html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-
-    let body_bytes = html.as_bytes().to_vec();
-    let screenshot = capture_screenshot(page, config, want_screenshot).await;
-
-    // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
-    Ok(HttpResponse {
-        status: RENDERED_PAGE_STATUS,
-        content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
-        body: html,
-        body_bytes,
-        headers: std::collections::HashMap::new(),
-        browser_extras: None,
-        // ~keep CDP final URL is unavailable here; this path only feeds browser backends, not wasm final_url tracking.
-        final_url: url.to_owned(),
-        screenshot,
-    })
-}
-
-/// Viewport a stealth session presents, chosen to match a common desktop display
-/// so the reported metrics are unremarkable.
-const STEALTH_VIEWPORT_WIDTH: u32 = 1920;
-const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
-
-/// Synthetic status and content type reported for a CDP-rendered page.
-const RENDERED_PAGE_STATUS: u16 = 200;
-const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
-
-/// Set the page's user agent, if one is configured or implied by stealth mode.
-async fn apply_user_agent(page: &chromiumoxide::Page, config: &CrawlConfig, stealth: bool) -> Result<(), CrawlError> {
-    let resolved_ua = if let Some(ref ua) = config.user_agent {
-        ua.clone()
-    } else if stealth {
-        resolve_default_user_agent().to_string()
-    } else {
-        "".to_string()
-    };
-
-    if resolved_ua.is_empty() {
-        return Ok(());
-    }
-    page.set_user_agent(&resolved_ua)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
-    Ok(())
-}
-
-/// Seed the page with cookies carried over from a previous fetch.
-///
-/// ~keep A cookie that cannot be built or set is skipped rather than failing the
-/// fetch: a partial session is still worth attempting, and CDP rejects cookies
-/// whose domain does not match the target.
-async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&[CookieInfo]>) {
-    let Some(cookies) = prior_cookies else {
-        return;
-    };
-    for cookie in cookies {
-        let mut builder = SetCookieParams::builder().name(&cookie.name).value(&cookie.value);
-        if let Some(ref domain) = cookie.domain {
-            builder = builder.domain(domain);
-        }
-        if let Some(ref path) = cookie.path {
-            builder = builder.path(path);
-        }
-        if let Ok(params) = builder.build() {
-            let _ = page.execute(params).await;
-        }
-    }
-}
-
-/// Install the configured custom headers plus any `auth`-derived header on the page.
-async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
-    let mut extra_headers = serde_json::Map::new();
-    for (k, v) in &config.custom_headers {
-        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-    if extra_headers.is_empty() {
-        return Ok(());
-    }
-    let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-    page.execute(params)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))
-        .map(|_| ())
-}
-
-/// Turn the navigation result and the interceptor's verdict into one error.
-///
-/// ~keep A request the SSRF interceptor blocked takes precedence over both the
-/// navigation error and the timeout: Chrome reports a blocked request as a generic
-/// navigation failure, so reporting that would hide the policy violation that
-/// actually caused it.
-fn resolve_navigation_outcome(
-    navigation: Result<Result<(), CrawlError>, tokio::time::error::Elapsed>,
-    blocked: Option<(String, String)>,
-    timeout: Duration,
-) -> Result<(), CrawlError> {
-    let navigation_error = match navigation {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error,
-        Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
-    };
-    if let Some((blocked_url, reason)) = blocked {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
-    }
-    Err(navigation_error)
-}
-
-/// Capture a PNG of the current viewport, when the caller asked for one.
-async fn capture_screenshot(
-    page: &chromiumoxide::Page,
-    config: &CrawlConfig,
-    want_screenshot: bool,
-) -> Option<Vec<u8>> {
-    // ~keep Gated on the CALLER wanting the bytes, not merely on the config flag. Only
-    // scrape()'s dedicated path consumes a screenshot; every other caller converts through
-    // browser_http_to_crawl, which has nowhere to put it. Reading the flag alone meant a
-    // crawl paid a full CDP screenshot round-trip per page and then discarded every one.
-    if !(want_screenshot && config.capture_screenshot) {
-        return None;
-    }
-    let params = ScreenshotParams::builder()
-        .format(CaptureScreenshotFormat::Png)
-        .full_page(false)
-        .build();
-    match page.screenshot(params).await {
-        Ok(bytes) => Some(bytes),
-        Err(e) => {
-            // ~keep A failed screenshot must not fail an otherwise-successful page fetch;
-            // ~keep the caller still gets HTML, just no image.
-            tracing::warn!(error = %e, "failed to capture page screenshot; continuing without one");
-            None
-        }
-    }
-}
-
-/// Wait for the page to be ready based on the configured wait strategy.
-async fn wait_for_ready(
-    page: &chromiumoxide::Page,
-    config: &CrawlConfig,
-) -> Result<(), chromiumoxide::error::CdpError> {
-    match config.browser.wait {
-        BrowserWait::NetworkIdle => {
-            // ~keep `NetworkIdle` is a settle delay here, not true CDP zero-in-flight detection.
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-        BrowserWait::Selector => {
-            if let Some(ref selector) = config.browser.wait_selector {
-                page.find_element(selector).await?;
-            } else {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
-        BrowserWait::Fixed => {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-    }
-    Ok(())
-}
-
-/// The Chrome `--user-data-dir` to launch with, and what to do with it once the
-/// browser session ends.
-struct UserDataDir {
-    path: std::path::PathBuf,
-    /// When `true`, the directory is deleted after the session (ephemeral launch,
-    /// or a scratch copy of a named profile whose changes should not be saved).
-    /// When `false`, the directory is left in place so its contents persist
-    /// (a named profile launched with `save_browser_profile: true`).
-    cleanup_on_exit: bool,
-}
-
-/// Unique-per-launch temp directory name, avoiding Chrome `SingletonLock` collisions
-/// when multiple browsers launch concurrently or a previous instance crashed uncleanly.
-fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-    static LAUNCH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
-    ))
-}
-
-/// Resolve the `--user-data-dir` for a one-shot Chrome launch from `config`.
-///
-/// - No `browser_profile`: a fresh ephemeral temp directory, deleted on exit.
-/// - `browser_profile` set and `save_browser_profile: true`: the named profile's
-///   own directory (created if missing), used and written to in place.
-/// - `browser_profile` set and `save_browser_profile: false`: the named profile's
-///   directory (created if missing) is copied into a scratch temp directory so
-///   the session starts from existing profile state but any changes made during
-///   the session are discarded rather than written back.
-fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError> {
-    let Some(name) = config.browser_profile.as_deref() else {
-        return Ok(UserDataDir {
-            path: unique_temp_dir("crawlberg-browser"),
-            cleanup_on_exit: true,
-        });
-    };
-
-    let profile = crate::browser_profile::BrowserProfile::new(name)?;
-    if !profile.exists() {
-        profile.create()?;
-    }
-
-    if config.save_browser_profile {
-        Ok(UserDataDir {
-            path: profile.user_data_dir,
-            cleanup_on_exit: false,
-        })
-    } else {
-        let scratch = unique_temp_dir(&format!("crawlberg-profile-{name}"));
-        copy_dir_recursive(&profile.user_data_dir, &scratch)?;
-        Ok(UserDataDir {
-            path: scratch,
-            cleanup_on_exit: true,
-        })
-    }
-}
-
-/// Recursively copy `src` into `dst`, creating `dst` if needed. Symlinks inside
-/// `src` are skipped rather than followed or copied as links.
-fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), CrawlError> {
-    std::fs::create_dir_all(dst)
-        .map_err(|e| CrawlError::other(format!("failed to create profile scratch directory: {e}")))?;
-    let entries =
-        std::fs::read_dir(src).map_err(|e| CrawlError::other(format!("failed to read profile directory: {e}")))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| CrawlError::other(format!("failed to read profile entry: {e}")))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| CrawlError::other(format!("failed to stat profile entry: {e}")))?;
-        let dest_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&entry.path(), &dest_path)?;
-        } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &dest_path)
-                .map_err(|e| CrawlError::other(format!("failed to copy profile file: {e}")))?;
-        }
-    }
-    Ok(())
-}
-
-/// Launch a new managed browser or connect to an external CDP endpoint.
-///
-/// Each ephemeral launch creates a unique user data directory to avoid Chrome's
-/// `SingletonLock` conflicts when multiple instances run concurrently or a
-/// previous instance crashed without cleanup. When `config.browser_profile` is
-/// set, the launch uses that named profile's directory instead (see
-/// [`resolve_user_data_dir`]).
-async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
-    if let Some(ref endpoint) = config.browser.endpoint {
-        if config.browser_profile.is_some() {
-            tracing::warn!(
-                profile = config.browser_profile.as_deref().unwrap_or_default(),
-                "browser_profile is ignored when connecting to an external browser.endpoint; \
-                 the remote Chrome process's profile is managed externally"
-            );
-        }
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
-        Ok((browser, handler, None))
-    } else {
-        let user_data = resolve_user_data_dir(config)?;
-
-        let builder = build_one_shot_launch_builder(&user_data.path);
-        let browser_config = builder
-            .build()
-            .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
-
-        match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, user_data.cleanup_on_exit.then_some(user_data.path))),
-            Err(e) => {
-                if user_data.cleanup_on_exit {
-                    let _ = std::fs::remove_dir_all(&user_data.path);
-                }
-                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
-            }
-        }
-    }
-}
-
-/// Build the [`ChromeBrowserConfig`] builder for a fresh one-shot launch (not the
-/// `browser.endpoint` connect branch).
-///
-/// ~keep Split out from `launch_or_connect` so a test can assert on the flags this
-/// ~keep path actually passes without spawning a real Chrome process.
-fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> chromiumoxide::browser::BrowserConfigBuilder {
-    let mut builder = ChromeBrowserConfig::builder()
-        .no_sandbox()
-        .new_headless_mode()
-        .user_data_dir(user_data_dir)
-        .disable_default_args();
-    // ~keep Mirror browser_pool's fork-safety env vars so one-shot and pooled Chrome launch paths match.
-    builder = builder
-        .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
-        .env("OS_ACTIVITY_MODE", "disable");
-    crate::browser_pool::apply_default_args(builder)
-}
-
-/// Returns a modern Chrome user-agent string suitable for the runtime environment.
-/// Used as the default UA when stealth mode is enabled.
-fn resolve_default_user_agent() -> &'static str {
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-}
-
-/// Set the viewport (device metrics) via CDP Emulation.setDeviceMetricsOverride.
-async fn set_viewport(page: &chromiumoxide::Page, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let params = SetDeviceMetricsOverrideParams::builder()
-        .width(width)
-        .height(height)
-        .device_scale_factor(1.0)
-        .build()?;
-
-    page.execute(params).await?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod ssrf_interception_tests {
-    //! Unit tests for the per-request SSRF decision applied by browser-tier
-    //! Fetch interception. These cover the security-critical verdict (the CDP
-    //! plumbing around it is thin glue) and stay hermetic by using literal-IP
-    //! and scheme rejections that require no DNS resolution or network.
-    use super::ssrf_verdict;
-    use crate::net::ssrf::SsrfPolicy;
-
-    fn deny_policy() -> SsrfPolicy {
-        SsrfPolicy::default()
-    }
-
-    fn allow_private_policy() -> SsrfPolicy {
-        SsrfPolicy {
-            deny_private: false,
-            ..SsrfPolicy::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn rejects_loopback_navigation() {
-        let verdict = ssrf_verdict("http://127.0.0.1/admin", &deny_policy()).await;
-        assert!(verdict.is_err(), "loopback must be rejected: {verdict:?}");
-    }
-
-    #[tokio::test]
-    async fn rejects_cloud_metadata_address() {
-        let verdict = ssrf_verdict("http://169.254.169.254/latest/meta-data/", &deny_policy()).await;
-        assert!(verdict.is_err(), "cloud metadata IP must be rejected: {verdict:?}");
-    }
-
-    #[tokio::test]
-    async fn rejects_non_http_scheme() {
-        let verdict = ssrf_verdict("file:///etc/passwd", &deny_policy()).await;
-        assert!(verdict.is_err(), "file:// scheme must be rejected: {verdict:?}");
-    }
-
-    #[tokio::test]
-    async fn rejects_malformed_url() {
-        let verdict = ssrf_verdict("not a url", &deny_policy()).await;
-        assert!(verdict.is_err(), "malformed URL must be rejected: {verdict:?}");
-    }
-
-    #[tokio::test]
-    async fn allows_loopback_when_private_networks_permitted() {
-        let verdict = ssrf_verdict("http://127.0.0.1/", &allow_private_policy()).await;
-        assert!(
-            verdict.is_ok(),
-            "loopback must pass when deny_private=false: {verdict:?}"
-        );
-    }
-}
-
-#[cfg(test)]
-mod user_data_dir_tests {
-    //! Hermetic, Chrome-free unit tests for the `browser_profile` /
-    //! `save_browser_profile` wiring in [`resolve_user_data_dir`] and
-    //! [`copy_dir_recursive`]. End-to-end proof that Chrome actually launches
-    //! against these resolved directories lives in
-    //! `crates/crawlberg/tests/test_browser_profile.rs`.
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-    use crate::browser_profile::BrowserProfile;
-    use crate::types::CrawlConfig;
-
-    static NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    /// A collision-free profile name so parallel test runs never race on the
-    /// same on-disk profile directory.
-    fn unique_profile_name(tag: &str) -> String {
-        format!(
-            "crawlberg-unit-test-{tag}-{}-{}",
-            std::process::id(),
-            NAME_COUNTER.fetch_add(1, Ordering::Relaxed)
-        )
-    }
-
-    /// Deletes the backing profile directory on drop, regardless of outcome.
-    struct ProfileGuard(BrowserProfile);
-    impl Drop for ProfileGuard {
-        fn drop(&mut self) {
-            let _ = self.0.delete();
-        }
-    }
-
-    #[test]
-    fn no_profile_resolves_to_ephemeral_temp_dir_marked_for_cleanup() {
-        let config = CrawlConfig::default();
-        let resolved = resolve_user_data_dir(&config).expect("resolve must succeed without a profile configured");
-        assert!(
-            resolved.cleanup_on_exit,
-            "ephemeral (no browser_profile) launches must be cleaned up after the session"
-        );
-    }
-
-    #[test]
-    fn missing_named_profile_is_created_and_used_directly_when_saved() {
-        let name = unique_profile_name("create-save");
-        let profile = BrowserProfile::new(&name).expect("profile name must be valid");
-        assert!(!profile.exists(), "precondition: profile must not exist yet");
-        let _guard = ProfileGuard(profile.clone());
-
-        let config = CrawlConfig {
-            browser_profile: Some(name.clone()),
-            save_browser_profile: true,
-            ..CrawlConfig::default()
-        };
-        let resolved = resolve_user_data_dir(&config).expect("resolve must succeed");
-
-        assert!(
-            profile.exists(),
-            "resolve_user_data_dir must create the named profile directory when missing"
-        );
-        assert_eq!(
-            resolved.path, profile.user_data_dir,
-            "save_browser_profile: true must launch directly against the profile's own directory"
-        );
-        assert!(
-            !resolved.cleanup_on_exit,
-            "save_browser_profile: true must not mark the profile directory for cleanup"
-        );
-    }
-
-    #[test]
-    fn unsaved_profile_launches_from_a_scratch_copy_that_preserves_the_original() {
-        let name = unique_profile_name("no-save");
-        let profile = BrowserProfile::new(&name).expect("profile name must be valid");
-        profile.create().expect("profile directory must be creatable");
-        let _guard = ProfileGuard(profile.clone());
-        std::fs::write(profile.user_data_dir.join("marker.txt"), b"original").expect("marker file must be writable");
-
-        let config = CrawlConfig {
-            browser_profile: Some(name.clone()),
-            save_browser_profile: false,
-            ..CrawlConfig::default()
-        };
-        let resolved = resolve_user_data_dir(&config).expect("resolve must succeed");
-
-        assert_ne!(
-            resolved.path, profile.user_data_dir,
-            "save_browser_profile: false must launch from a scratch copy, never the profile dir itself"
-        );
-        assert!(
-            resolved.cleanup_on_exit,
-            "the scratch copy must be marked for cleanup after the session"
-        );
-        assert_eq!(
-            std::fs::read(resolved.path.join("marker.txt")).expect("scratch copy must contain the marker file"),
-            b"original",
-            "the scratch copy must start from the existing profile state"
-        );
-
-        std::fs::write(resolved.path.join("marker.txt"), b"mutated-in-session")
-            .expect("writing into the scratch copy must succeed");
-        assert_eq!(
-            std::fs::read(profile.user_data_dir.join("marker.txt")).expect("original marker file must still exist"),
-            b"original",
-            "writes into the scratch copy must never be reflected back into the saved profile"
-        );
-
-        let _ = std::fs::remove_dir_all(&resolved.path);
-    }
-
-    #[test]
-    fn copy_dir_recursive_copies_nested_files_and_skips_symlinks() {
-        let root = std::env::temp_dir().join(unique_profile_name("copy"));
-        let src = root.join("src");
-        let dst = root.join("dst");
-        std::fs::create_dir_all(src.join("nested")).expect("nested src dir must be creatable");
-        std::fs::write(src.join("top.txt"), b"top").expect("top-level file must be writable");
-        std::fs::write(src.join("nested").join("deep.txt"), b"deep").expect("nested file must be writable");
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            let _ = symlink(src.join("top.txt"), src.join("link.txt"));
-        }
-
-        copy_dir_recursive(&src, &dst).expect("recursive copy must succeed");
-
-        assert_eq!(std::fs::read(dst.join("top.txt")).unwrap(), b"top");
-        assert_eq!(std::fs::read(dst.join("nested").join("deep.txt")).unwrap(), b"deep");
-        assert!(
-            !dst.join("link.txt").exists(),
-            "symlinks in the source directory must not be copied"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const TEST_TIMEOUT: Duration = Duration::from_secs(7);
-
-    fn elapsed() -> tokio::time::error::Elapsed {
-        // ~keep `Elapsed` has no public constructor, so the only way to obtain one is to
-        // ~keep let a zero-duration timeout actually expire.
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("runtime")
-            .block_on(async {
-                tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
-                    .await
-                    .expect_err("a zero timeout over a pending future must elapse")
-            })
-    }
-
-    fn blocked() -> Option<(String, String)> {
-        Some((
-            "http://169.254.169.254/".to_owned(),
-            "cloud metadata address".to_owned(),
-        ))
-    }
-
-    #[test]
-    fn a_successful_navigation_with_nothing_blocked_is_ok() {
-        assert!(resolve_navigation_outcome(Ok(Ok(())), None, TEST_TIMEOUT).is_ok());
-    }
-
-    #[test]
-    fn a_successful_navigation_wins_even_if_a_subresource_was_blocked() {
-        assert!(
-            resolve_navigation_outcome(Ok(Ok(())), blocked(), TEST_TIMEOUT).is_ok(),
-            "a blocked subresource must not fail a navigation that otherwise succeeded"
-        );
-    }
-
-    #[test]
-    fn a_blocked_request_is_reported_instead_of_the_navigation_error() {
-        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
-        let error = resolve_navigation_outcome(navigation, blocked(), TEST_TIMEOUT)
-            .expect_err("a blocked request must surface as an error");
-
-        match error {
-            CrawlError::SsrfPolicyViolation { url, reason, .. } => {
-                assert_eq!(url, "http://169.254.169.254/");
-                assert_eq!(reason, "cloud metadata address");
-            }
-            other => panic!("expected an SSRF policy violation, got: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_blocked_request_is_reported_instead_of_the_timeout() {
-        let error = resolve_navigation_outcome(Err(elapsed()), blocked(), TEST_TIMEOUT)
-            .expect_err("a blocked request must surface as an error");
-
-        assert!(
-            matches!(error, CrawlError::SsrfPolicyViolation { .. }),
-            "a navigation that timed out because a request was blocked must report the block, got: {error:?}"
-        );
-    }
-
-    #[test]
-    fn a_navigation_error_with_nothing_blocked_is_reported_verbatim() {
-        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: boom")));
-        let error = resolve_navigation_outcome(navigation, None, TEST_TIMEOUT).expect_err("must be an error");
-
-        assert!(
-            error.to_string().contains("navigation failed: boom"),
-            "the original navigation error must be preserved, got: {error}"
-        );
-    }
-
-    #[test]
-    fn a_timeout_with_nothing_blocked_reports_the_browser_timeout() {
-        let error = resolve_navigation_outcome(Err(elapsed()), None, TEST_TIMEOUT).expect_err("must be an error");
-
-        assert!(
-            matches!(error, CrawlError::BrowserTimeout { .. }),
-            "expected a browser timeout, got: {error:?}"
-        );
-        assert!(
-            error.to_string().contains("7s"),
-            "the timeout message must name the configured timeout, got: {error}"
-        );
-    }
-
-    #[test]
-    fn the_one_shot_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
-        // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
-        // ~keep uses to build its `BrowserConfig`, so a path that stops calling
-        // ~keep `apply_default_args` (even behind a comment claiming it still does) fails
-        // ~keep here because the returned flags actually change.
-        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"));
-        crate::browser_pool::assert_launch_flags_are_normalized(&builder);
-    }
 }

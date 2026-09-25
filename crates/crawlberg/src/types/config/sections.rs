@@ -92,6 +92,23 @@ pub struct BrowserConfig {
     /// Timeout for browser page load and rendering (in milliseconds when serialized).
     #[serde(with = "duration_ms")]
     pub timeout: Duration,
+    /// Overall deadline for a single browser fetch, covering browser launch (or
+    /// page acquisition from a shared pool), page setup, navigation, rendering,
+    /// and screenshot capture. Must exceed `timeout` to leave room for launch
+    /// and setup overhead; a fetch that has not returned within this deadline
+    /// fails with a timeout error (in milliseconds when serialized).
+    ///
+    /// Shutdown/teardown is governed separately by `shutdown_timeout` and is
+    /// not counted against this deadline: an already-computed result is
+    /// delivered to the caller without waiting for the browser process to
+    /// exit.
+    #[serde(with = "duration_ms")]
+    pub overall_timeout: Duration,
+    /// How long to wait for the browser process to close and exit cleanly
+    /// during teardown before the process is forcibly killed (in milliseconds
+    /// when serialized).
+    #[serde(with = "duration_ms")]
+    pub shutdown_timeout: Duration,
     /// Wait strategy after browser navigation.
     pub wait: BrowserWait,
     /// CSS selector to wait for when `wait` is `Selector`.
@@ -136,6 +153,8 @@ impl Default for BrowserConfig {
             backend: BrowserBackend::Chromiumoxide,
             endpoint: None,
             timeout: Duration::from_secs(30),
+            overall_timeout: Duration::from_secs(60),
+            shutdown_timeout: Duration::from_secs(5),
             wait: BrowserWait::default(),
             wait_selector: None,
             extra_wait: None,

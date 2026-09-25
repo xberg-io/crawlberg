@@ -189,6 +189,32 @@ async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
     }
 }
 
+/// Close `browser` and wait for its process to exit, bounding the wait by
+/// `shutdown_timeout`. If the browser has not exited before the deadline, the
+/// process is force-killed via [`Browser::kill`] rather than left to linger.
+///
+/// ~keep `Browser::wait` is a bare `child.wait().await` with no built-in limit, so a
+/// ~keep Chrome instance stuck behind a blocking OS dialog (observed: a macOS "wants to
+/// ~keep use your confidential information" keychain prompt) previously held this call
+/// ~keep open indefinitely. `Browser::close`/`wait`/`kill` are all documented no-ops when
+/// ~keep this `Browser` connected to an external process instead of spawning one, so this
+/// ~keep is safe to call unconditionally on every teardown path.
+pub(crate) async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) {
+    let closed = tokio::time::timeout(shutdown_timeout, async {
+        let _ = browser.close().await;
+        let _ = browser.wait().await;
+    })
+    .await;
+
+    if closed.is_err() {
+        tracing::warn!(
+            timeout_secs = shutdown_timeout.as_secs_f64(),
+            "browser did not close before the shutdown timeout; killing the process"
+        );
+        let _ = browser.kill().await;
+    }
+}
+
 /// Remove a Chrome profile directory, logging rather than ignoring a failure.
 ///
 /// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
@@ -305,8 +331,7 @@ impl BrowserPool {
         let mut guard = self.state.lock().await;
         if let Some(bs) = guard.take() {
             let mut browser = bs.browser;
-            let _ = browser.close().await;
-            let _ = browser.wait().await;
+            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
             drop(browser);
             abort_handler_after_timeout(bs.handler_handle).await;
             if let Some(dir) = bs.user_data_dir {
@@ -355,8 +380,7 @@ impl BrowserPool {
         self.healthy.store(false, Ordering::Release);
         if let Some(old) = guard.take() {
             let mut browser = old.browser;
-            let _ = browser.close().await;
-            let _ = browser.wait().await;
+            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
             drop(browser);
             abort_handler_after_timeout(old.handler_handle).await;
             if let Some(dir) = old.user_data_dir {
@@ -603,7 +627,7 @@ mod tests {
         // ~keep launch path added in a new file is NOT caught by this test; it needs its
         // ~keep own behavioral test or a new entry in this list.
         for (path, src) in [
-            ("browser.rs", include_str!("browser.rs")),
+            ("browser/launch.rs", include_str!("browser/launch.rs")),
             ("browser_pool.rs", include_str!("browser_pool.rs")),
             ("interact/chromiumoxide.rs", include_str!("interact/chromiumoxide.rs")),
         ] {
