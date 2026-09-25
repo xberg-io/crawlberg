@@ -4,14 +4,97 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-25
+
+Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
+green e2e suite could not see: the fixtures covering the affected behaviours passed with the bugs
+fully present, and the assertion vocabulary cannot express request counts or elapsed time at all,
+so the whole "how many requests did we send, and how long did we wait" class was invisible by
+construction.
+
+### Upgrading
+
+Three changes can affect an existing setup:
+
+- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
+  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
+  encrypted with a keychain-backed key and the mock keychain uses a different one.
+- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
+  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
+  versions. Older configurations still load unchanged.
+- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
+  originally discovered one, so it keys on where the content actually came from. This also feeds
+  `CrawlResult::unique_normalized_urls()`.
+
+### Added
+
+- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
+  to `false`. The head values remain available on `PageMetadata`, which is populated independently
+  of the converter. (#64)
+- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
+  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
+  pattern anchored with `$` changes meaning once the query joins the text. (#61)
+- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
+  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
+  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
+  from the key. (#65)
+- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
+  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
+- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
+- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
+  many hops it took. (#62)
+- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
+  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
+  (#57)
+
 ### Fixed
 
-- Default Chrome command-line flags now reach Chrome on every launch path, including the one-shot
-  browser-mode path, which previously discarded them because of a double `--` prefix. On macOS, a
-  crawl no longer shows a keychain prompt: Chrome now uses a mock keychain there instead of reading
-  the login keychain. Cookies in a `browser_profile` saved by an earlier version may not be
-  readable after upgrading, because they were encrypted with the real keychain-backed key and the
-  mock keychain uses a different, fixed key.
+- **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
+  host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
+  decision is now one helper shared by both crawl loops. Investigating this also showed that
+  `stay_on_domain` has never had an observable effect either; that needs its own decision and is
+  tracked as #72. (#60)
+- **A redirect on a discovered link was not followed.** Only the start URL resolved its redirect
+  chain; a discovered link answering 3xx was reported as a page with an empty body and its target
+  was never requested. Frontier fetches now resolve redirects with robots, `exclude_paths` and SSRF
+  enforced on every hop. Relative links on a redirected page also resolve against the final URL
+  instead of the pre-redirect one, which was wrong whenever a redirect crossed origins. (#62)
+- **`retry_count` did not bound requests.** Two retry loops ran nested and the outer one never read
+  the setting, so a URL answering 503 was requested `4 * (retry_count + 1)` times: 4, 8 and 20 for
+  `retry_count` 0, 1 and 4. Retries now have a single owner. Backoff existed in six disagreeing
+  implementations, including one uncapped shift reachable from an unvalidated `usize`; they now
+  share one function and `retry_count` is bounded. (#67, #68)
+- **A browser fetch could wait without a limit.** `BrowserConfig.timeout` covered only navigation
+  and the ready wait, leaving page creation, setup, content extraction and shutdown unbounded — and
+  a completed page result was not returned until Chrome exited, so a Chrome that would not exit
+  held a finished result. One deadline now covers the whole fetch, shutdown no longer blocks the
+  result, and the browser is killed if it does not close in time. (#66)
+- **Default Chrome flags never reached Chrome.** The one-shot launch path passed them with a `--`
+  prefix that chromiumoxide prefixes again, so Chrome received `----no-first-run` and ignored it.
+  On macOS a crawl no longer shows a keychain prompt, because `--use-mock-keychain` is now among
+  the defaults and actually applied. (#59)
+- **`browser-chromiumoxide` without `browser` did not compile.** The interact launcher called into a
+  module gated on the wider feature. No CI job built that configuration; one now builds all
+  fifteen. (#70)
+- **A fully successful release reported failure.** The job that pushes the Go module's subdirectory
+  tag checked the repository out at a tag that the Swift checksum job force-moves in the same
+  second, and died in `actions/checkout`. It now creates the tag through the API, with no working
+  tree and no tag fetch. (#71)
+
+### Changed
+
+- Repinned Alef to 0.96.2, which corrects two defects in the generated Python bindings.
+- Upgraded `deno_core`, `utoipa` to 6, and `saphyr`, and refreshed the lockfile. `cssparser` stays
+  at 0.37 because `selectors` still requires it, and the OpenTelemetry stack stays at 0.32/0.33
+  because every published `liter-llm` requires `opentelemetry ^0.32`; bumping it resolves two
+  versions at once whenever the `otel` feature is on, which a build does not catch.
+- CI now builds every feature configuration, and runs the binding-parity gate when `alef.toml`
+  changes — it was the only workflow whose path filter omitted the file while being the only place
+  that gate runs.
+- Closed the size and complexity baseline work (#42). Nothing left in the baseline is debt: five
+  entries are config or log files, one is generated, and the remaining two are the same defect in
+  poly's parameter counting, which counts an attribute on a parameter as a parameter. Reported as
+  Goldziher/poly#28.
 
 ## [1.7.2] - 2026-09-24
 
