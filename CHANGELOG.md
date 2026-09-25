@@ -4,6 +4,11 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets Rust consumers opt into byte-aware document acceptance
+  after bounded fetches, while preserving the default declared-MIME decision. (#95)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a

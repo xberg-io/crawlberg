@@ -144,13 +144,16 @@ impl CrawlEngine {
         body: &str,
         page_was_skipped: bool,
     ) -> (Option<DownloadedDocument>, Option<MarkdownResult>) {
-        let downloaded_document = crate::document::build_downloaded_document(
+        let downloaded_document = crate::document::build_downloaded_document_with_filter(
             page_url,
             page_parsed,
-            &fetch.content_type,
-            &fetch.body_bytes,
-            page_was_skipped,
+            crate::document::DocumentInput {
+                content_type: &fetch.content_type,
+                body_bytes: &fetch.body_bytes,
+                is_document: page_was_skipped,
+            },
             &self.config,
+            self.document_filter.as_deref(),
         )
         .await;
 

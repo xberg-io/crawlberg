@@ -41,6 +41,7 @@ pub struct CrawlEngineBuilder {
     event_emitter: Option<Arc<dyn EventEmitter>>,
     strategy: Option<Arc<dyn CrawlStrategy>>,
     content_filter: Option<Arc<dyn ContentFilter>>,
+    document_filter: Option<Arc<crate::document::DocumentFilter>>,
     cache: Option<Arc<dyn CrawlCache>>,
     #[cfg(not(target_arch = "wasm32"))]
     event_sink: Option<Arc<dyn EventSink>>,
@@ -63,6 +64,7 @@ impl CrawlEngineBuilder {
             event_emitter: None,
             strategy: None,
             content_filter: None,
+            document_filter: None,
             cache: None,
             #[cfg(not(target_arch = "wasm32"))]
             event_sink: None,
@@ -120,6 +122,17 @@ impl CrawlEngineBuilder {
     #[allow(dead_code)]
     pub fn content_filter(mut self, content_filter: impl ContentFilter + 'static) -> Self {
         self.content_filter = Some(Arc::new(content_filter));
+        self
+    }
+
+    /// Set a byte-aware predicate for document materialization during crawls.
+    ///
+    /// The predicate receives the normalized declared MIME type and at most
+    /// `document_max_size` bytes of the already bounded response body. It replaces
+    /// the `document_mime_types`/built-in classification decision for this engine.
+    /// With no predicate, the existing MIME decision is unchanged.
+    pub fn document_filter(mut self, document_filter: impl Fn(&str, &[u8]) -> bool + Send + Sync + 'static) -> Self {
+        self.document_filter = Some(Arc::new(document_filter));
         self
     }
 
@@ -250,6 +263,7 @@ impl CrawlEngineBuilder {
             content_filter: self
                 .content_filter
                 .unwrap_or_else(|| default_content_filter(bm25_filter)),
+            document_filter: self.document_filter,
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
             event_sink,

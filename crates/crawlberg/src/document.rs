@@ -27,6 +27,14 @@ use crate::types::{CrawlConfig, DocumentContentEncoding, DownloadedDocument};
 /// `run_crawl_loop`); duplicating the literal there would drift from this one.
 pub(crate) const DEFAULT_DOCUMENT_MAX_SIZE: usize = 50 * 1024 * 1024;
 
+pub(crate) type DocumentFilter = dyn Fn(&str, &[u8]) -> bool + Send + Sync;
+
+pub(crate) struct DocumentInput<'a> {
+    pub(crate) content_type: &'a str,
+    pub(crate) body_bytes: &'a [u8],
+    pub(crate) is_document: bool,
+}
+
 /// Fallback extension used when a document has no filename hint to derive one from.
 const DEFAULT_DOCUMENT_EXTENSION: &str = "bin";
 
@@ -205,29 +213,55 @@ pub(crate) async fn build_downloaded_document(
     is_document: bool,
     config: &CrawlConfig,
 ) -> Option<DownloadedDocument> {
+    build_downloaded_document_with_filter(
+        url,
+        parsed_url,
+        DocumentInput {
+            content_type,
+            body_bytes,
+            is_document,
+        },
+        config,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn build_downloaded_document_with_filter(
+    url: &str,
+    parsed_url: &Url,
+    input: DocumentInput<'_>,
+    config: &CrawlConfig,
+    document_filter: Option<&DocumentFilter>,
+) -> Option<DownloadedDocument> {
     if !config.download_documents {
         return None;
     }
 
-    let mime_type = normalize_mime_type(content_type);
-    if !should_download_mime(config, &mime_type, is_document) {
+    let mime_type = normalize_mime_type(input.content_type);
+    let max_size = config.document_max_size.unwrap_or(DEFAULT_DOCUMENT_MAX_SIZE);
+    let filter_bytes = &input.body_bytes[..input.body_bytes.len().min(max_size)];
+    let accepted = match document_filter {
+        Some(filter) => filter(&mime_type, filter_bytes),
+        None => should_download_mime(config, &mime_type, input.is_document),
+    };
+    if !accepted {
         tracing::debug!(
             { CRAWL_MIME_TYPE } = %mime_type,
-            is_document,
-            "response is not eligible for document download under document_mime_types/is_document"
+            is_document = input.is_document,
+            "response rejected by document materialization policy"
         );
         return None;
     }
 
-    let max_size = config.document_max_size.unwrap_or(DEFAULT_DOCUMENT_MAX_SIZE);
-    let size = body_bytes.len();
+    let size = input.body_bytes.len();
     let truncated = size > max_size;
     let content = if truncated {
-        body_bytes[..max_size].to_vec()
+        input.body_bytes[..max_size].to_vec()
     } else {
-        body_bytes.to_vec()
+        input.body_bytes.to_vec()
     };
-    let content_hash = hash_content(body_bytes);
+    let content_hash = hash_content(input.body_bytes);
     let filename = derive_filename(parsed_url);
 
     record_download_telemetry(url, &mime_type, size, max_size, truncated);
@@ -260,6 +294,7 @@ pub(crate) async fn build_downloaded_document(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     fn pdf_url() -> Url {
         Url::parse("https://example.com/files/report.pdf").expect("valid url")
@@ -281,6 +316,38 @@ mod tests {
         )
         .await;
         assert!(doc.is_none(), "disabled downloads must yield None");
+    }
+
+    #[tokio::test]
+    async fn byte_aware_filter_sees_only_document_max_size_prefix() {
+        let config = CrawlConfig {
+            document_max_size: Some(4),
+            ..Default::default()
+        };
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_by_filter = Arc::clone(&observed);
+        let filter = move |declared: &str, bytes: &[u8]| {
+            assert_eq!(declared, "text/plain");
+            *observed_by_filter.lock().expect("filter lock") = bytes.to_vec();
+            true
+        };
+        let document = build_downloaded_document_with_filter(
+            pdf_url().as_str(),
+            &pdf_url(),
+            DocumentInput {
+                content_type: "text/plain; charset=utf-8",
+                body_bytes: b"%PDF-1.7 body",
+                is_document: true,
+            },
+            &config,
+            Some(&filter),
+        )
+        .await
+        .expect("filter admits document");
+
+        assert_eq!(*observed.lock().expect("filter lock"), b"%PDF");
+        assert_eq!(document.content.as_slice(), b"%PDF");
+        assert!(document.truncated);
     }
 
     #[tokio::test]
