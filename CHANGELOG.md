@@ -4,6 +4,15 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Default Chrome command-line flags now reach Chrome on every launch path, including the one-shot
+  browser-mode path, which previously discarded them because of a double `--` prefix. On macOS, a
+  crawl no longer shows a keychain prompt: Chrome now uses a mock keychain there instead of reading
+  the login keychain. Cookies in a `browser_profile` saved by an earlier version may not be
+  readable after upgrading, because they were encrypted with the real keychain-backed key and the
+  mock keychain uses a different, fixed key.
+
 ## [1.7.2] - 2026-09-24
 
 A wasm and kotlin_android correctness release. A wasm engine handle was unusable after one call,

@@ -666,16 +666,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
     } else {
         let user_data = resolve_user_data_dir(config)?;
 
-        let mut builder = ChromeBrowserConfig::builder()
-            .no_sandbox()
-            .new_headless_mode()
-            .user_data_dir(&user_data.path)
-            .disable_default_args();
-        // ~keep Mirror browser_pool's fork-safety env vars so one-shot and pooled Chrome launch paths match.
-        builder = builder
-            .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
-            .env("OS_ACTIVITY_MODE", "disable");
-        builder = crate::browser_pool::apply_default_args(builder);
+        let builder = build_one_shot_launch_builder(&user_data.path);
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -690,6 +681,24 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             }
         }
     }
+}
+
+/// Build the [`ChromeBrowserConfig`] builder for a fresh one-shot launch (not the
+/// `browser.endpoint` connect branch).
+///
+/// ~keep Split out from `launch_or_connect` so a test can assert on the flags this
+/// ~keep path actually passes without spawning a real Chrome process.
+fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> chromiumoxide::browser::BrowserConfigBuilder {
+    let mut builder = ChromeBrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(user_data_dir)
+        .disable_default_args();
+    // ~keep Mirror browser_pool's fork-safety env vars so one-shot and pooled Chrome launch paths match.
+    builder = builder
+        .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+        .env("OS_ACTIVITY_MODE", "disable");
+    crate::browser_pool::apply_default_args(builder)
 }
 
 /// Returns a modern Chrome user-agent string suitable for the runtime environment.
@@ -992,5 +1001,15 @@ mod tests {
             error.to_string().contains("7s"),
             "the timeout message must name the configured timeout, got: {error}"
         );
+    }
+
+    #[test]
+    fn the_one_shot_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
+        // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
+        // ~keep uses to build its `BrowserConfig`, so a path that stops calling
+        // ~keep `apply_default_args` (even behind a comment claiming it still does) fails
+        // ~keep here because the returned flags actually change.
+        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"));
+        crate::browser_pool::assert_launch_flags_are_normalized(&builder);
     }
 }
