@@ -23,10 +23,14 @@ const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
 
 /// Upper bound accepted for `CrawlConfig::retry_count`.
 ///
-/// ~keep `retry_count` is caller-supplied through every language binding and feeds
-/// ~keep `1 << attempt` (via `compute_backoff_ms`). Even at a bounded 100ms initial delay,
-/// ~keep attempt 30 alone is a 12.4-day sleep, so this exists to reject obviously-mistaken
-/// ~keep input rather than to model any real retry budget a crawl would want.
+/// ~keep `retry_count` is caller-supplied through every language binding. `compute_backoff_ms`
+/// ~keep caps each individual delay at `retry_max_delay_ms` (default 60_000ms), so no bounded
+/// ~keep `retry_count` can produce a multi-day sleep through it whatever the exponent -- an
+/// ~keep earlier version of this comment claimed attempt 30 was a 12.4-day sleep, which was
+/// ~keep wrong by 100x and reachable only without the cap. The bound exists to reject
+/// ~keep obviously-mistaken input: unbounded, one failing URL retries for as long as the caller
+/// ~keep asked, at up to `retry_max_delay_ms` apart, stalling the crawl on it instead of failing
+/// ~keep it and moving on.
 const MAX_RETRY_COUNT: usize = 20;
 
 /// Default for `CrawlConfig::retry_initial_delay_ms`.

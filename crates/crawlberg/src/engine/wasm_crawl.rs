@@ -51,7 +51,14 @@ impl CrawlEngine {
             browser_used: scrape.browser_used,
             // ~keep The browser's own `fetch` already followed redirects (see `scrape`'s
             // ~keep wasm32 path), so `scrape.final_url` is this page's post-redirect URL and
-            // ~keep there is no separate per-hop count to report here.
+            // ~keep there is no per-hop count to report AT THE PAGE LEVEL. Two limits this
+            // ~keep does not excuse: `note_page_outcome` increments the crawl-wide
+            // ~keep `redirect_count` only for the depth-0 seed, from `final_url != entry.url`,
+            // ~keep so it is a did-the-seed-redirect flag rather than a hop count; and
+            // ~keep `wasm_fetch_for_scrape` -- the fetch this reasoning is about -- is
+            // ~keep `#[cfg(target_arch = "wasm32")]`, so this file's tests under plain
+            // ~keep `cargo test` drive the loop against the NATIVE fetch path. Real wasm
+            // ~keep redirect behaviour has no executing test.
             final_url: scrape.final_url,
             redirect_count: 0,
         }
