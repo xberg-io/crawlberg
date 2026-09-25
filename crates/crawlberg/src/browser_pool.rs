@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -31,8 +31,19 @@ const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// - `--metrics-recording-only` → "unknown command"
 ///
 /// We detect snap chromium at runtime and return a filtered set when detected.
+///
+/// ~keep This is the single source of every launch path's default Chrome flags. None of
+/// ~keep `browser.rs`, `browser_pool.rs`, `interact/chromiumoxide.rs` calls this function
+/// ~keep directly or keeps its own copy of the list; each calls [`apply_default_args`],
+/// ~keep which calls this. The returned strings are already run through `chrome_arg_key`,
+/// ~keep so every caller can hand them straight to chromiumoxide's `BrowserConfig::arg`
+/// ~keep without re-stripping the `--`. Normalizing here, once, means a fourth launch path
+/// ~keep can't reintroduce the double-dash bug (see `chrome_args.rs`) by forgetting to
+/// ~keep call `chrome_arg_key` itself.
+/// ~keep Caller-supplied `chrome_args` config entries do not come through this function
+/// ~keep and still need their own `chrome_arg_key` call at the call site.
 pub(crate) fn safe_default_args() -> Vec<&'static str> {
-    let all_args = vec![
+    let mut all_args = vec![
         "--disable-background-networking",
         "--enable-features=NetworkService,NetworkServiceInProcess",
         "--disable-background-timer-throttling",
@@ -56,9 +67,20 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
         "--lang=en_US",
     ];
 
+    // ~keep macOS shows a blocking "wants to use your confidential information stored in
+    // ~keep Chrome Safe Storage" prompt unless told to use a mock keychain instead.
+    // ~keep `--use-mock-keychain` (Chromium's `kUseMockKeychain`) is defined and consumed only
+    // ~keep in the macOS os_crypt backend that reads the login keychain; on Linux and Windows
+    // ~keep Chrome's os_crypt backend never looks at this switch, so passing it there is a
+    // ~keep no-op, not a behavior change. Gate it here anyway rather than relying on that
+    // ~keep upstream no-op, so this list documents its own platform scope.
+    if cfg!(target_os = "macos") {
+        all_args.push("--use-mock-keychain");
+    }
+
     let is_snap = std::path::Path::new("/snap/chromium/current/usr/bin/chromium").exists();
 
-    if is_snap {
+    let filtered: Vec<&'static str> = if is_snap {
         all_args
             .into_iter()
             .filter(|&arg| {
@@ -73,7 +95,47 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
             .collect()
     } else {
         all_args
+    };
+
+    filtered.into_iter().map(chrome_arg_key).collect()
+}
+
+/// Push every entry of [`safe_default_args`] onto `builder`.
+///
+/// ~keep All three launch paths (`browser.rs`, `browser_pool.rs`,
+/// ~keep `interact/chromiumoxide.rs`) call this instead of looping over
+/// ~keep `safe_default_args()` themselves, so the loop that hands flags to
+/// ~keep chromiumoxide exists exactly once. A fourth launch path gets the fix
+/// ~keep by calling this function; it cannot reintroduce the double-dash bug by
+/// ~keep writing its own loop and forgetting to normalize.
+pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserConfigBuilder {
+    for arg in safe_default_args() {
+        builder = builder.arg(arg);
     }
+    builder
+}
+
+/// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
+/// `browser_endpoint` connect branch).
+///
+/// ~keep Split out from `launch_browser` so a test can assert on the flags this path
+/// ~keep actually passes without spawning a real Chrome process.
+fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[String]) -> BrowserConfigBuilder {
+    let mut builder = BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(user_data_dir)
+        .disable_default_args();
+    // ~keep Chrome helper forks can trip macOS fork-safety checks; disable the ObjC abort so helpers exec.
+    // ~keep The env vars are harmless on older macOS and Linux and keep pooled launches consistent.
+    builder = builder
+        .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+        .env("OS_ACTIVITY_MODE", "disable");
+    builder = apply_default_args(builder);
+    for arg in chrome_args {
+        builder = builder.arg(chrome_arg_key(arg.as_str()));
+    }
+    builder
 }
 
 /// Configuration for a [`BrowserPool`].
@@ -324,22 +386,7 @@ impl BrowserPool {
                 std::process::id(),
                 COUNTER.fetch_add(1, Ordering::Relaxed),
             ));
-            let mut builder = BrowserConfig::builder()
-                .no_sandbox()
-                .new_headless_mode()
-                .user_data_dir(&user_data_dir)
-                .disable_default_args();
-            // ~keep Chrome helper forks can trip macOS fork-safety checks; disable the ObjC abort so helpers exec.
-            // ~keep The env vars are harmless on older macOS and Linux and keep pooled launches consistent.
-            builder = builder
-                .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
-                .env("OS_ACTIVITY_MODE", "disable");
-            for arg in safe_default_args() {
-                builder = builder.arg(chrome_arg_key(arg));
-            }
-            for arg in &self.config.chrome_args {
-                builder = builder.arg(chrome_arg_key(arg.as_str()));
-            }
+            let builder = build_pool_launch_builder(&user_data_dir, &self.config.chrome_args);
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -433,6 +480,36 @@ impl Drop for PooledPage {
     }
 }
 
+/// Assert that `builder` carries no double-dashed flag key and, on macOS, carries the
+/// mock-keychain flag. Shared by the behavioral test for each of the three launch paths
+/// (this file, `browser.rs`, `interact/chromiumoxide.rs`).
+///
+/// ~keep chromiumoxide's `Arg` derives `Debug` on its private `key` field, so this reads
+/// ~keep the exact string chromiumoxide stored, before it renders it as `--{key}`.
+/// ~keep `!debug.contains("----")` cannot fail here: chromiumoxide never performs that
+/// ~keep render at `Debug`/`build()` time (only inside `launch()`, which spawns Chrome),
+/// ~keep so a leftover `--` in `key` would show as `key: "--foo"`, one dash short of what
+/// ~keep an earlier version of this check looked for. Assert on the stored key directly.
+/// ~keep Kept right before `mod tests` (not up with `apply_default_args`), on purpose:
+/// ~keep `test_every_known_launch_path_calls_the_shared_apply_default_args_helper` below
+/// ~keep finds the boundary between production code and test code by splitting each
+/// ~keep file on its first `#[cfg(test)]` marker. A `#[cfg(test)]` item placed earlier in
+/// ~keep the file would move that boundary and hide a real, later production call site.
+#[cfg(test)]
+pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder) {
+    let debug = format!("{builder:?}");
+    assert!(
+        !debug.contains("key: \"--"),
+        "a flag key still carries its own `--`, which chromiumoxide would double-prefix: {debug}"
+    );
+    if cfg!(target_os = "macos") {
+        assert!(
+            debug.contains("key: \"use-mock-keychain\""),
+            "missing --use-mock-keychain on macOS: {debug}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +542,80 @@ mod tests {
         pool.shutdown().await;
         let result = pool.acquire_page().await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
+        // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an
+        // ~keep already-`--`-prefixed entry would render as `----...` and Chrome discards
+        // ~keep it as an unknown flag (see chrome_args.rs).
+        for arg in safe_default_args() {
+            let rendered = format!("--{arg}");
+            assert!(!rendered.starts_with("----"), "double-prefixed flag: {rendered}");
+        }
+    }
+
+    #[test]
+    fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
+        let args = safe_default_args();
+        if cfg!(target_os = "macos") {
+            assert!(
+                args.contains(&"use-mock-keychain"),
+                "missing --use-mock-keychain on macOS"
+            );
+        } else {
+            assert!(
+                !args.contains(&"use-mock-keychain"),
+                "use-mock-keychain should be macOS-only"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_default_args_produces_normalized_flags() {
+        let builder = apply_default_args(BrowserConfig::builder());
+        assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn the_pool_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
+        // ~keep Behavioral, not textual: this calls the exact function `launch_browser`
+        // ~keep uses to build its `BrowserConfig`, so a path that stops calling
+        // ~keep `apply_default_args` (even by looping over a raw flag instead) fails here
+        // ~keep because the returned flags actually change.
+        let builder = build_pool_launch_builder(std::path::Path::new("/tmp/pool-test-profile"), &[]);
+        assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn test_every_known_launch_path_calls_the_shared_apply_default_args_helper() {
+        // ~keep Textual guard, kept alongside the behavioral tests above and in browser.rs's
+        // ~keep and interact/chromiumoxide.rs's own test modules (each builds the real
+        // ~keep launch config for its path and inspects the flags). Comments are stripped
+        // ~keep and apply_default_args' own definition line is excluded, so a path that
+        // ~keep only mentions the helper's name in a comment, or is the file that defines
+        // ~keep it, does not satisfy this; only a real call site does.
+        // ~keep Limitation: this can only check the three files named here. A fourth
+        // ~keep launch path added in a new file is NOT caught by this test; it needs its
+        // ~keep own behavioral test or a new entry in this list.
+        for (path, src) in [
+            ("browser.rs", include_str!("browser.rs")),
+            ("browser_pool.rs", include_str!("browser_pool.rs")),
+            ("interact/chromiumoxide.rs", include_str!("interact/chromiumoxide.rs")),
+        ] {
+            let code_only: String = src
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(src)
+                .lines()
+                .filter(|line| !line.contains("fn apply_default_args("))
+                .map(|line| line.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                code_only.contains("apply_default_args("),
+                "{path} does not call the shared apply_default_args helper outside a comment or its own definition"
+            );
+        }
     }
 }

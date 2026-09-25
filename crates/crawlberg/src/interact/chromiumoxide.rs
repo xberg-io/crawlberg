@@ -9,7 +9,6 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -411,19 +410,13 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
         ));
 
-        let mut builder = ChromeBrowserConfig::builder()
-            .no_sandbox()
-            .new_headless_mode()
-            .user_data_dir(&user_data_dir)
-            .disable_default_args();
-        for arg in safe_default_args() {
-            builder = builder.arg(chrome_arg_key(arg));
-        }
-        if let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) {
-            // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
-            // ~keep `----proxy-server=...` and the proxy was silently never applied.
-            builder = builder.arg(format!("proxy-server={}", proxy.url));
-        }
+        let proxy_url = config
+            .browser
+            .proxy
+            .as_ref()
+            .or(config.proxy.as_ref())
+            .map(|p| p.url.as_str());
+        let builder = build_interact_launch_builder(&user_data_dir, proxy_url);
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -438,45 +431,52 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
     }
 }
 
-fn safe_default_args() -> Vec<&'static str> {
-    let all_args = vec![
-        "--disable-background-networking",
-        "--enable-features=NetworkService,NetworkServiceInProcess",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-breakpad",
-        "--disable-client-side-phishing-detection",
-        "--disable-component-extensions-with-background-pages",
-        "--disable-default-apps",
-        "--disable-dev-shm-usage",
-        "--disable-features=TranslateUI",
-        "--disable-hang-monitor",
-        "--disable-ipc-flooding-protection",
-        "--disable-popup-blocking",
-        "--disable-prompt-on-repost",
-        "--disable-renderer-backgrounding",
-        "--disable-sync",
-        "--force-color-profile=srgb",
-        "--metrics-recording-only",
-        "--no-first-run",
-        "--password-store=basic",
-        "--lang=en_US",
-    ];
+/// Build the [`ChromeBrowserConfig`] builder for a fresh interact-mode launch (not the
+/// `browser.endpoint` connect branch).
+///
+/// ~keep Split out from `launch_or_connect` so a test can assert on the flags this
+/// ~keep path actually passes without spawning a real Chrome process.
+fn build_interact_launch_builder(
+    user_data_dir: &std::path::Path,
+    proxy_url: Option<&str>,
+) -> chromiumoxide::browser::BrowserConfigBuilder {
+    let mut builder = ChromeBrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(user_data_dir)
+        .disable_default_args();
+    builder = crate::browser_pool::apply_default_args(builder);
+    if let Some(proxy) = proxy_url {
+        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+        // ~keep `----proxy-server=...` and the proxy was silently never applied.
+        builder = builder.arg(format!("proxy-server={proxy}"));
+    }
+    builder
+}
 
-    if std::path::Path::new("/snap/chromium/current/usr/bin/chromium").exists() {
-        all_args
-            .into_iter()
-            .filter(|&arg| {
-                !matches!(
-                    arg,
-                    "--disable-background-networking"
-                        | "--enable-features=NetworkService,NetworkServiceInProcess"
-                        | "--disable-background-timer-throttling"
-                        | "--metrics-recording-only"
-                )
-            })
-            .collect()
-    } else {
-        all_args
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_interact_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
+        // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
+        // ~keep uses to build its `BrowserConfig`, so a path that stops calling
+        // ~keep `apply_default_args` fails here because the returned flags actually change.
+        let builder = build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), None);
+        crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn the_interact_launch_builder_still_normalizes_the_proxy_server_flag() {
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            Some("http://127.0.0.1:9"),
+        );
+        let debug = format!("{builder:?}");
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
+            "proxy-server flag missing or mis-normalized: {debug}"
+        );
     }
 }

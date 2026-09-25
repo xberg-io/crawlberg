@@ -9,7 +9,7 @@ mod browser;
 mod browser_detect;
 // ~keep Gated on `browser-chromiumoxide`, not `browser`: `browser` implies it, and the
 // ~keep interact launcher is gated on the narrower feature, so both callers can reach this.
-#[cfg(feature = "browser")]
+#[cfg(feature = "browser-chromiumoxide")]
 pub mod browser_pool;
 #[cfg(feature = "browser")]
 pub mod browser_profile;
