@@ -1026,10 +1026,19 @@ class CrawlConfig {
   /// Custom user-agent string.
   final String? userAgent;
 
-  /// Whether to restrict crawling to the same domain.
+  /// Whether to confine *document* links (`.pdf`, `.docx`, `.zip`, ...) to the seed domain.
+  ///
+  /// Page links are always confined to the seed host, widened to its subdomains by
+  /// [`Self::allow_subdomains`]; this flag does not loosen that. It applies only to document
+  /// links, which are classified by file extension before their host is considered and so
+  /// are followed cross-host by default -- the usual case being documents served from a CDN
+  /// or object store. Set this to `true` to require documents to live on the seed domain too.
   final bool stayOnDomain;
 
-  /// Whether to allow subdomains when `stay_on_domain` is true.
+  /// Whether subdomains of the seed host are in scope.
+  ///
+  /// Applies to page links unconditionally, and to document links when
+  /// [`Self::stay_on_domain`] is set.
   final bool allowSubdomains;
 
   /// Regex patterns for paths to include during crawling.
