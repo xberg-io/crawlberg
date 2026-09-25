@@ -409,8 +409,9 @@ jobs:
       # above is chosen so the runner's `dart format` is a fixed point of the
       # committed tree. See the ~keep note on the dart matrix entry.
       #
-      # Excluding these keeps the check meaningful for the 8 remaining langs
-      # rather than shipping one that fails for toolchain reasons. The real
+      # Excluding these keeps the check meaningful for the 12 remaining legs of
+      # the 16-leg matrix rather than shipping one that fails for toolchain
+      # reasons. The real
       # fix is pinning the formatter toolchain so generation is reproducible;
       # tracked separately, and the silent WARN-and-skip is an alef defect.
       - name: Install alef (pinned)
