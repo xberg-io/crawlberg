@@ -1543,10 +1543,19 @@ jobs:
             crawlberg-go-*.tar.gz.sha256
           token: ${{ steps.app-token.outputs.token }}
 
+  # ~keep This job used to check the repo out and run `git tag`, and for v1.7.2 it died in
+  # ~keep actions/checkout with "The ref 'refs/tags/v1.7.2' does not point to the expected
+  # ~keep commit" -- publish-swift-checksums force-moves that tag, and the two overlapped by
+  # ~keep seven seconds (Swift 21:19:32-21:20:01, Go started 21:19:54). `target_sha` is empty
+  # ~keep on a release event ("Specific SHA to checkout (empty if using ref)"), so checkout fell
+  # ~keep back to github.ref -- the very tag being moved -- and enforced that it still pointed at
+  # ~keep the triggering commit. Creating the tag through the API needs no working tree and no
+  # ~keep tag fetch, so the race cannot recur; needing publish-swift-checksums additionally
+  # ~keep guarantees the Go tag names the commit the release actually ships.
   push-go-subdir-tag:
     name: Push Go module subdir tag
-    needs: [prepare, validate-versions, upload-go-release]
-    if: ${{ needs.prepare.outputs.release_go == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.upload-go-release.result == 'success' || needs.upload-go-release.result == 'skipped') }}
+    needs: [prepare, validate-versions, upload-go-release, publish-swift-checksums]
+    if: ${{ !cancelled() && needs.prepare.outputs.release_go == 'true' && needs.prepare.outputs.is_tag == 'true' && needs.validate-versions.result == 'success' && (needs.upload-go-release.result == 'success' || needs.upload-go-release.result == 'skipped') && (needs.publish-swift-checksums.result == 'success' || needs.publish-swift-checksums.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v3
@@ -1556,21 +1565,45 @@ jobs:
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
           owner: xberg-io
 
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare.outputs.target_sha }}
-          fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-          persist-credentials: true
-
-      - name: Push Go subdir tag
+      - name: Create Go module subdir tag
         shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          git config user.name "xberg-dev-publisher[bot]"
-          git config user.email "291994444+xberg-dev-publisher[bot]@users.noreply.github.com"
-          TAG_NAME="packages/go/v${{ needs.prepare.outputs.version }}"
-          git tag -a "$TAG_NAME" -m "Go module release ${{ needs.prepare.outputs.version }}"
-          git push origin "$TAG_NAME"
+          set -euo pipefail
+          TAG_NAME="packages/go/v${VERSION}"
+
+          COMMIT=$(gh api "repos/${REPO}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha, .object.type' | paste -sd' ' -)
+          SHA=${COMMIT%% *}
+          TYPE=${COMMIT##* }
+          if [ "$TYPE" = "tag" ]; then
+            SHA=$(gh api "repos/${REPO}/git/tags/${SHA}" --jq '.object.sha')
+          fi
+          [ -n "$SHA" ] || { echo "could not resolve ${RELEASE_TAG} to a commit"; exit 1; }
+          echo "Tagging ${SHA} as ${TAG_NAME}"
+
+          OBJ=$(gh api -X POST "repos/${REPO}/git/tags" \
+            -f tag="${TAG_NAME}" -f object="${SHA}" -f type=commit \
+            -f message="Go module release ${VERSION}" --jq '.sha')
+
+          if ! gh api -X POST "repos/${REPO}/git/refs" \
+                 -f ref="refs/tags/${TAG_NAME}" -f sha="${OBJ}" >/dev/null 2>&1; then
+            echo "refs/tags/${TAG_NAME} already exists; leaving it alone"
+          fi
+
+          # ~keep Assert the shape, because the symptom that opened #71 was a ref that resolved
+          # ~keep fine while pointing at the RELEASE tag object (its `tag` field read v1.7.2, not
+          # ~keep packages/go/v1.7.2). A ref existing is not the same as a correct Go module tag.
+          GOT=$(gh api "repos/${REPO}/git/ref/tags/${TAG_NAME}" --jq '.object.sha')
+          GOT_NAME=$(gh api "repos/${REPO}/git/tags/${GOT}" --jq '.tag')
+          [ "$GOT_NAME" = "$TAG_NAME" ] || {
+            echo "::error::refs/tags/${TAG_NAME} points at a tag object named '${GOT_NAME}'"
+            exit 1
+          }
+          echo "Verified ${TAG_NAME} -> $(gh api "repos/${REPO}/git/tags/${GOT}" --jq '.object.sha')"
 
   upload-c-ffi-release:
     name: Upload C FFI archives to GitHub Release
