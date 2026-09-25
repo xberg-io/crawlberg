@@ -8,6 +8,10 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
+      # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
+      # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
+      - "alef.toml"
       - ".github/workflows/ci-rust.yaml"
   pull_request:
     branches: [main]
@@ -16,6 +20,10 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      # ~keep alef.toml is the generator's entire configuration and this workflow runs the only
+      # ~keep `alef verify` in CI, so omitting it here meant a commit that touched just alef.toml
+      # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
+      - "alef.toml"
       - ".github/workflows/ci-rust.yaml"
   workflow_dispatch:
 
