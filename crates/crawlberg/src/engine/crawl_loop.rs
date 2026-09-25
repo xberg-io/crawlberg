@@ -62,6 +62,33 @@ fn retire_in_flight(in_flight: &mut Vec<FrontierEntry>, url: &str) {
     }
 }
 
+/// Seed-derived limits and host scope, fixed for the lifetime of one crawl.
+///
+/// ~keep Grouped rather than derived inline so `crawl_with_sender` stays inside the 80-line
+/// function limit; these five always travel together and none of them changes once the loop
+/// starts.
+struct CrawlBounds {
+    base_host: String,
+    base_host_suffix: String,
+    max_depth: usize,
+    max_pages: usize,
+    max_redirects: usize,
+}
+
+impl CrawlBounds {
+    fn resolve(config: &CrawlConfig, seed_url: &str) -> Result<Self, CrawlError> {
+        let parsed = Url::parse(seed_url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
+        let base_host = parsed.host_str().unwrap_or("").to_owned();
+        Ok(Self {
+            base_host_suffix: format!(".{base_host}"),
+            base_host,
+            max_depth: config.max_depth.unwrap_or(usize::MAX),
+            max_pages: config.max_pages.unwrap_or(usize::MAX),
+            max_redirects: config.max_redirects,
+        })
+    }
+}
+
 impl CrawlEngine {
     /// Internal crawl implementation that uses the engine's trait objects.
     ///
@@ -72,17 +99,13 @@ impl CrawlEngine {
         url: &str,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
-        let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
+        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, url);
         let client = build_client(&self.config)?;
-        let base_host = parsed_url.host_str().unwrap_or("").to_owned();
-        let base_host_suffix = format!(".{base_host}");
-        let max_depth = self.config.max_depth.unwrap_or(usize::MAX);
-        let max_pages = self.config.max_pages.unwrap_or(usize::MAX);
-        let max_redirects = self.config.max_redirects;
+        let bounds = CrawlBounds::resolve(&self.config, &seed_url)?;
 
         self.emit_crawl_start_span();
 
-        let capacity = max_pages.min(1024);
+        let capacity = bounds.max_pages.min(1024);
         let is_streaming = tx.is_some();
         let mut state = CrawlState::new(capacity, is_streaming);
         let start_time = Instant::now();
@@ -97,9 +120,9 @@ impl CrawlEngine {
         // into the redirect resolution below rather than bracketing it. A redirect can leave
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
-        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref());
+        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), &include_regexes);
         let seed = self
-            .resolve_initial_redirects(url, max_redirects, &mut state, &mut policy)
+            .resolve_initial_redirects(&seed_url, bounds.max_redirects, &mut state, &mut policy)
             .await;
         state.urls_filtered += policy.urls_filtered;
 
@@ -116,7 +139,7 @@ impl CrawlEngine {
         let final_url = seed
             .as_ref()
             .map(|outcome| outcome.final_url.clone())
-            .unwrap_or_else(|| url.to_owned());
+            .unwrap_or_else(|| seed_url.clone());
 
         if state.error.is_some() {
             return Ok(self.finish_without_crawling(state, final_url, &tx).await);
@@ -136,10 +159,10 @@ impl CrawlEngine {
             exclude_regexes: Arc::clone(&exclude_regexes),
             include_regexes: &include_regexes,
             robots: &robots,
-            base_host: &base_host,
-            base_host_suffix: &base_host_suffix,
-            max_depth,
-            max_pages,
+            base_host: &bounds.base_host,
+            base_host_suffix: &bounds.base_host_suffix,
+            max_depth: bounds.max_depth,
+            max_pages: bounds.max_pages,
             start_time,
             tx: &tx,
         };
@@ -164,7 +187,7 @@ impl CrawlEngine {
 
     /// Put the resolved seed on the frontier as the depth-0 entry, marking it seen first.
     async fn seed_frontier(&self, final_url: &str, state: &mut CrawlState) -> Result<(), CrawlError> {
-        let dedup_key = normalize_url_for_dedup(final_url);
+        let dedup_key = normalize_url_for_dedup(final_url, self.config.dedup_include_query);
         self.frontier.mark_seen(&dedup_key).await?;
         self.push_to_frontier(
             FrontierEntry {
@@ -598,12 +621,17 @@ impl CrawlEngine {
         context: &LoopContext<'_>,
     ) {
         let exclude_regexes = Arc::clone(&context.exclude_regexes);
+        // ~keep `LoopContext::include_regexes` is a borrowed slice, so a fresh `Arc` is built
+        // ~keep here rather than cloned, unlike `exclude_regexes`: the spawned task still
+        // ~keep needs an owned, `'static` list for its own task-local `RedirectPolicy`.
+        let include_regexes: Arc<[Regex]> = context.include_regexes.into();
         drive.join_set.spawn(fetch_and_extract(
             engine,
             entry,
             preloaded_response,
             permit,
             exclude_regexes,
+            include_regexes,
         ));
     }
 
@@ -698,12 +726,17 @@ impl CrawlEngine {
         };
         let path = page_parsed.path();
 
-        if !exclude_regexes.is_empty() && exclude_regexes.iter().any(|re| re.is_match(path)) {
-            *urls_filtered += 1;
-            return false;
-        }
-        if !include_regexes.is_empty() && entry.depth > 0 && !include_regexes.iter().any(|re| re.is_match(path)) {
-            *urls_filtered += 1;
+        // ~keep `include_paths` is exempt at depth 0 (the seed): the seed was not discovered
+        // through any filter, so requiring it to match its own include pattern would refuse
+        // crawls whose seed legitimately falls outside the pattern meant for its children.
+        if !crate::helpers::passes_path_patterns(
+            &page_parsed,
+            exclude_regexes,
+            include_regexes,
+            entry.depth > 0,
+            self.config.path_patterns_match_query,
+            urls_filtered,
+        ) {
             return false;
         }
         if !matches!(robots, RobotsOutcome::AllowAll) {
@@ -819,6 +852,7 @@ async fn fetch_and_extract(
     preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
     permit: tokio::sync::OwnedSemaphorePermit,
     exclude_regexes: Arc<[Regex]>,
+    include_regexes: Arc<[Regex]>,
 ) -> Result<FetchOutcome, (FrontierEntry, CrawlError)> {
     let _permit = permit;
 
@@ -828,7 +862,7 @@ async fn fetch_and_extract(
         Some((resp, browser_used)) => (resp, browser_used, entry.url.clone(), 0),
         None => {
             let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
-            let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref());
+            let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
             let max_redirects = engine.config.max_redirects;
             match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy)).await {
                 Ok(RedirectResolution::Fetched(outcome)) => (

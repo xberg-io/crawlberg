@@ -105,9 +105,14 @@ impl PolicyRefusal {
 pub(crate) struct RedirectPolicy<'a> {
     pub(super) engine: &'a CrawlEngine,
     pub(super) client: &'a reqwest::Client,
-    /// ~keep Only the exclude patterns: `include_paths` is scoped to depth above 0 by
-    /// ~keep `should_fetch_url`, and every URL in the seed's redirect chain is depth 0.
     pub(super) exclude_regexes: &'a [Regex],
+    /// ~keep Applied only to genuine redirect targets (`is_redirect_hop`), never to the
+    /// ~keep chain's own starting URL: that URL already passed whatever include check applied
+    /// ~keep to it (none, if it is the seed at depth 0) before this policy ever saw it, exactly
+    /// ~keep as `claim_redirect_target` only dedups a redirect target and not the chain's seed.
+    pub(super) include_regexes: &'a [Regex],
+    /// Whether `include_paths`/`exclude_paths` match `path?query` instead of just `path`.
+    pub(super) match_query: bool,
     /// What robots.txt established per origin, so one origin's file is read once per crawl.
     pub(super) outcomes: HashMap<RobotsCacheKey, Arc<RobotsOutcome>>,
     /// The origin of the last URL admitted, whose rules the crawl loop keeps applying.
@@ -117,11 +122,18 @@ pub(crate) struct RedirectPolicy<'a> {
 }
 
 impl<'a> RedirectPolicy<'a> {
-    pub(super) fn new(engine: &'a CrawlEngine, client: &'a reqwest::Client, exclude_regexes: &'a [Regex]) -> Self {
+    pub(super) fn new(
+        engine: &'a CrawlEngine,
+        client: &'a reqwest::Client,
+        exclude_regexes: &'a [Regex],
+        include_regexes: &'a [Regex],
+    ) -> Self {
         Self {
             engine,
             client,
             exclude_regexes,
+            include_regexes,
+            match_query: engine.config.path_patterns_match_query,
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
@@ -165,12 +177,10 @@ impl<'a> RedirectPolicy<'a> {
         }
 
         // ~keep The path filters first: they are local, and an excluded URL should not cost
-        // ~keep its origin a robots.txt request either.
-        let path = parsed.path();
-        let excluded = !self.exclude_regexes.is_empty() && self.exclude_regexes.iter().any(|re| re.is_match(path));
-        if excluded {
-            self.urls_filtered += 1;
-            return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
+        // ~keep its origin a robots.txt request either. See the field doc on
+        // ~keep `include_regexes` for why `is_redirect_hop` gates the include check.
+        if let Some(refusal) = self.filtered_by_path_patterns(url, &parsed, is_redirect_hop) {
+            return Ok(Some(refusal));
         }
 
         let user_agent = default_robots_user_agent(&self.engine.config);
@@ -217,6 +227,19 @@ impl<'a> RedirectPolicy<'a> {
         Ok(None)
     }
 
+    /// Whether `url` is filtered by `exclude_paths`/`include_paths`, as [`PolicyRefusal::Filtered`].
+    fn filtered_by_path_patterns(&mut self, url: &str, parsed: &Url, is_redirect_hop: bool) -> Option<PolicyRefusal> {
+        let admitted = crate::helpers::passes_path_patterns(
+            parsed,
+            self.exclude_regexes,
+            self.include_regexes,
+            is_redirect_hop,
+            self.match_query,
+            &mut self.urls_filtered,
+        );
+        (!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() })
+    }
+
     /// Claim `url` -- a redirect hop, never the chain's own starting URL -- against the
     /// frontier's seen-set.
     ///
@@ -225,7 +248,7 @@ impl<'a> RedirectPolicy<'a> {
     /// ~keep redirect must be requested once, and the frontier is the one place both paths
     /// ~keep already agree on what "seen" means.
     async fn claim_redirect_target(&self, url: &str) -> Result<Option<PolicyRefusal>, CrawlError> {
-        let dedup_key = normalize_url_for_dedup(url);
+        let dedup_key = normalize_url_for_dedup(url, self.engine.config.dedup_include_query);
         if self.engine.frontier.is_seen(&dedup_key).await? {
             return Ok(Some(PolicyRefusal::Filtered { url: url.to_owned() }));
         }

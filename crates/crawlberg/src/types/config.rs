@@ -34,6 +34,17 @@ const DEFAULT_RETRY_INITIAL_DELAY_MS: u64 = 100;
 
 /// Default for `CrawlConfig::retry_max_delay_ms`.
 const DEFAULT_RETRY_MAX_DELAY_MS: u64 = 60_000;
+
+/// Default for `CrawlConfig::tracking_params`: the query-parameter name patterns
+/// `strip_tracking_params` removes once it is enabled.
+fn default_tracking_params() -> Vec<String> {
+    vec![
+        "utm_*".to_owned(),
+        "fbclid".to_owned(),
+        "gclid".to_owned(),
+        "ref".to_owned(),
+    ]
+}
 mod credentials;
 mod primitives;
 mod sections;
@@ -100,6 +111,30 @@ pub struct CrawlConfig {
     /// Regex patterns for paths to exclude during crawling.
     #[serde(default)]
     pub exclude_paths: Vec<String>,
+    /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
+    /// `path`. Defaults to `false`, matching path only: a pattern anchored with `$` (e.g.
+    /// `/feed/?$`) changes meaning once the query joins the matched text, so this must stay
+    /// opt-in rather than silently changing what an existing config matches.
+    #[serde(default)]
+    pub path_patterns_match_query: bool,
+    /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
+    /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
+    /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
+    /// query is fetched once.
+    #[serde(default)]
+    pub dedup_include_query: bool,
+    /// Whether to strip `tracking_params` from a discovered URL before it is deduplicated,
+    /// fetched, and reported. Defaults to `false`, so no tracking parameters are stripped
+    /// unless explicitly enabled.
+    #[serde(default)]
+    pub strip_tracking_params: bool,
+    /// Query parameter name patterns to strip when `strip_tracking_params` is `true`. A
+    /// pattern ending in `*` matches by prefix (`utm_*` matches `utm_source`, `utm_campaign`,
+    /// ...); any other pattern matches the parameter name exactly. Defaults to
+    /// `["utm_*", "fbclid", "gclid", "ref"]`, applied only once `strip_tracking_params` is
+    /// enabled.
+    #[serde(default = "default_tracking_params")]
+    pub tracking_params: Vec<String>,
     /// Custom HTTP headers to send with each request.
     #[serde(default)]
     pub custom_headers: HashMap<String, String>,
@@ -304,6 +339,10 @@ impl Default for CrawlConfig {
             allow_subdomains: false,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
+            path_patterns_match_query: false,
+            dedup_include_query: false,
+            strip_tracking_params: false,
+            tracking_params: default_tracking_params(),
             custom_headers: HashMap::new(),
             request_timeout: Duration::from_secs(30),
             rate_limit_ms: None,

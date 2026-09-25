@@ -1,0 +1,48 @@
+{
+	"id": "markdown_no_frontmatter",
+	"description": "extract_metadata: false omits the YAML frontmatter block from markdown output",
+	"docs": {
+		"topic": "markdown",
+		"stem": "markdown-no-frontmatter",
+		"title": "Omitting the YAML frontmatter block from markdown output"
+	},
+	"tags": ["markdown", "content"],
+	"input": {
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_inline": "<html><head><title>Test</title></head><body><h1>Hello World</h1><p>This is a paragraph.</p></body></html>"
+			}
+		],
+		"config": {
+			"content": {
+				"extract_metadata": false
+			}
+		}
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "status_code",
+			"value": 200
+		},
+		{
+			"type": "equals",
+			"field": "metadata.title",
+			"value": "Test"
+		},
+		{
+			"type": "not_contains",
+			"field": "markdown.content",
+			"value": "---"
+		},
+		{
+			"type": "contains",
+			"field": "markdown.content",
+			"value": "Hello World"
+		}
+	]
+}

@@ -14,25 +14,32 @@ fn clean_url_path(u: &mut Url) {
     }
 }
 
+/// Sort `u`'s query parameters by key, re-encoding with a proper x-www-form-urlencoded
+/// serializer instead of `format!("{k}={v}")`.
+///
+/// ~keep The decoded pairs may contain '&' or '=' (e.g. from a percent-encoded value), and
+/// writing them back unescaped would collapse two genuinely different URLs onto the same
+/// normalized string.
+fn sort_query(u: &mut Url) {
+    let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+    if pairs.is_empty() {
+        return;
+    }
+    let mut sorted = pairs;
+    sorted.sort();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in &sorted {
+        serializer.append_pair(k, v);
+    }
+    u.set_query(Some(&serializer.finish()));
+}
+
 /// Normalize a URL by removing fragments, sorting query parameters,
 /// removing trailing slashes (except root), and fixing double slashes in the path.
 pub(crate) fn normalize_url(raw: &str) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
-        let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
-        if !pairs.is_empty() {
-            let mut sorted = pairs;
-            sorted.sort();
-            // ~keep Re-encode with a proper x-www-form-urlencoded serializer instead of
-            // `format!("{k}={v}")`. The decoded pairs may contain '&' or '=' (e.g. from a
-            // percent-encoded value), and writing them back unescaped would collapse two
-            // genuinely different URLs onto the same normalized string.
-            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-            for (k, v) in &sorted {
-                serializer.append_pair(k, v);
-            }
-            u.set_query(Some(&serializer.finish()));
-        }
+        sort_query(&mut u);
         clean_url_path(&mut u);
         u.to_string()
     } else {
@@ -42,21 +49,73 @@ pub(crate) fn normalize_url(raw: &str) -> String {
 
 /// Normalize a URL for deduplication during crawling.
 ///
-/// Strips query parameters and fragments, removes trailing slashes (except root),
-/// and fixes double slashes in the path.
+/// Strips fragments, removes trailing slashes (except root), and fixes double slashes in
+/// the path. `include_query` decides whether the query string participates in the key too:
+/// `false` (the historical default) drops it entirely, so `?id=1` and `?id=2` collapse to one
+/// key; `true` keeps it, sorted, so they are treated as distinct pages.
 ///
 /// ~keep Shared by the native and wasm crawl loops. The wasm loop used to carry its own
 /// copy that omitted the `//` collapse, so the two targets disagreed on which URLs were
 /// duplicates — one normalizer is the only way that stays fixed.
-pub(crate) fn normalize_url_for_dedup(raw: &str) -> String {
+pub(crate) fn normalize_url_for_dedup(raw: &str, include_query: bool) -> String {
     if let Ok(mut u) = Url::parse(raw) {
         u.set_fragment(None);
-        u.set_query(None);
+        if include_query {
+            sort_query(&mut u);
+        } else {
+            u.set_query(None);
+        }
         clean_url_path(&mut u);
         u.to_string()
     } else {
         raw.to_owned()
     }
+}
+
+/// Whether `name` matches a tracking-parameter pattern. A pattern ending in `*` matches any
+/// parameter name sharing that prefix (`utm_*` matches `utm_source`, `utm_campaign`, ...);
+/// any other pattern must match the parameter name exactly.
+fn matches_tracking_pattern(name: &str, pattern: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => name.starts_with(prefix),
+        None => name == pattern,
+    }
+}
+
+/// Remove query parameters matching `patterns` (see [`matches_tracking_pattern`]) from `raw`,
+/// preserving the order and encoding of the parameters that remain. Returns `raw` unchanged
+/// if it fails to parse, carries no query string, or `patterns` is empty.
+///
+/// ~keep Applied once, at the point a URL is discovered (seed or link), rather than only at
+/// the dedup key: `CrawlPageResult.normalized_url` and the URL actually fetched both derive
+/// from that already-stripped string, so stripping downstream in `normalize_url` as well
+/// would be redundant, and stripping only the dedup key would leave the tracking parameters
+/// in the fetched and reported URL.
+pub(crate) fn strip_tracking_params(raw: &str, patterns: &[String]) -> String {
+    if patterns.is_empty() {
+        return raw.to_owned();
+    }
+    let Ok(mut u) = Url::parse(raw) else {
+        return raw.to_owned();
+    };
+    if u.query().is_none() {
+        return raw.to_owned();
+    }
+    let kept: Vec<(String, String)> = u
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .filter(|(k, _)| !patterns.iter().any(|pattern| matches_tracking_pattern(k, pattern)))
+        .collect();
+    if kept.is_empty() {
+        u.set_query(None);
+    } else {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in &kept {
+            serializer.append_pair(k, v);
+        }
+        u.set_query(Some(&serializer.finish()));
+    }
+    u.to_string()
 }
 
 /// Build the robots.txt URL for a given parsed URL.
@@ -161,11 +220,59 @@ mod tests {
     /// duplicates. Both now call this function; this pins the contract they share.
     #[test]
     fn dedup_key_collapses_double_slashes_alongside_query_fragment_and_trailing_slash() {
-        let normalized = normalize_url_for_dedup("http://example.com/a//b/?q=1#top");
+        let normalized = normalize_url_for_dedup("http://example.com/a//b/?q=1#top", false);
         assert_eq!(
             normalized, "http://example.com/a/b",
             "expected query, fragment, trailing slash and doubled path separator all \
              normalized away, got {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn dedup_key_with_query_included_distinguishes_different_query_values() {
+        let first = normalize_url_for_dedup("http://example.com/item?id=1", true);
+        let second = normalize_url_for_dedup("http://example.com/item?id=2", true);
+        assert_ne!(
+            first, second,
+            "with include_query the dedup key must distinguish ?id=1 from ?id=2"
+        );
+    }
+
+    #[test]
+    fn dedup_key_with_query_included_ignores_parameter_order() {
+        let first = normalize_url_for_dedup("http://example.com/item?a=1&b=2", true);
+        let second = normalize_url_for_dedup("http://example.com/item?b=2&a=1", true);
+        assert_eq!(
+            first, second,
+            "differently-ordered query parameters must still produce one dedup key"
+        );
+    }
+
+    #[test]
+    fn strip_tracking_params_removes_prefix_and_exact_matches() {
+        let patterns = [
+            "utm_*".to_owned(),
+            "fbclid".to_owned(),
+            "gclid".to_owned(),
+            "ref".to_owned(),
+        ];
+        let stripped = strip_tracking_params(
+            "http://example.com/promo?utm_source=newsletter&id=1&fbclid=abc",
+            &patterns,
+        );
+        assert_eq!(
+            stripped, "http://example.com/promo?id=1",
+            "utm_* and fbclid must be stripped while other params are kept, got {stripped:?}"
+        );
+    }
+
+    #[test]
+    fn strip_tracking_params_drops_the_question_mark_when_nothing_remains() {
+        let patterns = ["utm_*".to_owned()];
+        let stripped = strip_tracking_params("http://example.com/promo?utm_source=newsletter", &patterns);
+        assert_eq!(
+            stripped, "http://example.com/promo",
+            "an all-tracking query string must leave no trailing '?', got {stripped:?}"
         );
     }
 
@@ -212,8 +319,8 @@ mod tests {
     #[test]
     fn dedup_key_maps_a_doubled_separator_onto_its_single_separator_twin() {
         assert_eq!(
-            normalize_url_for_dedup("http://example.com/a//b"),
-            normalize_url_for_dedup("http://example.com/a/b"),
+            normalize_url_for_dedup("http://example.com/a//b", false),
+            normalize_url_for_dedup("http://example.com/a/b", false),
             "a doubled path separator must not produce a second frontier entry for one page"
         );
     }

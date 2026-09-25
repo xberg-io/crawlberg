@@ -28,6 +28,7 @@ fn convert_html_to_markdown(html: &str, config: &ContentConfig) -> Option<Markdo
         max_depth: config.max_depth,
         wrap: config.wrap,
         wrap_width: config.wrap_width,
+        extract_metadata: config.extract_metadata,
         ..Default::default()
     };
 

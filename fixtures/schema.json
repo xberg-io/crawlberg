@@ -145,6 +145,23 @@
 							"items": { "type": "string" },
 							"description": "Regex patterns for URLs to exclude"
 						},
+						"path_patterns_match_query": {
+							"type": "boolean",
+							"description": "Match include_paths/exclude_paths against path?query instead of just path. Defaults to false"
+						},
+						"dedup_include_query": {
+							"type": "boolean",
+							"description": "Include the sorted query string in the crawl-dedup key. Defaults to false, so ?id=1 and ?id=2 collapse to one page"
+						},
+						"strip_tracking_params": {
+							"type": "boolean",
+							"description": "Strip tracking_params from a discovered URL before it is deduplicated, fetched, and reported. Defaults to false"
+						},
+						"tracking_params": {
+							"type": "array",
+							"items": { "type": "string" },
+							"description": "Query parameter name patterns stripped when strip_tracking_params is true. A trailing '*' matches by prefix. Defaults to [\"utm_*\", \"fbclid\", \"gclid\", \"ref\"]"
+						},
 						"allow_subdomains": { "type": "boolean" },
 						"max_redirects": { "type": "integer", "minimum": 0 },
 						"max_body_size": { "type": "integer", "minimum": 0, "description": "Max body size in bytes" },
@@ -204,7 +221,16 @@
 							"items": { "type": "string" },
 							"description": "CSS selectors for elements to remove"
 						},
-						"content": { "type": "object", "description": "Content extraction configuration" },
+						"content": {
+							"type": "object",
+							"description": "Content extraction configuration",
+							"properties": {
+								"extract_metadata": {
+									"type": "boolean",
+									"description": "Prepend a YAML frontmatter block to markdown.content. Default: true"
+								}
+							}
+						},
 						"map_search": { "type": "string", "description": "Search keyword filter for map results" },
 						"map_limit": { "type": "integer", "minimum": 1, "description": "Limit number of map results" },
 						"download_assets": { "type": "boolean" },

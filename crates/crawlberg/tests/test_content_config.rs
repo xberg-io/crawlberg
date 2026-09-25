@@ -104,3 +104,56 @@ async fn should_keep_the_footer_when_preprocessing_preset_is_default() {
         "`standard` removes nav-hinted asides; got:\n{markdown}"
     );
 }
+
+#[tokio::test]
+async fn should_prepend_yaml_frontmatter_by_default() {
+    let markdown = markdown_for(ContentConfig::default()).await;
+
+    assert!(
+        markdown.starts_with("---\n"),
+        "default extract_metadata=true should prepend a YAML frontmatter block; got:\n{markdown}"
+    );
+    assert!(
+        markdown.contains("title: Main Content Page"),
+        "frontmatter should carry the page title; got:\n{markdown}"
+    );
+}
+
+#[tokio::test]
+async fn should_omit_yaml_frontmatter_when_extract_metadata_is_false() {
+    let markdown = markdown_for(ContentConfig {
+        extract_metadata: false,
+        ..ContentConfig::default()
+    })
+    .await;
+
+    assert!(
+        !markdown.starts_with("---\n"),
+        "extract_metadata=false must suppress the YAML frontmatter block; got:\n{markdown}"
+    );
+    assert!(
+        markdown.contains("Main Article Title"),
+        "the article body must still be present; got:\n{markdown}"
+    );
+}
+
+#[tokio::test]
+async fn should_keep_page_metadata_when_frontmatter_is_disabled() {
+    let mock = serve_page().await;
+    let engine = create_engine(Some(config_with(ContentConfig {
+        extract_metadata: false,
+        ..ContentConfig::default()
+    })))
+    .expect("engine builds");
+    let result = scrape(&engine, &mock.uri()).await.expect("scrape succeeds");
+
+    // ~keep PageMetadata is populated independently of the markdown frontmatter, by
+    // crate::html::metadata::extract_metadata walking the parsed DOM -- it never reads the
+    // converter's frontmatter back out. Disabling extract_metadata on ContentConfig must not
+    // remove head metadata from ScrapeResult.metadata.
+    assert_eq!(
+        result.metadata.title.as_deref(),
+        Some("Main Content Page"),
+        "page title should still be extracted when markdown frontmatter is disabled"
+    );
+}

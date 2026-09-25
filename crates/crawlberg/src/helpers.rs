@@ -37,6 +37,59 @@ pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlEr
         .collect()
 }
 
+/// Strip `config.tracking_params` from a seed URL when `config.strip_tracking_params` is set.
+///
+/// ~keep Shared by the native and wasm crawl loops, applied once at the top of each, before
+/// the seed is parsed, redirect-resolved, or dedup-keyed: every later use of the seed URL
+/// (fetch, `final_url`, `normalized_url`) derives from this string, so a single strip keeps
+/// them all consistent without a second pass downstream.
+pub(crate) fn strip_seed_tracking_params(config: &CrawlConfig, url: &str) -> String {
+    if config.strip_tracking_params {
+        crate::normalize::strip_tracking_params(url, &config.tracking_params)
+    } else {
+        url.to_owned()
+    }
+}
+
+/// The text an `include_paths`/`exclude_paths` regex is matched against: the path alone, or
+/// the path with `?query` appended when `match_query` is set.
+///
+/// ~keep Path-only stays the default because a pattern anchored with `$` changes meaning once
+/// the query joins the text (`/feed/?$` stops matching `/feed?x=1`), so flipping the default
+/// would silently change what today's `exclude_paths`/`include_paths` configs match.
+pub(crate) fn path_pattern_target(url: &Url, match_query: bool) -> String {
+    match (match_query, url.query()) {
+        (true, Some(query)) => format!("{}?{query}", url.path()),
+        _ => url.path().to_owned(),
+    }
+}
+
+/// Whether `url` survives `exclude_paths`/`include_paths`, incrementing `urls_filtered` and
+/// returning `false` the first time a rule rejects it.
+///
+/// `check_include` lets a caller skip the include check for a URL it already vetted through
+/// some other rule before reaching this call — see `RedirectPolicy::admits`, which applies
+/// this only to genuine redirect targets and not to the chain's own starting URL.
+pub(crate) fn passes_path_patterns(
+    url: &Url,
+    exclude_regexes: &[Regex],
+    include_regexes: &[Regex],
+    check_include: bool,
+    match_query: bool,
+    urls_filtered: &mut usize,
+) -> bool {
+    let target = path_pattern_target(url, match_query);
+    if !exclude_regexes.is_empty() && exclude_regexes.iter().any(|re| re.is_match(&target)) {
+        *urls_filtered += 1;
+        return false;
+    }
+    if check_include && !include_regexes.is_empty() && !include_regexes.iter().any(|re| re.is_match(&target)) {
+        *urls_filtered += 1;
+        return false;
+    }
+    true
+}
+
 /// Why a robots.txt fetch failed closed, and therefore how far the denial can be trusted.
 ///
 /// ~keep The outcome cache is shared by every crawl on an engine handle, so a denial cached
@@ -212,6 +265,63 @@ mod tests {
 
     fn is_allow_all(outcome: &RobotsOutcome) -> bool {
         matches!(outcome, RobotsOutcome::AllowAll)
+    }
+
+    #[test]
+    fn exclude_pattern_matching_only_the_query_does_not_exclude_when_match_query_is_off() {
+        let url = Url::parse("https://example.com/blog?p=42").expect("valid URL");
+        let exclude = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            passes_path_patterns(&url, &exclude, &[], true, false, &mut urls_filtered),
+            "path-only matching must not see the query string, so /blog?p=42 must still be fetched"
+        );
+        assert_eq!(urls_filtered, 0);
+    }
+
+    #[test]
+    fn exclude_pattern_matching_the_query_excludes_when_match_query_is_on() {
+        let url = Url::parse("https://example.com/blog?p=42").expect("valid URL");
+        let exclude = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(&url, &exclude, &[], true, true, &mut urls_filtered),
+            "with match_query on, /blog?p=42 must be excluded"
+        );
+        assert_eq!(urls_filtered, 1);
+    }
+
+    #[test]
+    fn include_pattern_matching_only_the_query_does_not_admit_when_match_query_is_off() {
+        let url = Url::parse("https://example.com/blog?p=42").expect("valid URL");
+        let include = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(&url, &[], &include, true, false, &mut urls_filtered),
+            "path-only matching must not see the query string, so the include pattern never matches"
+        );
+    }
+
+    #[test]
+    fn include_pattern_matching_the_query_admits_when_match_query_is_on() {
+        let url = Url::parse("https://example.com/blog?p=42").expect("valid URL");
+        let include = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            passes_path_patterns(&url, &[], &include, true, true, &mut urls_filtered),
+            "with match_query on, /blog?p=42 must satisfy the include pattern"
+        );
+    }
+
+    #[test]
+    fn check_include_false_skips_the_include_check_entirely() {
+        let url = Url::parse("https://example.com/blog").expect("valid URL");
+        let include = compile_regexes(&["^/docs".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            passes_path_patterns(&url, &[], &include, false, false, &mut urls_filtered),
+            "check_include=false must admit a URL even when it fails every include pattern"
+        );
     }
 
     fn is_disallow_all(outcome: &RobotsOutcome) -> bool {

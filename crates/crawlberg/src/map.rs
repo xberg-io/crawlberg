@@ -206,6 +206,7 @@ fn links_as_sitemap_urls(doc: &tl::VDom<'_>, parsed_url: &Url) -> Vec<SitemapUrl
 pub(crate) struct MapFilter {
     exclude_paths: Vec<Regex>,
     search: Option<String>,
+    match_query: bool,
 }
 
 impl MapFilter {
@@ -213,14 +214,13 @@ impl MapFilter {
     ///
     /// Returns an error if any `exclude_paths` pattern is not a valid regex.
     pub(crate) fn from_config(config: &CrawlConfig) -> Result<Self, CrawlError> {
-        let mut exclude_paths = Vec::with_capacity(config.exclude_paths.len());
-        for pat in &config.exclude_paths {
-            let re = Regex::new(pat)
-                .map_err(|e| CrawlError::other(format!("invalid exclude_paths regex pattern '{pat}': {e}")))?;
-            exclude_paths.push(re);
-        }
+        let exclude_paths = crate::helpers::compile_regexes(&config.exclude_paths)?;
         let search = config.map_search.as_ref().map(|s| s.to_lowercase());
-        Ok(Self { exclude_paths, search })
+        Ok(Self {
+            exclude_paths,
+            search,
+            match_query: config.path_patterns_match_query,
+        })
     }
 
     /// Whether a discovered URL passes the exclude-path and search filters.
@@ -231,8 +231,15 @@ impl MapFilter {
         if !self.exclude_paths.is_empty()
             && let Ok(parsed) = Url::parse(url)
         {
-            let path = parsed.path();
-            if self.exclude_paths.iter().any(|re| re.is_match(path)) {
+            let mut urls_filtered = 0usize;
+            if !crate::helpers::passes_path_patterns(
+                &parsed,
+                &self.exclude_paths,
+                &[],
+                false,
+                self.match_query,
+                &mut urls_filtered,
+            ) {
                 return false;
             }
         }
@@ -479,6 +486,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_exclude_paths_ignores_query_by_default() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://example.com/blog?p=42".to_owned(),
+            "https://example.com/blog/two".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            exclude_paths: vec![r"\?p=\d+".to_owned()],
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            locs,
+            "path-only matching must not see the query string, so /blog?p=42 must not be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_exclude_paths_matches_query_when_path_patterns_match_query_is_set() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://example.com/blog?p=42".to_owned(),
+            "https://example.com/blog/two".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            exclude_paths: vec![r"\?p=\d+".to_owned()],
+            path_patterns_match_query: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.com/blog/two".to_owned()],
+            "with path_patterns_match_query on, /blog?p=42 must be excluded"
+        );
+    }
+
+    #[tokio::test]
     async fn map_limit_truncates_links_extracted_from_html() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -515,9 +571,7 @@ mod tests {
             .expect_err("an invalid regex must be reported, not silently ignored");
 
         assert!(
-            error
-                .to_string()
-                .contains("invalid exclude_paths regex pattern '[unclosed'"),
+            error.to_string().contains("invalid regex pattern \"[unclosed\""),
             "the error must name the offending pattern, got: {error}"
         );
     }

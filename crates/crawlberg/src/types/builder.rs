@@ -112,6 +112,32 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Set whether `include_paths`/`exclude_paths` match against `path?query` instead of
+    /// just `path`.
+    pub fn path_patterns_match_query(mut self, value: bool) -> Self {
+        self.inner.path_patterns_match_query = value;
+        self
+    }
+
+    /// Set whether the crawl-dedup key includes the (sorted) query string.
+    pub fn dedup_include_query(mut self, value: bool) -> Self {
+        self.inner.dedup_include_query = value;
+        self
+    }
+
+    /// Set whether to strip `tracking_params` from a discovered URL before it is
+    /// deduplicated, fetched, and reported.
+    pub fn strip_tracking_params(mut self, value: bool) -> Self {
+        self.inner.strip_tracking_params = value;
+        self
+    }
+
+    /// Set the query parameter name patterns stripped when `strip_tracking_params` is `true`.
+    pub fn tracking_params(mut self, value: Vec<String>) -> Self {
+        self.inner.tracking_params = value;
+        self
+    }
+
     /// Set custom HTTP headers to send with each request.
     pub fn custom_headers(mut self, value: HashMap<String, String>) -> Self {
         self.inner.custom_headers = value;

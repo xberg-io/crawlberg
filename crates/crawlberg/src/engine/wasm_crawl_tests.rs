@@ -1,0 +1,518 @@
+//! Native-only tests for the sequential (wasm) crawl loop.
+//!
+//! ~keep A sibling file reached through `#[path]` rather than an inline `mod tests`: the loop
+//! and its coverage together pushed `wasm_crawl.rs` past the 1000-line limit, and the tests are
+//! the part that keeps growing. `#[cfg(any(target_arch = "wasm32", test))]` on the parent means
+//! this runs under a plain `cargo test`, with no wasm toolchain.
+
+use super::*;
+use crate::types::CrawlConfig;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+async fn mount_html(mock: &MockServer, at: &str, body: &str) {
+    Mock::given(method("GET"))
+        .and(path(at))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body.to_owned())
+                .append_header("content-type", "text/html"),
+        )
+        .mount(mock)
+        .await;
+}
+
+/// Root links to `/a`, `/b`, `/c` in that order; each child links to one grandchild.
+async fn branching_site() -> MockServer {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/a">A</a><a href="/b">B</a><a href="/c">C</a></body></html>"#,
+    )
+    .await;
+    for child in ["a", "b", "c"] {
+        mount_html(
+            &mock,
+            &format!("/{child}"),
+            &format!(r#"<html><body><a href="/{child}1">{child}1</a></body></html>"#),
+        )
+        .await;
+        mount_html(
+            &mock,
+            &format!("/{child}1"),
+            &format!("<html><body>leaf {child}1</body></html>"),
+        )
+        .await;
+    }
+    mock
+}
+
+fn engine_with(config: CrawlConfig) -> CrawlEngine {
+    CrawlEngine::builder()
+        .config(config)
+        .build()
+        .expect("engine must build")
+}
+
+fn permissive(config: CrawlConfig) -> CrawlConfig {
+    CrawlConfig {
+        ssrf: crate::net::SsrfPolicy {
+            deny_private: false,
+            ..crate::net::SsrfPolicy::default()
+        },
+        ..config
+    }
+}
+
+fn visited(result: &CrawlResult, base: &str) -> Vec<String> {
+    result
+        .pages
+        .iter()
+        .map(|page| match page.url.strip_prefix(base).unwrap_or(&page.url) {
+            "" => "/".to_owned(),
+            rest => rest.to_owned(),
+        })
+        .collect()
+}
+
+/// The sequential loop visits one depth level before the next, in document order.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_visits_breadth_first() {
+    let mock = branching_site().await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(4),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned(), "/b".to_owned(), "/c".to_owned()],
+        "the whole depth-1 level must be visited before any depth-2 page"
+    );
+}
+
+/// `max_depth` bounds how far links are followed, not just how many pages are kept.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_stops_following_links_at_max_depth() {
+    let mock = branching_site().await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned(), "/b".to_owned(), "/c".to_owned()],
+        "no grandchild may be reached at max_depth = 1"
+    );
+}
+
+/// `max_links_per_page` caps how many links one page may enqueue.
+///
+/// ~keep The cap counts links actually *enqueued*, not raw anchors examined; a page
+/// ~keep whose first anchors are external must still discover the eligible ones behind
+/// ~keep them.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_caps_links_enqueued_per_page() {
+    let mock = branching_site().await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        max_links_per_page: Some(2),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned(), "/b".to_owned()],
+        "only the first two eligible links of the root may be enqueued"
+    );
+}
+
+/// An excluded path is filtered out before it is fetched.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_drops_excluded_paths() {
+    let mock = branching_site().await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        exclude_paths: vec!["^/b$".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned(), "/c".to_owned()],
+        "`/b` matches exclude_paths and must never be fetched"
+    );
+}
+
+/// A pattern matching only the query string does not exclude a link by default:
+/// `exclude_paths` matches `path()` alone unless `path_patterns_match_query` is set.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_ignores_query_in_exclude_paths_by_default() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", r#"<html><body><a href="/blog?p=42">Post</a></body></html>"#).await;
+    mount_html(&mock, "/blog", "<html><body>post</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        exclude_paths: vec![r"\?p=\d+".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/blog?p=42".to_owned()],
+        "path-only matching must not see the query string, so /blog?p=42 must still be fetched"
+    );
+}
+
+/// With `path_patterns_match_query` on, a query-only exclude pattern now matches.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_excludes_by_query_when_match_query_is_enabled() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", r#"<html><body><a href="/blog?p=42">Post</a></body></html>"#).await;
+    mount_html(&mock, "/blog", "<html><body>post</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        exclude_paths: vec![r"\?p=\d+".to_owned()],
+        path_patterns_match_query: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned()],
+        "with path_patterns_match_query on, /blog?p=42 must be excluded"
+    );
+}
+
+/// The dedup key drops the query by default, so `?id=1` and `?id=2` collapse to one page.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_collapses_distinct_queries_by_default() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/item", "<html><body>item</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        2,
+        "/item?id=1 and /item?id=2 must collapse to a single dedup key by default, got: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// With `dedup_include_query` on, distinct queries are fetched as distinct pages.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_fetches_both_queries_when_dedup_include_query_is_enabled() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/item?id=1">1</a><a href="/item?id=2">2</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/item", "<html><body>item</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        dedup_include_query: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        3,
+        "/item?id=1 and /item?id=2 must both be fetched as distinct pages, got: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// Tracking parameters are stripped from the fetched and reported URL, not just the
+/// dedup key.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_strips_tracking_params_from_fetched_and_reported_url() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/promo?utm_source=newsletter">Promo</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/promo", "<html><body>promo</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        strip_tracking_params: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/promo")),
+        "/promo?utm_source=newsletter must be fetched and reported as /promo, got: {urls:?}"
+    );
+    assert!(
+        !urls.iter().any(|u| u.contains("utm_source")),
+        "utm_source must not survive into the reported URL, got: {urls:?}"
+    );
+}
+
+/// Regression coverage for crawlberg#60 on the sequential (wasm) loop: a subdomain link
+/// must be followed when `allow_subdomains` is true.
+///
+/// ~keep Uses `*.localhost`, not a fabricated hostname: this positive case needs a real,
+/// reachable second host to prove the link is actually followed rather than merely not
+/// rejected. RFC 6761 §6.3 requires every conformant resolver to resolve `*.localhost` to
+/// the loopback address without any network traffic, unlike a public-DNS trick such as
+/// nip.io. The negative cases below use a fabricated `*.example.invalid` host instead,
+/// since a rejected link never reaches DNS resolution (see their own doc comments).
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        allow_subdomains: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        2,
+        "a subdomain link must be followed when allow_subdomains is true, got pages: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// The same subdomain link must NOT be followed when `allow_subdomains` is false.
+///
+/// ~keep A rejected link is dropped before SSRF validation ever resolves DNS, so a
+/// fabricated, unregistered hostname (RFC 2606's `.invalid`) is safe here — no network
+/// access happens for it either way.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="https://sub.example.invalid/a">A</a></body></html>"#,
+    )
+    .await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        allow_subdomains: false,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "a subdomain link must not be followed when allow_subdomains is false, got pages: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// An unrelated host is never enqueued by a default-configured crawl.
+///
+/// ~keep This pins the additive contract of the crawlberg#60 fix. The host is deliberately
+/// unresolvable (`.invalid`, RFC 2606): scope rejects it before SSRF validation would
+/// resolve anything, so the test needs no DNS. `stay_on_domain` is not an input -- see
+/// `link_scope::host_in_scope` and crawlberg#72.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://unrelated.invalid:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "an unrelated host must not be followed, got pages: {:?}",
+        result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
+    );
+}
+
+/// An off-host link is never enqueued: the seed host and, with `allow_subdomains`, its
+/// subdomains are the only hosts a crawl follows. ~keep `stay_on_domain` is NOT what
+/// enforces this and never has -- see `link_scope::host_in_scope` and crawlberg#72.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_stays_on_the_seed_host() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="https://elsewhere.example.com/x">out</a><a href="/a">A</a></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/a".to_owned()],
+        "an off-host link must not be enqueued"
+    );
+}
+
+/// A seed that fails is reported through `CrawlResult::error`; a child that fails is not.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
+    let seed_down = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&seed_down)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+    let result = engine
+        .crawl_sequential(&seed_down.uri())
+        .await
+        .expect("a failing seed is still a completed crawl");
+    assert!(result.pages.is_empty(), "a failing seed produces no pages");
+    assert!(
+        result.error.is_some(),
+        "a depth-0 failure must surface as CrawlResult::error"
+    );
+
+    let child_down = MockServer::start().await;
+    mount_html(&child_down, "/", r#"<html><body><a href="/a">A</a></body></html>"#).await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&child_down)
+        .await;
+    let base = child_down.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        ..CrawlConfig::default()
+    }));
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned()],
+        "the failing child contributes no page"
+    );
+    assert!(
+        result.error.is_none(),
+        "a failure below depth 0 must not become the crawl's error"
+    );
+}
+
+/// A seed that redirects is counted once and reported under its post-redirect URL.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_counts_a_seed_redirect() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/landing"))
+        .mount(&mock)
+        .await;
+    mount_html(&mock, "/landing", "<html><body>landed</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(0),
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(result.redirect_count, 1, "the seed hop must be counted once");
+    assert_eq!(
+        result.final_url,
+        format!("{base}/landing"),
+        "final_url must be the post-redirect URL"
+    );
+}

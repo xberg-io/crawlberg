@@ -58,6 +58,14 @@ pub struct ContentConfig {
     pub wrap_width: usize,
     /// Include document structure tree in output. Default: `true`.
     pub include_document_structure: bool,
+    /// Prepend a YAML frontmatter block (`title`, `description`, etc., extracted from
+    /// `<head>`) to the markdown output. Default: `true`.
+    ///
+    /// This only controls the frontmatter text inside `markdown.content`. Crawlberg
+    /// never reads `<head>` metadata back out of the converter's result -- `PageMetadata`
+    /// is populated independently by `crate::html::metadata::extract_metadata` from the
+    /// parsed DOM, so turning this off does not lose any metadata field. ~keep
+    pub extract_metadata: bool,
 }
 
 impl Default for ContentConfig {
@@ -75,6 +83,7 @@ impl Default for ContentConfig {
             wrap: false,
             wrap_width: 80,
             include_document_structure: true,
+            extract_metadata: true,
         }
     }
 }

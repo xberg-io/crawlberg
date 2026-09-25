@@ -71,6 +71,14 @@ impl CrawlEngine {
 
             let is_doc_link = link.link_type == LinkType::Document;
             let link_url = strip_fragment(&link.url);
+            // ~keep Stripped before scope, dedup, and enqueue: the stored frontier entry
+            // (what is later fetched and reported) must be the already-stripped URL, not just
+            // the dedup key computed from it.
+            let link_url = if self.config.strip_tracking_params {
+                crate::normalize::strip_tracking_params(&link_url, &self.config.tracking_params)
+            } else {
+                link_url
+            };
 
             let scope_policy = LinkScopePolicy {
                 follow_document_urls: self.config.follow_document_urls,
@@ -84,7 +92,7 @@ impl CrawlEngine {
             }
 
             let child_depth = parent.depth + 1;
-            let dedup_key = normalize_url_for_dedup(&link_url);
+            let dedup_key = normalize_url_for_dedup(&link_url, self.config.dedup_include_query);
             // ~keep Mark seen before SSRF validation so concurrent discovery cannot enqueue dedup-equivalent URLs.
             if !self.frontier.is_seen(&dedup_key).await? {
                 self.frontier.mark_seen(&dedup_key).await?;
