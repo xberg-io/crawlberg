@@ -580,6 +580,96 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// `close_browser_within` must return near its configured `shutdown_timeout`, and the
+    /// process must actually be dead afterward, even when `Browser::close`/`wait` cannot make
+    /// progress -- the reported case was a Chrome process blocked behind an OS dialog
+    /// (see the `~keep` on `close_browser_within`'s own doc comment).
+    ///
+    /// ~keep Simulates that without a real dialog: `SIGSTOP` freezes a genuinely launched
+    /// ~keep Chrome process so it cannot respond to the CDP `Browser.close` command or exit,
+    /// ~keep without killing it -- `close()`/`wait()` then hang exactly as they did against
+    /// ~keep the keychain-prompt report. Skipped (not failed) when this machine has no usable
+    /// ~keep Chrome or `kill -STOP` is unavailable (non-Unix), matching the browser
+    /// ~keep integration tests' skip convention. Requires a real Chrome binary; a fully mocked
+    /// ~keep `Browser` was not practical here (`chromiumoxide::Browser` wraps a real child
+    /// ~keep process and CDP connection with no test seam for either).
+    #[tokio::test]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
+        if !cfg!(unix) {
+            eprintln!("skipping close_browser_within_returns_promptly_when_the_process_is_stopped: not unix");
+            return;
+        }
+
+        let user_data_dir =
+            std::env::temp_dir().join(format!("crawlberg-shutdown-timeout-test-{}", std::process::id()));
+        let browser_config = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!(
+                    "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
+                     because no usable Chrome was found: {error}"
+                );
+                return;
+            }
+        };
+        let (mut browser, mut handler) = match Browser::launch(browser_config).await {
+            Ok(pair) => pair,
+            Err(error) => {
+                eprintln!(
+                    "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
+                     because no usable Chrome was found: {error}"
+                );
+                return;
+            }
+        };
+        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+        let pid = browser
+            .get_mut_child()
+            .and_then(|child| child.as_mut_inner().id())
+            .expect("a freshly launched child must have a pid");
+
+        let stopped = std::process::Command::new("kill")
+            .args(["-STOP", &pid.to_string()])
+            .status()
+            .expect("`kill -STOP` must run")
+            .success();
+        assert!(stopped, "failed to SIGSTOP the launched Chrome process (pid {pid})");
+
+        let shutdown_timeout = Duration::from_millis(500);
+        let start = std::time::Instant::now();
+        close_browser_within(&mut browser, shutdown_timeout).await;
+        let elapsed = start.elapsed();
+
+        // ~keep Always sent, even if the assertions below fail: a stopped process left behind
+        // ~keep by a broken implementation would otherwise leak past this test.
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+        handler_task.abort();
+
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "close_browser_within must return near its configured budget ({shutdown_timeout:?}) \
+             even when close()/wait() cannot make progress on a stopped process; took {elapsed:?}"
+        );
+
+        let still_running = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("`kill -0` must run")
+            .success();
+        assert!(
+            !still_running,
+            "the Chrome process (pid {pid}) must be dead after close_browser_within returns, \
+             via its Browser::kill() fallback"
+        );
+    }
+
     #[test]
     fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
         // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an

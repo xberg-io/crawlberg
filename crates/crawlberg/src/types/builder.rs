@@ -433,3 +433,61 @@ impl DispatchProfileBuilder {
         self.inner
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ~keep These three setters had zero call sites anywhere in `crates/` or `e2e/` before
+    // ~keep this module: replacing each body with `let _ = value;` left the whole suite green.
+    // ~keep Each test picks a value distinct from `CrawlConfig::default()` and reads it back
+    // ~keep off the built config, so a setter that silently drops its argument shows up as a
+    // ~keep value equal to the default rather than the one passed in.
+
+    #[test]
+    fn retry_initial_delay_ms_reaches_the_built_config() {
+        let config = CrawlConfig::builder().retry_initial_delay_ms(4_242).build();
+        assert_eq!(
+            config.retry_initial_delay_ms, 4_242,
+            "retry_initial_delay_ms(4242) must set CrawlConfig::retry_initial_delay_ms, got {}",
+            config.retry_initial_delay_ms
+        );
+        assert_ne!(
+            config.retry_initial_delay_ms,
+            CrawlConfig::default().retry_initial_delay_ms,
+            "the chosen test value must differ from the default, or this test cannot tell a \
+             working setter from a dropped argument"
+        );
+    }
+
+    #[test]
+    fn retry_max_delay_ms_reaches_the_built_config() {
+        let config = CrawlConfig::builder().retry_max_delay_ms(123_456).build();
+        assert_eq!(
+            config.retry_max_delay_ms, 123_456,
+            "retry_max_delay_ms(123456) must set CrawlConfig::retry_max_delay_ms, got {}",
+            config.retry_max_delay_ms
+        );
+        assert_ne!(
+            config.retry_max_delay_ms,
+            CrawlConfig::default().retry_max_delay_ms,
+            "the chosen test value must differ from the default, or this test cannot tell a \
+             working setter from a dropped argument"
+        );
+    }
+
+    #[test]
+    fn rate_limit_jitter_ratio_reaches_the_built_config() {
+        let config = CrawlConfig::builder().rate_limit_jitter_ratio(0.37).build();
+        assert!(
+            (config.rate_limit_jitter_ratio - 0.37).abs() < f64::EPSILON,
+            "rate_limit_jitter_ratio(0.37) must set CrawlConfig::rate_limit_jitter_ratio, got {}",
+            config.rate_limit_jitter_ratio
+        );
+        assert!(
+            (config.rate_limit_jitter_ratio - CrawlConfig::default().rate_limit_jitter_ratio).abs() > f64::EPSILON,
+            "the chosen test value must differ from the default, or this test cannot tell a \
+             working setter from a dropped argument"
+        );
+    }
+}

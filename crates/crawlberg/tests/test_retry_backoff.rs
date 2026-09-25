@@ -151,9 +151,18 @@ async fn large_retry_count_keeps_every_gap_at_or_below_the_configured_ceiling() 
     }
 }
 
+/// ~keep A paused tokio clock (`#[tokio::test(start_paused = true)]`) was tried here first and
+/// ~keep rejected: it makes `wiremock`'s real TCP round trip never complete (0 requests
+/// ~keep observed), because reqwest's own internal timers race the paused clock's auto-advance
+/// ~keep and fire before the real I/O is ready. So this stays wall-clock, but with a configured
+/// ~keep delay (2s) an order of magnitude above the hardcoded 100ms default this test exists to
+/// ~keep catch: the previous 150ms/50ms-margin version passed green on 3/3 runs even with the
+/// ~keep config read cut, because wiremock+reqwest overhead alone bridged that 50ms gap. A
+/// ~keep 1900ms lower-bound margin cannot be bridged by request overhead on any machine this
+/// ~keep suite runs on.
 #[tokio::test]
 async fn configured_initial_delay_is_honoured_for_the_first_retry() {
-    let initial_delay = Duration::from_millis(150);
+    let initial_delay = Duration::from_millis(2000);
     let config = CrawlConfig {
         retry_count: 1,
         retry_initial_delay_ms: u64::try_from(initial_delay.as_millis()).expect("fits u64"),
@@ -171,12 +180,13 @@ async fn configured_initial_delay_is_honoured_for_the_first_retry() {
 
     let gap = timestamps[1].duration_since(timestamps[0]);
     assert!(
-        gap >= initial_delay,
+        gap >= Duration::from_millis(1900),
         "the gap before the first retry ({gap:?}) must be at least the configured initial \
-         delay ({initial_delay:?})"
+         delay ({initial_delay:?}), less a 100ms tolerance; a hardcoded 100ms default would \
+         show up here as a gap far below this bound regardless of request overhead"
     );
     assert!(
-        gap < initial_delay * 3,
+        gap < Duration::from_millis(4000),
         "the gap ({gap:?}) is far larger than the configured initial delay ({initial_delay:?}); \
          backoff appears to be ignoring retry_initial_delay_ms"
     );

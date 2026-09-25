@@ -22,6 +22,23 @@ async fn mount_html(mock: &MockServer, at: &str, body: &str) {
         .await;
 }
 
+/// Mount `at`, asserting on drop that it is requested exactly `expected` times. Used to prove
+/// a rejected link's target was never fetched, rather than inferring rejection from page count
+/// alone — an unresolvable host makes "not fetched" ambiguous between "scope rejected it" and
+/// "DNS failed" (proven by mutation: hardwiring `allow_subdomains: true` left these green).
+async fn mount_html_expecting(mock: &MockServer, at: &str, body: &str, expected: u64) {
+    Mock::given(method("GET"))
+        .and(path(at))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body.to_owned())
+                .append_header("content-type", "text/html"),
+        )
+        .expect(expected)
+        .mount(mock)
+        .await;
+}
+
 /// Root links to `/a`, `/b`, `/c` in that order; each child links to one grandchild.
 async fn branching_site() -> MockServer {
     let mock = MockServer::start().await;
@@ -350,20 +367,22 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
 
 /// The same subdomain link must NOT be followed when `allow_subdomains` is false.
 ///
-/// ~keep A rejected link is dropped before SSRF validation ever resolves DNS, so a
-/// fabricated, unregistered hostname (RFC 2606's `.invalid`) is safe here — no network
-/// access happens for it either way.
+/// ~keep Uses a real, reachable `*.localhost` host with `.expect(0)` on the child path, not a
+/// fabricated `.invalid` one: an unresolvable host makes "no page fetched" ambiguous between
+/// "scope rejected it" and "DNS failed", so it cannot tell a working gate from a gutted one.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false() {
     let mock = MockServer::start().await;
+    let port = mock.address().port();
     mount_html(
         &mock,
         "/",
-        r#"<html><body><a href="https://sub.example.invalid/a">A</a></body></html>"#,
+        &format!(r#"<html><body><a href="http://sub.foo.localhost:{port}/a">A</a></body></html>"#),
     )
     .await;
-    let base = mock.uri();
+    mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
+    let base = format!("http://foo.localhost:{port}");
     let engine = engine_with(permissive(CrawlConfig {
         max_depth: Some(1),
         max_pages: Some(50),
@@ -379,13 +398,16 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
         "a subdomain link must not be followed when allow_subdomains is false, got pages: {:?}",
         result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
     );
+    // ~keep The `.expect(0)` on /a is the real assertion; it is verified on drop.
+    drop(mock);
 }
 
 /// An unrelated host is never enqueued by a default-configured crawl.
 ///
-/// ~keep This pins the additive contract of the crawlberg#60 fix. The host is deliberately
-/// unresolvable (`.invalid`, RFC 2606): scope rejects it before SSRF validation would
-/// resolve anything, so the test needs no DNS. `stay_on_domain` is not an input -- see
+/// ~keep This pins the additive contract of the crawlberg#60 fix. Uses a real, reachable
+/// `*.localhost` sibling host with `.expect(0)` on the child path, not an unresolvable
+/// `.invalid` one: "no page fetched" is ambiguous between "scope rejected it" and "DNS
+/// failed" for an unresolvable host. `stay_on_domain` is not an input -- see
 /// `link_scope::host_in_scope` and crawlberg#72.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
@@ -395,9 +417,10 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
     mount_html(
         &mock,
         "/",
-        &format!(r#"<html><body><a href="http://unrelated.invalid:{port}/a">A</a></body></html>"#),
+        &format!(r#"<html><body><a href="http://bar.localhost:{port}/a">A</a></body></html>"#),
     )
     .await;
+    mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
     let base = format!("http://localhost:{port}");
     let engine = engine_with(permissive(CrawlConfig {
         max_depth: Some(1),
@@ -413,23 +436,32 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
         "an unrelated host must not be followed, got pages: {:?}",
         result.pages.iter().map(|p| &p.url).collect::<Vec<_>>()
     );
+    drop(mock);
 }
 
 /// An off-host link is never enqueued: the seed host and, with `allow_subdomains`, its
 /// subdomains are the only hosts a crawl follows. ~keep `stay_on_domain` is NOT what
 /// enforces this and never has -- see `link_scope::host_in_scope` and crawlberg#72.
+///
+/// ~keep Uses a real, reachable `*.localhost` sibling host with `.expect(0)`, not a real
+/// external domain: fetching an actual off-box host if the gate were broken would make this
+/// test flaky and network-dependent instead of failing deterministically.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_stays_on_the_seed_host() {
     let mock = MockServer::start().await;
+    let port = mock.address().port();
     mount_html(
         &mock,
         "/",
-        r#"<html><body><a href="https://elsewhere.example.com/x">out</a><a href="/a">A</a></body></html>"#,
+        &format!(
+            r#"<html><body><a href="http://elsewhere.localhost:{port}/x">out</a><a href="/a">A</a></body></html>"#
+        ),
     )
     .await;
     mount_html(&mock, "/a", "<html><body>a</body></html>").await;
-    let base = mock.uri();
+    mount_html_expecting(&mock, "/x", "<html><body>x</body></html>", 0).await;
+    let base = format!("http://localhost:{port}");
     let engine = engine_with(permissive(CrawlConfig {
         max_depth: Some(1),
         max_pages: Some(50),
@@ -443,6 +475,7 @@ async fn sequential_crawl_stays_on_the_seed_host() {
         vec!["/".to_owned(), "/a".to_owned()],
         "an off-host link must not be enqueued"
     );
+    drop(mock);
 }
 
 /// A seed that fails is reported through `CrawlResult::error`; a child that fails is not.
@@ -515,4 +548,71 @@ async fn sequential_crawl_counts_a_seed_redirect() {
         format!("{base}/landing"),
         "final_url must be the post-redirect URL"
     );
+}
+
+async fn mount_pdf(mock: &MockServer, at: &str, expected: u64) {
+    Mock::given(method("GET"))
+        .and(path(at))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"%PDF-1.4".to_vec())
+                .append_header("content-type", "application/pdf"),
+        )
+        .expect(expected)
+        .mount(mock)
+        .await;
+}
+
+/// A cross-host document link (`.pdf`) on the seed page IS requested by a default-configured
+/// sequential crawl: `stay_on_domain` defaults to `false`, and `host_in_scope` treats
+/// `Document` links as exempt from the host restriction in that case (`link_scope.rs`).
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_a_cross_host_document_link_by_default() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://other.localhost:{port}/report.pdf">pdf</a></body></html>"#),
+    )
+    .await;
+    mount_pdf(&mock, "/report.pdf", 1).await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    // ~keep The `.expect(1)` on /report.pdf is the real assertion; it is verified on drop.
+    drop(mock);
+}
+
+/// The same cross-host document link must NOT be requested once `stay_on_domain` is `true`.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_rejects_a_cross_host_document_link_when_stay_on_domain_is_true() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://other.localhost:{port}/report.pdf">pdf</a></body></html>"#),
+    )
+    .await;
+    mount_pdf(&mock, "/report.pdf", 0).await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        stay_on_domain: true,
+        ..CrawlConfig::default()
+    }));
+
+    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    drop(mock);
 }

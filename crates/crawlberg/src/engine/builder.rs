@@ -480,44 +480,93 @@ mod env_private_network_precedence_tests {
 
 #[cfg(test)]
 mod rate_limiter_plumbing_tests {
-    use super::default_rate_limiter;
+    use std::time::Duration;
+
+    use super::CrawlEngine;
     use crate::types::CrawlConfig;
 
-    // ~keep These assert the CONFIG-TO-THROTTLE PLUMBING, not the jitter maths (which is unit
-    // tested in defaults::rate_limiter). `rate_limit_jitter_ratio` was added to `CrawlConfig`,
-    // to the builder, to the fixture schema and to `PerDomainThrottle` while nothing joined the
-    // two ends, so it parsed, validated and serialized while a live crawl got no jitter at all.
-    // A timing-based test cannot tell that apart from jitter that happened to be small.
-    #[test]
-    fn configured_jitter_ratio_reaches_the_default_throttle() {
+    // ~keep These assert the CONFIG-TO-THROTTLE PLUMBING actually exercised by `build()`, not
+    // the jitter maths (which is unit tested in defaults::rate_limiter). An earlier version of
+    // this suite called `default_rate_limiter(100, config.rate_limit_jitter_ratio)` directly --
+    // reconstructing the exact expression at builder.rs:246 rather than observing it -- so
+    // cutting that line to a hardcoded ratio left every test here green (`rate_limit_jitter_ratio`
+    // parsed, validated and serialized while a live crawl got no jitter at all). These build a
+    // real `CrawlEngine` through `CrawlEngineBuilder` and observe `engine.rate_limiter.acquire()`
+    // under a paused tokio clock: `tokio::time::sleep` inside `PerDomainThrottle::acquire` still
+    // runs, but the paused clock auto-advances to the sleep's deadline with no wall-clock noise,
+    // so the observed wait is exactly the throttle's computed `sleep_duration` -- deterministic,
+    // not "timing that happened to be small".
+    async fn wait_for_second_acquire(engine: &CrawlEngine, domain: &str) -> Duration {
+        engine.rate_limiter.acquire(domain).await.expect("first acquire");
+        let start = tokio::time::Instant::now();
+        engine.rate_limiter.acquire(domain).await.expect("second acquire");
+        start.elapsed()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn configured_jitter_ratio_reaches_the_default_throttle() {
         let config = CrawlConfig {
-            rate_limit_jitter_ratio: 0.25,
+            rate_limit_ms: Some(100),
+            rate_limit_jitter_ratio: 0.5,
             ..CrawlConfig::default()
         };
-        let throttle = default_rate_limiter(100, config.rate_limit_jitter_ratio);
+        let engine = CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build");
+
+        let waited = wait_for_second_acquire(&engine, "example.com").await;
+
         assert!(
-            (throttle.jitter_ratio() - 0.25).abs() < f64::EPSILON,
-            "rate_limit_jitter_ratio must reach the throttle the engine actually uses, got {}",
-            throttle.jitter_ratio()
+            waited >= Duration::from_millis(50) && waited <= Duration::from_millis(150),
+            "a 0.5 jitter_ratio over a 100ms delay must stay within [50ms, 150ms], got {waited:?}"
+        );
+        assert_ne!(
+            waited,
+            Duration::from_millis(100),
+            "a nonzero jitter_ratio must perturb the delay away from the unjittered 100ms baseline \
+             (this can only coincide by chance at the level of double-precision float equality)"
         );
     }
 
-    #[test]
-    fn default_config_leaves_the_throttle_unjittered() {
-        let config = CrawlConfig::default();
-        let throttle = default_rate_limiter(100, config.rate_limit_jitter_ratio);
-        assert!(
-            (throttle.jitter_ratio() - 0.0).abs() < f64::EPSILON,
+    #[tokio::test(start_paused = true)]
+    async fn default_config_leaves_the_throttle_unjittered() {
+        let config = CrawlConfig {
+            rate_limit_ms: Some(100),
+            ..CrawlConfig::default()
+        };
+        let engine = CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build");
+
+        let waited = wait_for_second_acquire(&engine, "example.com").await;
+
+        assert_eq!(
+            waited,
+            Duration::from_millis(100),
             "an unset ratio must leave the throttle behaving exactly as before jitter existed"
         );
     }
 
-    #[test]
-    fn an_out_of_range_ratio_is_clamped_before_it_reaches_the_throttle() {
-        let throttle = default_rate_limiter(100, 5.0);
+    #[tokio::test(start_paused = true)]
+    async fn an_out_of_range_ratio_is_clamped_before_it_reaches_the_throttle() {
+        let config = CrawlConfig {
+            rate_limit_ms: Some(100),
+            rate_limit_jitter_ratio: 5.0,
+            ..CrawlConfig::default()
+        };
+        let engine = CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build");
+
+        let waited = wait_for_second_acquire(&engine, "example.com").await;
+
         assert!(
-            (throttle.jitter_ratio() - 1.0).abs() < f64::EPSILON,
-            "a ratio above 1.0 must clamp, not scale a delay by 5x"
+            waited <= Duration::from_millis(200),
+            "a ratio above 1.0 must clamp to 1.0 (max 2x the 100ms delay), not scale it by 5x \
+             (up to 600ms), got {waited:?}"
         );
     }
 }

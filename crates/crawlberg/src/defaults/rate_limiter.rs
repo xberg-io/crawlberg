@@ -164,18 +164,6 @@ impl PerDomainThrottle {
         }
     }
 
-    /// The jitter ratio in effect, after clamping to `[0.0, 1.0]`.
-    ///
-    /// ~keep Public rather than test-only: the repo forbids test-only methods on production
-    /// types, and a `pub(crate)` accessor used only from a `#[cfg(test)]` module is dead code in
-    /// the plain lib build. It also answers a real question a caller can otherwise only infer by
-    /// timing requests -- which is exactly how `rate_limit_jitter_ratio` came to be plumbed
-    /// nowhere without anything noticing.
-    #[must_use]
-    pub const fn jitter_ratio(&self) -> f64 {
-        self.jitter_ratio
-    }
-
     /// Apply `jitter_ratio` to `duration`, scaling it by a factor in
     /// `[1 - jitter_ratio, 1 + jitter_ratio]`. A `jitter_ratio` of `0.0` always returns
     /// `duration` unchanged (`factor` is exactly `1.0`), so the default behaves exactly as

@@ -397,6 +397,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_initial_backoff_ms_overrides_the_attempt_zero_delay() {
+        let policy = SimpleRetryPolicy::new().with_initial_backoff_ms(250);
+        let err = CrawlError::rate_limited("429");
+        let directive = policy.decide(&outcome_with_error(err, 0)).await;
+        match directive {
+            RetryDirective::Retry { backoff_ms } => assert_eq!(
+                backoff_ms, 250,
+                "attempt=0 must back off for exactly 2^0 * 250 = 250ms, got {backoff_ms}"
+            ),
+            other => panic!("expected Retry, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn unlimited_budget_always_ok() {
         let budget = UnlimitedBudget;
         for cents in [0u32, 1, 1_000, u32::MAX] {
