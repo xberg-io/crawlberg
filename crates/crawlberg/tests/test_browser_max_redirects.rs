@@ -224,6 +224,11 @@ async fn a_redirect_after_a_script_navigation_is_not_counted() {
 
 /// `/` redirects twice to `/m`, whose meta refresh (too slow for Chrome to act on before the
 /// page is read) points at `/n`, which starts a second chain of two redirects.
+///
+/// ~keep The 30-second delay is deliberate: Chrome never acts on the refresh, so the second
+/// ~keep chain is walked by the crawl's own chain, one browser fetch per hop. This is therefore
+/// ~keep NOT coverage of #117 (a meta refresh Chrome does follow is unbounded inside one
+/// ~keep `page_fetch`); shortening the delay would change what the test measures.
 async fn chain_with_a_meta_refresh() -> MockServer {
     let mock = MockServer::start().await;
     for (from, to) in [("/", "/r1"), ("/r1", "/m"), ("/n", "/n1"), ("/n1", "/n2")] {
@@ -315,6 +320,12 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
 }
 
 /// Only the page's own navigation is limited: a redirect inside an iframe does not count.
+///
+/// ~keep A GUARD, not evidence for #90: this asserts the same `(0, "/", 200)` with the redirect
+/// ~keep counting reverted, because the seed then lands on itself and `landed_redirect` finds that
+/// ~keep URL already in the chain's `seen` set. What it does guard is the frame-id filter in
+/// ~keep `ssrf_intercept::redirect_verdict` — drop that and the iframe's 301 spends the seed's
+/// ~keep budget, which at `max_redirects = 0` ends the fetch on the 301 instead.
 #[tokio::test]
 async fn a_redirect_inside_an_iframe_does_not_count() {
     let site = MockServer::start().await;
