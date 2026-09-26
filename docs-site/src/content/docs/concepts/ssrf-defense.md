@@ -16,9 +16,10 @@ asset download, and link-following enqueue.
 | Link-local | 169.254.0.0/16 (incl. AWS/GCP metadata 169.254.169.254), fe80::/10 |
 | Unspecified | 0.0.0.0/8 |
 | Multicast | 224.0.0.0/4, ff00::/8 |
+| Reserved | 240.0.0.0/4 (incl. broadcast 255.255.255.255) |
 | IPv6 unique-local | fc00::/7 |
 | IPv6 forms that embed an IPv4 address | IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96), IPv4-translated (::ffff:0:0:0/96), NAT64 (64:ff9b::/96), 6to4 (2002::/16) and ISATAP (interface identifier 0000:5efe or 0200:5efe): the embedded IPv4 address is checked against the rows above |
-| IPv6 local-use NAT64 (64:ff9b:1::/48, RFC 8215) | The IPv4 address is read at each position a /48, /56, /64 or /96 network prefix puts it, and the address is refused when any reading falls in the rows above. A reading in 0.0.0.0/8 or 224.0.0.0/4 is skipped, because the unused positions of a real address read that way. An address whose every reading is skipped is refused |
+| IPv6 local-use NAT64 (64:ff9b:1::/48, RFC 8215) | The IPv4 address is read at each position a /48, /56, /64 or /96 network prefix puts it, and the address is refused when any reading falls in the rows above. A reading in 0.0.0.0/8, 224.0.0.0/4 or 240.0.0.0/4 is skipped, because the unused positions of a real address read that way. An address whose every reading is skipped is refused |
 | Non-http/https schemes | file, ftp, gopher, … |
 
 DNS rebinding is mitigated: if a hostname resolves to a mix of public and
@@ -38,9 +39,9 @@ gaps remain, and an egress restriction outside the process is the only defence a
   `10.0.0.5` in its last 32 bits but is not any of the forms above, so it is not unwrapped.
   Unwrapping every address that way would refuse public addresses whose last 32 bits happen to
   read as private, on every prefix rather than just inside `64:ff9b:1::/48`.
-- **Two ranges inside the local-use NAT64 prefix.** The skipped-reading rule above cuts both
+- **Three ranges inside the local-use NAT64 prefix.** The skipped-reading rule above cuts both
   ways: on a /48, /56 or /64 network, an address that genuinely encodes a destination in
-  `0.0.0.0/8` or `224.0.0.0/4` is permitted, because that reading is skipped as if it were
+  `0.0.0.0/8`, `224.0.0.0/4` or `240.0.0.0/4` is permitted, because that reading is skipped as if it were
   unused bits. `64:ff9b:1:1:2:300::` (`0.1.2.3` after a /48 prefix) and `64:ff9b:1:0:e0:0:100:0`
   (`224.0.0.1` after a /64 one) are permitted. No private, loopback, link-local or CGNAT
   destination escapes this way, and a /96 network is unaffected. In the other direction, the

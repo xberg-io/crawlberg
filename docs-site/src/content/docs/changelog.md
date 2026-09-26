@@ -225,14 +225,20 @@ title: "Changelog"
 - **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
   RFC 8215 fixes no position for the embedded address, so the check reads it at each of the four
   positions RFC 6052 section 2.2 allows — after a /48, /56, /64 or /96 network prefix — and refuses
-  the address when any reading is private. A reading that falls in `0.0.0.0/8` or `224.0.0.0/4` is
-  skipped, because the unused positions of a real address read that way. Two consequences follow
-  from that heuristic, neither of which affects a /96 network: some public addresses are refused on
-  a /48, /56 or /64 network, and an address that genuinely encodes a destination in `0.0.0.0/8` or
-  `224.0.0.0/4` at one of those positions is still permitted. An IPv4 allowlist entry admits a
+  the address when any reading is private. A reading that falls in `0.0.0.0/8`, `224.0.0.0/4` or
+  `240.0.0.0/4` is skipped, because the unused positions of a real address read that way. Two
+  consequences follow from that heuristic, neither of which affects a /96 network: some public
+  addresses are refused on a /48, /56 or /64 network, and an address that genuinely encodes a
+  destination in one of those three ranges at one of those positions is still permitted. An IPv4 allowlist entry admits a
   public address caught by the first. An address whose every reading is skipped is refused, because
   no real destination encodes that way and a stateful NAT64 translator forwards `0.0.0.0` to its
   own host. (#108)
+
+- **The reserved range `240.0.0.0/4` passed the SSRF deny-list.** With `deny_private` on,
+  `http://255.255.255.255/` and every other address in the range was fetched, plain or inside an
+  IPv6 form that carries an IPv4 address. The range is now refused in every form, and a local-use
+  NAT64 reading in it is skipped as a multicast reading is. The browser crate's exported deny-list
+  grows from 13 to 14 entries. (#173)
 
 - **A denial reason could name an address the allowlist permits.** The reason was classified from
   the first deny-listed candidate rather than the first one the allowlist did not admit, so an
