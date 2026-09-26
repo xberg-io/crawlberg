@@ -79,14 +79,14 @@ impl BypassProvider for SimpleHttpProvider {
                 CrawlError::other(
                     ProviderError::Send {
                         vendor: vendor.clone(),
-                        message: e.to_string(),
+                        // ~keep The request URL carries a query-parameter API key; reqwest's message would print it.
+                        message: e.without_url().to_string(),
                     }
                     .to_string(),
                 )
             })?;
 
             let status_u16 = resp.status().as_u16();
-            let final_url = resp.url().to_string();
             let resp_headers = resp.headers().clone();
 
             if let Some(err) = self.map_status(status_u16, &vendor) {
@@ -115,7 +115,7 @@ impl BypassProvider for SimpleHttpProvider {
                 CrawlError::other(
                     ProviderError::BodyRead {
                         vendor: vendor.clone(),
-                        message: e.to_string(),
+                        message: e.without_url().to_string(),
                     }
                     .to_string(),
                 )
@@ -138,7 +138,9 @@ impl BypassProvider for SimpleHttpProvider {
                 body,
                 body_bytes: body_bytes_final,
                 headers: HashMap::new(),
-                final_url,
+                // ~keep The response URL is the vendor's API endpoint (with any query-parameter key), not the
+                // ~keep target's. `ProviderConfig` has no way to read a vendor-reported target URL, so this stays empty.
+                final_url: String::new(),
                 cost_usd,
                 vendor_request_id: None,
             })

@@ -18,6 +18,11 @@ title: "Changelog"
   while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
   hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
   it is resynced and gated. (#162, #127)
+- **The bypass provider could expose a vendor API key.** It reported the vendor's API request URL
+  as the page's `final_url`, and its send and body-read errors printed the same URL. For a vendor
+  that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
+  field's contract allows when the vendor does not report the resolved URL, and the errors no
+  longer include the request URL. (#89)
 
 - **A WAF challenge served with 503 or 429 was retried instead of escalated.** WAF detection ran
   only for a 403 and for a 2xx, so a Cloudflare or Akamai interstitial served with 503 became a
