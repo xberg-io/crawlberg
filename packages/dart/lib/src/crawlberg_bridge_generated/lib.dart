@@ -1087,7 +1087,9 @@ class CrawlConfig {
   /// Number of retry attempts for failed requests. Bounded by [`MAX_RETRY_COUNT`].
   final PlatformInt64 retryCount;
 
-  /// HTTP status codes that should trigger a retry.
+  /// HTTP status codes that should trigger a retry. When empty, every rate limit, server
+  /// error, bad gateway and timeout is retried. When set, only a failure whose status is
+  /// listed is retried, so a timeout without a response is not.
   final Int64List retryCodes;
 
   /// Initial delay, in milliseconds, before the first retry. Doubled on each
