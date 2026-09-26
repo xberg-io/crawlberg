@@ -20,6 +20,10 @@ pub(super) async fn run(
             "browser.endpoint is only supported by the chromiumoxide backend",
         ));
     }
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "the native browser backend is selected; it runs no Chrome process",
+    );
 
     let native_config = build_native_config(config)?;
     let native_actions = actions.iter().map(map_action).collect::<Vec<_>>();

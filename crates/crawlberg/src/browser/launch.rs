@@ -131,6 +131,10 @@ pub(super) async fn launch_or_connect(
     config: &CrawlConfig,
 ) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
+        crate::types::warn_ignored_launch_options(
+            &config.browser,
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally",
+        );
         if config.browser_profile.is_some() {
             tracing::warn!(
                 profile = config.browser_profile.as_deref().unwrap_or_default(),
@@ -145,8 +149,7 @@ pub(super) async fn launch_or_connect(
     } else {
         let user_data = resolve_user_data_dir(config)?;
 
-        let builder = build_one_shot_launch_builder(&user_data.path);
-        let browser_config = builder
+        let browser_config = build_one_shot_launch_builder(&user_data.path, &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -163,7 +166,10 @@ pub(super) async fn launch_or_connect(
 ///
 /// ~keep Split out from `launch_or_connect` so a test can assert on the flags this
 /// ~keep path actually passes without spawning a real Chrome process.
-fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> BrowserConfigBuilder {
+fn build_one_shot_launch_builder(
+    user_data_dir: &std::path::Path,
+    browser: &crate::types::BrowserConfig,
+) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -173,7 +179,13 @@ fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> BrowserConf
     builder = builder
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
-    crate::browser_pool::apply_default_args(builder)
+    builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
+    crate::browser_pool::apply_launch_overrides(
+        builder,
+        "browser",
+        browser.chrome_path.as_deref(),
+        &browser.chrome_args,
+    )
 }
 
 /// Returns a modern Chrome user-agent string suitable for the runtime environment.
@@ -331,8 +343,26 @@ mod tests {
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` (even behind a comment claiming it still does) fails
         // ~keep here because the returned flags actually change.
-        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"));
+        let builder = build_one_shot_launch_builder(
+            std::path::Path::new("/tmp/browser-rs-test-profile"),
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn the_one_shot_launch_builder_uses_the_configured_chrome_path_and_args() {
+        crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+            build_one_shot_launch_builder(
+                std::path::Path::new("/tmp/browser-rs-test-profile"),
+                &crate::types::BrowserConfig {
+                    chrome_path,
+                    chrome_args,
+                    ..Default::default()
+                },
+            )
+        });
     }
 
     /// A profile directory nobody took ownership of is removed when its guard drops.

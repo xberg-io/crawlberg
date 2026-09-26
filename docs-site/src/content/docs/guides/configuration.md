@@ -82,9 +82,16 @@ println!("batch crawl completed: {}", crawl_results.completed_count);
 | `browser.wait_selector` required when `browser.wait` is `Selector` | `"browser.wait_selector required when browser.wait is Selector"` |
 | `browser.endpoint` must be `ws://` or `wss://`                     | `"browser.endpoint must start with ws:// or wss://"`             |
 | `browser.endpoint` cannot be used with `BrowserBackend::Native`    | `"browser.endpoint is only supported by the chromiumoxide backend"` |
+| Each `browser.chrome_args` entry must be `--flag` or `--flag=value` | `"browser.chrome_args entry \"...\" must start with -- followed by a flag name; ..."` |
+| Each `browser.chrome_args` flag name must be lowercase              | `"browser.chrome_args entry \"...\" must name the flag in lowercase, as Chrome does"` |
+| `browser.chrome_args` must not set `--headless`, `--remote-debugging-port` or `--user-data-dir` | `"browser.chrome_args must not set --...; crawlberg sets it to run Chrome"` |
+| `browser.chrome_args` must not name one flag twice                  | `"browser.chrome_args sets --... more than once"`                |
+| `browser.chrome_path` must be an executable file                   | `"browser.chrome_path '...' cannot be used: ..."`                |
 | All `include_paths` must be valid regex                            | `"invalid include_path regex '...': ..."`                        |
 | All `exclude_paths` must be valid regex                            | `"invalid exclude_path regex '...': ..."`                        |
 | All `retry_codes` must be 100-599                                  | `"invalid retry code: ..."`                                      |
+
+The `browser.chrome_args` and `browser.chrome_path` rules do not apply when `browser.endpoint` is set or the native backend is selected: crawlberg launches no Chrome from them then, and ignores both fields with a warning.
 
 You can also call `validate()` manually:
 
@@ -268,6 +275,8 @@ When `respect_robots_txt` is on, a crawl does not follow the links of a page mar
 | `robots_user_agent`      | `Option<String>`   | `None`        | Native backend user-agent for robots.txt fetches.                      |
 | `capture_network_events` | `bool`             | `false`       | Native backend network-event capture into `BrowserExtras`.             |
 | `session_affinity`       | `bool`             | `true`        | Reuse same-domain browser sessions when supported.                     |
+| `chrome_path`            | `Option<PathBuf>`  | `None`        | Chrome executable to launch; the only binary used when set. `None` uses the `CHROME` environment variable, then an installed Chrome. |
+| `chrome_args`            | `Vec<String>`      | `[]`          | Extra Chrome flags, each `--flag` or `--flag=value`. A flag with the same name as a crawlberg default replaces it. Trusted input only: `--proxy-server` and `--host-resolver-rules` bypass the SSRF policy. |
 
 ### WARC output
 
