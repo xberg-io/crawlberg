@@ -145,8 +145,37 @@ response:
     let config = load_with_env(&path, &env).unwrap();
     for rendered in [format!("{config:?}"), format!("{config:#?}")] {
         assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
-        for kept in ["api.example.com/v1/extract", "\"api_key\"", "vendor_name: \"test\""] {
+        for kept in ["https://api.example.com", "\"api_key\"", "vendor_name: \"test\""] {
             assert!(rendered.contains(kept), "{kept} missing from: {rendered}");
+        }
+    }
+}
+
+#[test]
+fn debug_output_prints_only_the_scheme_and_host_of_the_endpoint() {
+    for (endpoint, printed) in [
+        (
+            format!("https://api.example.com/v1/{SECRET}/extract"),
+            "https://api.example.com",
+        ),
+        (
+            format!("https://api.example.com/v1/extract#{SECRET}"),
+            "https://api.example.com",
+        ),
+        (
+            format!("https://{SECRET}@api.example.com:8443/v1?key={SECRET}"),
+            "https://api.example.com",
+        ),
+        (format!("api.example.com/v1?key={SECRET}"), "***"),
+        (format!("unix:/run/{SECRET}.sock"), "***"),
+    ] {
+        let config = config_with(AuthScheme::None, &endpoint);
+        for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+            assert!(!rendered.contains(SECRET), "secret printed for {endpoint}: {rendered}");
+            assert!(
+                rendered.contains(&format!("endpoint: \"{printed}\"")),
+                "endpoint for {endpoint} must print as {printed}: {rendered}"
+            );
         }
     }
 }

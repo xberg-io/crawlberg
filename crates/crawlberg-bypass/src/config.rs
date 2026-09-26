@@ -185,9 +185,18 @@ pub struct ProviderConfig {
     pub status_mapping: Vec<StatusOverride>,
 }
 
+/// The scheme and host of `endpoint`, or `***` when it has no host or does not parse as an
+/// absolute URL. Its userinfo, path, query and fragment can each carry a vendor key.
+fn endpoint_scheme_and_host(endpoint: &str) -> String {
+    reqwest::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| format!("{}://{host}", url.scheme())))
+        .unwrap_or_else(|| "***".to_owned())
+}
+
 impl std::fmt::Debug for ProviderConfig {
-    /// Redacted: the endpoint prints without its userinfo and query, which can carry a vendor key.
-    /// The auth scheme and request shape redact their own secrets.
+    /// Redacted: the endpoint prints as its scheme and host only. The auth scheme and request
+    /// shape redact their own secrets.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             vendor_name,
@@ -200,7 +209,7 @@ impl std::fmt::Debug for ProviderConfig {
         } = self;
         f.debug_struct("ProviderConfig")
             .field("vendor_name", vendor_name)
-            .field("endpoint", &crawlberg::net::redact::redact_url_secrets(endpoint))
+            .field("endpoint", &endpoint_scheme_and_host(endpoint))
             .field("method", method)
             .field("auth", auth)
             .field("request", request)
