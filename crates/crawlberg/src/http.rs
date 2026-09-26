@@ -20,8 +20,7 @@ use crate::types::{AuthConfig, CrawlConfig};
 use headers::build_headers_map;
 
 pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
-    truncate_body_at_char_boundary,
+    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
 };
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::build_client;
@@ -30,8 +29,7 @@ pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
+pub(crate) use waf::waf_2xx_error;
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
@@ -266,23 +264,18 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
         return Err(error);
     }
 
-    // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
-    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
-    if let Some(header_vendor) = header_only_waf_vendor(&head, &mut headers_map_cache) {
-        let config = context.config;
-        return Err(body_confirmed_waf_error(config, resp, &head, header_vendor, &mut headers_map_cache).await);
-    }
-
     let expected_len = head.content_length();
     let body_bytes = read_validated_body(context.config, resp, expected_len).await?;
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
-    // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
-    if let Some(vendor) = body_waf_vendor(&head, &body, &body_bytes, &mut headers_map_cache) {
-        return Err(CrawlError::WafBlocked {
-            message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-            vendor,
-        });
+    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
+    // The body is read before the check rather than after a header match because a header-only
+    // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231).
+    if head.is_success() {
+        let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+        if let Some(error) = waf::waf_2xx_error(head.status, &body_bytes, &body, headers_map) {
+            return Err(error);
+        }
     }
 
     // ~keep Reuses the cached header map (built at most once above) instead of walking
@@ -379,50 +372,6 @@ async fn unresolvable_redirect_response(
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let headers_map = build_headers_map(&head.headers);
     head.into_response(body, body_bytes, headers_map)
-}
-
-/// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
-fn header_only_waf_vendor(
-    head: &ResponseHead,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    challenge::header_waf_vendor(head.status, headers_map)
-}
-
-/// Re-run classification over the body of a 2xx its headers already flagged, preferring
-/// the vendor the body names and falling back to the header-derived one.
-async fn body_confirmed_waf_error(
-    config: &CrawlConfig,
-    resp: reqwest::Response,
-    head: &ResponseHead,
-    header_vendor: String,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> CrawlError {
-    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    let vendor = waf::waf_vendor_from_body(head.status, &body, headers_map).unwrap_or(header_vendor);
-    CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (header): {vendor}"),
-        vendor,
-    }
-}
-
-/// The WAF vendor a 2xx's already-read body fingerprints.
-fn body_waf_vendor(
-    head: &ResponseHead,
-    body: &str,
-    body_bytes: &[u8],
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    waf::waf_vendor_from_bytes(head.status, body_bytes, body, headers_map)
 }
 
 /// Shortfall below the declared `content-length` that is read as a truncated transfer
@@ -844,19 +793,24 @@ mod tests {
         }
     }
 
-    /// A 2xx whose headers alone fingerprint is a WAF interstitial, reported before the
-    /// body is treated as page content. ~keep
+    /// A 2xx whose headers name the vendor is reported as a header block rather than treated
+    /// as page content. ~keep
     ///
     /// ~keep Also the regression guard for crawlberg#169: this and the body-block test below
     /// pin the 2xx wording, which the challenge-status work must not reword. Both pass with
     /// and without that change, which is the point of a guard.
+    ///
+    /// ~keep The body carries DataDome's own script tag because a header-only fingerprint no
+    /// longer decides a 2xx on its own (crawlberg#231). That narrowing reaches `x-datadome`,
+    /// `x-px-block` and `x-amzn-waf-action` as well as the CDN-presence headers #231 is about:
+    /// on a 2xx all four now need the interstitial to be visible in the body.
     #[tokio::test]
     async fn http_fetch_reports_a_header_waf_block_on_a_2xx() {
         let error = fetch_status(
             200,
             ResponseTemplate::new(200)
                 .append_header("x-datadome", "protected")
-                .set_body_string("<html></html>"),
+                .set_body_string("<html><script src=\"https://js.datadome.co/tags.js\"></script></html>"),
         )
         .await;
         assert!(
