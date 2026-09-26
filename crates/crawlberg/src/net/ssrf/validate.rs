@@ -11,7 +11,7 @@ use super::{SsrfError, SsrfPolicy};
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 15] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -19,6 +19,10 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 section 4 reserved range. Holds the limited broadcast address
+    // ~keep 255.255.255.255, which nothing else in the classification path covers: there is no
+    // ~keep `Ipv4Addr::is_broadcast` call anywhere here, so the range entry is what denies it.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -29,6 +33,15 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
+    // ~keep Teredo, RFC 4380 section 4. The last 32 bits are an IPv4 address XOR'd with all-ones,
+    // ~keep so 2001:0:4136:e378:0:ffff:5601:5601 reaches 169.254.169.254 and
+    // ~keep 2001:0:4136:e378:8000:ffff:f5ff:fffa reaches 10.0.0.5. The whole prefix is denied
+    // ~keep instead of decoded: RFC 4380 section 5.2.4 only obliges the *Teredo node* to drop a
+    // ~keep packet whose embedded address is not global, which is a defence outside this process,
+    // ~keep and Teredo is deprecated, so denying the range costs no reachable crawl target and
+    // ~keep cannot be got wrong the way a positional decode can. Note this is 2001:0000::/32
+    // ~keep only, so the documentation prefix 2001:db8::/32 is unaffected.
+    "2001::/32",
 ];
 
 /// Private / metadata / loopback CIDRs that are denied by default.

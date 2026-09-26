@@ -29,7 +29,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 15] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -37,6 +37,10 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 section 4 reserved range. Holds the limited broadcast address
+    // ~keep 255.255.255.255, which nothing else in this validator covers: there is no
+    // ~keep `Ipv4Addr::is_broadcast` call anywhere here, so the range entry is what denies it.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -47,6 +51,15 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
+    // ~keep Teredo, RFC 4380 section 4. The last 32 bits are an IPv4 address XOR'd with all-ones,
+    // ~keep so 2001:0:4136:e378:0:ffff:5601:5601 reaches 169.254.169.254 and
+    // ~keep 2001:0:4136:e378:8000:ffff:f5ff:fffa reaches 10.0.0.5. The whole prefix is denied
+    // ~keep instead of decoded: RFC 4380 section 5.2.4 only obliges the *Teredo node* to drop a
+    // ~keep packet whose embedded address is not global, which is a defence outside this process,
+    // ~keep and Teredo is deprecated, so denying the range costs no reachable crawl target and
+    // ~keep cannot be got wrong the way a positional decode can. Note this is 2001:0000::/32
+    // ~keep only, so the documentation prefix 2001:db8::/32 is unaffected.
+    "2001::/32",
 ];
 
 /// Decides whether the browser layer may fetch a URL.
@@ -208,6 +221,15 @@ mod tests {
             "http://[::ffff:127.0.0.1]/",
             "http://[::ffff:169.254.169.254]/",
             "http://[64:ff9b::7f00:1]/",
+            // ~keep Teredo: the last 32 bits are an IPv4 address XOR'd with all-ones, reaching
+            // 169.254.169.254 and 10.0.0.5. Only the "2001::/32" row denies these.
+            "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
+            "http://[2001:0:4136:e378:8000:ffff:f5ff:fffa]/",
+            // ~keep The reserved range and the broadcast address inside it. Only the
+            // "240.0.0.0/4" row denies these; the mapped form reaches it via canonicalisation.
+            "http://240.0.0.1/",
+            "http://255.255.255.255/",
+            "http://[::ffff:255.255.255.255]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -218,9 +240,17 @@ mod tests {
 
     #[tokio::test]
     async fn default_validator_permits_public_addresses() {
-        validate("http://1.1.1.1/", true)
-            .await
-            .expect("a public address must be permitted");
+        for permitted in [
+            "http://1.1.1.1/",
+            "http://223.255.255.255/",
+            // ~keep `2001::/32` is only `2001:0000::/32`; neighbouring allocations stay permitted.
+            "http://[2001:db8::1]/",
+            "http://[2001:1::1]/",
+        ] {
+            validate(permitted, true)
+                .await
+                .unwrap_or_else(|e| panic!("{permitted} must be permitted: {e}"));
+        }
     }
 
     #[tokio::test]

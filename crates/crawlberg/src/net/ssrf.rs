@@ -409,6 +409,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_url_rejects_the_reserved_range_and_the_broadcast_address() {
+        // ~keep Nothing in the classification path calls `Ipv4Addr::is_broadcast`, and
+        // `240.0.0.0/4` is the only row that covers any of these, so each denial here comes from
+        // that row alone. The broadcast address needs no row of its own: it is inside the range.
+        let policy = SsrfPolicy::default();
+        for host in ["240.0.0.1", "250.1.2.3", "255.255.255.254", "255.255.255.255"] {
+            let url = format!("http://{host}/").parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err(&format!("{host} is in the reserved range and must be denied"));
+            assert!(
+                matches!(
+                    err,
+                    SsrfError::DeniedByPolicy {
+                        reason: "private_network"
+                    }
+                ),
+                "expected a private_network denial for {host}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_ipv4_mapped_reserved_and_broadcast_addresses() {
+        // ~keep The IPv4-mapped form routes to IPv4 on a dual-stack host, so the mapped broadcast
+        // address must be denied by the new `240.0.0.0/4` row after canonicalisation rather than
+        // slipping past the IPv6 rows.
+        let policy = SsrfPolicy::default();
+        for host in ["::ffff:240.0.0.1", "::ffff:255.255.255.255"] {
+            let url = format!("http://[{host}]/").parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err(&format!("{host} maps into the reserved range and must be denied"));
+            assert!(
+                matches!(
+                    err,
+                    SsrfError::DeniedByPolicy {
+                        reason: "private_network"
+                    }
+                ),
+                "expected a private_network denial for {host}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_permits_public_addresses_below_the_reserved_range() {
+        // ~keep A control, not coverage: these were permitted before `240.0.0.0/4` was added and
+        // must stay permitted. 223.255.255.255 is the last address below the multicast range.
+        let policy = SsrfPolicy::default();
+        for host in ["223.255.255.255", "8.8.8.8"] {
+            let url = format!("http://{host}/").parse::<url::Url>().expect("valid URL");
+            validate_url(&url, &policy)
+                .await
+                .unwrap_or_else(|e| panic!("{host} is outside 240.0.0.0/4 and must be permitted: {e:?}"));
+        }
+    }
+
+    #[tokio::test]
     async fn validate_url_rejects_multicast() {
         let policy = SsrfPolicy::default();
         let url = "http://224.0.0.1/".parse::<url::Url>().unwrap();
@@ -733,6 +792,48 @@ mod tests {
             matches!(err, SsrfError::DeniedByPolicy { reason: "loopback" }),
             "expected loopback denial for a NAT64-embedded loopback address, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_teredo_addresses_that_carry_a_private_ipv4() {
+        // ~keep A Teredo address (RFC 4380 section 4) carries an IPv4 address in its last 32
+        // bits, XOR'd with all-ones, so these two reach cloud metadata and RFC 1918 space.
+        // `canonicalize_ip` does not unwrap the Teredo form and no other deny row covers
+        // `2001:0000::/32`, so each denial here comes from the `2001::/32` row alone.
+        let policy = SsrfPolicy::default();
+        for (host, reached) in [
+            ("2001:0:4136:e378:0:ffff:5601:5601", "169.254.169.254"),
+            ("2001:0:4136:e378:8000:ffff:f5ff:fffa", "10.0.0.5"),
+            ("2001::1", "the Teredo prefix itself"),
+            ("2001:0:ffff:ffff:ffff:ffff:ffff:ffff", "the top of the Teredo prefix"),
+        ] {
+            let url = format!("http://[{host}]/").parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err(&format!("{host} reaches {reached} and must be denied"));
+            assert!(
+                matches!(
+                    err,
+                    SsrfError::DeniedByPolicy {
+                        reason: "private_network"
+                    }
+                ),
+                "{host} reaches {reached}; expected a private_network denial, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_permits_public_ipv6_just_outside_the_teredo_prefix() {
+        // ~keep `2001::/32` is only `2001:0000::/32`: the neighbouring allocations, including the
+        // documentation prefix `2001:db8::/32`, must stay permitted.
+        let policy = SsrfPolicy::default();
+        for host in ["2001:1::1", "2001:db8::1", "2000:ffff::1"] {
+            let url = format!("http://[{host}]/").parse::<url::Url>().expect("valid URL");
+            validate_url(&url, &policy)
+                .await
+                .unwrap_or_else(|e| panic!("{host} is outside 2001::/32 and must be permitted: {e:?}"));
+        }
     }
 
     #[tokio::test]

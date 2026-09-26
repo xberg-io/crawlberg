@@ -16,7 +16,9 @@ asset download, and link-following enqueue.
 | Link-local | 169.254.0.0/16 (incl. AWS/GCP metadata 169.254.169.254), fe80::/10 |
 | Unspecified | 0.0.0.0/8 |
 | Multicast | 224.0.0.0/4, ff00::/8 |
+| Reserved | 240.0.0.0/4 (RFC 1112, includes the limited broadcast address 255.255.255.255) |
 | IPv6 unique-local | fc00::/7 |
+| Teredo | 2001::/32 (RFC 4380). The last 32 bits of a Teredo address are an IPv4 address XOR'd with all-ones, so `2001:0:4136:e378:0:ffff:5601:5601` reaches 169.254.169.254. The whole prefix is refused rather than decoded; the documentation prefix 2001:db8::/32 is outside it and stays permitted |
 | Non-http/https schemes | file, ftp, gopher, … |
 
 DNS rebinding is mitigated: if a hostname resolves to a mix of public and

@@ -13,6 +13,25 @@ All notable changes to crawlberg are documented here.
   check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
   landed URL is refused is dropped. (#75)
 
+- **Teredo addresses reached private and metadata hosts.** A Teredo address (RFC 4380) carries an
+  IPv4 address in its last 32 bits, XOR'd with all-ones, and no deny-list entry covered the prefix,
+  so `http://[2001:0:4136:e378:0:ffff:5601:5601]/` reached 169.254.169.254 and
+  `http://[2001:0:4136:e378:8000:ffff:f5ff:fffa]/` reached 10.0.0.5. The prefix `2001::/32` is now
+  refused outright rather than decoded. Only `2001:0000::/32` is refused, so the documentation
+  prefix `2001:db8::/32` and every neighbouring allocation stay permitted.
+
+- **The reserved range `240.0.0.0/4` and the broadcast address were permitted.** With
+  `deny_private` on, nothing covered RFC 1112 reserved space, so `http://255.255.255.255/` and
+  `http://240.0.0.1/` were fetched; no code path called `Ipv4Addr::is_broadcast`. The range is now
+  refused, and the IPv4-mapped form `::ffff:255.255.255.255` with it. The broadcast address needs
+  no entry of its own because it is inside the range. (#173)
+
+### Changed
+
+- `crawlberg_browser::adapter::DEFAULT_DENY_NET_CIDRS` is a fixed-size array and grows from
+  `[&str; 13]` to `[&str; 15]`. Code that names the length, destructures it, or assigns it to a
+  `[&str; 13]` binding no longer compiles.
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
