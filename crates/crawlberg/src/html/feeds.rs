@@ -8,10 +8,10 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{get_attr, has_rel, mime_essence, resolve_url};
+use super::{get_attr, get_url_attr, has_rel, mime_essence, resolve_url};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
-/// document's base URL.
+/// document's base URL. A link with a blank `href` is skipped.
 pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     let parser = dom.parser();
     let mut feeds = Vec::new();
@@ -24,8 +24,11 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
             if !has_rel(tag, "alternate") {
                 continue;
             }
+            let Some(href) = get_url_attr(tag, "href") else {
+                continue;
+            };
             let link_type = mime_essence(tag).unwrap_or_default();
-            let href = resolve_url(&get_attr(tag, "href").unwrap_or_default(), base_url);
+            let href = resolve_url(&href, base_url);
             let title = get_attr(tag, "title").map(Cow::into_owned);
 
             let feed_type = match link_type.as_str() {
@@ -62,8 +65,9 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangE
             }
             let lang = get_attr(tag, "hreflang").unwrap_or_default();
             let lang = lang.trim_ascii();
-            let href = get_attr(tag, "href").unwrap_or_default();
-            if !lang.is_empty() && !href.trim_ascii().is_empty() {
+            if let Some(href) = get_url_attr(tag, "href")
+                && !lang.is_empty()
+            {
                 let url = resolve_url(&href, base_url);
                 entries.push(HreflangEntry {
                     lang: lang.to_owned(),
@@ -79,7 +83,7 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangE
 const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 
 /// Extract favicon and icon links from a parsed HTML document, resolved against the document's
-/// base URL.
+/// base URL. A link with a blank `href` is skipped.
 pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let parser = dom.parser();
     let mut favicons = Vec::new();
@@ -92,10 +96,9 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
                 continue;
             }
             let rel = get_attr(tag, "rel").unwrap_or_default();
-            let raw_href = get_attr(tag, "href").unwrap_or_default();
-            if raw_href.is_empty() {
+            let Some(raw_href) = get_url_attr(tag, "href") else {
                 continue;
-            }
+            };
             let url = resolve_url(&raw_href, base_url);
             let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
             let mime_type = get_attr(tag, "type").map(Cow::into_owned);

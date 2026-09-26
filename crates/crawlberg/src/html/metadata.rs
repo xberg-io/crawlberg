@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{ArticleMetadata, PageMetadata};
 
 use super::selectors::{META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE};
-use super::{attr_eq, decode_attr_value, get_attr, has_rel, resolve_url};
+use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_rel, resolve_url};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -155,8 +155,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
     let canonical_url = dom.query_selector(SEL_LINK_REL).and_then(|iter| {
         iter.filter_map(|h| h.get(parser).and_then(|node| node.as_tag()))
             .find(|tag| has_rel(tag, "canonical"))
-            .and_then(|tag| get_attr(tag, "href"))
-            .filter(|href| !href.trim_ascii().is_empty())
+            .and_then(|tag| get_url_attr(tag, "href"))
             .map(|href| resolve_url(&href, base_url))
     });
 

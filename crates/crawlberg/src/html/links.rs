@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{LinkInfo, LinkType};
 
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{get_attr, has_rel};
+use super::{get_attr, get_url_attr, has_rel};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -73,11 +73,10 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             };
 
-            let href = get_attr(tag, "href").unwrap_or_default();
-            let href = href.trim();
-            if href.is_empty() {
+            let Some(href) = get_url_attr(tag, "href") else {
                 continue;
-            }
+            };
+            let href = href.as_ref();
 
             if href.starts_with("mailto:")
                 || href.starts_with("javascript:")

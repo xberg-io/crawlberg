@@ -725,6 +725,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_feed_and_icon_links_with_a_blank_href() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\" \t\n\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">\
+             <link rel=\"icon\" href=\" \">\
+             <link rel=\"icon\" href=\"fav.ico\"></head></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/fav.ico"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_unicode_spaces_at_the_ends_of_a_link_address() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\" \t\u{A0}nbsp.html\u{3000}\n\">a</a>\
+             <a href=\"\u{2003}em.html\u{85}\">b</a>\
+             <a href=\"\u{A0}\">c</a>\
+             <a href=\" \t\">d</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            [
+                "https://example.com/%C2%A0nbsp.html%E3%80%80",
+                "https://example.com/%E2%80%83em.html%C2%85",
+                "https://example.com/%C2%A0",
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn scrape_rejects_an_unparseable_url() {
         let resp = response("text/html", "<html></html>");
         let error = scrape_from_crawl_response("not a url", &resp, &offline_config(), None)

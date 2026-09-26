@@ -161,6 +161,14 @@ All notable changes to crawlberg are documented here.
   value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
   reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
   rewrite. (#160)
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. The links list now trims only ASCII whitespace from an address, as
+  it does for other attribute values. (#191)
 
 ### Added
 

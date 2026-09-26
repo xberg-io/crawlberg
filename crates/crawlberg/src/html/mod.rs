@@ -63,6 +63,22 @@ pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a
         .map(decode_attr_value)
 }
 
+/// Get a URL attribute value such as `href`, decoded and without surrounding ASCII whitespace.
+///
+/// Returns `None` when the value is missing or blank: a blank URL points at the page itself.
+/// Other Unicode spaces stay, as they do in a browser.
+pub(crate) fn get_url_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
+    let value = get_attr(tag, attr)?;
+    let trimmed = value.trim_ascii();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() == value.len() {
+        return Some(value);
+    }
+    Some(Cow::Owned(trimmed.to_owned()))
+}
+
 /// Whether the tag's `attr` value, without surrounding ASCII whitespace, equals `expected` in any
 /// ASCII case.
 ///
