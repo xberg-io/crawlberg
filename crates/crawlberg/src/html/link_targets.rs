@@ -6,8 +6,8 @@ use std::ops::Range;
 use tl::VDom;
 use url::Url;
 
-use super::decode_attr_value;
 use super::links::effective_base_url;
+use super::{clean_url, decode_attr_value};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -145,44 +145,47 @@ fn rewrite_value(raw: &str, shape: Shape, base: &Url) -> Option<String> {
 ///
 /// Returns `None` for anything a reader can already use as written: an absolute URL of any
 /// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...), a fragment-only reference that
-/// points into the same document, and an empty value.
+/// points into the same document, and a blank value.
 fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
-    let trimmed = reference.trim_matches(|c: char| c.is_ascii_whitespace());
-    if trimmed.is_empty() || trimmed.starts_with('#') {
+    let reference = clean_url(Cow::Borrowed(reference))?;
+    if reference.starts_with('#') {
         return None;
     }
-    match Url::parse(trimmed) {
-        Err(url::ParseError::RelativeUrlWithoutBase) => base.join(trimmed).ok().map(String::from),
+    match Url::parse(&reference) {
+        Err(url::ParseError::RelativeUrlWithoutBase) => base.join(&reference).ok().map(String::from),
         _ => None,
     }
 }
 
-/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
+/// Split a `srcset`-style list into its candidates, each a URL and its descriptor.
 ///
 /// ~keep Follows the HTML "parse a srcset attribute" split: a candidate URL is a run of
-/// ~keep non-whitespace (so a `data:` URL's own comma stays inside it), trailing commas end
-/// ~keep the candidate, and otherwise the descriptor runs to the next comma.
+/// ~keep non-ASCII-whitespace (so a `data:` URL's own comma stays inside it), trailing commas
+/// ~keep end the candidate, and otherwise the descriptor runs to the next comma.
+pub(super) fn srcset_candidates(list: &str) -> impl Iterator<Item = (&str, &str)> {
+    let mut rest = list;
+    std::iter::from_fn(move || {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if rest.is_empty() {
+            return None;
+        }
+        let url_end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
+        let (candidate_url, after_url) = rest.split_at(url_end);
+        if candidate_url.ends_with(',') {
+            rest = after_url;
+            return Some((candidate_url.trim_end_matches(','), ""));
+        }
+        let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
+        rest = &after_url[descriptor_end..];
+        Some((candidate_url, after_url[..descriptor_end].trim()))
+    })
+}
+
+/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
 fn resolve_candidates(list: &str, base: &Url) -> Option<String> {
     let mut candidates = Vec::new();
     let mut changed = false;
-    let mut rest = list;
-    loop {
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
-        if rest.is_empty() {
-            break;
-        }
-        let url_end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
-        let (mut candidate_url, after_url) = rest.split_at(url_end);
-        let descriptor;
-        if candidate_url.ends_with(',') {
-            candidate_url = candidate_url.trim_end_matches(',');
-            descriptor = "";
-            rest = after_url;
-        } else {
-            let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
-            descriptor = after_url[..descriptor_end].trim();
-            rest = &after_url[descriptor_end..];
-        }
+    for (candidate_url, descriptor) in srcset_candidates(list) {
         let resolved = resolve_reference(candidate_url, base);
         changed |= resolved.is_some();
         let candidate_url = resolved.unwrap_or_else(|| candidate_url.to_owned());
@@ -259,6 +262,15 @@ mod tests {
         let html = r##"<a href="https://example.com/x">x</a><a href="#top">t</a><img src="data:image/png;base64,AA">"##;
         let url = Url::parse("https://example.com/").expect("valid URL");
         assert!(matches!(resolve_link_targets(html, &url), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn an_address_of_only_c0_controls_is_left_as_written() {
+        let html = "<a href=\"\u{1}\u{B}\">x</a><a href=\"\u{B}y.html\">y</a>";
+        assert_eq!(
+            resolve(html, "https://example.com/p/"),
+            "<a href=\"\u{1}\u{B}\">x</a><a href=\"https://example.com/p/y.html\">y</a>"
+        );
     }
 
     #[test]
