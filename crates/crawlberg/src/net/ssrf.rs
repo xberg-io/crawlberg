@@ -736,6 +736,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_deny_a_teredo_literal_carrying_a_private_embedded_ipv4() {
+        // ~keep RFC 4380 section 4 stores the client's IPv4 address as its one's complement, so
+        // nothing in the deny-list saw it: 2001::/32 is absent from the IPv6 nets and ipnet's
+        // contains() is family-scoped. Section 5.2.4 obliges a *remote* Teredo node to drop a
+        // packet whose embedded address is not global, which crawlberg can neither observe nor
+        // enforce, so it is not a control this deny-list can lean on.
+        for (target, expected_reason) in [
+            ("http://[2001:0:4136:e378:0:ffff:5601:5601]/", "link_local"),
+            ("http://[2001:0:4136:e378:8000:ffff:f5ff:fffa]/", "private_network"),
+        ] {
+            let url = target.parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &SsrfPolicy::default())
+                .await
+                .expect_err(&format!("{target} must be denied"));
+            assert!(
+                matches!(err, SsrfError::DeniedByPolicy { reason } if reason == expected_reason),
+                "{target} must be denied as {expected_reason}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn should_permit_a_teredo_literal_whose_embedded_ipv4_is_public() {
+        // ~keep Guards, not coverage: both passed before the decode existed. The first decodes to
+        // 192.0.2.45 (TEST-NET-1, a genuinely public address); the second is the documentation
+        // prefix 2001:db8::/32, which the decode must not touch because only 2001:0000::/32 is
+        // Teredo.
+        for target in [
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+            "http://[2001:db8::1]/",
+        ] {
+            let url = target.parse::<url::Url>().expect("valid URL");
+            validate_url(&url, &SsrfPolicy::default())
+                .await
+                .unwrap_or_else(|e| panic!("{target} must remain permitted, got {e:?}"));
+        }
+    }
+
+    #[tokio::test]
     async fn validate_url_still_permits_genuine_public_ipv6() {
         let url = "http://[2606:4700:4700::1111]/".parse::<url::Url>().expect("valid URL");
         validate_url(&url, &SsrfPolicy::default())
