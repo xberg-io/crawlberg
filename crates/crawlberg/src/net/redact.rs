@@ -58,6 +58,32 @@ pub fn redact_url_secrets(input: &str) -> String {
     url.to_string()
 }
 
+/// Redact `user[:password]@` userinfo from a URL-like string **without parsing it**.
+///
+/// [`redact_url_credentials`] returns its input unchanged when `url::Url::parse` fails, so it
+/// is a no-op in exactly the place an "invalid URL" error message is assembled — the value is
+/// unparseable, which is why the error exists. This locates the authority's userinfo span
+/// textually instead, so a malformed URL still has its credentials removed.
+///
+/// The span examined is bounded by the authority: the text after `//` (or the start of the
+/// input when there is no `//`) up to the first `/`, `?` or `#`. Only the last `@` inside that
+/// span terminates the userinfo, matching how a URL parser reads an authority, so an `@` in a
+/// path, query or fragment is never mistaken for one.
+#[must_use]
+pub(crate) fn redact_userinfo_textually(input: &str) -> String {
+    let authority_start = input.find("//").map_or(0, |index| index + 2);
+    let authority = &input[authority_start..];
+    let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    let Some(at) = authority[..authority_end].rfind('@') else {
+        return input.to_owned();
+    };
+    format!(
+        "{}{REDACTED_PLACEHOLDER}{}",
+        &input[..authority_start],
+        &input[authority_start + at..]
+    )
+}
+
 /// `Debug` view of a string map that shows each key and hides each value, for maps of
 /// header values or cookie values set by the caller.
 pub(crate) struct RedactedValues<'a>(pub(crate) &'a std::collections::HashMap<String, String>);
@@ -128,6 +154,33 @@ mod tests {
     fn redacted_values_shows_keys_only() {
         let map = std::collections::HashMap::from([("Authorization".to_owned(), "Bearer abc123".to_owned())]);
         assert_eq!(format!("{:?}", RedactedValues(&map)), r#"{"Authorization": "***"}"#);
+    }
+
+    #[test]
+    fn redacts_userinfo_of_a_url_that_does_not_parse() {
+        // ~keep A space in the host makes this unparseable, so `redact_url_credentials` is a
+        // ~keep no-op on it; the textual strip is the only thing that removes the password.
+        let malformed = "http://user:hunter2@proxy internal:8080";
+        assert_eq!(
+            redact_url_credentials(malformed),
+            malformed,
+            "the parsing helper is expected to pass an unparseable URL through unchanged"
+        );
+        assert_eq!(redact_userinfo_textually(malformed), "http://***@proxy internal:8080");
+    }
+
+    #[test]
+    fn textual_userinfo_strip_ignores_an_at_sign_outside_the_authority() {
+        assert_eq!(
+            redact_userinfo_textually("http://example.com/mail/user@host?to=a@b#f@g"),
+            "http://example.com/mail/user@host?to=a@b#f@g"
+        );
+    }
+
+    #[test]
+    fn textual_userinfo_strip_handles_a_missing_scheme_and_a_plain_string() {
+        assert_eq!(redact_userinfo_textually("user:hunter2@proxy:8080"), "***@proxy:8080");
+        assert_eq!(redact_userinfo_textually("not a url at all"), "not a url at all");
     }
 
     #[test]
