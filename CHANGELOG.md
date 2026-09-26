@@ -173,6 +173,15 @@ All notable changes to crawlberg are documented here.
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **A Teredo IPv6 literal reached the private IPv4 address it carries.** With `deny_private` on,
+  `http://[2001:0:4136:e378:0:ffff:5601:5601]/` was permitted: RFC 4380 stores a Teredo client's
+  IPv4 address as its one's complement, so nothing ever tested the `169.254.169.254` it encodes, and
+  `2001::/32` is in no deny-list entry. `canonicalize_ip` now decodes that address alongside the
+  IPv4-mapped and NAT64 forms, in the core policy and in `crawlberg-browser`'s standalone fallback
+  validator. A Teredo literal whose embedded address is public stays permitted, and `2001:db8::/32`
+  is untouched because only `2001:0000::/32` is Teredo. RFC 4380 section 5.2.4 obliges a *remote*
+  Teredo node to drop a non-global embedded address; crawlberg can neither observe nor enforce that,
+  so the address is decoded rather than trusted. (#196)
 
 ### Added
 
