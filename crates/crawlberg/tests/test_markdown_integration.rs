@@ -91,3 +91,70 @@ async fn test_markdown_heading_extraction() {
     );
     assert!(md.content.contains("Section One"), "should contain h2 content");
 }
+
+/// The markdown of a scraped page resolves relative links against the page's `<base href>`,
+/// which is itself relative to the page URL (issue #63).
+#[tokio::test]
+async fn test_markdown_links_resolve_against_a_relative_base_href() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"<html><head><base href="/other/"></head><body><a href="leaf.html">leaf</a></body></html>"#,
+                )
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(allow_private_config())).unwrap();
+    let result = scrape(&handle, &mock.uri()).await.unwrap();
+    let md = result.markdown.expect("markdown should be present");
+    let expected = format!("{}/other/leaf.html", mock.uri());
+
+    assert!(
+        md.content.contains(&format!("[leaf]({expected})")),
+        "the markdown link must resolve against the base href, got {:?}",
+        md.content
+    );
+    assert!(
+        result.links.iter().any(|link| link.url == expected),
+        "the links list must agree with the markdown, got {:?}",
+        result.links
+    );
+}
+
+/// A scrape that follows a redirect resolves the markdown's relative links against the URL
+/// that served the content, not the one requested (issue #63).
+#[tokio::test]
+async fn test_markdown_links_resolve_against_the_scrape_redirect_target() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/go"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/page/index.html"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/page/index.html"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"<html><body><p><a href="next.html">next</a></p></body></html>"#)
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(allow_private_config())).unwrap();
+    let result = scrape(&handle, &format!("{}/go", mock.uri())).await.unwrap();
+    let md = result.markdown.expect("markdown should be present");
+
+    assert!(
+        md.content.contains(&format!("[next]({}/page/next.html)", mock.uri())),
+        "the markdown link must resolve against the redirect target, got {:?}",
+        md.content
+    );
+}

@@ -80,6 +80,7 @@ encoding_rs = "0.8"
 ext-php-rs = "0.15.15"
 flate2 = "1"
 futures = "0.3"
+html-escape = "0.2.15"
 html-to-markdown-rs = { version = "3.14", features = ["full"] }
 # ~keep Kept in lockstep with html-to-markdown-rs, which pins html5ever 0.40 from 3.14 on.
 # Before that it pinned 0.39 and the graph carried two copies of the html5ever/markup5ever/

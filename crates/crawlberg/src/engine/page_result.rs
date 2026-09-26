@@ -156,7 +156,7 @@ impl CrawlEngine {
             None
         } else {
             let content_config = crate::scrape::merged_content_config(&self.config);
-            crate::markdown::convert_to_markdown(body, &content_config).await
+            crate::markdown::convert_to_markdown(body, page_parsed, &content_config).await
         };
 
         (downloaded_document, markdown)

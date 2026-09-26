@@ -5,8 +5,8 @@ use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
-use super::get_attr;
-use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
+use super::selectors::SEL_A_HREF;
+use super::{decode_attr_value, elements_named, get_attr};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -44,22 +44,22 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
     }
 }
 
+/// The URL a document's relative references resolve against: the `href` of its first `<base>`
+/// that has one, decoded and joined to the document URL, or the document URL itself.
+pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
+    elements_named(dom, "base")
+        .find_map(|tag| tag.attributes().get("href"))
+        .map(|value| value.and_then(|v| v.try_as_utf8_str()).unwrap_or(""))
+        // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
+        // the document URL instead of requiring it to already be absolute.
+        .and_then(|href| document_url.join(&decode_attr_value(href)).ok())
+        .unwrap_or_else(|| document_url.clone())
+}
+
 /// Extract all links from a parsed HTML document.
 pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
     let parser = dom.parser();
-
-    let effective_base = dom
-        .query_selector(SEL_BASE_HREF)
-        .and_then(|mut iter| {
-            iter.next()
-                .and_then(|h| h.get(parser))
-                .and_then(|n| n.as_tag())
-                .and_then(|tag| get_attr(tag, "href"))
-                // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
-                // the document URL instead of requiring it to already be absolute.
-                .and_then(|href| base_url.join(href).ok())
-        })
-        .unwrap_or_else(|| base_url.clone());
+    let effective_base = effective_base_url(dom, base_url);
 
     let mut links = Vec::new();
 
