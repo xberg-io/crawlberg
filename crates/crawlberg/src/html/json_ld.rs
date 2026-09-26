@@ -139,12 +139,13 @@ mod tests {
     }
 
     #[test]
-    fn the_type_is_read_as_a_whatwg_mime_type() {
+    fn the_type_is_read_by_its_mime_essence_without_ascii_whitespace() {
         let entry = r#"{"@type":"Thing"}"#;
         let blocks = [
             ("\t application/LD+JSON \r\n; charset=utf-8", 1),
-            ("\x0Capplication/ld+json", 0),
-            ("application/ld+json\x0C", 0),
+            ("\x0Capplication/ld+json", 1),
+            ("application/ld+json\x0C; charset=utf-8", 1),
+            ("application/ld+json\u{A0}", 0),
         ];
         for (type_value, expected) in blocks {
             let html = format!("<script type=\"{type_value}\">{entry}</script>");

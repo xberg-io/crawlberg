@@ -33,6 +33,12 @@ title: "Changelog"
   code joins a relative canonical URL to the page URL, remove that step. If it compares the value
   with a literal, compare with the normalized form. (#101)
 
+- **`metadata.hreflangs[].url` is now an absolute URL.** It was each alternate-language link's
+  `href` as the page wrote it, so `<link rel="alternate" hreflang="de" href="/de/">` gave `/de/`.
+  It is now resolved against the page's base URL and normalized as the canonical URL is, so it
+  gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
+  remove that step. (#126)
+
 ### Fixed
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
@@ -236,8 +242,11 @@ title: "Changelog"
   same base as the links list, as a browser resolves a `<link href>`. (#101)
 - **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
   was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
-  `application/ld+json; charset=utf-8`, was skipped. Values are now compared without the
-  spaces around them, and a `type` is compared by its MIME type without the parameters. (#136)
+  `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
+  without the parameters. A `type`, `name`, `property` or `http-equiv` value is also compared
+  without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
+  not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
+  spaces is a deliberate leniency for pages that add them. (#136)
 - **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
   gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
   the page now has no canonical URL. (#137)

@@ -91,27 +91,27 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
-/// Whether the tag's `attr` value, without surrounding ASCII whitespace, equals `expected` in any
-/// ASCII case.
+/// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
+/// around the value.
 ///
 /// ~keep HTML compares values such as `name`, `http-equiv` and `type` without case, but tl's
 /// ~keep attribute selectors compare them byte for byte and cannot parse the CSS `i` flag. Select
-/// ~keep the tag and compare the value here instead.
+/// ~keep the tag and compare the value here instead. HTML does not trim these values, so a browser
+/// ~keep ignores `http-equiv=" refresh "`; the trim is a leniency for pages that add the spaces.
 pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
     get_attr(tag, attr).is_some_and(|value| value.trim_ascii().eq_ignore_ascii_case(expected))
 }
 
 /// The essence of the tag's `type` value, a MIME type, in lowercase: the part before any `;`
-/// parameters, without the tab, LF, CR and space around it.
+/// parameters, without the ASCII whitespace around it.
 ///
-/// ~keep The WHATWG MIME type parser strips HTTP whitespace, which has no form feed, so this
-/// ~keep does not use `trim_ascii`.
+/// ~keep HTML strips ASCII whitespace, form feed included, from a `<script type>` before it reads
+/// ~keep the type; the MIME parser alone would keep a form feed and reject the type. `<link type>`
+/// ~keep has no such rule and gets the same trim as a leniency, so both `type` attributes read alike.
 pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
     get_attr(tag, "type").map(|value| {
         let essence = value.split(';').next().unwrap_or_default();
-        essence
-            .trim_matches(|c| matches!(c, '\t' | '\n' | '\r' | ' '))
-            .to_ascii_lowercase()
+        essence.trim_ascii().to_ascii_lowercase()
     })
 }
 
@@ -144,7 +144,7 @@ pub(crate) fn decode_attr_value(raw: &str) -> Cow<'_, str> {
     let Some(first) = raw.bytes().position(|b| matches!(b, b'&' | b'\r' | b'\0')) else {
         return Cow::Borrowed(raw);
     };
-    if raw.as_bytes()[first..].contains(&b'&') {
+    if raw.contains('&') {
         return decode_with_tokenizer(raw);
     }
     let mut out = String::with_capacity(raw.len() + 2);
@@ -233,9 +233,21 @@ mod tests {
     fn decoding_normalizes_newlines_and_nul_as_an_html_parser_does() {
         assert_eq!(decode_attr_value("a\r\nb\rc\nd\0e"), "a\nb\nc\nd\u{FFFD}e");
         assert_eq!(decode_attr_value("a&amp;\r\nb\0"), "a&\nb\u{FFFD}");
+        assert_eq!(decode_attr_value("a\r&amp;"), "a\n&");
         assert_eq!(decode_attr_value("a\0b"), "a\u{FFFD}b");
         assert_eq!(decode_attr_value("a\rb"), "a\nb");
         assert!(matches!(decode_attr_value("plain value"), Cow::Borrowed("plain value")));
+    }
+
+    #[test]
+    fn cleaning_an_address_with_nothing_to_remove_borrows_it() {
+        assert!(matches!(
+            clean_url(Cow::Borrowed("a.html")),
+            Some(Cow::Borrowed("a.html"))
+        ));
+        assert!(matches!(clean_url(Cow::Borrowed(" a.html")), Some(Cow::Owned(ref s)) if s == "a.html"));
+        assert_eq!(clean_url(Cow::Borrowed("a\t.html\n")).as_deref(), Some("a.html"));
+        assert_eq!(clean_url(Cow::Borrowed("\u{1} \u{C}")), None);
     }
 
     #[test]

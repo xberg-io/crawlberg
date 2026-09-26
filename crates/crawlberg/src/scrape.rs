@@ -748,6 +748,7 @@ mod tests {
         let resp = response(
             "text/html",
             "<html><head>\
+             <link rel=\"alternate\" type=\"application/rss+xml\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\">\
              <link rel=\"alternate\" type=\"application/atom+xml\" href=\" \t\n\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">\
@@ -761,6 +762,57 @@ mod tests {
         assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
         assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/fav.ico"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_a_type_with_form_feeds_around_it() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"alternate\" type=\"\x0Capplication/atom+xml\x0C\" href=\"/atom.xml\">\
+             <script type=\"\x0Capplication/ld+json\x0C\">{\"@type\":\"Thing\",\"name\":\"t\"}</script>\
+             </head></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/atom.xml"]);
+        assert!(
+            matches!(result.feeds[0].feed_type, crate::types::FeedType::Atom),
+            "got {:?}",
+            result.feeds
+        );
+        assert_eq!(result.json_ld.len(), 1, "got {:?}", result.json_ld);
+    }
+
+    #[tokio::test]
+    async fn scrape_decodes_character_references_in_image_and_icon_addresses() {
+        let resp = response(
+            "text/html",
+            r#"<html><head>
+            <link rel="icon" href="&#32;&#32;"><link rel="icon" href="&#102;av.ico">
+            <meta property="og:image" content="&#32;"><meta property="og:image" content="og&#46;png">
+            <meta name="twitter:image" content="&#x74;w.png"></head><body>
+            <img src="&#32;&#9;"><img src="i&amp;j.png">
+            <picture><source srcset="&#32;&#32;"></picture>
+            <picture><source srcset="s&#46;png 2x"></picture></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/dir/fav.ico"]);
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            [
+                "https://example.com/dir/i&j.png",
+                "https://example.com/dir/s.png",
+                "https://example.com/dir/og.png",
+                "https://example.com/dir/tw.png"
+            ]
+        );
     }
 
     #[tokio::test]
