@@ -28,7 +28,9 @@ use crate::traits::*;
 use crate::types::*;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page};
+use super::crawl_state::{
+    CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page, receiver_closed, receiver_gone,
+};
 use super::redirect::{PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host};
 
 /// Map [`BrowserMode`] to a stable string label for telemetry.
@@ -121,9 +123,13 @@ impl CrawlEngine {
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
         let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), &include_regexes);
-        let seed = self
-            .resolve_initial_redirects(&seed_url, bounds.max_redirects, &mut state, &mut policy)
-            .await;
+        // ~keep A stream dropped while the seed is still resolving abandons it here, so its
+        // ~keep retries and redirect hops stop with it; the loop below watches the same drop.
+        let seed = tokio::select! {
+            biased;
+            () = receiver_closed(&tx) => return Ok(self.finish_without_crawling(state, seed_url, &tx).await),
+            seed = self.resolve_initial_redirects(&seed_url, bounds.max_redirects, &mut state, &mut policy) => seed,
+        };
         state.urls_filtered += policy.urls_filtered;
 
         let seed = match seed {
@@ -493,7 +499,7 @@ impl CrawlEngine {
         let mut drive = LoopDrive::new(window, in_flight, max_concurrent);
         let mut cancelled = false;
 
-        while !cancelled {
+        while !cancelled && !receiver_gone(context.tx) {
             self.spawn_pending_fetches(&mut drive, state, preloaded, context)
                 .await?;
 
@@ -511,7 +517,16 @@ impl CrawlEngine {
                 break;
             }
 
-            let Some(result) = drive.join_set.join_next().await else {
+            // ~keep A dropped receiver ends the loop here rather than at the next page send: a
+            // ~keep failed fetch's error event ignores its failed send, so a run of failures kept
+            // ~keep the crawl starting requests nobody would read. Leaving the loop drops `drive`,
+            // ~keep whose `JoinSet` aborts the fetches still in flight, retries included.
+            let joined = tokio::select! {
+                biased;
+                () = receiver_closed(context.tx) => break,
+                joined = drive.join_set.join_next() => joined,
+            };
+            let Some(result) = joined else {
                 break;
             };
 
@@ -673,8 +688,7 @@ impl CrawlEngine {
         match result {
             Ok(Ok(FetchOutcome::Fetched(fetch))) => {
                 retire_in_flight(drive.in_flight, &fetch.entry.url);
-                self.process_fetch_result(*fetch, state, context, &mut drive.join_set)
-                    .await
+                self.process_fetch_result(*fetch, state, context).await
             }
             Ok(Ok(FetchOutcome::Skipped(entry))) => {
                 retire_in_flight(drive.in_flight, &entry.url);
@@ -774,6 +788,7 @@ struct LoopDrive<'a> {
     window: &'a mut Vec<FrontierEntry>,
     /// Entries whose fetch task is running, kept so an early exit can return them.
     in_flight: &'a mut Vec<FrontierEntry>,
+    /// The running fetches. Dropping it, as every exit from the loop does, aborts them.
     join_set: JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     semaphore: Arc<Semaphore>,
     max_concurrent: usize,

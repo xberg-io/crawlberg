@@ -81,6 +81,7 @@ impl CrawlEngine {
                         body: bypass_resp.body,
                         body_bytes: bypass_resp.body_bytes,
                         headers: bypass_resp.headers,
+                        landed_url: None,
                     },
                     false,
                 ))
@@ -138,6 +139,7 @@ impl CrawlEngine {
                 body: r.body,
                 body_bytes: r.body_bytes,
                 headers: std::collections::HashMap::new(),
+                landed_url: Some(r.final_url),
             },
             extras,
         )
@@ -155,6 +157,7 @@ impl CrawlEngine {
             body: String::new(),
             body_bytes: Vec::new(),
             headers: std::collections::HashMap::new(),
+            landed_url: None,
         }
     }
 

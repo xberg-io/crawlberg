@@ -1,10 +1,9 @@
 //! Turning a completed fetch into a [`CrawlPageResult`] and the events that accompany it.
 
-use tokio::task::JoinSet;
 use url::Url;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FALLBACK_URL, FetchOutcome, FetchResult, LoopContext, ParentPage};
+use super::crawl_state::{CrawlState, FALLBACK_URL, FetchResult, LoopContext, ParentPage};
 use super::redirect::url_host;
 use crate::error::CrawlError;
 use crate::http::extract_cookies_from_hashmap;
@@ -24,7 +23,6 @@ impl CrawlEngine {
         mut fetch: FetchResult,
         state: &mut CrawlState,
         context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     ) -> Result<bool, CrawlError> {
         let page_url = fetch.entry.url.clone();
         let depth = fetch.entry.depth;
@@ -96,7 +94,7 @@ impl CrawlEngine {
             }
         };
 
-        Ok(self.deliver_page(page, state, context, join_set).await)
+        Ok(self.deliver_page(page, state, context).await)
     }
 
     /// Fold this response's `Set-Cookie` headers into the crawl-wide cookie jar.
@@ -195,13 +193,7 @@ impl CrawlEngine {
 
     /// Record a finished page everywhere it is owed, and report whether that page was the
     /// one that ends the crawl -- `max_pages` reached, or a streaming receiver gone away.
-    async fn deliver_page(
-        &self,
-        page: CrawlPageResult,
-        state: &mut CrawlState,
-        context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
-    ) -> bool {
+    async fn deliver_page(&self, page: CrawlPageResult, state: &mut CrawlState, context: &LoopContext<'_>) -> bool {
         self.strategy.on_page_processed(&page);
         let _ = self.store.store_crawl_page(&page.url, &page).await;
 
@@ -223,7 +215,6 @@ impl CrawlEngine {
             }
             state.pages_count += 1;
             if state.pages_count >= context.max_pages {
-                join_set.abort_all();
                 return true;
             }
         } else {
@@ -237,7 +228,6 @@ impl CrawlEngine {
             }
             state.pages.push(page);
             if state.pages.len() >= context.max_pages {
-                join_set.abort_all();
                 return true;
             }
         }

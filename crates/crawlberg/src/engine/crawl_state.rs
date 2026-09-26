@@ -44,6 +44,19 @@ pub(super) struct LoopContext<'a> {
     pub(super) tx: &'a Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
 }
 
+/// Whether this is a streaming crawl whose receiver has been dropped.
+pub(super) fn receiver_gone(tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>) -> bool {
+    tx.as_ref().is_some_and(tokio::sync::mpsc::Sender::is_closed)
+}
+
+/// Resolve once a streaming crawl's receiver is dropped; never for a non-streaming crawl.
+pub(super) async fn receiver_closed(tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>) {
+    match tx {
+        Some(sender) => sender.closed().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The page whose links are being discovered, as link discovery sees it.
 pub(super) struct ParentPage<'a> {
     pub(super) url: &'a str,
