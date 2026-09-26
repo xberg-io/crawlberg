@@ -10,6 +10,7 @@ mod json_ld;
 mod link_targets;
 mod links;
 mod metadata;
+mod raw_text;
 pub(crate) mod selectors;
 
 use std::borrow::Cow;
@@ -114,3 +115,4 @@ pub(crate) use links::extract_links;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::detect_meta_refresh;
 pub(crate) use metadata::{detect_nofollow, detect_noindex};
+pub(crate) use raw_text::mask_raw_text_markup;

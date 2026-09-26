@@ -9,7 +9,7 @@ use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, fetch_robots_outcome};
 use crate::html::{
     detect_charset, detect_nofollow, detect_noindex, extract_page_data, is_binary_content_type, is_binary_url,
-    is_html_content, is_pdf_content,
+    is_html_content, is_pdf_content, mask_raw_text_markup,
 };
 use crate::http::build_client;
 use crate::robots::is_path_allowed;
@@ -59,13 +59,13 @@ pub(crate) async fn scrape_from_crawl_response(
     // ~keep probes and asset discovery all read the same `VDom`, and its type is not
     // ~keep nameable outside `crate::html` on wasm, so this stays an inline block.
     let (extraction, asset_refs, page_robots) = {
-        let doc = tl::parse(&decoded.body, ParserOptions::default())
+        // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
+        // ~keep raw-text elements as markup, which both invents tags and hides real ones.
+        let parsed_html = mask_raw_text_markup(&decoded.body);
+        let doc = tl::parse(&parsed_html, ParserOptions::default())
             .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-        let page_robots = RobotsDirectives {
-            noindex: header_robots.noindex || detect_noindex(&doc),
-            nofollow: header_robots.nofollow || detect_nofollow(&doc),
-        };
-        let extraction = extract_page_data(&doc, &decoded.body, &parsed_url, decoded.is_html, true);
+        let page_robots = merge_page_robots(&doc, &header_robots);
+        let extraction = extract_page_data(&doc, &parsed_html, &parsed_url, decoded.is_html, true);
         let asset_refs = discover_page_assets(&doc, &parsed_url, decoded.is_html, config);
         (extraction, asset_refs, page_robots)
     };
@@ -108,6 +108,14 @@ pub(crate) async fn scrape_from_crawl_response(
         downloaded_document,
         browser: None,
     })
+}
+
+/// The page's own robots directives, merged with whatever the response headers declared.
+fn merge_page_robots(doc: &tl::VDom<'_>, header_robots: &RobotsDirectives) -> RobotsDirectives {
+    RobotsDirectives {
+        noindex: header_robots.noindex || detect_noindex(doc),
+        nofollow: header_robots.nofollow || detect_nofollow(doc),
+    }
 }
 
 /// What the site's robots.txt says about this URL, as reported (not enforced) by

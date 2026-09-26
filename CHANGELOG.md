@@ -32,6 +32,20 @@ All notable changes to crawlberg are documented here.
   now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
   was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
 
+- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
+  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
+  element handling and parses the contents of these elements as markup, so
+  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+  `<base href>` inside title text changed the base for the whole page. In the other direction a
+  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
+  every tag up to the next `-->`: real links after the script were missing from the links list
+  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
+  masked in the source before it is parsed — the point at which a browser stops reading markup —
+  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
+  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
+  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
+  `math` are left alone, because a browser parses those as markup too. (#124, #125)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The

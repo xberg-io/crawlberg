@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::html::{
     HtmlExtraction, detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content,
-    is_pdf_content, is_pdf_url,
+    is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
 use crate::types::*;
 use regex::Regex;
@@ -213,8 +213,9 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
-    let extraction = if let Ok(doc) = tl::parse(&body, ParserOptions::default()) {
-        extract_page_data(&doc, &body, &parsed_url, is_html && !is_binary && !is_pdf, false)
+    let parsed_html = mask_raw_text_markup(&body);
+    let extraction = if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
+        extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false)
     } else {
         HtmlExtraction {
             metadata: PageMetadata::default(),
