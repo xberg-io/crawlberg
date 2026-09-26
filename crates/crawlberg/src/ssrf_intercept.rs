@@ -6,8 +6,8 @@
 //! the main frame follows, so `max_redirects` can bound them.
 //!
 //! ~keep A top-level module rather than nested under `browser`, so both chromiumoxide
-//! ~keep navigation call sites can reach it: `browser::navigation::page_fetch` (scrape/crawl)
-//! ~keep and `interact::chromiumoxide::navigate_and_wait` (xberg-io/crawlberg#74). `browser.rs`
+//! ~keep call sites can reach it: `browser::navigation::page_fetch` (scrape/crawl)
+//! ~keep and `interact::chromiumoxide::run_with_browser` (xberg-io/crawlberg#74). `browser.rs`
 //! ~keep is gated on the wider `browser` feature (it pulls in `browser_profile`/
 //! ~keep `browser_session_pool`, which are `browser`-gated too), but `interact/chromiumoxide.rs`
 //! ~keep is gated on the narrower `browser-chromiumoxide`, so nesting this under `browser`
@@ -20,10 +20,11 @@ use std::sync::{Arc, Mutex};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, RequestPattern, RequestStage,
+    FailRequestParams, RequestId, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::FrameId;
+use chromiumoxide::listeners::EventStream;
 use tokio_stream::StreamExt;
 
 use crate::error::CrawlError;
@@ -34,6 +35,10 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 /// request against the SSRF policy. Held alive across a navigation; consuming it
 /// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
 /// and reports what it saw.
+///
+/// ~keep Page-level interception serves `browser::navigation` alone, which needs the `browser`
+/// ~keep feature; `interact` intercepts on the browser session (see [`BrowserIntercept`]).
+#[cfg(feature = "browser")]
 pub(crate) struct SsrfInterceptGuard {
     page: chromiumoxide::Page,
     listener: tokio::task::JoinHandle<()>,
@@ -69,16 +74,113 @@ pub(crate) struct StoppedResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
 }
 
+#[cfg(feature = "browser")]
 impl SsrfInterceptGuard {
     /// Disable interception, stop the listener, and return what it observed.
     pub(crate) async fn finish(self) -> InterceptOutcome {
         let _ = self.page.execute(FetchDisableParams::default()).await;
         self.listener.abort();
-        match self.state.lock() {
-            Ok(mut state) => std::mem::take(&mut *state),
-            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        take_outcome(&self.state)
+    }
+}
+
+/// Browser-wide interception: the SSRF check and the redirect counting of
+/// [`start_ssrf_interception`], applied to every request of every target in the browser,
+/// so popups, new tabs, out-of-process frames and workers are checked too.
+///
+/// ~keep CDP Fetch interception is per session. Enabled on a page's session it pauses only
+/// ~keep that page's requests, and chromiumoxide attaches a popup's target without pausing it,
+/// ~keep so the popup's first request would leave before a page-level interception could be
+/// ~keep enabled on it. Enabled on the browser session, it pauses every target's requests.
+/// ~keep On a browser reached through `browser.endpoint`, that includes pages other clients
+/// ~keep opened, for as long as the session runs.
+pub(crate) struct BrowserIntercept {
+    state: Arc<Mutex<InterceptOutcome>>,
+}
+
+impl BrowserIntercept {
+    /// Return what the interception observed so far, and keep it running. Redirects are not
+    /// counted again: once the main frame has its first document, later navigations are free
+    /// of the redirect limit.
+    pub(crate) fn take_outcome(&self) -> InterceptOutcome {
+        take_outcome(&self.state)
+    }
+
+    /// Disable interception on the browser session. Call it once the listener is no longer
+    /// polled, since a request paused after that point would never be answered.
+    pub(crate) async fn finish(self, browser: &chromiumoxide::Browser) {
+        let _ = browser.execute(FetchDisableParams::default()).await;
+    }
+}
+
+fn take_outcome(state: &Mutex<InterceptOutcome>) -> InterceptOutcome {
+    let mut state = match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let first_document_arrived = state.first_document_arrived;
+    let outcome = std::mem::take(&mut *state);
+    state.first_document_arrived = first_document_arrived;
+    outcome
+}
+
+/// The CDP session a paused request is answered on: the one it was paused on.
+enum Session<'a> {
+    #[cfg(feature = "browser")]
+    Page(chromiumoxide::Page),
+    Browser(&'a chromiumoxide::Browser),
+}
+
+impl Session<'_> {
+    async fn answer(&self, request_id: RequestId, allow: bool) {
+        if allow {
+            self.execute(ContinueRequestParams::new(request_id)).await;
+        } else {
+            self.execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
+                .await;
         }
     }
+
+    async fn execute<C: chromiumoxide::types::Command>(&self, command: C) {
+        let _ = match self {
+            #[cfg(feature = "browser")]
+            Session::Page(page) => page.execute(command).await.map(drop),
+            Session::Browser(browser) => browser.execute(command).await.map(drop),
+        };
+    }
+}
+
+/// Enable browser-wide interception and return it with the listener that answers the paused
+/// requests. The caller polls the listener for as long as the check must hold, and disables
+/// the Fetch domain on the browser session after it.
+///
+/// `page` names the main frame whose redirects are counted against `redirect_limit`.
+pub(crate) async fn start_browser_interception<'a>(
+    browser: &'a chromiumoxide::Browser,
+    page: &chromiumoxide::Page,
+    policy: &SsrfPolicy,
+    redirect_limit: usize,
+) -> Result<(BrowserIntercept, impl Future<Output = ()> + 'a), CrawlError> {
+    let events = browser
+        .event_listener::<EventRequestPaused>()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
+    let main_frame = page.mainframe().await.ok().flatten();
+    browser
+        .execute(fetch_enable_params())
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
+
+    let state = Arc::new(Mutex::new(InterceptOutcome::default()));
+    let listener = answer_paused_requests(
+        events,
+        Session::Browser(browser),
+        policy.clone(),
+        main_frame,
+        redirect_limit,
+        Arc::clone(&state),
+    );
+    Ok((BrowserIntercept { state }, listener))
 }
 
 /// Decide whether an intercepted request URL is permitted by the SSRF policy.
@@ -101,63 +203,32 @@ async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), Stri
 /// follows are counted, and the redirect that would exceed `redirect_limit` is
 /// failed before its target is requested. A response Chrome does
 /// not commit is recorded and failed the same way, so the navigation ends at once.
+#[cfg(feature = "browser")]
 pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
     redirect_limit: usize,
 ) -> Result<SsrfInterceptGuard, CrawlError> {
-    let mut events = page
+    let events = page
         .event_listener::<EventRequestPaused>()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
 
     let main_frame = page.mainframe().await.ok().flatten();
 
-    page.execute(FetchEnableParams {
-        patterns: Some(intercept_patterns()),
-        handle_auth_requests: None,
-    })
-    .await
-    .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
+    page.execute(fetch_enable_params())
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
 
     let state = Arc::new(Mutex::new(InterceptOutcome::default()));
-    let listener_page = page.clone();
-    let listener_policy = policy.clone();
-    let listener_state = Arc::clone(&state);
-
-    let listener = tokio::spawn(async move {
-        while let Some(event) = events.next().await {
-            let request_id = event.request_id.clone();
-
-            if is_response_stage(&event) {
-                if main_frame_verdict(&event, main_frame.as_ref(), redirect_limit, &listener_state) {
-                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
-                } else {
-                    let _ = listener_page
-                        .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
-                        .await;
-                }
-                continue;
-            }
-
-            let request_url = event.request.url.clone();
-            match ssrf_verdict(&request_url, &listener_policy).await {
-                Ok(()) => {
-                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
-                }
-                Err(reason) => {
-                    if let Ok(mut state) = listener_state.lock()
-                        && state.blocked.is_none()
-                    {
-                        state.blocked = Some((request_url, reason));
-                    }
-                    let _ = listener_page
-                        .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
-                        .await;
-                }
-            }
-        }
-    });
+    let listener = tokio::spawn(answer_paused_requests(
+        events,
+        Session::Page(page.clone()),
+        policy.clone(),
+        main_frame,
+        redirect_limit,
+        Arc::clone(&state),
+    ));
 
     Ok(SsrfInterceptGuard {
         page: page.clone(),
@@ -166,20 +237,56 @@ pub(crate) async fn start_ssrf_interception(
     })
 }
 
+/// Answer every paused request on `session` until the event stream ends: a request the SSRF
+/// policy refuses is failed and the first one recorded; a main-frame document response is
+/// judged by [`main_frame_verdict`].
+async fn answer_paused_requests(
+    mut events: EventStream<EventRequestPaused>,
+    session: Session<'_>,
+    policy: SsrfPolicy,
+    main_frame: Option<FrameId>,
+    redirect_limit: usize,
+    state: Arc<Mutex<InterceptOutcome>>,
+) {
+    while let Some(event) = events.next().await {
+        let request_id = event.request_id.clone();
+
+        if is_response_stage(&event) {
+            let allow = main_frame_verdict(&event, main_frame.as_ref(), redirect_limit, &state);
+            session.answer(request_id, allow).await;
+            continue;
+        }
+
+        let request_url = event.request.url.clone();
+        let verdict = ssrf_verdict(&request_url, &policy).await;
+        let allow = verdict.is_ok();
+        if let Err(reason) = verdict
+            && let Ok(mut state) = state.lock()
+            && state.blocked.is_none()
+        {
+            state.blocked = Some((request_url, reason));
+        }
+        session.answer(request_id, allow).await;
+    }
+}
+
 /// Every request at the request stage, plus document responses so redirects can be counted.
-fn intercept_patterns() -> Vec<RequestPattern> {
-    vec![
-        RequestPattern {
-            url_pattern: Some("*".to_owned()),
-            resource_type: None,
-            request_stage: Some(RequestStage::Request),
-        },
-        RequestPattern {
-            url_pattern: Some("*".to_owned()),
-            resource_type: Some(ResourceType::Document),
-            request_stage: Some(RequestStage::Response),
-        },
-    ]
+fn fetch_enable_params() -> FetchEnableParams {
+    FetchEnableParams {
+        patterns: Some(vec![
+            RequestPattern {
+                url_pattern: Some("*".to_owned()),
+                resource_type: None,
+                request_stage: Some(RequestStage::Request),
+            },
+            RequestPattern {
+                url_pattern: Some("*".to_owned()),
+                resource_type: Some(ResourceType::Document),
+                request_stage: Some(RequestStage::Response),
+            },
+        ]),
+        handle_auth_requests: None,
+    }
 }
 
 /// CDP marks a paused response by setting its status or error reason.

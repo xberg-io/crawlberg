@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{StoppedResponse, start_ssrf_interception};
+use crate::ssrf_intercept::{BrowserIntercept, StoppedResponse, start_browser_interception};
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -103,43 +103,64 @@ async fn run_with_browser(
 
     let result = async {
         prepare_page(&page, config).await?;
-        if let Some(stop) = navigate_and_wait(&page, url, config).await? {
-            return Ok(no_document_result(&stop, actions));
-        }
-        if let Some(ref script) = config.browser.eval_script {
-            evaluate_json(&page, script).await.map_err(|e| {
-                CrawlError::browser_error(format!(
-                    "post-navigation eval_script failed before interaction actions: {e}"
-                ))
-            })?;
-        }
-
-        let (action_results, screenshot) = run_actions(&page, actions).await;
-
-        let final_html = page
-            .content()
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-        let final_url = evaluate_json(&page, "location.href")
-            .await
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| url.to_owned());
-
-        let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
-
-        Ok(InteractionResult {
-            action_results,
-            final_html,
-            final_url,
-            screenshot,
-            screenshot_base64,
-        })
+        // ~keep The SSRF check holds for the whole session, not just the first navigation: the
+        // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
+        // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
+        let (intercept, listener) =
+            start_browser_interception(browser, &page, &config.ssrf, config.max_redirects).await?;
+        let session = tokio::select! {
+            session = run_session(&page, &intercept, url, actions, config) => session,
+            () = listener => Err(CrawlError::browser_error("request interception stopped before the session ended")),
+        };
+        intercept.finish(browser).await;
+        session
     }
     .await;
 
     let _ = page.close().await;
     result
+}
+
+/// Navigate to `url`, then run the actions and read the final page.
+async fn run_session(
+    page: &chromiumoxide::Page,
+    intercept: &BrowserIntercept,
+    url: &str,
+    actions: &[PageAction],
+    config: &CrawlConfig,
+) -> Result<InteractionResult, CrawlError> {
+    if let Some(stop) = navigate_and_wait(page, intercept, url, config).await? {
+        return Ok(no_document_result(&stop, actions));
+    }
+    if let Some(ref script) = config.browser.eval_script {
+        evaluate_json(page, script).await.map_err(|e| {
+            CrawlError::browser_error(format!(
+                "post-navigation eval_script failed before interaction actions: {e}"
+            ))
+        })?;
+    }
+
+    let (action_results, screenshot) = run_actions(page, actions).await;
+
+    let final_html = page
+        .content()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
+    let final_url = evaluate_json(page, "location.href")
+        .await
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned());
+
+    let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
+
+    Ok(InteractionResult {
+        action_results,
+        final_html,
+        final_url,
+        screenshot,
+        screenshot_base64,
+    })
 }
 
 /// The result of a navigation that ended on a response without a document: the URL that
@@ -211,17 +232,16 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 
 /// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
 /// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
-// ~keep Mirrors `browser::navigation::page_fetch`'s interception shape (xberg-io/crawlberg#74):
-// ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
-// ~keep redirects/client-side navigations internally, so per-request CDP interception is still
-// ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
+// ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows
+// ~keep redirects/client-side navigations internally, so `intercept` checks every request the
+// ~keep navigation makes, the same way the scrape/crawl path does (xberg-io/crawlberg#74).
 async fn navigate_and_wait(
     page: &chromiumoxide::Page,
+    intercept: &BrowserIntercept,
     url: &str,
     config: &CrawlConfig,
 ) -> Result<Option<StoppedResponse>, CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -234,7 +254,7 @@ async fn navigate_and_wait(
     })
     .await;
 
-    let intercepted = interceptor.finish().await;
+    let intercepted = intercept.take_outcome();
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {

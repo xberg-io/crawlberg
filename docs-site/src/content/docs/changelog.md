@@ -32,6 +32,12 @@ title: "Changelog"
   the URL that answered, empty HTML, and a failed result for each action that names the status.
   The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
   (#116, #140)
+- **`interact` actions reached addresses the SSRF policy refuses.** The request check stopped
+  when the first navigation finished, so a click, a form submission, a script `fetch()` or a popup
+  the actions started reached private and loopback addresses. The check now covers every request
+  of the whole session, in the page, its frames and workers, and in any popup or new tab. Only
+  the redirect limit stays with the first navigation. This applies to the Chromiumoxide backend.
+  (#153)
 
 ## [1.8.0] - 2026-09-25
 
