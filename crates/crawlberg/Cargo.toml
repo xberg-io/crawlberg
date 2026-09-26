@@ -70,6 +70,7 @@ crawlberg-browser = { workspace = true, optional = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
+fancy-regex = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }

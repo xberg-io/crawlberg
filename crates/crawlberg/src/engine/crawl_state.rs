@@ -7,12 +7,12 @@ use std::time::Instant;
 use tl::ParserOptions;
 use url::Url;
 
+use crate::helpers::PathPattern;
 use crate::html::{
     HtmlExtraction, detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content,
     is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
 use crate::types::*;
-use regex::Regex;
 
 use crate::helpers::RobotsOutcome;
 use crate::scrape::RobotsDirectives;
@@ -33,8 +33,8 @@ pub(super) struct LoopContext<'a> {
     /// ~keep `Arc` rather than a borrowed slice: `fetch_and_extract` is spawned into a
     /// ~keep `JoinSet` and must own a redirect-hop policy of its own (see `FetchResult`'s
     /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of the exclude list.
-    pub(super) exclude_regexes: Arc<[Regex]>,
-    pub(super) include_regexes: &'a [Regex],
+    pub(super) exclude_regexes: Arc<[PathPattern]>,
+    pub(super) include_regexes: &'a [PathPattern],
     pub(super) robots: &'a RobotsOutcome,
     pub(super) base_host: &'a str,
     pub(super) base_host_suffix: &'a str,

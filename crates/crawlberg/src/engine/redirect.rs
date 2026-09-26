@@ -3,14 +3,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use regex::Regex;
+use crate::helpers::PathPattern;
 use tl::ParserOptions;
 use url::Url;
 
 use super::CrawlEngine;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
-use crate::helpers::RobotsOutcome;
+use crate::helpers::{PathPatternTarget, RobotsOutcome};
 use crate::helpers::{default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive};
 use crate::html::is_html_content;
 use crate::html::{detect_meta_refresh, mask_raw_text_markup};
@@ -105,14 +105,14 @@ impl PolicyRefusal {
 pub(crate) struct RedirectPolicy<'a> {
     pub(super) engine: &'a CrawlEngine,
     pub(super) client: &'a reqwest::Client,
-    pub(super) exclude_regexes: &'a [Regex],
+    pub(super) exclude_regexes: &'a [PathPattern],
     /// ~keep Applied only to genuine redirect targets (`is_redirect_hop`), never to the
     /// ~keep chain's own starting URL: that URL already passed whatever include check applied
     /// ~keep to it (none, if it is the seed at depth 0) before this policy ever saw it, exactly
     /// ~keep as `claim_redirect_target` only dedups a redirect target and not the chain's seed.
-    pub(super) include_regexes: &'a [Regex],
-    /// Whether `include_paths`/`exclude_paths` match `path?query` instead of just `path`.
-    pub(super) match_query: bool,
+    pub(super) include_regexes: &'a [PathPattern],
+    /// What `include_paths`/`exclude_paths` match against: the path, `path?query`, or the full URL.
+    pub(super) target: PathPatternTarget,
     /// What robots.txt established per origin, so one origin's file is read once per crawl.
     pub(super) outcomes: HashMap<RobotsCacheKey, Arc<RobotsOutcome>>,
     /// The origin of the last URL admitted, whose rules the crawl loop keeps applying.
@@ -125,15 +125,15 @@ impl<'a> RedirectPolicy<'a> {
     pub(super) fn new(
         engine: &'a CrawlEngine,
         client: &'a reqwest::Client,
-        exclude_regexes: &'a [Regex],
-        include_regexes: &'a [Regex],
+        exclude_regexes: &'a [PathPattern],
+        include_regexes: &'a [PathPattern],
     ) -> Self {
         Self {
             engine,
             client,
             exclude_regexes,
             include_regexes,
-            match_query: engine.config.path_patterns_match_query,
+            target: PathPatternTarget::from_config(&engine.config),
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
@@ -234,7 +234,7 @@ impl<'a> RedirectPolicy<'a> {
             self.exclude_regexes,
             self.include_regexes,
             is_redirect_hop,
-            self.match_query,
+            self.target,
             &mut self.urls_filtered,
         );
         (!admitted).then(|| PolicyRefusal::Filtered { url: url.to_owned() })

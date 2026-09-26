@@ -1194,6 +1194,7 @@ dependencies = [
  "dashmap 6.2.1",
  "dirs",
  "encoding_rs 0.8.42",
+ "fancy-regex",
  "flate2",
  "futures",
  "getrandom 0.3.4",
@@ -2169,6 +2170,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

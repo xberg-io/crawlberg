@@ -87,6 +87,16 @@ title: "Changelog"
   unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
   `math` are left alone, because a browser parses those as markup too. (#124, #125)
 
+- **One look-around pattern refused the whole configuration.** `include_paths` and `exclude_paths`
+  compiled on an engine without look-around or backreferences, so a single `(?!...)` pattern made
+  `create_engine` reject every pattern in the list. Both lists now compile with `fancy-regex`: a
+  plain pattern keeps its old meaning, and look-around and backreferences work. A pattern that
+  `fancy-regex` refuses, such as an inline `(?-u)` flag, compiles with the previous engine, so
+  every pattern that worked before still works. A pattern that still fails to compile refuses the
+  configuration and names the pattern. A pattern that hits the
+  backtracking limit on a URL fails closed: an exclude pattern counts as a match, an include
+  pattern as no match, and a warning names the pattern. (#78)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The
@@ -171,6 +181,11 @@ title: "Changelog"
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+
+- `CrawlConfig.path_patterns_match_url` matches `include_paths`/`exclude_paths` against the full
+  URL, `scheme://host[:port]/path?query`, so a pattern can scope by host. The matched text leaves
+  out any userinfo and the fragment, and the host is in punycode. It defaults to `false` and takes
+  precedence over `path_patterns_match_query`. (#78)
 
 ### Internal
 
