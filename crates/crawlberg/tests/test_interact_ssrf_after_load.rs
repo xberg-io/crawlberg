@@ -272,3 +272,75 @@ async fn interact_refuses_requests_a_popup_sends_while_the_session_ends() {
     );
     assert_nothing_leaks_at_the_end(test_name, "<p>start</p>", vec![execute_js(&script)], &denied).await;
 }
+
+/// Assert the action at `index` failed with the SSRF policy error that names the denied URL.
+fn assert_action_refused(test_name: &str, result: &InteractionResult, index: usize) {
+    let action = &result.action_results[index];
+    let error = action.error.as_deref().unwrap_or_default();
+    assert!(
+        !action.success && error.contains("ssrf_policy_violation") && error.contains("/secret"),
+        "{test_name}: action {index} must fail with the policy error, got {:?}",
+        result.action_results
+    );
+}
+
+#[tokio::test]
+async fn interact_fails_a_click_whose_navigation_was_refused() {
+    let test_name = "interact_fails_a_click_whose_navigation_was_refused";
+    let denied = denied_server().await;
+    let (_site, seed) = seed_site(&format!(r#"<a id="go" href="{}">go</a>"#, denied_url(&denied))).await;
+    let Some(result) = run(test_name, &seed, vec![click("#go")]).await else {
+        return;
+    };
+    assert_action_refused(test_name, &result, 0);
+    assert!(
+        result.action_results[1].success,
+        "{test_name}: the wait after the click sent nothing refused: {:?}",
+        result.action_results
+    );
+}
+
+#[tokio::test]
+async fn interact_fails_a_script_whose_fetch_was_refused() {
+    let test_name = "interact_fails_a_script_whose_fetch_was_refused";
+    let denied = denied_server().await;
+    let (_site, seed) = seed_site("<p>start</p>").await;
+    let script = format!(
+        "fetch({:?}, {{ mode: 'no-cors' }}).catch(() => {{}}); return true",
+        denied_url(&denied)
+    );
+    let Some(result) = run(test_name, &seed, vec![execute_js(&script)]).await else {
+        return;
+    };
+    assert_action_refused(test_name, &result, 0);
+}
+
+/// A request refused during the extra wait, after the navigation settled and before the first
+/// action, fails no action.
+#[tokio::test]
+async fn interact_fails_no_action_for_a_request_refused_before_the_actions() {
+    let test_name = "interact_fails_no_action_for_a_request_refused_before_the_actions";
+    let denied = denied_server().await;
+    let body = format!(
+        "<p>start</p><script>setTimeout(() => fetch({:?}, {{ mode: 'no-cors' }}).catch(() => {{}}), 700);</script>",
+        denied_url(&denied)
+    );
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1000));
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = match interact(&engine, &seed, vec![execute_js("return 1")]).await {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: interact must succeed: {error:?}"),
+    };
+    assert!(
+        result.action_results.iter().all(|action| action.success),
+        "{test_name}: {:?}",
+        result.action_results
+    );
+    assert_refused(test_name, &denied, &result).await;
+}

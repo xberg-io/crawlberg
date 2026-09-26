@@ -40,13 +40,27 @@ pub(super) async fn run(
 /// Run every action in order, collecting one [`ActionResult`] each and the last screenshot taken.
 ///
 /// A failing action is recorded and the run continues, so the caller always gets one result per
-/// requested action.
-async fn run_actions(page: &chromiumoxide::Page, actions: &[PageAction]) -> (Vec<ActionResult>, Option<Vec<u8>>) {
+/// requested action. An action during which the SSRF check refused a request fails with the
+/// policy error.
+async fn run_actions(
+    page: &chromiumoxide::Page,
+    intercept: &BrowserIntercept,
+    actions: &[PageAction],
+) -> (Vec<ActionResult>, Option<Vec<u8>>) {
     let mut action_results = Vec::with_capacity(actions.len());
     let mut screenshot = None;
+    // ~keep A request refused before the first action, during the extra wait or the
+    // ~keep eval_script, belongs to no action.
+    let _ = intercept.take_outcome();
 
     for (index, action) in actions.iter().enumerate() {
-        match run_action_with_timeout(page, action, index).await {
+        let outcome = run_action_with_timeout(page, action, index).await;
+        intercept.settle().await;
+        let outcome = match intercept.take_outcome().blocked {
+            Some((url, reason)) => Err(CrawlError::ssrf_violation(url, reason)),
+            None => outcome,
+        };
+        match outcome {
             Ok(action_data) => {
                 if let Some(bytes) = action_data.screenshot {
                     screenshot = Some(bytes);
@@ -215,7 +229,7 @@ async fn run_session(
         })?;
     }
 
-    let (action_results, screenshot) = run_actions(page, actions).await;
+    let (action_results, screenshot) = run_actions(page, intercept, actions).await;
 
     let final_html = page
         .content()

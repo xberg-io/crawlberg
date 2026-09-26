@@ -38,6 +38,9 @@ All notable changes to crawlberg are documented here.
   of the whole session, in the page, its frames and workers, and in any popup or new tab. Only
   the redirect limit stays with the first navigation. This applies to the Chromiumoxide backend.
   (#153)
+- **An `interact` action whose request the SSRF check refused was reported as successful.** The
+  action now fails with the SSRF policy error that names the refused URL, as it does on the native
+  backend. This applies to the Chromiumoxide backend. (#167)
 
 ## [1.8.0] - 2026-09-25
 

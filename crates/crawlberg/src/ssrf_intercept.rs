@@ -17,6 +17,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
@@ -58,6 +59,8 @@ pub(crate) struct InterceptOutcome {
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
     first_document_arrived: bool,
+    /// When the check last paused a request.
+    last_request: Option<Instant>,
 }
 
 /// A main-frame response the navigation ends on without a document, reported as is.
@@ -104,6 +107,25 @@ impl BrowserIntercept {
     /// of the redirect limit.
     pub(crate) fn take_outcome(&self) -> InterceptOutcome {
         take_outcome(&self.state)
+    }
+
+    /// Wait until the check has paused no request for a short quiet period, so the requests an
+    /// action just started are judged before its outcome is read. Bounded by a limit, for a
+    /// page that sends requests without pause.
+    pub(crate) async fn settle(&self) {
+        const QUIET: Duration = Duration::from_millis(100);
+        const LIMIT: Duration = Duration::from_secs(1);
+        let started = Instant::now();
+        loop {
+            tokio::time::sleep(QUIET).await;
+            let last_request = match self.state.lock() {
+                Ok(state) => state.last_request,
+                Err(poisoned) => poisoned.into_inner().last_request,
+            };
+            if last_request.is_none_or(|at| at.elapsed() >= QUIET) || started.elapsed() >= LIMIT {
+                return;
+            }
+        }
     }
 
     /// Disable interception on the browser session. Call it once the listener is no longer
@@ -260,11 +282,13 @@ async fn answer_paused_requests(
         let request_url = event.request.url.clone();
         let verdict = ssrf_verdict(&request_url, &policy).await;
         let allow = verdict.is_ok();
-        if let Err(reason) = verdict
-            && let Ok(mut state) = state.lock()
-            && state.blocked.is_none()
-        {
-            state.blocked = Some((request_url, reason));
+        if let Ok(mut state) = state.lock() {
+            state.last_request = Some(Instant::now());
+            if let Err(reason) = verdict
+                && state.blocked.is_none()
+            {
+                state.blocked = Some((request_url, reason));
+            }
         }
         session.answer(request_id, allow).await;
     }
