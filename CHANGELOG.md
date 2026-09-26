@@ -13,6 +13,10 @@ All notable changes to crawlberg are documented here.
   fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
   requests start after the stream is closed; a later change to the binding generator fixes that.
   (#77)
+- **A dropped batch stream still reported every seed it had not started.** The batch went on
+  starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
+  and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
+  is dropped, and a seed it never started reports nothing. (#91)
 
 ## [1.8.0] - 2026-09-25
 
