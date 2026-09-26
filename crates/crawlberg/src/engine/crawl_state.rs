@@ -15,6 +15,7 @@ use crate::types::*;
 use regex::Regex;
 
 use crate::helpers::RobotsOutcome;
+use crate::scrape::RobotsDirectives;
 use crate::traits::*;
 
 /// Fallback URL used when a fetched URL fails to parse during extraction.
@@ -76,6 +77,8 @@ pub(super) struct FetchResult {
     pub(super) body_bytes: Vec<u8>,
     pub(super) headers: HashMap<String, Vec<String>>,
     pub(super) extraction: HtmlExtraction,
+    /// The page's own `noindex` / `nofollow`, from its `X-Robots-Tag` headers and meta tags.
+    pub(super) robots: RobotsDirectives,
     pub(super) is_binary: bool,
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
@@ -110,6 +113,7 @@ pub(super) struct PageExtraction {
     pub(super) body: String,
     pub(super) body_bytes: Vec<u8>,
     pub(super) extraction: HtmlExtraction,
+    pub(super) robots: RobotsDirectives,
     pub(super) is_binary: bool,
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
@@ -198,6 +202,7 @@ impl CrawlState {
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
+    x_robots_tag: Option<&str>,
     body: String,
     body_bytes: Vec<u8>,
 ) -> PageExtraction {
@@ -213,23 +218,31 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
+    let header_robots = RobotsDirectives::from_header(x_robots_tag);
+    // ~keep Parse the masked source, never `body`: `tl` reads the contents of raw-text elements
+    // ~keep as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&body);
-    let extraction = if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
-        extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false)
+    let (extraction, robots) = if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
+        (
+            extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false),
+            header_robots.with_meta_tags(&doc),
+        )
     } else {
-        HtmlExtraction {
+        let extraction = HtmlExtraction {
             metadata: PageMetadata::default(),
             links: Vec::new(),
             images: Vec::new(),
             feeds: Vec::new(),
             json_ld: Vec::new(),
-        }
+        };
+        (extraction, header_robots)
     };
 
     PageExtraction {
         body,
         body_bytes,
         extraction,
+        robots,
         is_binary,
         is_pdf,
         detected_charset,

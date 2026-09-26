@@ -92,7 +92,12 @@ pub struct CrawlConfig {
     pub bm25_query: Option<String>,
     /// Minimum BM25 score a page must reach to be kept. Defaults to `0.0`.
     pub bm25_threshold: Option<f64>,
-    /// Whether to respect robots.txt directives.
+    /// Whether to respect robots.txt directives. A crawl that respects them also honours
+    /// the page's own robots instructions: it does not follow the links of a page marked
+    /// `nofollow` by its robots meta tag or an `X-Robots-Tag` header. A link marked
+    /// `rel="nofollow"` is a hint, not a robots directive, and is still followed. A `noindex`
+    /// page is still crawled and its links followed; the page result marks it with
+    /// `noindex_detected`.
     pub respect_robots_txt: bool,
     /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
     /// are surfaced as `ScrapeResult` records with the matching `status_code` rather

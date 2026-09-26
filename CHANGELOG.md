@@ -4,6 +4,29 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
+  `nofollow_detected` are always serialised, and `CrawlPageResult` carries
+  `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
+  every older crawlberg** — even when both values are `false`. The break is one-directional: an
+  older result still loads here, because both fields default to `false`.
+
+  What this affects:
+
+  - A cross-version pipeline that serialises a crawl result on one crawlberg and reads it on
+    another. Upgrade the readers before, or with, the writers.
+  - A persisted `CrawlCache`: entries written by this version cannot be read back by an older
+    build, so a rollback must treat the cache as cold rather than reuse it.
+  - Any binding that round-trips a page result through JSON across the FFI boundary
+    (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
+    versions.
+
+- **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
+  constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
+  Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
+  and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
+
 ### Fixed
 
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
@@ -90,6 +113,16 @@ All notable changes to crawlberg are documented here.
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
+  now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
+  `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
+  it is a hint and not a robots directive. A `noindex` page is still crawled and its links
+  followed. Each page result now reports both directives in `noindex_detected` and
+  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
+  **Upgrading** above for the wire-format consequence of the two new fields. (#135)
+- **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
+  `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
+  Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
 
 ### Added
 

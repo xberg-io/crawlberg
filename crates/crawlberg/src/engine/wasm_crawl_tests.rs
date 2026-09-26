@@ -669,3 +669,80 @@ async fn sequential_crawl_rejects_a_cross_host_document_link_when_stay_on_domain
 
     drop(mock);
 }
+
+/// With robots respected, a `nofollow` page's links are never requested, a `rel="nofollow"`
+/// link is still followed, and a noindex page is still crawled and marked.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_honours_nofollow_when_respecting_robots() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/meta">meta</a><a href="/nf" rel="nofollow">nf</a></body></html>"#,
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/meta",
+        r#"<html><head><meta name="robots" content="noindex, nofollow"></head>
+<body><a href="/child">child</a></body></html>"#,
+    )
+    .await;
+    mount_html_expecting(&mock, "/nf", "<html><body>nf</body></html>", 1).await;
+    mount_html_expecting(&mock, "/child", "<html><body>child</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(50),
+        respect_robots_txt: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/meta".to_owned(), "/nf".to_owned()]
+    );
+    assert!(result.pages[1].noindex_detected && result.pages[1].nofollow_detected);
+    drop(mock);
+}
+
+/// With robots not respected, the same links are all followed.
+///
+/// ~keep A guard, not evidence the fix works: `CrawlConfig::default()` leaves
+/// ~keep `respect_robots_txt` false, so the suppression conjunct is `!(false && _)` and this
+/// ~keep passes with the production change reverted. It exists to catch a mis-implementation that
+/// ~keep applied nofollow unconditionally on the sequential loop, which would silently narrow
+/// ~keep every default-configured crawl. Its assertions are the two `.expect(1)` mounts, verified
+/// ~keep on `drop(mock)`. Keep it; do not read it as coverage of the fix.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta name="robots" content="nofollow"></head>
+<body><a href="/child">child</a><a href="/nf" rel="nofollow">nf</a></body></html>"#,
+    )
+    .await;
+    mount_html_expecting(&mock, "/child", "<html><body>child</body></html>", 1).await;
+    mount_html_expecting(&mock, "/nf", "<html><body>nf</body></html>", 1).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    drop(mock);
+}

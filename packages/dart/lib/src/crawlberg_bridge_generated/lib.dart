@@ -1011,7 +1011,12 @@ class CrawlConfig {
   /// Minimum BM25 score a page must reach to be kept. Defaults to `0.0`.
   final double? bm25Threshold;
 
-  /// Whether to respect robots.txt directives.
+  /// Whether to respect robots.txt directives. A crawl that respects them also honours
+  /// the page's own robots instructions: it does not follow the links of a page marked
+  /// `nofollow` by its robots meta tag or an `X-Robots-Tag` header. A link marked
+  /// `rel="nofollow"` is a hint, not a robots directive, and is still followed. A `noindex`
+  /// page is still crawled and its links followed; the page result marks it with
+  /// `noindex_detected`.
   final bool respectRobotsTxt;
 
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
@@ -1605,6 +1610,14 @@ class CrawlPageResult {
   /// Redirect hops taken to reach `final_url` from `url`.
   final PlatformInt64 redirectCount;
 
+  /// Whether the page asked not to be indexed, by its robots meta tag or `X-Robots-Tag`
+  /// header. The page is still crawled and its links still followed.
+  final bool noindexDetected;
+
+  /// Whether the page asked that its links not be followed, by its robots meta tag or
+  /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
+  final bool nofollowDetected;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1629,6 +1642,8 @@ class CrawlPageResult {
     required this.browserUsed,
     required this.finalUrl,
     required this.redirectCount,
+    required this.noindexDetected,
+    required this.nofollowDetected,
   });
 
   @override
@@ -1655,7 +1670,9 @@ class CrawlPageResult {
       downloadedDocument.hashCode ^
       browserUsed.hashCode ^
       finalUrl.hashCode ^
-      redirectCount.hashCode;
+      redirectCount.hashCode ^
+      noindexDetected.hashCode ^
+      nofollowDetected.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1684,7 +1701,9 @@ class CrawlPageResult {
           downloadedDocument == other.downloadedDocument &&
           browserUsed == other.browserUsed &&
           finalUrl == other.finalUrl &&
-          redirectCount == other.redirectCount;
+          redirectCount == other.redirectCount &&
+          noindexDetected == other.noindexDetected &&
+          nofollowDetected == other.nofollowDetected;
 }
 
 /// The result of a multi-page crawl operation.
@@ -2849,7 +2868,7 @@ class ScrapeResult {
   /// Whether a nofollow directive was detected.
   final bool nofollowDetected;
 
-  /// The X-Robots-Tag header value, if present.
+  /// The X-Robots-Tag header values, joined with `, ` when the response sent more than one.
   final String? xRobotsTag;
 
   /// Whether the content is a PDF.

@@ -195,9 +195,11 @@ When both static `proxy` and an injected provider are set, the provider takes pr
 
 ### Robots and compliance
 
-| Field                | Type   | Default | Description                                                                   |
-| -------------------- | ------ | ------- | ----------------------------------------------------------------------------- |
-| `respect_robots_txt` | `bool` | `false` | Fetch and honor robots.txt directives (allow/disallow, crawl-delay, sitemap). |
+| Field                | Type   | Default | Description                                                                                                                         |
+| -------------------- | ------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `respect_robots_txt` | `bool` | `false` | Fetch and honor robots.txt directives (allow/disallow, crawl-delay, sitemap), and in a crawl the page's own `nofollow` instruction. |
+
+When `respect_robots_txt` is on, a crawl does not follow the links of a page marked `nofollow` by its robots meta tag or by any of its `X-Robots-Tag` headers. A link marked `rel="nofollow"` is a hint, not a robots directive, so the crawl still follows it. A `noindex` page is still crawled and its links followed. Every page result reports the two directives in `noindex_detected` and `nofollow_detected`, whatever the setting.
 
 ### Content processing
 

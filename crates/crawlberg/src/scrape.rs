@@ -20,7 +20,7 @@ use crate::types::{CrawlConfig, ScrapeResult};
 fn header_robots_directives(
     headers: &std::collections::HashMap<String, Vec<String>>,
 ) -> (Option<String>, RobotsDirectives) {
-    let value = headers.get("x-robots-tag").and_then(|v| v.first().cloned());
+    let value = x_robots_tag(headers);
     let directives = RobotsDirectives::from_header(value.as_deref());
     (value, directives)
 }
@@ -128,7 +128,7 @@ fn extract_from_body(
     let parsed_html = mask_raw_text_markup(&decoded.body);
     let doc = tl::parse(&parsed_html, ParserOptions::default())
         .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-    let page_robots = merge_page_robots(&doc, header_robots);
+    let page_robots = header_robots.with_meta_tags(&doc);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
     Ok(BodyExtraction {
@@ -136,14 +136,6 @@ fn extract_from_body(
         asset_refs,
         page_robots,
     })
-}
-
-/// The page's own robots directives, merged with whatever the response headers declared.
-fn merge_page_robots(doc: &tl::VDom<'_>, header_robots: &RobotsDirectives) -> RobotsDirectives {
-    RobotsDirectives {
-        noindex: header_robots.noindex || detect_noindex(doc),
-        nofollow: header_robots.nofollow || detect_nofollow(doc),
-    }
 }
 
 /// What the site's robots.txt says about this URL, as reported (not enforced) by
@@ -251,16 +243,27 @@ fn decode_response_body(
     }
 }
 
+/// Every `X-Robots-Tag` header on a response, joined with `, `, or `None` when it has none.
+///
+/// ~keep A response may send the header more than once, and a directive in any of them
+/// applies, so reading only the first one missed a `nofollow` in the second.
+pub(crate) fn x_robots_tag(headers: &std::collections::HashMap<String, Vec<String>>) -> Option<String> {
+    headers
+        .get("x-robots-tag")
+        .filter(|values| !values.is_empty())
+        .map(|values| values.join(", "))
+}
+
 /// `noindex` / `nofollow` as signalled by an `X-Robots-Tag` header or by the
 /// document's own meta tags.
 #[derive(Clone, Copy)]
-struct RobotsDirectives {
-    noindex: bool,
-    nofollow: bool,
+pub(crate) struct RobotsDirectives {
+    pub(crate) noindex: bool,
+    pub(crate) nofollow: bool,
 }
 
 impl RobotsDirectives {
-    fn from_header(x_robots_tag: Option<&str>) -> Self {
+    pub(crate) fn from_header(x_robots_tag: Option<&str>) -> Self {
         let Some(value) = x_robots_tag else {
             return Self {
                 noindex: false,
@@ -271,6 +274,14 @@ impl RobotsDirectives {
         Self {
             noindex: lower.contains("noindex"),
             nofollow: lower.contains("nofollow"),
+        }
+    }
+
+    /// Add the directives from the document's robots meta tags.
+    pub(crate) fn with_meta_tags(self, doc: &tl::VDom<'_>) -> Self {
+        Self {
+            noindex: self.noindex || detect_noindex(doc),
+            nofollow: self.nofollow || detect_nofollow(doc),
         }
     }
 }
@@ -382,6 +393,22 @@ mod tests {
         assert!(result.noindex_detected, "X-Robots-Tag: noindex must be honoured");
         assert!(result.nofollow_detected, "X-Robots-Tag: nofollow must be honoured");
         assert_eq!(result.x_robots_tag.as_deref(), Some("NoIndex, NoFollow"));
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_nofollow_from_a_second_x_robots_tag_header() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["noarchive".to_owned(), "nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.nofollow_detected, "every X-Robots-Tag header must be read");
+        assert_eq!(result.x_robots_tag.as_deref(), Some("noarchive, nofollow"));
     }
 
     #[tokio::test]
