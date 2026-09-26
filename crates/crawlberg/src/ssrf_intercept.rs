@@ -135,12 +135,16 @@ pub(crate) async fn start_ssrf_interception(
             {
                 if redirect_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
                     // ~keep `Fetch.continueResponse` is the contract-correct call for a
-                    // ~keep response-stage pause, but switching to it turned the two
-                    // ~keep script-navigation tests in test_browser_max_redirects.rs red on the
-                    // ~keep macos-latest CI runner while they stayed green on Linux and locally.
-                    // ~keep That runner uses whatever Chrome is preinstalled, unlike the Linux
-                    // ~keep leg which pins one, so the call is not safe to change until Chrome is
-                    // ~keep pinned there. `continueRequest` is accepted at this stage in practice.
+                    // ~keep response-stage pause and `continueRequest` is the request-stage one,
+                    // ~keep but Chrome accepts this and the switch was reverted. The one CI run
+                    // ~keep carrying `continueResponse` (2d2089793) was the only run in which the
+                    // ~keep two script-navigation tests in test_browser_max_redirects.rs failed,
+                    // ~keep on macos-latest only, while Linux and a local macOS Chrome stayed
+                    // ~keep green. That is a correlation on a single run, not a proven cause: the
+                    // ~keep macos-latest leg deliberately uses the preinstalled Chrome (see the
+                    // ~keep Setup Chrome step in ci-rust.yaml, Linux-only), so its Chrome version
+                    // ~keep is neither pinned nor reproducible locally. Pin Chrome on that leg
+                    // ~keep before revisiting the call.
                     let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
                 } else {
                     let _ = listener_page
