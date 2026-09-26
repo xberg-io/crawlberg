@@ -4,6 +4,26 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`retry_codes` did not gate error retries.** A 500 or a timeout was retried the full
+  `retry_count` even when `retry_codes` did not list it; only a status with no error of its own was
+  checked against the list. A non-empty `retry_codes` is now an allowlist: a failure is retried only
+  when its status is listed, and a timeout without a response is not retried. An empty list still
+  retries every rate limit, server error, bad gateway and timeout. `map()` and the wasm scrape path
+  now follow the same rule, so with an empty list they retry these failures up to `retry_count`
+  instead of never. (#76)
+- **A 408 was told apart from other timeouts by guesswork.** A timeout counted as a 408 whenever
+  it had no underlying error, so a timeout that never saw a response could be retried under
+  `retry_codes = [408]`. An error raised for a response status now carries that status, and
+  `retry_codes` matches only that. (#92)
+- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
+  success on these paths, while `map()` already reported it as a server error, so an empty
+  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
+  path now maps a status to the same error, so a 504 is a server error everywhere and is
+  retried like a 503. The messages of these errors on `map()` now match the other paths:
+  `timeout`, `service unavailable` and `gateway timeout`. (#76)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
