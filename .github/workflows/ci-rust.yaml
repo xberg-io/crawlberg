@@ -109,14 +109,24 @@ jobs:
         run: cargo clippy --workspace --exclude crawlberg-ffi --exclude crawlberg-py --all-features -- -D warnings
         shell: bash
 
-      # ~keep macOS runners ship Chrome preinstalled (see actions/runner-images macos
-      # readme), so installing here would only double CI time for no coverage gain.
-      # Linux-only closes the gap where browser-gated tests in crates/crawlberg/tests
-      # (test_browser_pool_lifecycle, test_browser_profile, test_browser_screenshot,
-      # test_interact) previously had no Chrome binary at all and silently skipped via
-      # common::is_missing_chrome_message on every CI run.
+      # ~keep Runs on EVERY runner, not only Linux. It was `if: runner.os == 'Linux'`, on the
+      # reasoning that macOS runners ship Chrome preinstalled (actions/runner-images macos
+      # readme) so installing again bought no coverage. PR #112 falsified that on 2026-09-26:
+      # `a_redirect_after_a_script_navigation_is_not_counted` failed on `macos-latest` across
+      # two runs and passed on `ubuntu-24.04-arm`, and the only browser difference between the
+      # legs was that macOS used whatever build its image happened to carry. An unpinned browser
+      # is not the same coverage more cheaply -- it is a verdict nobody can reproduce or bisect.
+      #
+      # ~keep This does NOT make the two legs run the same browser, and it is not meant to. The
+      # action installs the chromium snap on `ubuntu-*-arm` (Chrome for Testing publishes no
+      # linux-arm64 build) and delegates to browser-actions/setup-chrome elsewhere, so macOS gets
+      # Chrome stable. What it buys is that each leg's browser is declared and pinnable.
+      #
+      # ~keep Linux-only originally closed the gap where browser-gated tests in
+      # crates/crawlberg/tests (test_browser_pool_lifecycle, test_browser_profile,
+      # test_browser_screenshot, test_interact) had no Chrome binary at all and silently skipped
+      # via common::is_missing_chrome_message on every CI run.
       - name: Setup Chrome
-        if: runner.os == 'Linux'
         uses: xberg-io/actions/setup-chrome@v1
 
       - name: Run tests
