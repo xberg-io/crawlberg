@@ -22,6 +22,20 @@ title: "Changelog"
     (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
     versions.
 
+- **`CrawlConfig` gained `path_patterns_match_url` and rejects unknown fields.** The field is
+  always serialised, and `CrawlConfig` carries `#[serde(deny_unknown_fields)]`, so **a config
+  serialised by this version is rejected by every older crawlberg**, even when the value is
+  `false`. The break is one-directional: an older config still loads here, because the field
+  defaults to `false`.
+
+  What this affects:
+
+  - A config serialised on one crawlberg and read by another. Upgrade the readers before, or
+    with, the writers.
+  - Any binding that round-trips a config through JSON across the FFI boundary
+    (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
+    can be at different versions.
+
 - **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
@@ -93,9 +107,11 @@ title: "Changelog"
   plain pattern keeps its old meaning, and look-around and backreferences work. A pattern that
   `fancy-regex` refuses, such as an inline `(?-u)` flag, compiles with the previous engine, so
   every pattern that worked before still works. A pattern that still fails to compile refuses the
-  configuration and names the pattern. A pattern that hits the
-  backtracking limit on a URL fails closed: an exclude pattern counts as a match, an include
-  pattern as no match, and a warning names the pattern. (#78)
+  configuration and names the pattern. A look-around or backreference pattern backtracks at
+  most 100,000 times per URL, a tenth of the `fancy-regex` default, so one pattern costs at most
+  a few milliseconds per URL. A pattern that hits that limit fails closed: an exclude pattern
+  counts as a match, an include pattern as no match, and one warning per crawl names the
+  pattern. (#78)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page

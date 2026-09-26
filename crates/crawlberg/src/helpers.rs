@@ -1,6 +1,8 @@
 //! Shared helper functions used by the crawl engine.
 
 use std::borrow::Cow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use url::{Position, Url};
 
@@ -30,15 +32,40 @@ pub(crate) fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Optio
     })
 }
 
-/// A compiled `include_paths`/`exclude_paths` pattern.
+/// How many times one `include_paths`/`exclude_paths` match may backtrack before it gives up.
 ///
+/// ~keep The patterns can come from a remote caller (the REST crawl endpoint), and a match runs
+/// on the async executor for every discovered URL, so this bounds the executor time one pattern
+/// can take per URL. Measured on fancy-regex 0.19.2: a failing match costs about 26 ns per
+/// backtrack, so 2.6 ms here against 26 ms at the library's default of 1,000,000. Look-around
+/// patterns of the usual shape, such as `^(?:(?!/private/).)*$`, need about two backtracks per
+/// character of the URL; `.*(?<!\.html)$` needs about the square of the URL length, so it gives
+/// up on URLs longer than about 300 characters.
+const PATH_PATTERN_BACKTRACK_LIMIT: usize = 100_000;
+
+/// The largest compiled size, in bytes, of one `include_paths`/`exclude_paths` pattern.
+///
+/// ~keep The default of both the `regex` crate and `regex-automata`: a lower limit refuses
+/// patterns the `regex` crate accepts (1 MiB already refuses `\w{30}`), and a pattern is
+/// compiled once per crawl, not once per URL.
+const PATH_PATTERN_SIZE_LIMIT: usize = 10 * (1 << 20);
+
+/// A compiled `include_paths`/`exclude_paths` pattern.
+#[derive(Clone)]
+pub(crate) struct PathPattern {
+    engine: PatternEngine,
+    /// Set once a match of this pattern has failed and been logged. Clones share it, so every
+    /// task of one crawl logs a failing pattern once.
+    warned: Arc<AtomicBool>,
+}
+
 /// ~keep `fancy_regex` parses every pattern with its own parser, and runs one without
 /// look-around or backreferences on `regex-automata`, the engine behind the `regex` crate.
 /// Its parser refuses a few constructs the `regex` crate accepts, such as inline Unicode-mode
 /// flags (`(?-u)`), so a pattern it refuses is compiled with the `regex` crate instead: every
 /// pattern the `regex` crate accepts keeps compiling, with the meaning it has there.
 #[derive(Clone)]
-pub(crate) enum PathPattern {
+enum PatternEngine {
     /// Compiled by `fancy_regex`; may backtrack, so a match can fail.
     Fancy(fancy_regex::Regex),
     /// Refused by `fancy_regex`, compiled by the `regex` crate.
@@ -48,25 +75,37 @@ pub(crate) enum PathPattern {
 impl PathPattern {
     /// Compile `pattern`, or return `fancy_regex`'s error when neither engine accepts it.
     pub(crate) fn new(pattern: &str) -> Result<Self, fancy_regex::Error> {
-        match fancy_regex::Regex::new(pattern) {
-            Ok(regex) => Ok(Self::Fancy(regex)),
-            Err(error) => regex::Regex::new(pattern).map(Self::Plain).map_err(|_| error),
-        }
+        let engine = match fancy_regex::RegexBuilder::new(pattern)
+            .backtrack_limit(PATH_PATTERN_BACKTRACK_LIMIT)
+            .delegate_size_limit(PATH_PATTERN_SIZE_LIMIT)
+            .build()
+        {
+            Ok(regex) => PatternEngine::Fancy(regex),
+            Err(error) => regex::RegexBuilder::new(pattern)
+                .size_limit(PATH_PATTERN_SIZE_LIMIT)
+                .build()
+                .map(PatternEngine::Plain)
+                .map_err(|_| error)?,
+        };
+        Ok(Self {
+            engine,
+            warned: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// The pattern as written in the config.
     pub(crate) fn as_str(&self) -> &str {
-        match self {
-            Self::Fancy(regex) => regex.as_str(),
-            Self::Plain(regex) => regex.as_str(),
+        match &self.engine {
+            PatternEngine::Fancy(regex) => regex.as_str(),
+            PatternEngine::Plain(regex) => regex.as_str(),
         }
     }
 
     /// Whether the pattern matches `text`; an error means the backtracking limit was hit.
     pub(crate) fn is_match(&self, text: &str) -> Result<bool, fancy_regex::Error> {
-        match self {
-            Self::Fancy(regex) => regex.is_match(text),
-            Self::Plain(regex) => Ok(regex.is_match(text)),
+        match &self.engine {
+            PatternEngine::Fancy(regex) => regex.is_match(text),
+            PatternEngine::Plain(regex) => Ok(regex.is_match(text)),
         }
     }
 }
@@ -145,13 +184,18 @@ impl PathPatternTarget {
 /// ~keep A look-around or backreference pattern runs on a backtracking engine that gives up
 /// at its backtrack limit. The caller passes the answer that keeps the URL out of the crawl
 /// (excluded, or not included), so a pattern that cannot be evaluated never widens the crawl.
+/// The warning is logged for the first such URL only, so its count does not grow with the
+/// number of URLs.
 fn pattern_matches(pattern: &PathPattern, text: &str, on_error: bool) -> bool {
     pattern.is_match(text).unwrap_or_else(|error| {
-        tracing::warn!(
-            pattern = pattern.as_str(),
-            %error,
-            "path pattern could not be evaluated; the URL is kept out of the crawl"
-        );
+        if !pattern.warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                pattern = pattern.as_str(),
+                %error,
+                "path pattern could not be evaluated; URLs it cannot evaluate are kept out of the crawl, \
+                 and later ones are not logged"
+            );
+        }
         on_error
     })
 }
@@ -485,6 +529,10 @@ mod tests {
         let compiled = compile_regexes(&patterns).expect("every pattern the regex crate accepts must compile");
         let url = Url::parse("https://example.com/xA").expect("valid URL");
         for (pattern, source) in compiled.iter().zip(REGEX_ONLY_PATTERNS) {
+            assert!(
+                matches!(pattern.engine, PatternEngine::Plain(_)),
+                "{source} must be compiled by the regex crate fallback"
+            );
             let mut urls_filtered = 0usize;
             assert!(
                 !passes_path_patterns(
@@ -596,6 +644,98 @@ mod tests {
             "an include pattern that hits the backtrack limit must count as no match"
         );
         assert_eq!(urls_filtered, 1);
+    }
+
+    /// A URL of `len` characters ending in `.html`, which `.*(?<!\.html)$` never matches: every
+    /// start position is tried, so the backtracks needed grow with the square of `len`.
+    fn html_url_text(len: usize) -> String {
+        format!("https://example.com/{}.html", "x".repeat(len - 25))
+    }
+
+    #[test]
+    fn backtrack_limit_is_lower_than_the_library_default() {
+        const QUADRATIC: &str = r".*(?<!\.html)$";
+        let long = html_url_text(600);
+        assert!(
+            fancy_regex::Regex::new(QUADRATIC)
+                .expect("valid pattern")
+                .is_match(&long)
+                .is_ok(),
+            "the fixture must finish under the library's default limit, or it cannot tell the limits apart"
+        );
+        let pattern = PathPattern::new(QUADRATIC).expect("valid pattern");
+        assert!(
+            pattern.is_match(&long).is_err(),
+            "a 600-character URL must exceed the path pattern backtrack limit"
+        );
+        assert_eq!(
+            pattern.is_match(&html_url_text(150)).ok(),
+            Some(false),
+            "the same pattern must still be evaluated on a 150-character URL"
+        );
+    }
+
+    /// A `tracing` subscriber that counts WARN events.
+    struct WarnCounter(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn a_pattern_that_cannot_be_evaluated_warns_once_per_compilation() {
+        let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let subscriber = WarnCounter(Arc::clone(&warnings));
+        tracing::subscriber::with_default(subscriber, || {
+            let exclude = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+            let cloned = exclude.clone();
+            let mut urls_filtered = 0usize;
+            for patterns in [&exclude, &cloned, &exclude, &cloned] {
+                passes_path_patterns(
+                    &backtrack_bomb_url(),
+                    patterns,
+                    &[],
+                    true,
+                    PathPatternTarget::Path,
+                    &mut urls_filtered,
+                );
+            }
+            assert_eq!(urls_filtered, 4, "every URL must still be kept out of the crawl");
+            assert_eq!(
+                warnings.load(Ordering::SeqCst),
+                1,
+                "a pattern and its clones must warn once, not once per URL"
+            );
+
+            let recompiled = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+            passes_path_patterns(
+                &backtrack_bomb_url(),
+                &recompiled,
+                &[],
+                true,
+                PathPatternTarget::Path,
+                &mut urls_filtered,
+            );
+        });
+        assert_eq!(
+            warnings.load(Ordering::SeqCst),
+            2,
+            "a pattern compiled for another crawl must warn again"
+        );
     }
 
     fn is_disallow_all(outcome: &RobotsOutcome) -> bool {
