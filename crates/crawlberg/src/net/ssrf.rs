@@ -286,6 +286,29 @@ mod tests {
     }
 
     #[test]
+    fn should_name_every_address_in_the_fe80_and_fc00_prefixes_by_its_prefix() {
+        // ~keep fe80::/10 spans fe80..=febf and fc00::/7 spans fc00..=fdff. RFC 4193 randomises
+        // the unique-local global id, so fd12:: is the common case rather than fd00::. The
+        // fe80::1 and fc00::1 rows are guards -- they passed before the range fix; the other
+        // four are the coverage.
+        for (literal, expected) in [
+            ("fe80::1", "link_local"),
+            ("feaa::1", "link_local"),
+            ("febf:ffff::1", "link_local"),
+            ("fc00::1", "unique_local"),
+            ("fd12::1", "unique_local"),
+            ("fdff:ffff::1", "unique_local"),
+        ] {
+            let ip = IpAddr::V6(literal.parse().expect("valid IPv6 literal"));
+            assert_eq!(
+                classify_private_ip(ip),
+                expected,
+                "{literal} must be classified as {expected}"
+            );
+        }
+    }
+
+    #[test]
     fn test_classify_ipv6_multicast() {
         assert_eq!(classify_private_ip(IpAddr::V6("ff00::1".parse().unwrap())), "multicast");
     }
