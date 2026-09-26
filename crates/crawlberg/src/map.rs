@@ -6,7 +6,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::error::CrawlError;
-use crate::html::{effective_base_url, extract_links, is_html_content};
+use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
 use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
 use crate::sitemap::{
@@ -157,10 +157,11 @@ async fn urls_from_direct_response(
         }
     }
 
-    if is_html_content(&resp.content_type, &resp.body)
-        && let Ok(doc) = crate::html::parse_html(&resp.body)
-    {
-        return links_as_sitemap_urls(&doc, parsed_url);
+    if is_html_content(&resp.content_type, &resp.body) {
+        let parsed_html = mask_raw_text_markup(&resp.body);
+        if let Ok(doc) = crate::html::parse_html(&parsed_html) {
+            return links_as_sitemap_urls(&doc, parsed_url);
+        }
     }
 
     Vec::new()

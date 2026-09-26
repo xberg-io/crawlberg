@@ -2173,6 +2173,20 @@ char *cberg_crawl_page_result_final_url(CBERGAlefHandle handle);
 uintptr_t cberg_crawl_page_result_redirect_count(CBERGAlefHandle handle);
 
 /**
+ * Get the `noindex_detected` field from a `CrawlPageResult`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_page_result_noindex_detected(CBERGAlefHandle handle);
+
+/**
+ * Get the `nofollow_detected` field from a `CrawlPageResult`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_page_result_nofollow_detected(CBERGAlefHandle handle);
+
+/**
  * Create a `CrawlResult` from a JSON string. Returns null on failure.
  * # Safety
  * JSON string must be valid UTF-8 and null-terminated.

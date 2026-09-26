@@ -8,3 +8,36 @@ jobs:
   validate:
     uses: xberg-io/actions/.github/workflows/reusable-validate-pr.yml@v1
     secrets: inherit
+
+  # ~keep ci-rust, ci-lint, ci-e2e, ci-docs and the rest all trigger on
+  # `pull_request: branches: [main]`. That filter matches the BASE branch, so a PR stacked on
+  # another PR's feature branch fires none of them: 18 of 28 open PRs had never run cargo test,
+  # clippy, poly or alef verify, while showing green checks from this workflow and ci-fuzz and
+  # reading as reviewed. This workflow is the only one with no base filter, which is why the
+  # guard lives here.
+  #
+  # ~keep Dropping the base filters instead would run the full matrix (a 16-leg e2e job plus the
+  # rust matrix) on every PR in a ~26-deep stack, on a runner pool that was already starving;
+  # widening it to fix/** and feat/** has the same cost. This job costs one ubuntu-latest step of
+  # a few seconds per PR event and makes the missing coverage visible instead of silent, which is
+  # the actual failure. Retarget the PR onto main to get real CI.
+  pr-base-is-main:
+    name: PR base gets real CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a base branch the CI workflows actually trigger on
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          echo "expected base: main"
+          echo "actual base:   ${BASE_REF}"
+          if [ -z "${BASE_REF}" ]; then
+            echo "::error::could not read the pull request base branch"
+            exit 1
+          fi
+          if [ "${BASE_REF}" != "main" ]; then
+            echo "::error::This PR targets '${BASE_REF}', not 'main'. Every CI workflow in this repo filters on a base of main, so cargo test, clippy, poly, alef verify and the e2e matrix did NOT run on this PR — the green checks below cover the PR title and commit messages only. Retarget onto main (merge or land the parent PR first) before merging."
+            exit 1
+          fi
+          echo "base is main — the CI workflows trigger on this PR"
