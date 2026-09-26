@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{effective_base_url, get_attr, has_rel};
+use crate::html::{effective_base_url, get_url_attr, has_rel};
 use crate::http::http_fetch;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
@@ -32,7 +32,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && has_rel(tag, "stylesheet")
-                && let Some(href) = get_attr(tag, "href")
+                && let Some(href) = get_url_attr(tag, "href")
                 && let Ok(url) = base_url.join(&href)
             {
                 assets.push(AssetRef {
@@ -47,7 +47,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
     if let Some(iter) = dom.query_selector(SEL_SCRIPT_SRC) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
-                && let Some(src) = get_attr(tag, "src")
+                && let Some(src) = get_url_attr(tag, "src")
                 && let Ok(url) = base_url.join(&src)
             {
                 assets.push(AssetRef {
@@ -62,7 +62,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
     if let Some(iter) = dom.query_selector(SEL_IMG_SRC) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
-                && let Some(src) = get_attr(tag, "src")
+                && let Some(src) = get_url_attr(tag, "src")
                 && !src.starts_with("data:")
                 && let Ok(url) = base_url.join(&src)
             {
@@ -196,6 +196,18 @@ mod tests {
                 "https://example.com/"
             ),
             ["https://example.com/a.css", "https://example.com/b.css"]
+        );
+    }
+
+    #[test]
+    fn assets_with_a_blank_address_are_skipped() {
+        assert_eq!(
+            discovered(
+                "<link rel=\"stylesheet\" href=\" \"><link rel=\"stylesheet\" href=\"s.css\">\
+                 <script src=\"\t\n\"></script><script src=\"\u{1}\"></script><img src=\"  \">",
+                "https://example.com/page"
+            ),
+            ["https://example.com/s.css"]
         );
     }
 

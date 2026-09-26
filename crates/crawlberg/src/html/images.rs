@@ -7,8 +7,9 @@ use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
+use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{attr_eq, get_attr, resolve_url};
+use super::{attr_eq, clean_url, get_attr, get_url_attr, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -37,7 +38,7 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     images
 }
 
-/// Collect `<img src>` images, skipping empty and inline `data:` sources.
+/// Collect `<img src>` images, skipping blank and inline `data:` sources.
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -47,8 +48,10 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let src = get_attr(tag, "src").unwrap_or_default();
-        if src.is_empty() || src.starts_with("data:") {
+        let Some(src) = get_url_attr(tag, "src") else {
+            continue;
+        };
+        if src.starts_with("data:") {
             continue;
         }
         images.push(ImageInfo {
@@ -61,7 +64,8 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
     }
 }
 
-/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor.
+/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
+/// skipping blank and inline `data:` candidates.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -72,16 +76,17 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
             continue;
         };
         let srcset = get_attr(tag, "srcset").unwrap_or_default();
-        if srcset.is_empty() {
+        let Some(raw_url) = srcset_candidates(&srcset)
+            .next()
+            .and_then(|(url, _)| clean_url(Cow::Borrowed(url)))
+        else {
             continue;
-        }
-        let first_url = srcset.split(',').next().unwrap_or("").trim();
-        let raw_url = first_url.split_whitespace().next().unwrap_or("");
-        if raw_url.is_empty() {
+        };
+        if raw_url.starts_with("data:") {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(raw_url, base_url),
+            url: resolve_url(&raw_url, base_url),
             alt: None,
             width: None,
             height: None,
@@ -110,12 +115,9 @@ fn collect_meta_images(
         if !attr_eq(tag, attr, name) {
             continue;
         }
-        let Some(content) = get_attr(tag, "content") else {
+        let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
-        if content.is_empty() {
-            continue;
-        }
         images.push(ImageInfo {
             url: resolve_url(&content, base_url),
             alt: None,
@@ -199,9 +201,17 @@ mod tests {
     }
 
     #[test]
-    fn srcset_that_is_empty_or_descriptor_only_yields_nothing() {
+    fn srcset_that_is_empty_or_only_separators_yields_nothing() {
         assert_eq!(extract(r#"<source srcset="">"#), Vec::<Flat>::new());
-        assert_eq!(extract(r#"<source srcset=" , b.png">"#), Vec::<Flat>::new());
+        assert_eq!(extract("<source srcset=\" , \t,\">"), Vec::<Flat>::new());
+    }
+
+    #[test]
+    fn srcset_skips_leading_separators_as_a_browser_does() {
+        assert_eq!(
+            extract(r#"<source srcset=" , b.png">"#),
+            vec![flat("https://example.com/dir/b.png", "picture_source")]
+        );
     }
 
     #[test]

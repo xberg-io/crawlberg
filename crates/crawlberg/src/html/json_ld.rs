@@ -5,7 +5,7 @@ use tl::VDom;
 
 use crate::types::JsonLdEntry;
 
-use super::attr_eq;
+use super::mime_essence;
 use super::selectors::SEL_SCRIPT_TYPE;
 
 /// Extract JSON-LD structured data entries from a parsed HTML document.
@@ -26,10 +26,7 @@ pub(crate) fn extract_json_ld(dom: &VDom<'_>) -> Vec<JsonLdEntry> {
         let Some(node) = handle.get(parser) else {
             continue;
         };
-        if !node
-            .as_tag()
-            .is_some_and(|tag| attr_eq(tag, "type", "application/ld+json"))
-        {
+        if node.as_tag().and_then(|tag| mime_essence(tag)).as_deref() != Some("application/ld+json") {
             continue;
         }
         let raw = node.inner_text(parser).to_string();
@@ -140,6 +137,20 @@ mod tests {
         );
         assert_eq!(entries[1].schema_type, "Product", "entry 1 type: {entries:?}");
         assert_eq!(entries[1].name.as_deref(), Some("Widget"), "entry 1 name: {entries:?}");
+    }
+
+    #[test]
+    fn the_type_is_read_as_a_whatwg_mime_type() {
+        let entry = r#"{"@type":"Thing"}"#;
+        let blocks = [
+            ("\t application/LD+JSON \r\n; charset=utf-8", 1),
+            ("\x0Capplication/ld+json", 0),
+            ("application/ld+json\x0C", 0),
+        ];
+        for (type_value, expected) in blocks {
+            let html = format!("<script type=\"{type_value}\">{entry}</script>");
+            assert_eq!(extract(&html).len(), expected, "for type {type_value:?}");
+        }
     }
 
     #[test]

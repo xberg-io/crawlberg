@@ -644,6 +644,27 @@ mod tests {
         );
     }
 
+    /// The meta refresh target loses only what the URL parser strips: a no-break space stays,
+    /// and a target of only C0 controls is no target. ~keep
+    #[test]
+    fn a_meta_refresh_target_keeps_unicode_spaces_and_drops_c0_controls() {
+        let meta = |content: &str| {
+            response(
+                200,
+                &[],
+                &format!("<html><head><meta http-equiv=\"refresh\" content=\"{content}\"></head></html>"),
+            )
+        };
+        assert_eq!(
+            meta_refresh_target(&meta("0; url= /next\u{A0}"), "https://example.com/start"),
+            Some("https://example.com/next%C2%A0".to_owned())
+        );
+        assert_eq!(
+            meta_refresh_target(&meta("0; url=\u{1}\u{B}"), "https://example.com/start"),
+            None
+        );
+    }
+
     #[test]
     fn every_source_looping_back_ends_the_chain() {
         let resp = response(302, &[("location", "/start")], "");

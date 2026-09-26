@@ -146,6 +146,40 @@ title: "Changelog"
   same base as the links list, as a browser resolves a `<link href>`. An absolute canonical
   URL is now reported in the same normalized form as the links list, so `https://Example.com`
   becomes `https://example.com/`. (#101)
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. Values are now compared without the
+  spaces around them, and a `type` is compared by its MIME type without the parameters. (#136)
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
 
 ### Added
 
