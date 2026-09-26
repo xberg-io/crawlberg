@@ -518,7 +518,7 @@ mod tests {
             r#"<html><body><a href="list?a=1&amp;b=2">q</a> <a href="&#47;root.html">r</a>
             <img src="i.png?a=1&amp;b=2" alt="Tom &amp; Jerry"></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -541,7 +541,7 @@ mod tests {
             <LINK REL="canonical" HREF="/canon"></HEAD>
             <BODY><A HREF="up.html">x</A><IMG SRC="u.png"></BODY></HTML>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -561,7 +561,7 @@ mod tests {
             <body><a href="leaf.html">l</a><img src="logo.png">
             <picture><source srcset="wide.png 2x"></picture></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
