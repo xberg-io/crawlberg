@@ -43,10 +43,10 @@ pub fn redact_url_credentials(input: &str) -> String {
 /// Redact userinfo and the whole query string from a URL-like string.
 ///
 /// For an endpoint that authenticates through its query, such as a CDP WebSocket URL with
-/// a `?token=` parameter or a bypass vendor endpoint. Returns `input` unchanged when it does
-/// not parse as an absolute URL or carries neither.
+/// a `?token=` parameter. Returns `input` unchanged when it does not parse as an absolute
+/// URL or carries neither.
 #[must_use]
-pub fn redact_url_secrets(input: &str) -> String {
+pub(crate) fn redact_url_secrets(input: &str) -> String {
     let redacted = redact_url_credentials(input);
     let Ok(mut url) = url::Url::parse(&redacted) else {
         return redacted;

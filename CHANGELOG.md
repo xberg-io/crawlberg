@@ -222,8 +222,8 @@ All notable changes to crawlberg are documented here.
   serialised config as secret-bearing.
 - **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
   the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
-  now prints without its userinfo and query, each query value prints as `***`, and so does the body
-  template. (#144)
+  now prints as its scheme and host only, and as `***` when it does not parse as an absolute URL.
+  Each query value prints as `***`, and so does the body template. (#144, #152)
 
 ### Added
 
