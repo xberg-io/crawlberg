@@ -4,6 +4,9 @@ use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::target::{
+    CloseTargetParams, EventTargetDestroyed, GetTargetsParams, TargetId,
+};
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
 use tokio_stream::StreamExt;
@@ -100,6 +103,7 @@ async fn run_with_browser(
         .new_page("about:blank")
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+    let mut close_on_drop = ClosePageOnDrop(Some(page.clone()));
 
     let result = async {
         prepare_page(&page, config).await?;
@@ -108,17 +112,88 @@ async fn run_with_browser(
         // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
         let (intercept, listener) =
             start_browser_interception(browser, &page, &config.ssrf, config.max_redirects).await?;
+        // ~keep The pages close while the listener still answers their requests: once the check
+        // ~keep is off, a page that is still open reaches any address.
         let session = tokio::select! {
-            session = run_session(&page, &intercept, url, actions, config) => session,
-            () = listener => Err(CrawlError::browser_error("request interception stopped before the session ended")),
+            session = async {
+                let session = run_session(&page, &intercept, url, actions, config).await;
+                close_session_targets(browser, &page).await;
+                session
+            } => session,
+            () = listener => {
+                close_session_targets(browser, &page).await;
+                Err(CrawlError::browser_error("request interception stopped before the session ended"))
+            }
         };
         intercept.finish(browser).await;
         session
     }
     .await;
 
-    let _ = page.close().await;
+    close_session_targets(browser, &page).await;
+    close_on_drop.0 = None;
     result
+}
+
+/// Closes the page when the session is dropped before it closed the page itself. The check is
+/// never turned off on that path, so the page's pending requests stay paused until it closes.
+struct ClosePageOnDrop(Option<chromiumoxide::Page>);
+
+impl Drop for ClosePageOnDrop {
+    fn drop(&mut self) {
+        if let Some(page) = self.0.take()
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(async move {
+                let _ = page.close().await;
+            });
+        }
+    }
+}
+
+/// How long closing the session's pages may take before the check is turned off anyway.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Close `page` and every page it opened, directly or through another popup, and wait until
+/// Chrome has destroyed them. A page already closed is skipped.
+async fn close_session_targets(browser: &Browser, page: &chromiumoxide::Page) {
+    let Ok(mut destroyed) = browser.event_listener::<EventTargetDestroyed>().await else {
+        return;
+    };
+    let targets = match browser.execute(GetTargetsParams::default()).await {
+        Ok(response) => response.result.target_infos,
+        Err(_) => Vec::new(),
+    };
+    let mut open: Vec<TargetId> = targets
+        .iter()
+        .filter(|target| target.target_id == *page.target_id())
+        .map(|target| target.target_id.clone())
+        .collect();
+    let mut index = 0;
+    while index < open.len() {
+        let opener = open[index].clone();
+        open.extend(
+            targets
+                .iter()
+                .filter(|target| target.opener_id.as_ref() == Some(&opener))
+                .map(|target| target.target_id.clone()),
+        );
+        index += 1;
+    }
+    // ~keep Popups close before the page that opened them: closing the opener first let a
+    // ~keep popup's request through the check in some runs.
+    for target in open.iter().rev() {
+        let _ = browser.execute(CloseTargetParams::new(target.clone())).await;
+    }
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+        while !open.is_empty() {
+            let Some(event) = destroyed.next().await else {
+                return;
+            };
+            open.retain(|target| *target != event.target_id);
+        }
+    })
+    .await;
 }
 
 /// Navigate to `url`, then run the actions and read the final page.

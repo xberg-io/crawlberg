@@ -226,3 +226,49 @@ async fn interact_still_follows_a_click_to_an_allowed_address() {
         .collect();
     assert!(requested.iter().any(|p| p == "/allowed"), "{requested:?}");
 }
+
+/// A script that sends a request to `url` in a loop, from the start of the page it runs in.
+fn fetch_loop(url: &str) -> String {
+    format!("setInterval(() => fetch({url:?}, {{ mode: 'no-cors' }}).catch(() => {{}}), 0)")
+}
+
+/// Run sessions whose pages keep requesting the denied address, then wait past their end, and
+/// assert the denied address was never reached, not even while a session closed.
+///
+/// ~keep A request leaves only if it is sent in the moment between the check stopping and the
+/// ~keep page closing, so one session reaches the address in some runs only. Five sessions
+/// ~keep make a leak show on nearly every run.
+async fn assert_nothing_leaks_at_the_end(
+    test_name: &str,
+    seed_body: &str,
+    actions: Vec<PageAction>,
+    denied: &MockServer,
+) {
+    let (_site, seed) = seed_site(seed_body).await;
+    for _ in 0..5 {
+        let Some(result) = run(test_name, &seed, actions.clone()).await else {
+            return;
+        };
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_refused(test_name, denied, &result).await;
+    }
+}
+
+#[tokio::test]
+async fn interact_refuses_requests_the_page_sends_while_the_session_ends() {
+    let test_name = "interact_refuses_requests_the_page_sends_while_the_session_ends";
+    let denied = denied_server().await;
+    let body = format!("<script>{}</script>", fetch_loop(&denied_url(&denied)));
+    assert_nothing_leaks_at_the_end(test_name, &body, Vec::new(), &denied).await;
+}
+
+#[tokio::test]
+async fn interact_refuses_requests_a_popup_sends_while_the_session_ends() {
+    let test_name = "interact_refuses_requests_a_popup_sends_while_the_session_ends";
+    let denied = denied_server().await;
+    let script = format!(
+        "const popup = window.open('about:blank'); popup.eval({:?}); return true",
+        fetch_loop(&denied_url(&denied))
+    );
+    assert_nothing_leaks_at_the_end(test_name, "<p>start</p>", vec![execute_js(&script)], &denied).await;
+}
