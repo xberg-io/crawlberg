@@ -33,6 +33,14 @@ All notable changes to crawlberg are documented here.
   The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
   (#116, #140)
 
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
