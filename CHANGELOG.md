@@ -123,6 +123,11 @@ All notable changes to crawlberg are documented here.
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **An image embedded in the page copied its whole encoded data into the markdown.** An
+  `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
+  icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
+  and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
+  real URL is still used in its place. `fit_content` follows the same rule. (#97)
 
 ### Added
 
@@ -153,11 +158,6 @@ All notable changes to crawlberg are documented here.
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
-- **An image embedded in the page copied its whole encoded data into the markdown.** An
-  `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
-  icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
-  and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
-  real URL is still used in its place. `fit_content` follows the same rule. (#97)
 
 ### Internal
 
