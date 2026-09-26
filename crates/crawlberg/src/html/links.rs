@@ -76,7 +76,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
             if resolved
                 .as_ref()
-                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "javascript" | "tel" | "data"))
+                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "javascript" | "vbscript" | "tel" | "data"))
             {
                 continue;
             }

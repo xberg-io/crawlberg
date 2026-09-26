@@ -883,6 +883,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_vbscript_links_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\"vbscript:msgbox(1)\">a</a><a href=\"VBScript:msgbox(1)\">b</a>\
+             <a href=\"next.html\">c</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
     async fn scrape_skips_inline_data_meta_images_in_any_case() {
         let resp = response(
             "text/html",

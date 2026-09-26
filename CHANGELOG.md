@@ -115,7 +115,8 @@ All notable changes to crawlberg are documented here.
   so `JAVASCRIPT:alert(1)` or `Mailto:...` stayed in it. URL schemes are case-insensitive, and
   these checks now read the scheme the way the URL parser does, as the markdown pass already did.
   An `og:image` or `twitter:image` whose content is a `data:` address is now skipped too, as an
-  `<img>` with one is. (#200)
+  `<img>` with one is. The links list now skips `vbscript:` links too, a script address like
+  `javascript:`. (#200)
 
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
   `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the

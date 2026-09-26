@@ -311,17 +311,20 @@ mod tests {
             "TEL:+1",
             "tel",
             "telx:1",
+            "VBScript:msgbox(1)",
+            "vbscript:",
+            "vbscriptx:1",
             "https://example.com/data:x",
             "https://example.com/tel:1",
         ];
         let mut matches = 0;
-        for scheme in ["data", "javascript", "mailto", "tel"] {
+        for scheme in ["data", "javascript", "mailto", "tel", "vbscript"] {
             for address in addresses {
                 let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == scheme);
                 assert_eq!(has_scheme(address, scheme), parsed, "for {scheme:?} in {address:?}");
                 matches += usize::from(parsed);
             }
         }
-        assert_eq!(matches, 11);
+        assert_eq!(matches, 13);
     }
 }
