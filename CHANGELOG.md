@@ -131,6 +131,12 @@ All notable changes to crawlberg are documented here.
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A custom retry policy could not read the status of a failed attempt.** `AttemptOutcome.status`
+  was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
+  the error but not the 503 or 500 behind it. The field now holds the status for every status the
+  built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
+  stays empty when no response caused the error, such as a connection failure, and also for a
+  plain 403 or a 429/503 fingerprinted as a WAF block; #133 tracks giving those a status too. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because

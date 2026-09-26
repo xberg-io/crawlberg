@@ -694,3 +694,53 @@ async fn a_503_without_a_waf_signal_is_retried_and_never_escalates() {
         "retry_count=3 with 503 in retry_codes must send 4 requests"
     );
 }
+
+/// A retry policy written outside the crate reads the HTTP status of a failed attempt from
+/// `AttemptOutcome::status`, so it can tell a 503 from a 500 without parsing the error. A plain
+/// 403 pins the documented limit (crawlberg#133): it also ends the attempt with `error`, but
+/// `status_error` never maps 403, so the field stays `None` for it.
+#[tokio::test]
+async fn custom_retry_policy_reads_the_status_of_a_failed_attempt() {
+    use std::sync::Mutex;
+
+    #[derive(Debug)]
+    struct StatusRecordingPolicy(Arc<Mutex<Vec<Option<u16>>>>);
+
+    #[async_trait::async_trait]
+    impl RetryPolicy for StatusRecordingPolicy {
+        async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
+            assert!(outcome.error.is_some(), "each attempt here fails: {outcome:?}");
+            self.0.lock().unwrap().push(outcome.status);
+            RetryDirective::Stop
+        }
+
+        fn name(&self) -> &'static str {
+            "status_recording"
+        }
+    }
+
+    let mock = MockServer::start().await;
+    for (route, status) in [("/unavailable", 503), ("/broken", 500), ("/forbidden", 403)] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&mock)
+            .await;
+    }
+
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let config = CrawlConfig {
+        dispatch: Some(DispatchProfile {
+            retry_policy: Some(Arc::new(StatusRecordingPolicy(recorded.clone()))),
+            ..DispatchProfile::default()
+        }),
+        ..allow_private_config()
+    };
+    let engine = build_engine(config);
+    for route in ["/unavailable", "/broken", "/forbidden"] {
+        let result = engine.scrape(&format!("{}{route}", mock.uri())).await;
+        assert!(result.is_err(), "{route} must fail, got {result:?}");
+    }
+
+    assert_eq!(*recorded.lock().unwrap(), vec![Some(503), Some(500), None]);
+}
