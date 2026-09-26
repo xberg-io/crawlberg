@@ -42,8 +42,9 @@ title: "Changelog"
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports
   the URL that answered, empty HTML, and a failed result for each action that names the status.
-  The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
-  (#116, #140)
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
+  on the native backend `interact` still follows every redirect a chain offers, up to the
+  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
