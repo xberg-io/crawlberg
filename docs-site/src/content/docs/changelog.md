@@ -17,10 +17,36 @@ title: "Changelog"
   `***` in place of the secret and keeps the non-secret fields. (#118)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **Two config validation errors echoed the rejected value.** `browser.endpoint` that is not
+  `ws://` or `wss://` printed the endpoint, and an unparseable `proxy.url` printed the URL. Both
+  fire precisely when the value does not parse as a URL, which is also when the URL redaction
+  helpers pass their input through unchanged — so the redaction added above did not cover them. The
+  endpoint error now names only the field, and the proxy error strips `user:password@` textually.
+  (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
 - **Debug output printed header credentials.** The network events, the native browser's rendered
   page and the fetch and bypass responses printed every header value with `{:?}`, including
   `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie`. These four values now print as
   `***`. Other headers and all header names stay visible. (#141)
+
+- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
+  and the page result kept the URL that was asked for, so relative links on the landed page
+  resolved against the wrong path and `final_url` named a page that never served the content. The
+  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
+  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
+  landed URL is refused is dropped. (#75)
+
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
 
 ## [1.8.0] - 2026-09-25
 
