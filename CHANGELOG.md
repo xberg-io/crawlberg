@@ -27,6 +27,22 @@ All notable changes to crawlberg are documented here.
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+- **`BrowserConfig` gained two fields and rejects unknown ones.** `chrome_path` and `chrome_args`
+  are always serialised, and `BrowserConfig` rejects unknown fields, so **a browser configuration
+  serialised by this version is rejected by every older crawlberg**, even when both are unset.
+  The break is one-directional: an older configuration still loads here, because both fields
+  have defaults. (#79, #80)
+
+- **`BrowserPoolConfig.chrome_args` now refuses entries that the pool used to launch with.** The
+  pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
+  without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
+  (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
+  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
+  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
+  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
+  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
+  `--enable-features` values with commas. (#79, #80)
+
 ### Fixed
 
 - **A browser fetch reported no response headers at all on the crawl path.**
@@ -203,6 +219,17 @@ All notable changes to crawlberg are documented here.
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+
+- **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
+  Chrome or Chromium executable a browser-mode fetch launches; a missing or non-executable path is
+  an error that names it, never a fallback to another Chrome. `BrowserConfig.chrome_args` adds
+  Chrome flags, each written as `--flag` or `--flag=value` with a lowercase flag name, and a flag
+  that names one of crawlberg's defaults replaces that default. The Rust `BrowserPoolConfig`
+  applies the same checks to its own `chrome_args` when it launches Chrome. Both settings reach
+  every Chrome that crawlberg launches, and both are ignored with a warning, and not checked,
+  when `browser.endpoint` is set or the native backend is in use. Flags such as
+  `--proxy-server` and `--host-resolver-rules` route around the SSRF policy, so set
+  `chrome_args` only from trusted configuration. (#79, #80)
 
 ### Internal
 
