@@ -19,6 +19,21 @@ title: "Changelog"
   same base as the links list, as a browser resolves a `<link href>`. An absolute canonical
   URL is now reported in the same normalized form as the links list, so `https://Example.com`
   becomes `https://example.com/`. (#101)
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. Values are now compared without the
+  spaces around them, and a `type` is compared by its MIME type without the parameters. (#136)
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
 
 ## [1.8.0] - 2026-09-25
 

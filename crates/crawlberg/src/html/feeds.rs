@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{get_attr, has_rel, resolve_url};
+use super::{get_attr, has_rel, mime_essence, resolve_url};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
 /// document's base URL.
@@ -24,7 +24,7 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
             if !has_rel(tag, "alternate") {
                 continue;
             }
-            let link_type = get_attr(tag, "type").unwrap_or_default().to_ascii_lowercase();
+            let link_type = mime_essence(tag).unwrap_or_default();
             let href = resolve_url(&get_attr(tag, "href").unwrap_or_default(), base_url);
             let title = get_attr(tag, "title").map(Cow::into_owned);
 
@@ -47,8 +47,9 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     feeds
 }
 
-/// Extract hreflang alternate links from a parsed HTML document.
-pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
+/// Extract hreflang alternate links from a parsed HTML document, resolved against the document's
+/// base URL. A link with a blank `hreflang` or `href` is skipped.
+pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangEntry> {
     let parser = dom.parser();
     let mut entries = Vec::new();
     if let Some(iter) = dom.query_selector(SEL_HREFLANG) {
@@ -59,10 +60,15 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
             if !has_rel(tag, "alternate") {
                 continue;
             }
-            let lang = get_attr(tag, "hreflang").unwrap_or_default().into_owned();
-            let url = get_attr(tag, "href").unwrap_or_default().into_owned();
-            if !lang.is_empty() && !url.is_empty() {
-                entries.push(HreflangEntry { lang, url });
+            let lang = get_attr(tag, "hreflang").unwrap_or_default();
+            let lang = lang.trim_ascii();
+            let href = get_attr(tag, "href").unwrap_or_default();
+            if !lang.is_empty() && !href.trim_ascii().is_empty() {
+                let url = resolve_url(&href, base_url);
+                entries.push(HreflangEntry {
+                    lang: lang.to_owned(),
+                    url,
+                });
             }
         }
     }
