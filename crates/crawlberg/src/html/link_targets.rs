@@ -1,5 +1,6 @@
 //! Rewriting the relative addresses that the markdown converter renders into absolute URLs,
-//! and emptying the `data:` addresses of images so their payload stays out of the markdown.
+//! and emptying the `data:` addresses of images and media so their payload stays out of the
+//! markdown.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -55,6 +56,10 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
     ),
 ];
 
+/// The elements of [`TARGETS`] whose `data:` addresses are emptied, because the converter would
+/// write their whole encoded payload into the markdown.
+const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "source"];
+
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
 /// base URL (its first `<base href>`, else `document_url`), using WHATWG URL parsing.
 ///
@@ -63,8 +68,8 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ///
 /// Character references in a value are decoded before resolution, as a browser decodes them.
 /// Absolute URLs of any scheme, fragment-only references and empty values are left as written,
-/// except that a `data:` address on an `<img>` is removed, so its encoded payload stays out of
-/// the markdown. Tags written inside raw-text content, such as a `<base>` in `<title>` text, are
+/// except that a `data:` address on an image, a media element or an iframe is removed, so its
+/// encoded payload stays out of the markdown. Tags written inside raw-text content, such as a `<base>` in `<title>` text, are
 /// not read. Every byte outside a rewritten attribute value is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
     // ~keep Parse the masked source, as link extraction does: `tl` reads raw-text content as
@@ -126,10 +131,13 @@ fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(R
         else {
             continue;
         };
-        // ~keep An image's `data:` address carries the whole encoded image, and the converter
-        // ~keep would write all of it into the markdown (#97). Emptying it keeps the alt text,
-        // ~keep and the converter then falls back to the image's other address attributes.
-        let drop_inline_data = name.eq_ignore_ascii_case(b"img");
+        // ~keep A `data:` address carries the whole encoded image or media, and the converter
+        // ~keep would write all of it into the markdown (#97). Emptying it keeps an image's alt
+        // ~keep text, and the converter then falls back to the element's other address
+        // ~keep attributes, or for media to a nested `<source>`. Links keep theirs.
+        let drop_inline_data = INLINE_DATA_ELEMENTS
+            .iter()
+            .any(|element| name.eq_ignore_ascii_case(element.as_bytes()));
         for &(attr, shape) in *attributes {
             let Some((value, span)) = borrowed_attr(tag, attr).and_then(original) else {
                 continue;
@@ -428,6 +436,17 @@ mod tests {
                 "https://example.com/"
             ),
             r#"<img src="" alt="a"><IMG data-src=""><a href="data:text/plain,x">d</a>"#
+        );
+    }
+
+    #[test]
+    fn empties_the_data_address_of_media_and_iframes() {
+        assert_eq!(
+            resolve(
+                r#"<VIDEO src="data:video/mp4,x"><source src="data:video/mp4,y"></VIDEO><audio src="data:audio/mpeg,x"></audio><iframe src="data:text/html,x"></iframe><blockquote cite="data:text/plain,x"></blockquote>"#,
+                "https://example.com/"
+            ),
+            r#"<VIDEO src=""><source src=""></VIDEO><audio src=""></audio><iframe src=""></iframe><blockquote cite="data:text/plain,x"></blockquote>"#
         );
     }
 

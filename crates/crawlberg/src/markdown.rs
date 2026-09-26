@@ -7,8 +7,8 @@ use crate::types::{ContentConfig, MarkdownResult};
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
 ///
 /// ~keep html-to-markdown-rs 3.14 has no base URL option and writes each address as found, so
-/// ~keep relative addresses are made absolute, and image `data:` addresses emptied, in the
-/// ~keep HTML first; see `resolve_link_targets`.
+/// ~keep relative addresses are made absolute, and image and media `data:` addresses emptied, in
+/// ~keep the HTML first; see `resolve_link_targets`.
 fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConfig) -> Option<MarkdownResult> {
     let html = crate::html::resolve_link_targets(html, document_url);
     let preset = html_to_markdown_rs::options::PreprocessingPreset::parse(&config.preprocessing_preset);
@@ -412,6 +412,32 @@ mod tests {
             let md = markdown_at(&html, "https://example.com/docs/index.html").await;
             assert_eq!(md, "![a](<>)\n", "attribute {attr}");
         }
+    }
+
+    #[tokio::test]
+    async fn media_and_iframes_drop_an_inline_data_address() {
+        for html in [
+            format!(r#"<p>before</p><video src="data:video/mp4;base64,{ICON_PAYLOAD}"></video><p>after</p>"#),
+            format!(r#"<p>before</p><audio src="data:audio/mpeg;base64,{ICON_PAYLOAD}"></audio><p>after</p>"#),
+            format!(r#"<p>before</p><iframe src="data:text/html;base64,{ICON_PAYLOAD}"></iframe><p>after</p>"#),
+            format!(r#"<p>before</p><video><source src="data:video/mp4;base64,{ICON_PAYLOAD}"></video><p>after</p>"#),
+        ] {
+            let md = markdown_at(&html, "https://example.com/").await;
+            assert_eq!(md, "before\n\nafter\n", "for {html}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_video_falls_through_an_inline_data_address_to_its_source() {
+        let md = markdown_at(
+            r#"<video src="data:video/mp4;base64,AAAA"><source src="clip.mp4"></video>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(
+            md,
+            "[https://example.com/docs/clip.mp4](https://example.com/docs/clip.mp4)\n"
+        );
     }
 
     #[tokio::test]

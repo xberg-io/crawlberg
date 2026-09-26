@@ -189,6 +189,10 @@ async fn test_markdown_leaves_out_the_payload_of_an_inline_image() {
         md.content
     );
     assert!(md.content.contains("Real text after the icon."), "got {:?}", md.content);
+    assert!(
+        fit.contains("![icon]"),
+        "fit_content must keep the image line, got {fit:?}"
+    );
     for text in [&md.content, &fit] {
         assert!(
             !text.contains("PHN2Zy"),
