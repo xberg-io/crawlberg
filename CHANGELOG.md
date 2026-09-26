@@ -4,6 +4,19 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
+  now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
+  `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
+  it is a hint and not a robots directive. A `noindex` page is still crawled and its links
+  followed. Each page result now reports both directives in `noindex_detected` and
+  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. Older crawlberg versions
+  reject a page result serialised with the two new fields. (#135)
+- **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
+  `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
+  Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a

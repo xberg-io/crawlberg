@@ -84,6 +84,8 @@ impl CrawlEngine {
             browser_used: fetch.browser_used,
             final_url,
             redirect_count: fetch.redirect_count,
+            noindex_detected: fetch.robots.noindex,
+            nofollow_detected: fetch.robots.nofollow,
         };
 
         let page = match self.content_filter.filter(page).await? {
@@ -108,7 +110,8 @@ impl CrawlEngine {
             .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
     }
 
-    /// Enqueue the page's outbound links, unless its depth or its document context says not to.
+    /// Enqueue the page's outbound links, unless its depth, its document context or its own
+    /// `nofollow` (when the crawl respects robots) says not to.
     async fn discover_links_if_allowed(
         &self,
         fetch: &FetchResult,
@@ -120,7 +123,8 @@ impl CrawlEngine {
         let in_document_context = fetch.entry.doc_depth > 0;
         let should_discover = (!page_was_skipped || in_document_context)
             && (self.config.follow_document_urls || !in_document_context)
-            && fetch.entry.depth < context.max_depth;
+            && fetch.entry.depth < context.max_depth
+            && !(self.config.respect_robots_txt && fetch.robots.nofollow);
         if !should_discover {
             return Ok(());
         }

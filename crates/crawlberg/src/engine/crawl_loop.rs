@@ -892,9 +892,16 @@ async fn fetch_and_extract(
     // ~keep page against the wrong origin.
     let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
+    let x_robots_tag = crate::scrape::x_robots_tag(&headers);
 
     let page_ext = tokio::task::spawn_blocking(move || {
-        blocking_extract_page(&url_for_extract, &content_type_clone, body, body_bytes)
+        blocking_extract_page(
+            &url_for_extract,
+            &content_type_clone,
+            x_robots_tag.as_deref(),
+            body,
+            body_bytes,
+        )
     })
     .await
     .map_err(|e| (entry.clone(), CrawlError::other(format!("extraction task failed: {e}"))))?;
@@ -907,6 +914,7 @@ async fn fetch_and_extract(
         body_bytes: page_ext.body_bytes,
         headers,
         extraction: page_ext.extraction,
+        robots: page_ext.robots,
         is_binary: page_ext.is_binary,
         is_pdf: page_ext.is_pdf,
         detected_charset: page_ext.detected_charset,

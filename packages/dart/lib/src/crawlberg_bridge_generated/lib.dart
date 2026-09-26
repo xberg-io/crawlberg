@@ -1603,6 +1603,14 @@ class CrawlPageResult {
   /// Redirect hops taken to reach `final_url` from `url`.
   final PlatformInt64 redirectCount;
 
+  /// Whether the page asked not to be indexed, by its robots meta tag or `X-Robots-Tag`
+  /// header. The page is still crawled and its links still followed.
+  final bool noindexDetected;
+
+  /// Whether the page asked that its links not be followed, by its robots meta tag or
+  /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
+  final bool nofollowDetected;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1627,6 +1635,8 @@ class CrawlPageResult {
     required this.browserUsed,
     required this.finalUrl,
     required this.redirectCount,
+    required this.noindexDetected,
+    required this.nofollowDetected,
   });
 
   @override
@@ -1653,7 +1663,9 @@ class CrawlPageResult {
       downloadedDocument.hashCode ^
       browserUsed.hashCode ^
       finalUrl.hashCode ^
-      redirectCount.hashCode;
+      redirectCount.hashCode ^
+      noindexDetected.hashCode ^
+      nofollowDetected.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1682,7 +1694,9 @@ class CrawlPageResult {
           downloadedDocument == other.downloadedDocument &&
           browserUsed == other.browserUsed &&
           finalUrl == other.finalUrl &&
-          redirectCount == other.redirectCount;
+          redirectCount == other.redirectCount &&
+          noindexDetected == other.noindexDetected &&
+          nofollowDetected == other.nofollowDetected;
 }
 
 /// The result of a multi-page crawl operation.

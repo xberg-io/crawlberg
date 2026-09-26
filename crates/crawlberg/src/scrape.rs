@@ -33,7 +33,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let content_type = resp.content_type.clone();
     let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
 
-    let x_robots_tag = resp.headers.get("x-robots-tag").and_then(|v| v.first().cloned());
+    let x_robots_tag = x_robots_tag(&resp.headers);
     let header_robots = RobotsDirectives::from_header(x_robots_tag.as_deref());
 
     let downloaded_document = crate::document::build_downloaded_document(
@@ -52,10 +52,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let (extraction, asset_refs, page_robots) = {
         let doc = tl::parse(&decoded.body, ParserOptions::default())
             .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-        let page_robots = RobotsDirectives {
-            noindex: header_robots.noindex || detect_noindex(&doc),
-            nofollow: header_robots.nofollow || detect_nofollow(&doc),
-        };
+        let page_robots = header_robots.with_meta_tags(&doc);
         let extraction = extract_page_data(&doc, &decoded.body, &parsed_url, decoded.is_html, true);
         let asset_refs = discover_page_assets(&doc, &parsed_url, decoded.is_html, config);
         (extraction, asset_refs, page_robots)
@@ -205,16 +202,27 @@ fn decode_response_body(
     }
 }
 
+/// Every `X-Robots-Tag` header on a response, joined with `, `, or `None` when it has none.
+///
+/// ~keep A response may send the header more than once, and a directive in any of them
+/// applies, so reading only the first one missed a `nofollow` in the second.
+pub(crate) fn x_robots_tag(headers: &std::collections::HashMap<String, Vec<String>>) -> Option<String> {
+    headers
+        .get("x-robots-tag")
+        .filter(|values| !values.is_empty())
+        .map(|values| values.join(", "))
+}
+
 /// `noindex` / `nofollow` as signalled by an `X-Robots-Tag` header or by the
 /// document's own meta tags.
 #[derive(Clone, Copy)]
-struct RobotsDirectives {
-    noindex: bool,
-    nofollow: bool,
+pub(crate) struct RobotsDirectives {
+    pub(crate) noindex: bool,
+    pub(crate) nofollow: bool,
 }
 
 impl RobotsDirectives {
-    fn from_header(x_robots_tag: Option<&str>) -> Self {
+    pub(crate) fn from_header(x_robots_tag: Option<&str>) -> Self {
         let Some(value) = x_robots_tag else {
             return Self {
                 noindex: false,
@@ -225,6 +233,14 @@ impl RobotsDirectives {
         Self {
             noindex: lower.contains("noindex"),
             nofollow: lower.contains("nofollow"),
+        }
+    }
+
+    /// Add the directives from the document's robots meta tags.
+    pub(crate) fn with_meta_tags(self, doc: &tl::VDom<'_>) -> Self {
+        Self {
+            noindex: self.noindex || detect_noindex(doc),
+            nofollow: self.nofollow || detect_nofollow(doc),
         }
     }
 }
@@ -334,6 +350,22 @@ mod tests {
         assert!(result.noindex_detected, "X-Robots-Tag: noindex must be honoured");
         assert!(result.nofollow_detected, "X-Robots-Tag: nofollow must be honoured");
         assert_eq!(result.x_robots_tag.as_deref(), Some("NoIndex, NoFollow"));
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_nofollow_from_a_second_x_robots_tag_header() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["noarchive".to_owned(), "nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.nofollow_detected, "every X-Robots-Tag header must be read");
+        assert_eq!(result.x_robots_tag.as_deref(), Some("noarchive, nofollow"));
     }
 
     #[tokio::test]
