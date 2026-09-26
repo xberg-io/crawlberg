@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
+use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -171,10 +172,26 @@ impl Default for BrowserPoolConfig {
     }
 }
 
+/// The page-close tasks that [`PooledPage`]'s `Drop` spawned for the current browser, kept so
+/// teardown can wait for them instead of cancelling them.
+type PendingCloses = Arc<std::sync::Mutex<Vec<JoinHandle<()>>>>;
+
+/// What a caller-owned (connected) Chrome needs tidied before crawlberg disconnects from it:
+/// the tabs crawlberg opened there. Ignored for a Chrome crawlberg launched itself, which is
+/// closed outright and takes its tabs with it.
+#[derive(Default)]
+pub(crate) struct ExternalTabCleanup {
+    /// A tab to close directly, for a caller that opened exactly one and tracked its id.
+    pub(crate) open_tab: Option<TargetId>,
+    /// Page-close tasks already in flight, to be awaited before the CDP websocket goes away.
+    pub(crate) pending_closes: Option<PendingCloses>,
+}
+
 struct BrowserState {
     browser: Browser,
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<std::path::PathBuf>,
+    pending_closes: PendingCloses,
 }
 
 /// Wait for the CDP handler loop to finish, aborting it if it outlives the timeout.
@@ -193,6 +210,74 @@ async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
     }
 }
 
+/// Tear down `browser` and the task that runs its CDP handler.
+///
+/// A Chrome that crawlberg launched is closed and reaped within `shutdown_timeout` (see
+/// `close_browser_within`); closing it removes every tab it has. A Chrome reached through
+/// `Browser::connect` (a configured `browser.endpoint`) belongs to the caller: crawlberg closes
+/// only the tabs named by `cleanup`, then disconnects by stopping the handler task that owns the
+/// CDP websocket. It never sends that Chrome `Browser.close`.
+///
+/// ~keep chromiumoxide 0.9.1 has no disconnect call, and its handler loop runs until the
+/// ~keep websocket closes, which a connected Chrome never does on its own. Aborting the task
+/// ~keep drops the websocket. `get_mut_child` is `None` exactly for a connected browser.
+/// ~keep `cleanup` is honoured only on the connected branch: on a launched Chrome that hangs,
+/// ~keep a tab close ahead of `close_browser_within` would push the kill past `shutdown_timeout`.
+pub(crate) async fn release_browser(
+    mut browser: Browser,
+    handler_handle: JoinHandle<()>,
+    cleanup: ExternalTabCleanup,
+    shutdown_timeout: Duration,
+) {
+    if browser.get_mut_child().is_none() {
+        if let Some(pending) = cleanup.pending_closes {
+            await_pending_closes(&pending, shutdown_timeout).await;
+        }
+        if let Some(target_id) = cleanup.open_tab {
+            let _ = tokio::time::timeout(shutdown_timeout, browser.execute(CloseTargetParams::new(target_id))).await;
+        }
+        drop(browser);
+        handler_handle.abort();
+        return;
+    }
+    close_browser_within(&mut browser, shutdown_timeout).await;
+    drop(browser);
+    abort_handler_after_timeout(handler_handle).await;
+}
+
+/// Wait for the page-close tasks [`PooledPage`]'s `Drop` spawned, bounding the wait by
+/// `wait_timeout`.
+///
+/// ~keep `Drop` cannot await, so it spawns `page.close()` and records the handle here. Teardown
+/// ~keep aborts the handler task that owns the CDP websocket, which cancels any close still in
+/// ~keep flight and leaves that tab open in a Chrome crawlberg does not own -- the leak this
+/// ~keep function exists to prevent. Awaiting the handles, not just sleeping, keeps it
+/// ~keep deterministic: `Drop` registers the handle before it returns, so a caller that drops a
+/// ~keep `PooledPage` and then shuts the pool down always finds the close here.
+async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
+    let handles = match pending.lock() {
+        Ok(mut guard) => std::mem::take(&mut *guard),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    };
+    if handles.is_empty() {
+        return;
+    }
+    let pending_count = handles.len();
+    let joined = tokio::time::timeout(wait_timeout, async {
+        for handle in handles {
+            let _ = handle.await;
+        }
+    })
+    .await;
+    if joined.is_err() {
+        tracing::warn!(
+            pending = pending_count,
+            timeout_secs = wait_timeout.as_secs_f64(),
+            "pool-opened tabs did not close before the shutdown timeout; leaving them to the browser"
+        );
+    }
+}
+
 /// Close `browser` and wait for its process to exit, bounding the wait by
 /// `shutdown_timeout`. If the browser has not exited before the deadline, the
 /// process is force-killed via [`Browser::kill`] rather than left to linger.
@@ -200,14 +285,9 @@ async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
 /// ~keep `Browser::wait` is a bare `child.wait().await` with no built-in limit, so a
 /// ~keep Chrome instance stuck behind a blocking OS dialog (observed: a macOS "wants to
 /// ~keep use your confidential information" keychain prompt) previously held this call
-/// ~keep open indefinitely. Only `wait`/`kill` are documented no-ops when this `Browser`
-/// ~keep connected to an external process (chromiumoxide 0.9.1, `src/browser/mod.rs`) --
-/// ~keep `close` is not: it sends a real CDP `Browser.close`. `launch_or_connect`
-/// ~keep (`browser/launch.rs`) uses `Browser::connect` whenever `config.browser.endpoint`
-/// ~keep is set, and this function is called unconditionally on every teardown path, so a
-/// ~keep `browser.endpoint`-configured crawl shuts down the caller's external Chrome on
-/// ~keep teardown. Pre-existing, tracked separately -- not fixed here.
-pub(crate) async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) {
+/// ~keep open indefinitely. `close` sends a real CDP `Browser.close` even to a browser this
+/// ~keep process only connected to, so only `release_browser` calls this, for a launched one.
+async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) {
     let closed = tokio::time::timeout(shutdown_timeout, async {
         let _ = browser.close().await;
         let _ = browser.wait().await;
@@ -302,13 +382,14 @@ impl BrowserPool {
         }
 
         match self.try_new_page().await {
-            Ok(page) => Ok(PooledPage {
+            Ok((page, pending_closes)) => Ok(PooledPage {
                 page: Some(page),
                 _permit: Some(permit),
+                pending_closes: Some(pending_closes),
             }),
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let page = self.try_new_page().await.map_err(|e| {
+                let (page, pending_closes) = self.try_new_page().await.map_err(|e| {
                     CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
@@ -316,6 +397,7 @@ impl BrowserPool {
                 Ok(PooledPage {
                     page: Some(page),
                     _permit: Some(permit),
+                    pending_closes: Some(pending_closes),
                 })
             }
         }
@@ -338,10 +420,11 @@ impl BrowserPool {
 
         let mut guard = self.state.lock().await;
         if let Some(bs) = guard.take() {
-            let mut browser = bs.browser;
-            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(browser);
-            abort_handler_after_timeout(bs.handler_handle).await;
+            let cleanup = ExternalTabCleanup {
+                pending_closes: Some(bs.pending_closes),
+                ..ExternalTabCleanup::default()
+            };
+            release_browser(bs.browser, bs.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
             if let Some(dir) = bs.user_data_dir {
                 remove_profile_dir(dir).await;
             }
@@ -350,7 +433,10 @@ impl BrowserPool {
 
     /// Try to create a new page from the current browser. Takes the mutex
     /// briefly, creates the page, and releases.
-    async fn try_new_page(&self) -> Result<chromiumoxide::Page, CrawlError> {
+    ///
+    /// Returns the page together with the current browser's pending-close registry, so the
+    /// [`PooledPage`] built around it can record a close its `Drop` spawns.
+    async fn try_new_page(&self) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
 
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
@@ -367,10 +453,11 @@ impl BrowserPool {
         }
 
         let bs = guard.as_ref().expect("browser state was just set above");
-        tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
             .await
             .map_err(|_| CrawlError::browser_error("timeout opening page"))?
-            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))
+            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))?;
+        Ok((page, Arc::clone(&bs.pending_closes)))
     }
 
     /// Force-relaunch Chrome (used after a page-open failure).
@@ -387,10 +474,11 @@ impl BrowserPool {
 
         self.healthy.store(false, Ordering::Release);
         if let Some(old) = guard.take() {
-            let mut browser = old.browser;
-            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(browser);
-            abort_handler_after_timeout(old.handler_handle).await;
+            let cleanup = ExternalTabCleanup {
+                pending_closes: Some(old.pending_closes),
+                ..ExternalTabCleanup::default()
+            };
+            release_browser(old.browser, old.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
             if let Some(dir) = old.user_data_dir {
                 remove_profile_dir(dir).await;
             }
@@ -436,6 +524,7 @@ impl BrowserPool {
             browser,
             handler_handle,
             user_data_dir: data_dir,
+            pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 }
@@ -458,6 +547,8 @@ impl std::fmt::Debug for BrowserPool {
 pub struct PooledPage {
     page: Option<chromiumoxide::Page>,
     _permit: Option<OwnedSemaphorePermit>,
+    /// Where `Drop` records the close it spawns, so pool teardown can await it.
+    pending_closes: Option<PendingCloses>,
 }
 
 impl PooledPage {
@@ -504,9 +595,21 @@ impl Drop for PooledPage {
         if let Some(page) = self.page.take() {
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
-                    handle.spawn(async move {
+                    let close = handle.spawn(async move {
                         let _ = page.close().await;
                     });
+                    match self.pending_closes.take() {
+                        // ~keep Recorded, not detached: pool teardown aborts the task owning the
+                        // ~keep CDP websocket, which cancels this close and leaks the tab in a
+                        // ~keep Chrome crawlberg only connected to. `release_browser` awaits it.
+                        Some(pending) => match pending.lock() {
+                            Ok(mut guard) => guard.push(close),
+                            Err(poisoned) => poisoned.into_inner().push(close),
+                        },
+                        None => {
+                            tracing::debug!("dropping a pooled page with no close registry; its close runs detached");
+                        }
+                    }
                 }
                 Err(_) => {
                     tracing::warn!("dropping a pooled page outside a Tokio runtime; its CDP target is left to Chrome");
@@ -667,6 +770,146 @@ mod tests {
             !still_running,
             "the Chrome process (pid {pid}) must be dead after close_browser_within returns, \
              via its Browser::kill() fallback"
+        );
+    }
+
+    /// Releasing a launched Chrome that has stopped responding kills it within one
+    /// `shutdown_timeout`, even when a tab is handed over for closing: the tab dies with the
+    /// browser, so no separate tab close may run ahead of the close-and-kill.
+    ///
+    /// ~keep `SIGSTOP` freezes the process so every CDP call hangs, as in
+    /// ~keep `close_browser_within_returns_promptly_when_the_process_is_stopped`.
+    #[tokio::test]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_timeout() {
+        const TEST_NAME: &str = "release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_timeout";
+        if !cfg!(unix) {
+            eprintln!("skipping {TEST_NAME}: not unix");
+            return;
+        }
+        let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-stopped-test-{}", std::process::id()));
+        let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+            Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        };
+        let (mut browser, mut handler) = match launched {
+            Ok(pair) => pair,
+            Err(error) => {
+                eprintln!("skipping {TEST_NAME} because no usable Chrome was found: {error}");
+                return;
+            }
+        };
+        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .expect("a launched Chrome must open a tab");
+        let tab = page.target_id().clone();
+        let pid = browser
+            .get_mut_child()
+            .and_then(|child| child.as_mut_inner().id())
+            .expect("a freshly launched child must have a pid");
+        let stopped = std::process::Command::new("kill")
+            .args(["-STOP", &pid.to_string()])
+            .status()
+            .expect("`kill -STOP` must run")
+            .success();
+        assert!(stopped, "failed to SIGSTOP the launched Chrome process (pid {pid})");
+
+        // ~keep Time the process's death, not `release_browser`'s return: after the kill it
+        // ~keep still waits up to `HANDLER_SHUTDOWN_TIMEOUT` for the handler task to wind down.
+        let alive = move || {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        let start = std::time::Instant::now();
+        let died_after = std::thread::spawn(move || {
+            while alive() && start.elapsed() < Duration::from_secs(20) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            start.elapsed()
+        });
+        let shutdown_timeout = Duration::from_secs(1);
+        let cleanup = ExternalTabCleanup {
+            open_tab: Some(tab),
+            ..ExternalTabCleanup::default()
+        };
+        release_browser(browser, handler_task, cleanup, shutdown_timeout).await;
+        let died_after = died_after.join().expect("the watcher thread must not panic");
+
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+        let _ = std::fs::remove_dir_all(&user_data_dir);
+
+        // ~keep The kill lands one `shutdown_timeout` after the release starts. A tab close run
+        // ~keep ahead of the close-and-kill would add a second timeout before it.
+        assert!(
+            died_after < shutdown_timeout + Duration::from_millis(700),
+            "a stopped launched Chrome must be killed within one shutdown_timeout \
+             ({shutdown_timeout:?}); it died after {died_after:?}"
+        );
+    }
+
+    /// Releasing a connected browser disconnects from it: the handler task that owns the CDP
+    /// websocket stops at once, and the Chrome at the other end keeps running.
+    #[tokio::test]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
+        let user_data_dir =
+            std::env::temp_dir().join(format!("crawlberg-release-connected-test-{}", std::process::id()));
+        let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+            Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        };
+        let (mut owner, mut owner_handler) = match launched {
+            Ok(pair) => pair,
+            Err(error) => {
+                eprintln!(
+                    "skipping release_browser_disconnects_from_a_connected_browser_without_closing_it \
+                     because no usable Chrome was found: {error}"
+                );
+                return;
+            }
+        };
+        let owner_task = tokio::spawn(async move { while owner_handler.next().await.is_some() {} });
+
+        let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
+            .await
+            .expect("connecting to the launched Chrome must succeed");
+        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let handler_abort = handler_task.abort_handle();
+
+        release_browser(
+            connected,
+            handler_task,
+            ExternalTabCleanup::default(),
+            Duration::from_secs(5),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let disconnected = handler_abort.is_finished();
+        let version = tokio::time::timeout(Duration::from_secs(5), owner.version()).await;
+
+        let _ = owner.kill().await;
+        owner_task.abort();
+        let _ = std::fs::remove_dir_all(&user_data_dir);
+
+        assert!(
+            disconnected,
+            "the handler task for a connected browser must stop, closing its websocket"
+        );
+        assert!(
+            matches!(version, Ok(Ok(_))),
+            "the connected Chrome must still answer CDP after release: {version:?}"
         );
     }
 
