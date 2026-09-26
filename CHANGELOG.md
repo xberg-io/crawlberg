@@ -6,6 +6,18 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Four CI gates passed without examining anything.** The vendored-C-header check compared only
+  `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
+  canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every
+  tracked `crawlberg.h` from the repository index, byte-compares the generator's own outputs,
+  compares the vendored bundles as a normalised declaration stream, and fails on any copy it does
+  not classify. The e2e fixture-drift check excluded `python`, `php`, `ruby` and `c` for formatter
+  skew; measuring each formatter against alef 0.96.4 showed only `python` had any, so `ruff` is now
+  pinned and asserted and all four languages are gated. A pull request stacked on another pull
+  request's branch matched no CI workflow's `branches: [main]` base filter and ran none of them
+  while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
+  hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
+  it is resynced and gated. (#162, #127)
 - **The bypass provider could expose a vendor API key.** It reported the vendor's API request URL
   as the page's `final_url`, and its send and body-read errors printed the same URL. For a vendor
   that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
@@ -57,6 +69,61 @@ All notable changes to crawlberg are documented here.
   fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
   requests start after the stream is closed; a later change to the binding generator fixes that.
   (#77)
+- **A dropped batch stream still reported every seed it had not started.** The batch went on
+  starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
+  and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
+  is dropped, and a seed it never started reports nothing. (#91)
+
+- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
+  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
+  statuses; only a status that raised no error of its own was checked against the list. A non-empty
+  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
+  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
+  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
+  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
+  empty list they retry these failures up to `retry_count` instead of never. (#76)
+
+  This narrows retries for any configuration that already sets `retry_codes`, including a list
+  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
+  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
+  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
+  0, so a configuration that never raised it sends one request either way and is unaffected.
+
+- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
+  whether or not a response caused it, so a transport timeout was retried under
+  `retry_codes = [408]`. An error raised for a response status now carries that status, and
+  `retry_codes` matches only that. (#92)
+- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
+  success on these paths, while `map()` already reported it as a server error, so an empty
+  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
+  path now maps a status to the same error, so a 504 is a server error everywhere and is
+  retried like a 503. The messages of these errors on `map()` now match the other paths:
+  `timeout`, `service unavailable` and `gateway timeout`. (#76)
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
 
 ## [1.8.0] - 2026-09-25
 

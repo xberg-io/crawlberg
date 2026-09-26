@@ -13,6 +13,11 @@ on:
       # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
       - "alef.toml"
       - ".github/workflows/ci-rust.yaml"
+      # ~keep This workflow runs the vendored-C-header gate, whose inputs are the tracked header
+      # ~keep copies and the script itself. Without these two patterns a commit that edited only
+      # ~keep a vendored header, or only the check, skipped the very gate it changed.
+      - "packages/**/crawlberg.h"
+      - "scripts/ci/check-vendored-headers.sh"
   pull_request:
     branches: [main]
     paths:
@@ -25,6 +30,11 @@ on:
       # ~keep skipped the drift gate altogether. ci-docs, ci-e2e and ci-lint already watch it.
       - "alef.toml"
       - ".github/workflows/ci-rust.yaml"
+      # ~keep This workflow runs the vendored-C-header gate, whose inputs are the tracked header
+      # ~keep copies and the script itself. Without these two patterns a commit that edited only
+      # ~keep a vendored header, or only the check, skipped the very gate it changed.
+      - "packages/**/crawlberg.h"
+      - "scripts/ci/check-vendored-headers.sh"
   workflow_dispatch:
 
 concurrency:
@@ -230,29 +240,12 @@ jobs:
       - name: Verify binding API parity
         run: alef verify --exit-code
 
+      # ~keep The list this step used to carry named one path, packages/go/include/crawlberg.h,
+      # ~keep which crates/crawlberg-ffi/build.rs writes in the same call as the canonical header
+      # ~keep — so the only copy it compared was the one that cannot differ, and the four other
+      # ~keep tracked copies went unchecked for months (#162, folded into #182). The list now
+      # ~keep lives in the script, which discovers every tracked crawlberg.h from git and fails on
+      # ~keep any it does not classify, so a new vendored copy cannot be added silently.
       - name: Validate vendored C headers match canonical
         shell: bash
-        run: |
-          CANONICAL="crates/crawlberg-ffi/include/crawlberg.h"
-          # ~keep A missing vendored header must fail, not pass: the previous
-          # `[ -f "$VENDORED" ] &&` guard silently skipped every stale path and
-          # made this step unconditionally green.
-          VENDORED_HEADERS="packages/go/include/crawlberg.h"
-          FAIL=0
-          if [ ! -f "$CANONICAL" ]; then
-            echo "::error::canonical header $CANONICAL is missing"
-            exit 1
-          fi
-          for VENDORED in $VENDORED_HEADERS; do
-            if [ ! -f "$VENDORED" ]; then
-              echo "::error::vendored header $VENDORED is missing — restore it or update VENDORED_HEADERS in this workflow"
-              FAIL=1
-            elif ! diff -q "$CANONICAL" "$VENDORED" > /dev/null 2>&1; then
-              echo "::error::$VENDORED is out of sync with $CANONICAL — run 'task c:headers'"
-              diff "$CANONICAL" "$VENDORED" | head -20
-              FAIL=1
-            else
-              echo "ok: $VENDORED matches $CANONICAL"
-            fi
-          done
-          [ "$FAIL" -eq 0 ] || exit 1
+        run: ./scripts/ci/check-vendored-headers.sh

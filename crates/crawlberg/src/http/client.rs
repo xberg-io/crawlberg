@@ -419,7 +419,7 @@ mod tests {
     /// a corpse and fails mid-request -- as `error sending request` if it dies during send,
     /// or `error decoding response body` (classified `DataLoss`) if it dies during
     /// `resp.chunk()`. Neither is retryable, since `retry_count` defaults to 0 and
-    /// `should_retry_status` only matches status-derived variants. Measured in a standalone
+    /// `should_retry_error` only matches status-derived variants. Measured in a standalone
     /// harness at ~8.5% of requests across 28 short-lived runtimes; 0% once the cache key
     /// carries runtime identity. Every consumer's `#[tokio::test]` suite is this shape.
     ///
