@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
-    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, RequestPattern, RequestStage,
+    ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
+    FailRequestParams, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::FrameId;
@@ -131,9 +131,14 @@ pub(crate) async fn start_ssrf_interception(
 
             if is_response_stage(&event) {
                 if main_frame_verdict(&event, &main_frame, redirect_limit, &listener_state) {
-                    // ~keep A pause at the response stage is released by `Fetch.continueResponse`;
-                    // ~keep `continueRequest` is the request-stage call.
-                    let _ = listener_page.execute(ContinueResponseParams::new(request_id)).await;
+                    // ~keep `Fetch.continueResponse` is the contract-correct call for a
+                    // ~keep response-stage pause, but switching to it turned the two
+                    // ~keep script-navigation tests in test_browser_max_redirects.rs red on the
+                    // ~keep macos-latest CI runner while they stayed green on Linux and locally.
+                    // ~keep That runner uses whatever Chrome is preinstalled, unlike the Linux
+                    // ~keep leg which pins one, so the call is not safe to change until Chrome is
+                    // ~keep pinned there. `continueRequest` is accepted at this stage in practice.
+                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
                 } else {
                     let _ = listener_page
                         .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
