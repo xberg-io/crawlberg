@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, RequestPattern, RequestStage,
+    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
+    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::FrameId;
@@ -110,7 +110,7 @@ pub(crate) async fn start_ssrf_interception(
         .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
 
     let main_frame = match redirect_limit {
-        Some(_) => page.mainframe().await.ok().flatten(),
+        Some(_) => Some(require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?),
         None => None,
     };
 
@@ -134,7 +134,9 @@ pub(crate) async fn start_ssrf_interception(
                 && is_response_stage(&event)
             {
                 if redirect_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
-                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
+                    // ~keep A pause at the response stage is released by `Fetch.continueResponse`;
+                    // ~keep `continueRequest` is the request-stage call.
+                    let _ = listener_page.execute(ContinueResponseParams::new(request_id)).await;
                 } else {
                     let _ = listener_page
                         .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
@@ -167,6 +169,24 @@ pub(crate) async fn start_ssrf_interception(
         listener,
         state,
     })
+}
+
+/// The main frame the redirect limit is counted against, or an error naming why it is unknown.
+///
+/// ~keep The limit cannot be applied without it, so an unknown main frame has to be loud.
+/// ~keep Treating it as "no frame to compare against" instead turns "count the main frame's
+/// ~keep redirects" into "count every document frame's", so an iframe redirect would spend the
+/// ~keep seed's redirect budget or end the fetch on a redirect response with no body.
+fn require_main_frame(resolved: Result<Option<FrameId>, String>) -> Result<FrameId, CrawlError> {
+    match resolved {
+        Ok(Some(frame)) => Ok(frame),
+        Ok(None) => Err(CrawlError::browser_error(
+            "cannot apply the redirect limit: the page reports no main frame".to_owned(),
+        )),
+        Err(error) => Err(CrawlError::browser_error(format!(
+            "cannot apply the redirect limit: failed to read the page's main frame: {error}"
+        ))),
+    }
 }
 
 /// Every request at the request stage, plus document responses so redirects can be counted.
@@ -250,7 +270,7 @@ mod tests {
     //! Fetch interception. These cover the security-critical verdict (the CDP
     //! plumbing around it is thin glue) and stay hermetic by using literal-IP
     //! and scheme rejections that require no DNS resolution or network.
-    use super::ssrf_verdict;
+    use super::{FrameId, require_main_frame, ssrf_verdict};
     use crate::net::ssrf::SsrfPolicy;
 
     fn deny_policy() -> SsrfPolicy {
@@ -294,6 +314,32 @@ mod tests {
         assert!(
             verdict.is_ok(),
             "loopback must pass when deny_private=false: {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn a_resolved_main_frame_is_the_frame_the_limit_counts_against() {
+        let frame = require_main_frame(Ok(Some(FrameId::new("FRAME-1")))).expect("a resolved frame must be returned");
+        assert_eq!(frame, FrameId::new("FRAME-1"));
+    }
+
+    #[test]
+    fn should_refuse_the_limit_when_the_page_reports_no_main_frame() {
+        let error =
+            require_main_frame(Ok(None)).expect_err("without a main frame the limit would count every document frame");
+        assert_eq!(
+            error.to_string(),
+            "browser: cannot apply the redirect limit: the page reports no main frame"
+        );
+    }
+
+    #[test]
+    fn should_refuse_the_limit_when_the_main_frame_cannot_be_read() {
+        let error = require_main_frame(Err("channel closed".to_owned()))
+            .expect_err("a failed main-frame read must not silently widen the count");
+        assert_eq!(
+            error.to_string(),
+            "browser: cannot apply the redirect limit: failed to read the page's main frame: channel closed"
         );
     }
 }
