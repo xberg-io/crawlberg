@@ -38,6 +38,9 @@ pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
 /// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
 /// ~keep so `a[href]` would miss `<A HREF>`. tl already lowercases attribute names. Parse
 /// ~keep every document crawlberg queries through here, so no selector needs its own fix.
+/// ~keep A renamed tag name is an owned copy, no longer a slice of `html`. `link_targets` finds a
+/// ~keep value's offset in the source by pointer, so it reads only attribute values that way, and
+/// ~keep it compares tag names exactly because this rename has already run.
 pub(crate) fn parse_html(html: &str) -> Result<VDom<'_>, tl::ParseError> {
     let mut dom = tl::parse(html, tl::ParserOptions::default())?;
     for tag in dom.nodes_mut().iter_mut().filter_map(|node| node.as_tag_mut()) {
@@ -46,7 +49,7 @@ pub(crate) fn parse_html(html: &str) -> Result<VDom<'_>, tl::ParseError> {
             let lowercase = name.to_ascii_lowercase();
             tag.name_mut()
                 .set(lowercase)
-                .expect("lowercasing a tag name keeps its length");
+                .expect("a tag name tl parsed is at most u32::MAX bytes");
         }
     }
     Ok(dom)

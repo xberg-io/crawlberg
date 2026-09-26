@@ -48,11 +48,15 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
             continue;
         };
         let src = get_attr(tag, "src").unwrap_or_default();
-        if src.is_empty() || src.starts_with("data:") {
+        if src.is_empty() {
+            continue;
+        }
+        let resolved = base_url.join(&src);
+        if resolved.as_ref().is_ok_and(|u| u.scheme() == "data") {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(&src, base_url),
+            url: resolved.map_or_else(|_| src.into_owned(), String::from),
             alt: get_attr(tag, "alt").map(Cow::into_owned),
             width: get_attr(tag, "width").and_then(|w| w.parse::<u32>().ok()),
             height: get_attr(tag, "height").and_then(|h| h.parse::<u32>().ok()),
@@ -128,7 +132,6 @@ fn collect_meta_images(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     /// Flattened `ImageInfo` used so a whole extraction can be compared in one
@@ -188,6 +191,14 @@ mod tests {
     #[test]
     fn unresolvable_src_falls_back_to_the_raw_value() {
         assert_eq!(extract(r#"<img src="http://[bad">"#), vec![flat("http://[bad", "img")]);
+    }
+
+    #[test]
+    fn inline_data_images_are_skipped_in_any_spelling() {
+        assert_eq!(
+            extract(r#"<img src="DATA:image/png;base64,AA"><img src="&#68;ata:image/gif;base64,R0"><img src="i.png">"#),
+            [flat("https://example.com/dir/i.png", "img")]
+        );
     }
 
     #[test]

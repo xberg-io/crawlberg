@@ -63,8 +63,8 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
-                && !src.starts_with("data:")
                 && let Ok(url) = base_url.join(&src)
+                && url.scheme() != "data"
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -212,6 +212,17 @@ mod tests {
                 "https://example.com/other/j.js",
                 "https://example.com/other/i.png"
             ]
+        );
+    }
+
+    #[test]
+    fn inline_data_images_are_skipped_in_any_spelling() {
+        assert_eq!(
+            discovered(
+                r#"<img src="Data:image/png;base64,AA"><img src="&#100;ata&#9;:,x"><img src="i.png">"#,
+                "https://example.com/page"
+            ),
+            ["https://example.com/i.png"]
         );
     }
 }

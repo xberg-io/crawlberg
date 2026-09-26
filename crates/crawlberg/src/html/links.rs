@@ -79,23 +79,20 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             }
 
-            if href.starts_with("mailto:")
-                || href.starts_with("javascript:")
-                || href.starts_with("tel:")
-                || href.starts_with("data:")
+            // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
+            // per the WHATWG URL spec, so no special-casing is needed here.
+            let resolved = base_url.join(href);
+            // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
+            // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
+            if resolved
+                .as_ref()
+                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "javascript" | "tel" | "data"))
             {
                 continue;
             }
 
-            // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
-            // per the WHATWG URL spec, so no special-casing is needed here.
             let link_type = classify_link(href, base_url);
-
-            let resolved_url = if let Ok(u) = base_url.join(href) {
-                u.to_string()
-            } else {
-                href.to_owned()
-            };
+            let resolved_url = resolved.map_or_else(|_| href.to_owned(), String::from);
 
             let rel = get_attr(tag, "rel").map(Cow::into_owned);
             let nofollow = has_rel(tag, "nofollow");
@@ -115,7 +112,6 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     fn extract(html: &str, document_url: &str) -> Vec<LinkInfo> {
@@ -175,6 +171,16 @@ mod tests {
     #[test]
     fn an_encoded_script_address_is_skipped_like_a_plain_one() {
         let html = r#"<a href="&#106;avascript&#58;alert(1)">x</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
+    }
+
+    #[test]
+    fn a_skipped_scheme_is_read_as_the_url_parser_reads_it() {
+        let html = r#"<a href="JavaScript:alert(1)">a</a><a href="&#74;avascript:alert(1)">b</a>
+            <a href="java&#9;script:alert(1)">c</a><a href="MAILTO:x@example.com">d</a>
+            <a href="Tel:+1">e</a><a href="&#68;ata:text/html,x">f</a><a href="ok.html">ok</a>"#;
         let links = extract(html, "https://example.com/dir/page");
         let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
         assert_eq!(urls, ["https://example.com/dir/ok.html"]);
