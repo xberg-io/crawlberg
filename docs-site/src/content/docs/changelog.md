@@ -149,7 +149,7 @@ title: "Changelog"
   `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
   any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
   and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
-  nofollow. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
 - **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
   against the page URL, and the canonical URL was not resolved at all, so
   `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the

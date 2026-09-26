@@ -77,7 +77,20 @@ pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
 
 /// Whether the tag's `rel` value, a space-separated list of tokens, holds `token` in any ASCII case.
 pub(crate) fn has_rel(tag: &HTMLTag<'_>, token: &str) -> bool {
-    get_attr(tag, "rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case(token)))
+    rel_holds(tag, token, |c| c.is_ascii_whitespace())
+}
+
+/// Whether the tag's `rel` value holds the link qualifier `nofollow`, `ugc` or `sponsored`, in
+/// any ASCII case.
+///
+/// ~keep Google documents comma-separated qualifiers (`rel="ugc,nofollow"`), so a comma also
+/// ~keep separates these three words. Every other `rel` word keeps the HTML whitespace rule.
+pub(crate) fn has_link_qualifier(tag: &HTMLTag<'_>, qualifier: &str) -> bool {
+    rel_holds(tag, qualifier, |c| c.is_ascii_whitespace() || c == ',')
+}
+
+fn rel_holds(tag: &HTMLTag<'_>, token: &str, is_separator: fn(char) -> bool) -> bool {
+    get_attr(tag, "rel").is_some_and(|rel| rel.split(is_separator).any(|t| t.eq_ignore_ascii_case(token)))
 }
 
 /// Decode the character references in a raw attribute value (`&amp;`, `&#x2F;`), as an HTML

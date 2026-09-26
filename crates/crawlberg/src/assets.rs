@@ -200,6 +200,17 @@ mod tests {
     }
 
     #[test]
+    fn a_comma_does_not_separate_stylesheet_from_other_rel_words() {
+        assert_eq!(
+            discovered(
+                r#"<link rel="stylesheet,icon" href="a.css"><link rel="stylesheet" href="b.css">"#,
+                "https://example.com/"
+            ),
+            ["https://example.com/b.css"]
+        );
+    }
+
+    #[test]
     fn assets_resolve_against_the_base_href() {
         assert_eq!(
             discovered(

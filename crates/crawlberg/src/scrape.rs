@@ -623,6 +623,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_reads_nofollow_from_a_comma_separated_rel() {
+        let resp = response(
+            "text/html",
+            r#"<html><body><a href="/a" rel="ugc,nofollow">a</a><a href="/b" rel="nofollow,ugc">b</a>
+            <a href="/c" rel="UGC , NoFollow">c</a><a href="/d" rel="ugc,sponsored">d</a></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let nofollow: Vec<(&str, bool)> = result.links.iter().map(|l| (l.text.as_str(), l.nofollow)).collect();
+        assert_eq!(
+            nofollow,
+            [("a", true), ("b", true), ("c", true), ("d", false)],
+            "a comma separates the link qualifiers"
+        );
+    }
+
+    #[tokio::test]
     async fn scrape_resolves_head_links_against_the_base_href() {
         let resp = response(
             "text/html",

@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{LinkInfo, LinkType};
 
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{get_attr, has_rel};
+use super::{get_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -95,7 +95,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             let resolved_url = resolved.map_or_else(|_| href.to_owned(), String::from);
 
             let rel = get_attr(tag, "rel").map(Cow::into_owned);
-            let nofollow = has_rel(tag, "nofollow");
+            let nofollow = has_link_qualifier(tag, "nofollow");
             let text = tag.inner_text(parser).trim().to_owned();
 
             links.push(LinkInfo {
