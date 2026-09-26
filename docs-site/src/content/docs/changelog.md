@@ -91,6 +91,21 @@ title: "Changelog"
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
 
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
+
 - **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
   as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
   `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
