@@ -633,8 +633,15 @@ impl CrawlConfig {
         let Some(ref proxy) = self.proxy else {
             return Ok(());
         };
-        let parsed = url::Url::parse(&proxy.url)
-            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
+        let parsed = url::Url::parse(&proxy.url).map_err(|e| {
+            // ~keep This fires precisely when `Url::parse` fails, and the parsing redaction
+            // ~keep helper returns its input unchanged in that case — so it would be a no-op
+            // ~keep here. The textual strip is what actually removes `user:password@`.
+            CrawlError::invalid_config(format!(
+                "invalid proxy URL '{}': {e}",
+                crate::net::redact::redact_userinfo_textually(&proxy.url)
+            ))
+        })?;
         let scheme = parsed.scheme();
         if !SUPPORTED_PROXY_SCHEMES.contains(&scheme) {
             return Err(CrawlError::invalid_config(format!(
@@ -705,9 +712,14 @@ impl CrawlConfig {
             && !endpoint.starts_with("ws://")
             && !endpoint.starts_with("wss://")
         {
-            return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
-            )));
+            // ~keep Do not echo the value. This fires exactly when the endpoint is not
+            // ~keep `ws(s)://`, which is also when `redact_url_secrets` passes it through
+            // ~keep unchanged, so an endpoint carrying `?token=` would print in full in a
+            // ~keep `CrawlError` Display — and from there into logs and API error bodies.
+            // ~keep The field name is enough for the caller to find it.
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint must start with ws:// or wss://",
+            ));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
             return Err(CrawlError::invalid_config(
