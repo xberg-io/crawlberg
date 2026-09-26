@@ -127,7 +127,10 @@ title: "Changelog"
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
   Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
   This also covers image addresses, feed and favicon links, and text such as an image's alt
-  text. (#86)
+  text. The `javascript:`, `mailto:`, `tel:` and `data:` addresses that the links list, the
+  images list and asset downloads skip are now recognised as the URL parser reads them, in any
+  letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
+  `javascript:`. (#86)
 - **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
   the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
   were skipped the same way. Tag names now match in any case. (#87)

@@ -69,7 +69,6 @@ fn push_entry(val: &Value, raw: String, entries: &mut Vec<JsonLdEntry>) {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     fn extract(html: &str) -> Vec<JsonLdEntry> {

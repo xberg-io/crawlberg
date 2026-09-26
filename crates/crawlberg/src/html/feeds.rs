@@ -135,7 +135,6 @@ pub(crate) fn extract_headings(dom: &VDom<'_>) -> Vec<HeadingInfo> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     fn parse(html: &str) -> tl::VDom<'_> {
