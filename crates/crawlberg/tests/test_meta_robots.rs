@@ -204,3 +204,142 @@ async fn should_mark_a_nofollow_page_even_when_not_respecting_robots() {
     );
     drop(mock);
 }
+
+#[tokio::test]
+async fn should_read_meta_robots_none_as_both_noindex_and_nofollow() {
+    let mock = MockServer::start().await;
+    mount_absent_robots_txt(&mock).await;
+    mount_page(
+        &mock,
+        "/",
+        r#"<html><head><meta name="robots" content="none"></head>
+<body><a href="/child">child</a></body></html>"#,
+        &[],
+        1,
+    )
+    .await;
+    mount_page(&mock, "/child", "<html><body>child</body></html>", &[], 0).await;
+
+    let engine = create_engine(Some(config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "`none` means nofollow: the child must not be fetched"
+    );
+    let seed = &result.pages[0];
+    assert!(seed.noindex_detected, "`none` must be read as noindex");
+    assert!(seed.nofollow_detected, "`none` must be read as nofollow");
+    drop(mock);
+}
+
+#[tokio::test]
+async fn should_read_an_x_robots_tag_none_as_both_noindex_and_nofollow() {
+    let mock = MockServer::start().await;
+    mount_absent_robots_txt(&mock).await;
+    mount_page(
+        &mock,
+        "/",
+        r#"<html><body><a href="/child">child</a></body></html>"#,
+        &[("x-robots-tag", "none")],
+        1,
+    )
+    .await;
+    mount_page(&mock, "/child", "<html><body>child</body></html>", &[], 0).await;
+
+    let engine = create_engine(Some(config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "`none` means nofollow: the child must not be fetched"
+    );
+    let seed = &result.pages[0];
+    assert!(seed.noindex_detected, "`none` must be read as noindex");
+    assert!(seed.nofollow_detected, "`none` must be read as nofollow");
+    drop(mock);
+}
+
+#[tokio::test]
+async fn should_ignore_an_x_robots_tag_scoped_to_another_crawler() {
+    let mock = MockServer::start().await;
+    mount_absent_robots_txt(&mock).await;
+    mount_page(
+        &mock,
+        "/",
+        r#"<html><body><a href="/child">child</a></body></html>"#,
+        &[("x-robots-tag", "googlebot: noindex, nofollow")],
+        1,
+    )
+    .await;
+    mount_page(&mock, "/child", "<html><body>child</body></html>", &[], 1).await;
+
+    let engine = create_engine(Some(config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        2,
+        "a directive addressed to googlebot does not bind us"
+    );
+    let seed = &result.pages[0];
+    assert!(!seed.noindex_detected, "another crawler's noindex must not be applied");
+    assert!(
+        !seed.nofollow_detected,
+        "another crawler's nofollow must not be applied"
+    );
+    drop(mock);
+}
+
+/// ~keep A guard, not evidence the fix works: the pre-fix substring parse also found `nofollow`
+/// in `crawlberg: nofollow`, so this passes with the production change reverted. It exists to
+/// catch the plausible mis-implementation of dropping every scoped directive, including ours.
+#[tokio::test]
+async fn should_honour_an_x_robots_tag_scoped_to_our_own_user_agent() {
+    let mock = MockServer::start().await;
+    mount_absent_robots_txt(&mock).await;
+    mount_page(
+        &mock,
+        "/",
+        r#"<html><body><a href="/child">child</a></body></html>"#,
+        &[("x-robots-tag", "crawlberg: nofollow")],
+        1,
+    )
+    .await;
+    mount_page(&mock, "/child", "<html><body>child</body></html>", &[], 0).await;
+
+    let engine = create_engine(Some(config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(result.pages.len(), 1, "a directive naming our product token binds us");
+    assert!(result.pages[0].nofollow_detected, "the seed must be marked nofollow");
+    drop(mock);
+}
+
+#[tokio::test]
+async fn should_apply_a_meta_tag_named_for_our_user_agent_and_ignore_one_for_another_crawler() {
+    let mock = MockServer::start().await;
+    mount_absent_robots_txt(&mock).await;
+    mount_page(
+        &mock,
+        "/",
+        r#"<html><head><meta name="googlebot" content="noindex">
+<meta name="crawlberg" content="nofollow"></head>
+<body><a href="/child">child</a></body></html>"#,
+        &[],
+        1,
+    )
+    .await;
+    mount_page(&mock, "/child", "<html><body>child</body></html>", &[], 0).await;
+
+    let engine = create_engine(Some(config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(result.pages.len(), 1, "a meta tag naming our product token binds us");
+    let seed = &result.pages[0];
+    assert!(seed.nofollow_detected, "`meta name=\"crawlberg\"` must be honoured");
+    assert!(!seed.noindex_detected, "`meta name=\"googlebot\"` must be ignored");
+    drop(mock);
+}

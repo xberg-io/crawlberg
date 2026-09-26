@@ -8,7 +8,7 @@ use super::get_attr;
 #[cfg(not(target_arch = "wasm32"))]
 use super::selectors::SEL_META_REFRESH;
 use super::selectors::{
-    META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_CANONICAL, SEL_HTML, SEL_META, SEL_ROBOTS_META, SEL_TITLE,
+    META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, ROBOTS_META_NAME, SEL_CANONICAL, SEL_HTML, SEL_META, SEL_TITLE,
 };
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
@@ -182,30 +182,27 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
     md
 }
 
-/// Check whether a meta robots directive contains the given keyword.
-fn has_robots_directive(dom: &VDom<'_>, directive: &str) -> bool {
-    let parser = dom.parser();
-    if let Some(iter) = dom.query_selector(SEL_ROBOTS_META) {
-        for handle in iter {
-            if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
-                && let Some(content) = get_attr(tag, "content")
-                && content.to_lowercase().contains(directive)
-            {
-                return true;
-            }
+/// The `content` of every robots meta tag whose directives address this crawler.
+///
+/// ~keep A `<meta name="...">` robots tag may be addressed either to every crawler, through the
+/// generic `robots` name, or to one named crawler. A tag naming another crawler is not ours to
+/// obey, so it is dropped here rather than folded in with everyone else's.
+pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<String> {
+    let ua_lower = user_agent.to_lowercase();
+    let mut contents = Vec::new();
+    super::query_tags(dom, SEL_META, |tag, _parser| {
+        let Some(name) = get_attr(tag, "name") else {
+            return;
+        };
+        let name_lower = name.trim().to_lowercase();
+        if name_lower != ROBOTS_META_NAME && !crate::robots::product_token_addresses_us(&name_lower, &ua_lower) {
+            return;
         }
-    }
-    false
-}
-
-/// Detect whether a page has a `noindex` robots directive in its meta tags.
-pub(crate) fn detect_noindex(dom: &VDom<'_>) -> bool {
-    has_robots_directive(dom, "noindex")
-}
-
-/// Detect whether a page has a `nofollow` robots directive in its meta tags.
-pub(crate) fn detect_nofollow(dom: &VDom<'_>) -> bool {
-    has_robots_directive(dom, "nofollow")
+        if let Some(content) = get_attr(tag, "content") {
+            contents.push(content.to_owned());
+        }
+    });
+    contents
 }
 
 /// Marker introducing the redirect target inside a `refresh` directive's content.
@@ -412,19 +409,34 @@ mod tests {
         assert_eq!(md.description.as_deref(), Some("from-dom"));
     }
 
-    #[test]
-    fn robots_directives_are_detected_case_insensitively() {
-        let dom = tl::parse(
-            r#"<meta name="robots" content="NoIndex, NoFollow">"#,
-            ParserOptions::default(),
-        )
-        .expect("valid HTML");
-        assert!(detect_noindex(&dom));
-        assert!(detect_nofollow(&dom));
+    fn robots_contents(html: &str, user_agent: &str) -> Vec<String> {
+        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        robots_meta_contents(&dom, user_agent)
+    }
 
-        let plain = tl::parse(r#"<meta name="robots" content="all">"#, ParserOptions::default()).expect("valid HTML");
-        assert!(!detect_noindex(&plain));
-        assert!(!detect_nofollow(&plain));
+    #[test]
+    fn the_generic_robots_meta_tag_is_read_for_every_user_agent() {
+        assert_eq!(
+            robots_contents(r#"<meta name="robots" content="NoIndex, NoFollow">"#, "crawlberg/1.0"),
+            vec!["NoIndex, NoFollow".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_meta_tag_naming_our_product_token_is_read_and_another_crawlers_is_not() {
+        assert_eq!(
+            robots_contents(
+                r#"<meta name="googlebot" content="noindex"><meta name="Crawlberg" content="nofollow">"#,
+                "crawlberg/1.0",
+            ),
+            vec!["nofollow".to_owned()],
+            "only the tag addressed to this crawler binds it"
+        );
+    }
+
+    #[test]
+    fn a_non_robots_meta_tag_is_not_read_as_a_directive() {
+        assert!(robots_contents(r#"<meta name="description" content="hi">"#, "crawlberg/1.0").is_empty());
     }
 
     fn meta_refresh(html: &str) -> Option<String> {
