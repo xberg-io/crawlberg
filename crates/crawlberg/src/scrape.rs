@@ -596,7 +596,7 @@ mod tests {
             <script type="application/LD+JSON">{"@type":"Thing","name":"t"}</script></head>
             <body><a href="https://other.example/" rel="External NoFollow">x</a></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -630,7 +630,7 @@ mod tests {
             <link rel="alternate" type="application/rss+xml" href="feed.xml">
             <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
