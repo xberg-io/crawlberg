@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
+use crate::redact::RedactedHeaders;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
 use deno_core::OpState;
@@ -15,7 +16,6 @@ use tokio::sync::Mutex;
 pub type InterceptCallback =
     Arc<Mutex<Option<Box<dyn Fn(String, String, String) -> Option<(u16, String, String)> + Send + Sync>>>>;
 
-#[derive(Debug)]
 pub enum InterceptResolution {
     Continue {
         url: Option<String>,
@@ -31,6 +31,34 @@ pub enum InterceptResolution {
     Fail {
         reason: String,
     },
+}
+
+impl std::fmt::Debug for InterceptResolution {
+    /// Redacted: the headers a CDP client sets can carry `Authorization` and `Cookie`.
+    /// Header names stay visible; sensitive values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Continue {
+                url,
+                method,
+                headers,
+                body,
+            } => f
+                .debug_struct("Continue")
+                .field("url", url)
+                .field("method", method)
+                .field("headers", &headers.as_ref().map(RedactedHeaders))
+                .field("body", body)
+                .finish(),
+            Self::Fulfill { status, headers, body } => f
+                .debug_struct("Fulfill")
+                .field("status", status)
+                .field("headers", &RedactedHeaders(headers))
+                .field("body", body)
+                .finish(),
+            Self::Fail { reason } => f.debug_struct("Fail").field("reason", reason).finish(),
+        }
+    }
 }
 
 pub struct InterceptedRequest {

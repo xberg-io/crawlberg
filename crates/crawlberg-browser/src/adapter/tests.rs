@@ -447,3 +447,94 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
         assert!(rendered.contains("session"), "cookie name missing: {rendered}");
     }
 }
+
+/// The network events, the rendered page and the internal request/response types keep
+/// header names in `Debug` but never print a credential value.
+#[test]
+fn header_maps_debug_hides_sensitive_values_and_keeps_names() {
+    const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+    let request_headers = HashMap::from([
+        ("Authorization".to_owned(), format!("Bearer {SECRET}")),
+        ("cookie".to_owned(), format!("sid={SECRET}")),
+        ("Proxy-Authorization".to_owned(), format!("Basic {SECRET}")),
+        ("accept".to_owned(), "text/html".to_owned()),
+    ]);
+    let response_headers = HashMap::from([
+        ("set-cookie".to_owned(), format!("sid={SECRET}; HttpOnly")),
+        ("content-type".to_owned(), "text/html".to_owned()),
+    ]);
+    let url = Url::parse("https://example.com/").expect("url");
+    let native_event = NativeNetworkEvent {
+        url: url.to_string(),
+        method: "GET".into(),
+        resource_type: "document".into(),
+        status: 200,
+        request_headers: request_headers.clone(),
+        response_headers: response_headers.clone(),
+        body_size: 0,
+        timestamp_ms: 0,
+    };
+    let page_event = crate::page::NetworkEvent {
+        request_id: "1".into(),
+        url: url.to_string(),
+        method: "GET".into(),
+        resource_type: "document".into(),
+        status: 200,
+        headers: request_headers.clone(),
+        response_headers: Arc::new(response_headers.clone()),
+        body_size: 0,
+        timestamp: 0.0,
+    };
+    let rendered_page = RenderedPage {
+        final_url: url.to_string(),
+        status: Some(200),
+        html: String::new(),
+        headers: response_headers.clone(),
+        eval_result: None,
+        network_events: vec![native_event.clone()],
+        cookies: Vec::new(),
+    };
+    let response = crate::net::client::Response {
+        url: url.clone(),
+        status: 200,
+        headers: response_headers.clone(),
+        body: Vec::new(),
+        redirected_from: Vec::new(),
+    };
+    let request_info = crate::net::client::RequestInfo {
+        url: url.clone(),
+        method: "GET".into(),
+        headers: request_headers.clone(),
+        resource_type: crate::net::client::ResourceType::Document,
+    };
+    let resolutions = [
+        crate::js::ops::InterceptResolution::Continue {
+            url: None,
+            method: None,
+            headers: Some(request_headers.clone()),
+            body: None,
+        },
+        crate::js::ops::InterceptResolution::Fulfill {
+            status: 200,
+            headers: response_headers.clone(),
+            body: String::new(),
+        },
+    ];
+
+    let mut rendered = vec![
+        format!("{native_event:?}"),
+        format!("{page_event:#?}"),
+        format!("{rendered_page:?}"),
+        format!("{response:?}"),
+        format!("{request_info:?}"),
+    ];
+    rendered.extend(resolutions.iter().map(|resolution| format!("{resolution:?}")));
+    for text in rendered {
+        assert!(!text.contains(SECRET), "secret printed: {text}");
+        assert!(text.contains("***"), "placeholder missing: {text}");
+        assert!(
+            text.contains("text/html"),
+            "a non-sensitive value must stay visible: {text}"
+        );
+    }
+}

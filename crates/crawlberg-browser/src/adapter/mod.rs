@@ -10,6 +10,7 @@ pub use crate::page::PageError;
 use crate::context::BrowserContext;
 use crate::lifecycle::WaitUntil;
 use crate::page::Page;
+use crate::redact::{REDACTED, RedactedHeaders, RedactedValues};
 
 mod executor;
 mod snapshot;
@@ -54,11 +55,8 @@ impl std::fmt::Debug for NativeCookie {
     }
 }
 
-/// Placeholder `Debug` prints in place of a secret.
-const REDACTED: &str = "***";
-
 /// A single network event recorded during page navigation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeNetworkEvent {
     pub url: String,
     pub method: String,
@@ -68,6 +66,33 @@ pub struct NativeNetworkEvent {
     pub response_headers: HashMap<String, String>,
     pub body_size: usize,
     pub timestamp_ms: u64,
+}
+
+impl std::fmt::Debug for NativeNetworkEvent {
+    /// Redacted: the headers carry `Authorization`, `Cookie` and `Set-Cookie`. Header names
+    /// stay visible; sensitive values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            method,
+            resource_type,
+            status,
+            request_headers,
+            response_headers,
+            body_size,
+            timestamp_ms,
+        } = self;
+        f.debug_struct("NativeNetworkEvent")
+            .field("url", url)
+            .field("method", method)
+            .field("resource_type", resource_type)
+            .field("status", status)
+            .field("request_headers", &RedactedHeaders(request_headers))
+            .field("response_headers", &RedactedHeaders(response_headers))
+            .field("body_size", body_size)
+            .field("timestamp_ms", timestamp_ms)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -146,15 +171,6 @@ impl std::fmt::Debug for NativeBrowserConfig {
     }
 }
 
-/// `Debug` view of a header map that shows each name and hides each value.
-struct RedactedValues<'a>(&'a HashMap<String, String>);
-
-impl std::fmt::Debug for RedactedValues<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_map().entries(self.0.keys().map(|key| (key, REDACTED))).finish()
-    }
-}
-
 impl Default for NativeBrowserConfig {
     fn default() -> Self {
         Self {
@@ -185,7 +201,7 @@ pub enum NativeBrowserWait {
     Selector,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RenderedPage {
     pub final_url: String,
     pub status: Option<u16>,
@@ -197,6 +213,31 @@ pub struct RenderedPage {
     pub network_events: Vec<NativeNetworkEvent>,
     /// All non-expired cookies from the jar after navigation.
     pub cookies: Vec<NativeCookie>,
+}
+
+impl std::fmt::Debug for RenderedPage {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            final_url,
+            status,
+            html,
+            headers,
+            eval_result,
+            network_events,
+            cookies,
+        } = self;
+        f.debug_struct("RenderedPage")
+            .field("final_url", final_url)
+            .field("status", status)
+            .field("html", html)
+            .field("headers", &RedactedHeaders(headers))
+            .field("eval_result", eval_result)
+            .field("network_events", network_events)
+            .field("cookies", cookies)
+            .finish()
+    }
 }
 
 /// Per-action ceiling in the native worker.

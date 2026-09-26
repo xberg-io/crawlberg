@@ -220,6 +220,10 @@ All notable changes to crawlberg are documented here.
   `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
   every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
   serialised config as secret-bearing.
+- **Debug output printed header credentials.** The network events, the native browser's rendered
+  page and the fetch and bypass responses printed every header value with `{:?}`, including
+  `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie`. These four values now print as
+  `***`. Other headers and all header names stay visible. (#141)
 
 ### Added
 
