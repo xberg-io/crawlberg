@@ -40,6 +40,37 @@ pub fn redact_url_credentials(input: &str) -> String {
     url.to_string()
 }
 
+/// Request and response headers whose values are credentials: the caller's own
+/// `Authorization`, a proxy's, and session cookies in either direction. Names are
+/// lowercase and matched without case.
+pub(crate) const SENSITIVE_HEADERS: [&str; 4] = ["authorization", "proxy-authorization", "cookie", "set-cookie"];
+
+/// Whether `name` is one of [`SENSITIVE_HEADERS`], in any case.
+pub(crate) fn is_sensitive_header(name: &str) -> bool {
+    SENSITIVE_HEADERS
+        .iter()
+        .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+}
+
+/// `Debug` view of a header map that shows every name and every value, except the value
+/// of a [`SENSITIVE_HEADERS`] entry, which prints as the placeholder.
+pub(crate) struct RedactedHeaders<'a, K, V>(pub(crate) &'a std::collections::HashMap<K, V>);
+
+impl<K: AsRef<str> + std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for RedactedHeaders<'_, K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(name, value)| {
+                let value: &dyn std::fmt::Debug = if is_sensitive_header(name.as_ref()) {
+                    &REDACTED_PLACEHOLDER
+                } else {
+                    value
+                };
+                (name, value)
+            }))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +111,23 @@ mod tests {
             redact_url_credentials("https://example.com/path?query=1"),
             "https://example.com/path?query=1"
         );
+    }
+
+    #[test]
+    fn redacted_headers_hide_only_sensitive_values_in_any_case() {
+        let map = std::collections::HashMap::from([
+            ("Authorization".to_owned(), "Bearer fake-token".to_owned()),
+            ("set-cookie".to_owned(), "sid=fake-session".to_owned()),
+            ("content-type".to_owned(), "text/html".to_owned()),
+        ]);
+        let debug = format!("{:?}", RedactedHeaders(&map));
+        assert!(
+            !debug.contains("fake-token") && !debug.contains("fake-session"),
+            "sensitive values must not survive redaction, got {debug}"
+        );
+        assert!(debug.contains(r#""Authorization": "***""#), "got {debug}");
+        assert!(debug.contains(r#""set-cookie": "***""#), "got {debug}");
+        assert!(debug.contains(r#""content-type": "text/html""#), "got {debug}");
     }
 
     #[test]
