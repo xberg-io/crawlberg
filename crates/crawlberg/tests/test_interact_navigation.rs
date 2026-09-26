@@ -175,6 +175,13 @@ async fn interact_stops_a_chain_longer_than_max_redirects_where_scrape_does() {
     );
 }
 
+/// A chain that sits exactly on the limit is followed to its end, and the actions run there.
+///
+/// ~keep A GUARD, not evidence for #116: without the interception `interact` followed every
+/// ~keep redirect, so it also followed these two and reported the same landed page and the same
+/// ~keep successful actions. What it guards is the off-by-one — that the limit allows the hop it
+/// ~keep is equal to rather than stopping one short. Only
+/// ~keep `interact_stops_a_chain_longer_than_max_redirects_where_scrape_does` goes red without it.
 #[tokio::test]
 async fn interact_follows_a_chain_exactly_at_max_redirects() {
     let test_name = "interact_follows_a_chain_exactly_at_max_redirects";
@@ -251,6 +258,12 @@ async fn interact_runs_actions_on_a_normal_page() {
 
 /// A redirect to a blocked address is still refused by the SSRF check while redirects are
 /// counted. Only the seed's loopback address is allowlisted; private addresses stay denied.
+///
+/// ~keep A GUARD, not evidence for #116: the SSRF check already intercepted redirect targets
+/// ~keep during navigation (#74), so this refusal held before the change too. What it guards is
+/// ~keep the switch from CDP's default interception patterns to the explicit
+/// ~keep `ssrf_intercept::intercept_patterns()` this change needs for the response stage: those
+/// ~keep patterns must still cover every request, or the SSRF check silently stops seeing them.
 #[tokio::test]
 async fn interact_still_refuses_a_redirect_to_a_blocked_address() {
     let test_name = "interact_still_refuses_a_redirect_to_a_blocked_address";
