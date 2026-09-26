@@ -172,6 +172,10 @@ impl CrawlEngine {
     }
 
     /// Crawl multiple seed URLs and stream events from all crawls.
+    ///
+    /// Dropping the stream stops the batch: no further seed starts, and a seed that never
+    /// started sends nothing to the event emitter or the event sink. A seed already running
+    /// at the drop still reports its own completion.
     pub fn batch_crawl_stream(&self, urls: &[&str]) -> ReceiverStream<CrawlEvent> {
         let span = tracing::info_span!("crawl.engine.batch_crawl_stream", url_count = urls.len());
         let urls: Vec<String> = urls.iter().map(|u| u.to_string()).collect();
@@ -186,12 +190,19 @@ impl CrawlEngine {
                 let mut join_set = JoinSet::new();
 
                 for url in urls {
+                    // ~keep A seed started after the receiver is gone abandons its crawl at once
+                    // ~keep but still reports a zero-page `Complete` for a crawl that never ran,
+                    // ~keep so the loop stops at the drop, also while it waits for a permit.
+                    let permit = tokio::select! {
+                        biased;
+                        () = tx.closed() => break,
+                        permit = semaphore.clone().acquire_owned() => match permit {
+                            Ok(p) => p,
+                            Err(_) => break,
+                        },
+                    };
                     let engine = engine.with_isolated_frontier();
                     let tx = tx.clone();
-                    let permit = match semaphore.clone().acquire_owned().await {
-                        Ok(p) => p,
-                        Err(_) => break,
-                    };
 
                     join_set.spawn(async move {
                         let _permit = permit;

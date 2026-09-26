@@ -11,8 +11,8 @@ use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::RobotsOutcome;
 use crate::helpers::{default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive};
-use crate::html::detect_meta_refresh;
 use crate::html::is_html_content;
+use crate::html::{detect_meta_refresh, mask_raw_text_markup};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
@@ -527,7 +527,10 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     if !is_html_content(&resp.content_type, &resp.body) {
         return None;
     }
-    let target = crate::html::parse_html(&resp.body)
+    // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
+    // ~keep redirect a browser would follow, so mask raw text before looking for one.
+    let parsed_html = mask_raw_text_markup(&resp.body);
+    let target = crate::html::parse_html(&parsed_html)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
     Some(resolve_redirect(current_url, &target))
@@ -607,6 +610,38 @@ mod tests {
         let (target, _) =
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the meta refresh must still be consulted");
         assert_eq!(target, "https://example.com/from-meta");
+    }
+
+    /// A `<meta http-equiv="refresh">` written inside script text is script source, not a
+    /// redirect a browser would follow. ~keep
+    #[test]
+    fn a_meta_refresh_inside_script_text_is_not_a_redirect() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><script>document.write('<meta http-equiv="refresh" content="0; url=/from-script">');</script></head></html>"#,
+        );
+
+        assert!(
+            meta_refresh_target(&resp, "https://example.com/start").is_none(),
+            "a meta refresh inside script text must not be followed"
+        );
+    }
+
+    /// The masking pass must not stop a real meta refresh that follows script text. ~keep
+    #[test]
+    fn a_meta_refresh_after_script_text_is_still_followed() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><script>var s = "<!--";</script><meta http-equiv="refresh" content="0; url=/real"></head></html>"#,
+        );
+
+        assert_eq!(
+            meta_refresh_target(&resp, "https://example.com/start"),
+            Some("https://example.com/real".to_owned()),
+            "a real meta refresh after a script must still be found"
+        );
     }
 
     #[test]

@@ -157,39 +157,6 @@ async fn read_redirect_response(
     }
 }
 
-/// Classify a 403 as a WAF block when the body or headers carry a vendor fingerprint.
-async fn forbidden_error(
-    resp: reqwest::Response,
-    headers: &HashMap<String, Vec<String>>,
-    config: &CrawlConfig,
-) -> CrawlError {
-    let server = server_header(headers);
-    let body = crate::http::read_text_bounded(resp, crate::http::effective_max_body_size(config)).await;
-    if crate::http::is_waf_blocked(&server, &body, headers) {
-        let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-        return CrawlError::WafBlocked {
-            message: format!("waf/blocked detected: {vendor}"),
-            vendor,
-        };
-    }
-    CrawlError::forbidden("forbidden")
-}
-
-/// Map a status code that needs no body inspection onto its error, if it is an error at all.
-fn status_error(status: u16, url: &str) -> Option<CrawlError> {
-    match status {
-        401 => Some(CrawlError::unauthorized("unauthorized")),
-        404 => Some(CrawlError::not_found(format!("not_found: {url}"))),
-        408 => Some(CrawlError::timeout("timeout")),
-        410 => Some(CrawlError::gone("gone")),
-        429 => Some(CrawlError::rate_limited("rate_limited")),
-        500 => Some(CrawlError::server_error("server_error")),
-        502 => Some(CrawlError::bad_gateway("bad_gateway")),
-        503 => Some(CrawlError::server_error("service unavailable")),
-        _ => None,
-    }
-}
-
 /// Whether an error chain names a truncated or failed body transfer rather than a transport fault.
 fn is_body_error_chain(chain: &str) -> bool {
     chain.contains("content-length")
@@ -295,10 +262,22 @@ async fn do_fetch(
         return Ok(read_redirect_response(resp, config, status, content_type, headers).await);
     }
 
-    if status == 403 {
-        return Err(forbidden_error(resp, &headers, config).await);
+    // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
+    // a second copy: the two copies had already drifted. The one that stood here classified
+    // every response as if it were a 403 (`is_waf_blocked`/`detect_waf_vendor` hardcode that
+    // status) and showed the classifier only the `server` header, so a 403 identified by any
+    // other header came back as vendor "unknown".
+    if crate::http::is_challenge_status(status) {
+        return Err(crate::http::challenge_status_error(
+            status,
+            &req.url,
+            &headers,
+            resp,
+            crate::http::effective_max_body_size(config),
+        )
+        .await);
     }
-    if let Some(error) = status_error(status, &req.url) {
+    if let Some(error) = crate::http::status_error(status, &req.url) {
         return Err(error);
     }
 
@@ -356,68 +335,6 @@ impl Service<CrawlRequest> for HttpFetchService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Status → error mapping captured from the pre-extraction `do_fetch` match, so the
-    /// extraction into [`status_error`] can be shown to be behavior-preserving.
-    fn expected_status_mapping() -> Vec<(u16, Option<&'static str>)> {
-        vec![
-            (200, None),
-            (201, None),
-            (204, None),
-            (400, None),
-            (401, Some("unauthorized")),
-            (402, None),
-            (403, None),
-            (404, Some("not_found")),
-            (405, None),
-            (408, Some("timeout")),
-            (409, None),
-            (410, Some("gone")),
-            (418, None),
-            (429, Some("rate_limited")),
-            (451, None),
-            (500, Some("server_error")),
-            (501, None),
-            (502, Some("bad_gateway")),
-            (503, Some("service_unavailable")),
-            (504, None),
-        ]
-    }
-
-    fn error_tag(error: &CrawlError) -> &'static str {
-        match error {
-            CrawlError::Unauthorized { .. } => "unauthorized",
-            CrawlError::NotFound { .. } => "not_found",
-            CrawlError::Timeout { .. } => "timeout",
-            CrawlError::Gone { .. } => "gone",
-            CrawlError::RateLimited { .. } => "rate_limited",
-            CrawlError::ServerError { message, .. } if message == "service unavailable" => "service_unavailable",
-            CrawlError::ServerError { .. } => "server_error",
-            CrawlError::BadGateway { .. } => "bad_gateway",
-            other => panic!("unexpected error variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn status_error_maps_exactly_the_codes_the_fetch_path_classified() {
-        for (status, expected) in expected_status_mapping() {
-            let actual = status_error(status, "https://example.com/x");
-            assert_eq!(
-                actual.as_ref().map(error_tag),
-                expected,
-                "status {status} mapped to {actual:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn status_error_embeds_the_requested_url_in_the_not_found_message() {
-        let error = status_error(404, "https://example.com/missing").expect("404 is an error");
-        assert!(
-            matches!(&error, CrawlError::NotFound { message, .. } if message == "not_found: https://example.com/missing"),
-            "got {error:?}"
-        );
-    }
 
     #[test]
     fn only_3xx_is_returned_to_the_caller_as_a_redirect() {
