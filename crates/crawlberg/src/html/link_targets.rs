@@ -11,7 +11,8 @@ use tracing::debug;
 use url::Url;
 
 use super::links::effective_base_url;
-use super::start_tags::real_start_tags;
+use super::raw_text::mask;
+use super::start_tags::{RealTags, scan};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -76,15 +77,20 @@ const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "sour
 /// text inside `<title>`, `<textarea>`, `<script>` and the like stays as written. Every byte
 /// outside a rewritten attribute is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
+    // ~keep Scripting on, as the converter reads `<noscript>` (it drops the element).
+    // ~keep tl reads every `<name ...>` as a tag, even inside `<title>`, `<script>` or another
+    // ~keep tag's quoted value. A tag is rewritten only when this scan also ends a start tag of
+    // ~keep the same name at the same `>`, and the rewrite reads the scan's values.
+    let read = scan(html, true, |name| rewritten_attributes(name.as_bytes()));
     // ~keep Parse the masked source, as link extraction does: `tl` reads raw-text content as
     // ~keep markup, which both invents tags and hides real ones. Masking keeps every byte
     // ~keep offset, so a span found in the masked source addresses the same bytes in `html`.
-    let masked = super::mask_raw_text_markup(html);
+    let masked = mask(html, &read.raw_text);
     let Ok(dom) = tl::parse(&masked, ParserOptions::default()) else {
         return Cow::Borrowed(html);
     };
-    let base = effective_base_url(&dom, document_url);
-    let mut edits = collect_edits(&dom, &masked, html, &base);
+    let base = effective_base_url(read.base_href.as_deref(), document_url);
+    let mut edits = collect_edits(&dom, &masked, html, &base, &read.tags);
     if edits.is_empty() {
         return Cow::Borrowed(html);
     }
@@ -104,16 +110,18 @@ pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow
 /// The byte span of each attribute value that needs rewriting, with its encoded replacement.
 ///
 /// The tags come from `dom`, parsed from `masked`, and each edit addresses `html` at the same
-/// span.
+/// span. Only the tags in `real_tags` are rewritten.
 ///
 /// ~keep One pass over tl's flat node list rather than a selector query per element name:
 /// ~keep each query walks the whole tree, and there are eight element names to look for.
-fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(Range<usize>, String)> {
+fn collect_edits(
+    dom: &VDom<'_>,
+    masked: &str,
+    html: &str,
+    base: &Url,
+    real_tags: &RealTags,
+) -> Vec<(Range<usize>, String)> {
     let mut edits = Vec::new();
-    // ~keep tl reads every `<name ...>` as a tag, even inside `<title>`, `<script>` or another
-    // ~keep tag's quoted value. A tag is rewritten only when a real HTML parser also ends a start
-    // ~keep tag of the same name at the same `>`, and the rewrite reads that parser's values.
-    let real_tags = real_start_tags(html, |name| rewritten_attributes(name.as_bytes()));
     // ~keep html-to-markdown-rs copies the base into the front matter without decoding it
     // ~keep (`head_metadata.rs`, 3.14.3), so the base is written unencoded between double quotes.
     // ~keep A serialized URL can hold `"`, `<` and `>` (in a host or an opaque path), and those
@@ -194,8 +202,7 @@ fn value_edit(html: &str, span: Range<usize>, rewritten: &str) -> (Range<usize>,
 ///
 /// ~keep The converter reads the first copy of a repeated attribute, so a copy left after the
 /// ~keep first is removed would take its place, payload and all. The spans are found in
-/// ~keep `masked`, the bytes tl parsed: where the masking scan misreads a tag, the source can
-/// ~keep hold a `<` there that tl read as a space, and a name looked up in the source is missed.
+/// ~keep `masked`, the bytes tl parsed, where the value's span was found.
 fn attribute_removals(masked: &str, span: Range<usize>, attr: &str, tag_end: usize) -> Vec<(Range<usize>, String)> {
     let Some(first) = attribute_removal(masked, span.clone(), attr) else {
         debug!(offset = span.start, attr, "no attribute name before a value to remove");
@@ -284,7 +291,7 @@ fn rewritten_attributes(element: &[u8]) -> Option<&'static [(&'static str, Shape
 /// The byte span in `masked` of the attribute `attr` on the tl tag, with the value the real
 /// parser gives it: decoded, with CR and CRLF made LF and NUL made U+FFFD, as a browser reads it.
 ///
-/// ~keep The value is never read from `masked`: where the masking scan and tl disagree on where
+/// ~keep The value is never read from `masked`: where the HTML parser and tl disagree on where
 /// ~keep a tag ends, the masked bytes of a value can hold a masked `<`.
 fn parsed_value<'p>(
     tag: &tl::HTMLTag<'_>,
@@ -440,7 +447,6 @@ fn encode_attribute_value(value: &str, quoted: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::html::decode_attr_value;
 
     fn resolve(html: &str, document_url: &str) -> String {
         let url = Url::parse(document_url).expect("valid document URL");
@@ -502,11 +508,6 @@ mod tests {
             resolve(r#"<a href="p&#150;q&#233;.html">x</a>"#, "https://example.com/d/"),
             r#"<a href="https://example.com/d/p%E2%80%93q%C3%A9.html">x</a>"#
         );
-    }
-
-    #[test]
-    fn decoding_keeps_a_double_quote_in_the_value() {
-        assert_eq!(decode_attr_value(r#"a"b&amp;c&#150;"#), "a\"b&c\u{2013}");
     }
 
     #[test]
@@ -719,19 +720,6 @@ mod tests {
     }
 
     #[test]
-    fn removes_an_attribute_where_the_masking_scan_misreads_the_tag() {
-        // ~keep The masking scan opens a quote at the `'` of `x'y`, reads `<title>` as a tag and
-        // ~keep masks the `<` of `src<=`, so the bytes `tl` parsed there differ from the source.
-        assert_eq!(
-            resolve(
-                r#"<img b=x'y alt="'><title>" src<="data:image/png,A" x="</title>" src="data:image/png,B">"#,
-                "https://example.com/"
-            ),
-            r#"<img b=x'y alt="'><title>"  x="</title>" >"#
-        );
-    }
-
-    #[test]
     fn an_equals_sign_inside_an_unquoted_value_does_not_open_a_quote() {
         assert_eq!(
             resolve(r#"<a href=x="y>z</a><a href=a=b"c>z</a>"#, "https://example.com/"),
@@ -784,15 +772,37 @@ mod tests {
     }
 
     #[test]
-    fn a_value_is_read_from_the_source_where_the_masking_scan_misreads_a_quote() {
-        // ~keep The masking scan opens a quote at the `'` of `x'y` and masks `t<i` as title
-        // ~keep text, while `tl`, like a browser, reads all of it as the `href` value.
+    fn a_quote_in_an_unquoted_value_opens_no_quote() {
+        // ~keep The `'` of `x'y` is part of an unquoted value, so `<title>t<i</title>` sits inside
+        // ~keep the quoted `href` value and is not masked as title text.
         assert_eq!(
             resolve(
                 r#"<a b=x'y href="d'><title>t<i</title>">x</a>"#,
                 "https://example.com/dir/"
             ),
             r#"<a b=x'y href="https://example.com/dir/d&#x27;%3E%3Ctitle%3Et%3Ci%3C/title%3E">x</a>"#
+        );
+    }
+
+    #[test]
+    fn a_quote_in_an_unquoted_value_does_not_hide_later_links() {
+        assert_eq!(
+            resolve(
+                r#"<p b=x'y>one</p><i c='><title>' >two</i><p>Go <a href="leaf.html">leaf</a> <img alt="icon" src="data:image/png;base64,iVBORw0KGgo="></p>"#,
+                "https://example.com/dir/"
+            ),
+            r#"<p b=x'y>one</p><i c='><title>' >two</i><p>Go <a href="https://example.com/dir/leaf.html">leaf</a> <img alt="icon" ></p>"#
+        );
+    }
+
+    #[test]
+    fn a_base_inside_noscript_does_not_count() {
+        assert_eq!(
+            resolve(
+                r#"<head><noscript><base href="/ns/"></noscript></head><a href="leaf.html">x</a>"#,
+                "https://example.com/dir/page.html"
+            ),
+            r#"<head><noscript><base href="/ns/"></noscript></head><a href="https://example.com/dir/leaf.html">x</a>"#
         );
     }
 

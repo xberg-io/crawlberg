@@ -423,6 +423,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_less_than_sign_after_an_attribute_name_leaks_no_payload() {
+        // ~keep tl reads `src<=` as a `src` with no value, and the converter keeps that first
+        // ~keep copy, so neither payload reaches the markdown.
+        let md = markdown_at(
+            &format!(
+                r#"<img b=x'y alt="'><title>" src<="data:image/png;base64,{ICON_PAYLOAD}" x="</title>" src="data:image/png;base64,{ICON_PAYLOAD}">"#
+            ),
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(md, "!['><title>](<>)\n");
+    }
+
+    #[tokio::test]
     async fn an_inline_data_graphic_drops_the_payload() {
         for attr in ["url", "href", "xlink:href", "src"] {
             let html = format!(r#"<p><graphic {attr}="data:image/png;base64,{ICON_PAYLOAD}" alt="g"></graphic></p>"#);

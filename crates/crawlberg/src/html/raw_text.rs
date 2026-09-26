@@ -1,55 +1,22 @@
-//! Raw-text element handling, applied to the source HTML before it is parsed.
+//! Raw-text element handling, applied to the source HTML before tl parses it.
 //!
-//! `tl` has no notion of raw-text elements: it parses the contents of `script`,
-//! `style`, `textarea` and `title` as markup, which a browser never does. That has two
-//! opposite consequences, and both are cured here instead of in each extractor:
+//! tl reads the content of raw-text elements (`script`, `title`, `xmp`, `plaintext` and the
+//! rest) as markup, which a browser never does: tags written there become nodes, and a `<!--`
+//! there hides every real tag up to the next `-->`. [`mask_raw_text_markup`] overwrites each `<`
+//! of raw-text content with a space, where an HTML parser finds that content, so tl builds no
+//! node from it and every extractor sees what a browser sees.
 //!
-//! - A `<!--` inside raw text starts a comment for `tl`, so every tag up to the next
-//!   `-->` is swallowed and never reaches the tree at all. No filtering of the parsed
-//!   tree can recover a node that was never built.
-//! - Tags written *inside* raw text — `document.write("<a href=...>")`, a `<base href>`
-//!   in title text — become real nodes and are picked up by link, image, feed and meta
-//!   extraction.
-//!
-//! [`mask_raw_text_markup`] walks the source with a small tokenizer, finds the content of
-//! each raw-text element the way the HTML5 tokenizer does, and overwrites every `<` in
-//! that content with a space. Afterwards no raw-text content contains a `<`, so `tl`
-//! cannot build a node — or start a comment — from it, and every extractor is fixed at
-//! once with no change to its signature.
-//!
-//! Only `<` is rewritten, so raw-text content a consumer legitimately reads — a `<title>`'s
-//! text, a `<script type="application/ld+json">` payload — survives unless it contains a
-//! literal `<`, which in valid HTML is written `&lt;` and is left alone. Content that does
-//! carry a literal `<` is already mis-parsed today, because `tl` turns it into tags.
-//!
-//! The rewrite replaces one ASCII byte with another, so the result has exactly the same
-//! byte length as the source and every byte outside raw-text content is untouched. Byte
-//! offsets computed against the masked string therefore address the same bytes in the
-//! original, which is what the markdown URL-splicing path relies on.
+//! The masked string has the source's byte length, and differs from it only at `<` bytes inside
+//! raw-text content. Byte offsets into it address the same bytes in the source, which is what
+//! the markdown URL-splicing path relies on.
 
 use std::borrow::Cow;
 use std::ops::Range;
 
-use memchr::{memchr, memmem};
+use memchr::memchr;
 use tracing::debug;
 
-/// Elements whose content the HTML5 tokenizer reads as raw text (`RAWTEXT`) or as
-/// escapable raw text (`RCDATA`) when they appear in the HTML namespace.
-///
-/// ~keep `noscript` is deliberately absent: its content is raw text only when scripting
-/// is enabled, and a crawler's HTTP fetch has no scripting, so the markup reading is the
-/// right one — it is also how `<noscript><img src=…></noscript>` tracking pixels stay
-/// discoverable. `iframe[srcdoc]` needs nothing: its HTML lives in a quoted attribute
-/// value, which no parser here reads as markup.
-const RAW_TEXT_ELEMENTS: [&[u8]; 4] = [b"script", b"style", b"textarea", b"title"];
-
-/// Elements that put the tokenizer into foreign content.
-///
-/// ~keep Inside SVG and MathML the tokenizer stays in the data state, so a browser also
-/// parses the contents of `svg script`, `svg style` and `svg title` as markup. Suspending
-/// the raw-text rule there matches browsers and keeps this pass from masking content that
-/// really is markup.
-const FOREIGN_ELEMENTS: [&[u8]; 2] = [b"svg", b"math"];
+use super::start_tags::{Kept, scan};
 
 /// Byte written over a `<` inside raw-text content.
 ///
@@ -58,206 +25,53 @@ const FOREIGN_ELEMENTS: [&[u8]; 2] = [b"svg", b"math"];
 /// character reference the way `&` could.
 const MARKUP_MASK: char = ' ';
 
-/// Overwrite every `<` inside the content of a raw-text element with a space.
+/// A document with its raw-text markup masked, and the base address an HTML parser reads in it.
+pub(crate) struct MaskedHtml<'h> {
+    /// The source with every `<` inside raw-text content overwritten.
+    pub(crate) text: Cow<'h, str>,
+    /// The decoded `href` of the first `<base>` in the document that has one.
+    pub(crate) base_href: Option<String>,
+}
+
+/// Mask `source` for link extraction: read with scripting off, as a crawler that runs no script
+/// fetches a page, so `<noscript>` content is markup.
+pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
+    let read = scan(source, false, |_| None::<Kept<()>>);
+    MaskedHtml {
+        text: mask(source, &read.raw_text),
+        base_href: read.base_href,
+    }
+}
+
+/// Overwrite every `<` inside `raw_text` with a space.
 ///
-/// Returns the source unchanged (and unallocated) when no raw-text element contains a
-/// `<`. The returned string always has the same byte length as `source`, and differs from
-/// it only at `<` bytes inside raw-text content.
-pub(crate) fn mask_raw_text_markup(source: &str) -> Cow<'_, str> {
-    let regions = markup_bearing_regions(source);
-    if regions.is_empty() {
+/// Returns the source unchanged (and unallocated) when no range holds a `<`.
+pub(super) fn mask<'h>(source: &'h str, raw_text: &[Range<usize>]) -> Cow<'h, str> {
+    let bytes = source.as_bytes();
+    let mut regions = raw_text
+        .iter()
+        .filter(|region| memchr(b'<', &bytes[(*region).clone()]).is_some())
+        .peekable();
+    if regions.peek().is_none() {
         return Cow::Borrowed(source);
     }
 
     let mut masked = String::with_capacity(source.len());
     let mut cursor = 0;
-    for region in &regions {
+    let mut count = 0usize;
+    for region in regions {
         masked.push_str(&source[cursor..region.start]);
-        for character in source[region.start..region.end].chars() {
-            masked.push(if character == '<' { MARKUP_MASK } else { character });
-        }
+        masked.extend(
+            source[region.clone()]
+                .chars()
+                .map(|character| if character == '<' { MARKUP_MASK } else { character }),
+        );
         cursor = region.end;
+        count += 1;
     }
     masked.push_str(&source[cursor..]);
-    debug!(regions = regions.len(), "masked markup inside raw-text element content");
+    debug!(regions = count, "masked markup inside raw-text element content");
     Cow::Owned(masked)
-}
-
-/// What the scan does with the `<` it is looking at.
-enum Step {
-    /// Nothing to mask; carry on at this offset.
-    Resume(usize),
-    /// Raw-text content occupying this byte range.
-    RawText(Range<usize>),
-    /// A foreign-content element opened; carry on at this offset.
-    EnterForeign(usize),
-    /// A foreign-content element closed; carry on at this offset.
-    LeaveForeign(usize),
-}
-
-/// The byte ranges of raw-text content that contain at least one `<`.
-fn markup_bearing_regions(source: &str) -> Vec<Range<usize>> {
-    let bytes = source.as_bytes();
-    let mut regions: Vec<Range<usize>> = Vec::new();
-    let mut foreign_depth: usize = 0;
-    let mut cursor = 0;
-
-    while let Some(offset) = bytes.get(cursor..).and_then(|rest| memchr(b'<', rest)) {
-        let at = cursor + offset;
-        let next = match classify(bytes, at, foreign_depth > 0) {
-            Step::Resume(next) => next,
-            Step::EnterForeign(next) => {
-                foreign_depth += 1;
-                next
-            }
-            Step::LeaveForeign(next) => {
-                foreign_depth -= 1;
-                next
-            }
-            Step::RawText(content) => {
-                let resume = content.end;
-                if memchr(b'<', &bytes[content.clone()]).is_some() {
-                    regions.push(content);
-                }
-                resume
-            }
-        };
-        // ~keep The scan must move past this `<` even for input no branch understands,
-        // or a malformed tag turns the loop into a spin.
-        cursor = next.max(at + 1);
-    }
-    regions
-}
-
-/// Decide what the markup starting at `at` (a `<`) means for the scan.
-fn classify(bytes: &[u8], at: usize, in_foreign: bool) -> Step {
-    let rest = &bytes[at..];
-
-    if rest.starts_with(b"<!--") {
-        return Step::Resume(end_of_comment(bytes, at + 4));
-    }
-    if rest.starts_with(b"<!") || rest.starts_with(b"<?") {
-        return Step::Resume(end_of_tag(bytes, at + 2).0);
-    }
-    if rest.starts_with(b"</") {
-        let (name, after_name) = tag_name(bytes, at + 2);
-        let next = end_of_tag(bytes, after_name).0;
-        if in_foreign && named_in(name, &FOREIGN_ELEMENTS) {
-            return Step::LeaveForeign(next);
-        }
-        return Step::Resume(next);
-    }
-
-    let (name, after_name) = tag_name(bytes, at + 1);
-    if name.is_empty() {
-        return Step::Resume(at + 1);
-    }
-    let (next, self_closing) = end_of_tag(bytes, after_name);
-    if named_in(name, &FOREIGN_ELEMENTS) {
-        return if self_closing {
-            Step::Resume(next)
-        } else {
-            Step::EnterForeign(next)
-        };
-    }
-    if in_foreign || self_closing || !named_in(name, &RAW_TEXT_ELEMENTS) {
-        return Step::Resume(next);
-    }
-    // ~keep HTML5 ends a raw-text element at its first end tag even inside a quoted
-    // string, and treats the rest of the document as its content when there is none.
-    let content_end = end_tag_offset(bytes, next, name).unwrap_or_else(|| {
-        debug!(
-            element = %String::from_utf8_lossy(name),
-            offset = at,
-            "raw-text element has no end tag; treating the rest of the document as its content"
-        );
-        bytes.len()
-    });
-    Step::RawText(next..content_end)
-}
-
-/// Whether `name` case-insensitively equals one of `candidates`.
-fn named_in(name: &[u8], candidates: &[&[u8]]) -> bool {
-    candidates.iter().any(|candidate| name.eq_ignore_ascii_case(candidate))
-}
-
-/// Offset just past a comment's `-->`, or the end of input when it has none.
-///
-/// ~keep `tl` ends a comment at the first `-->` and swallows to end of input without
-/// one. Matching that exactly is what keeps this scan and `tl`'s tree agreeing on which
-/// `<script>` is real and which sits inside a comment.
-fn end_of_comment(bytes: &[u8], from: usize) -> usize {
-    match bytes.get(from..).and_then(|rest| memmem::find(rest, b"-->")) {
-        Some(offset) => from + offset + b"-->".len(),
-        None => bytes.len(),
-    }
-}
-
-/// The tag name starting at `from`, and the offset just past it.
-///
-/// An empty name means `from` does not begin one, which HTML5 reads as text rather than
-/// as a tag.
-fn tag_name(bytes: &[u8], from: usize) -> (&[u8], usize) {
-    if !bytes.get(from).is_some_and(u8::is_ascii_alphabetic) {
-        return (&[], from);
-    }
-    let mut end = from + 1;
-    while bytes
-        .get(end)
-        .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
-    {
-        end += 1;
-    }
-    (&bytes[from..end], end)
-}
-
-/// Offset just past a tag's `>`, and whether the tag ended with `/>`.
-///
-/// Quoted attribute values are skipped, so a `>` inside one does not end the tag.
-fn end_of_tag(bytes: &[u8], from: usize) -> (usize, bool) {
-    let mut index = from;
-    let mut quote: Option<u8> = None;
-    let mut last_significant = 0u8;
-
-    while let Some(&byte) = bytes.get(index) {
-        match quote {
-            Some(open) if byte == open => quote = None,
-            Some(_) => {}
-            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
-            None if byte == b'>' => return (index + 1, last_significant == b'/'),
-            None => {}
-        }
-        if !byte.is_ascii_whitespace() {
-            last_significant = byte;
-        }
-        index += 1;
-    }
-    (bytes.len(), false)
-}
-
-/// Offset of the `</name` that closes a raw-text element opened at `from`.
-///
-/// Per HTML5 the name must be followed by whitespace, `/` or `>`, so `</scriptish>` does
-/// not close a `<script>`.
-fn end_tag_offset(bytes: &[u8], from: usize, name: &[u8]) -> Option<usize> {
-    let mut index = from;
-    while let Some(offset) = bytes.get(index..).and_then(|rest| memchr(b'<', rest)) {
-        let at = index + offset;
-        let name_start = at + 2;
-        let name_end = name_start + name.len();
-        if bytes.get(at + 1) == Some(&b'/')
-            && bytes
-                .get(name_start..name_end)
-                .is_some_and(|found| found.eq_ignore_ascii_case(name))
-            && bytes
-                .get(name_end)
-                .is_none_or(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'))
-        {
-            return Some(at);
-        }
-        index = at + 1;
-    }
-    None
 }
 
 #[cfg(test)]
@@ -269,7 +83,7 @@ mod tests {
     #[test]
     fn should_leave_html_without_raw_text_elements_untouched() {
         let html = r#"<html><body><a href="/x">x</a><!-- <b> --><p>1 < 2</p></body></html>"#;
-        let masked = mask_raw_text_markup(html);
+        let masked = mask_raw_text_markup(html).text;
         assert_eq!(masked, html, "nothing to mask, so the source should come back as-is");
         assert!(
             matches!(masked, Cow::Borrowed(_)),
@@ -281,7 +95,7 @@ mod tests {
     fn should_mask_a_comment_opener_inside_script_text() {
         let html = r#"<script>var a = "<!--";</script><a href="/real">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<script>var a = " !--";</script><a href="/real">r</a>"#,
             "the `<` of a comment opener inside script text should become a space"
         );
@@ -291,7 +105,7 @@ mod tests {
     fn should_mask_every_markup_open_in_each_raw_text_element() {
         let html = r#"<style><a href="/s"></style><textarea><b></textarea><title><i></title>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<style> a href="/s"></style><textarea> b></textarea><title> i></title>"#,
             "style, textarea and title content should all be masked"
         );
@@ -300,7 +114,7 @@ mod tests {
     #[test]
     fn should_preserve_the_byte_length_of_the_source() {
         let html = r#"<script>"<a href=\"/x\">" + '<div>'</script><p>after</p>"#;
-        let masked = mask_raw_text_markup(html);
+        let masked = mask_raw_text_markup(html).text;
         assert_eq!(
             masked.len(),
             html.len(),
@@ -314,7 +128,7 @@ mod tests {
     fn should_not_mask_past_the_end_tag_of_a_raw_text_element() {
         let html = r#"<script><a></script><a href="/real">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<script> a></script><a href="/real">r</a>"#,
             "only the element's content should be masked, never the markup after it"
         );
@@ -324,7 +138,7 @@ mod tests {
     fn should_end_a_raw_text_element_at_an_uppercase_end_tag() {
         let html = r#"<SCRIPT><b></SCRIPT ><a href="/real">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<SCRIPT> b></SCRIPT ><a href="/real">r</a>"#,
             "end-tag matching should ignore case and allow trailing whitespace"
         );
@@ -334,7 +148,7 @@ mod tests {
     fn should_not_end_a_raw_text_element_at_a_longer_tag_name() {
         let html = r#"<script></scriptish><a href="/x"></script><b>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<script> /scriptish> a href="/x"></script><b>"#,
             "`</scriptish>` should not close a `<script>`"
         );
@@ -344,9 +158,18 @@ mod tests {
     fn should_treat_the_rest_of_the_document_as_content_when_the_end_tag_is_missing() {
         let html = r#"<p>before</p><script>var a = 1;<a href="/x">"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<p>before</p><script>var a = 1; a href="/x">"#,
             "an unterminated raw-text element runs to the end of the document, as in a browser"
+        );
+    }
+
+    #[test]
+    fn should_not_end_raw_text_at_an_end_tag_cut_off_by_the_end_of_input() {
+        assert_eq!(
+            mask_raw_text_markup(r#"<title><a href="/in"></title"#).text,
+            r#"<title> a href="/in"> /title"#,
+            "`</title` with nothing after it is title text, as in a browser"
         );
     }
 
@@ -356,19 +179,93 @@ mod tests {
         // ~keep skipped to `-->`, instead of merely to the first `>`.
         let html = r#"<!-- a > b <script> --><a href="/real">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             html,
             "a `<script>` inside a comment is not an element"
         );
     }
 
     #[test]
-    fn should_not_start_a_raw_text_element_from_a_self_closed_tag() {
-        let html = r#"<script/><a href="/real">r</a>"#;
+    fn should_start_raw_text_from_a_self_closed_script() {
+        let html = r#"<script/><a href="/in">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
+            r#"<script/> a href="/in">r /a>"#,
+            "an HTML parser ignores the `/` of `<script/>`, so script text follows it"
+        );
+    }
+
+    #[test]
+    fn should_mask_noscript_only_with_scripting_on() {
+        let html = r#"<noscript><a href="/in"></noscript><a href="/real">"#;
+        assert_eq!(
+            mask_raw_text_markup(html).text,
             html,
-            "`<script/>` is treated as closed here, so nothing follows it as raw text"
+            "link extraction reads `<noscript>` as markup, as a browser without scripting does"
+        );
+        let with_scripting = scan(html, true, |_| None::<Kept<()>>);
+        assert_eq!(
+            mask(html, &with_scripting.raw_text),
+            r#"<noscript> a href="/in"></noscript><a href="/real">"#,
+            "with scripting on, `<noscript>` content is raw text"
+        );
+    }
+
+    #[test]
+    fn should_mask_every_raw_text_element_a_browser_reads_as_text() {
+        for element in ["xmp", "iframe", "noembed", "noframes"] {
+            let html = format!(r#"<{element}><a href="/in"></{element}><a href="/real">"#);
+            assert_eq!(
+                mask_raw_text_markup(&html).text,
+                format!(r#"<{element}> a href="/in"></{element}><a href="/real">"#),
+                "element {element}"
+            );
+        }
+        assert_eq!(
+            mask_raw_text_markup(r#"<a href="/real"><plaintext><a href="/in"></plaintext>"#).text,
+            r#"<a href="/real"><plaintext> a href="/in"> /plaintext>"#,
+            "plaintext content runs to the end of the input"
+        );
+    }
+
+    #[test]
+    fn should_mask_script_inside_svg_foreign_object() {
+        let html = r#"<svg><foreignObject><script><a href="/in"></script></foreignObject></svg><a href="/real">"#;
+        assert_eq!(
+            mask_raw_text_markup(html).text,
+            r#"<svg><foreignObject><script> a href="/in"></script></foreignObject></svg><a href="/real">"#,
+            "`foreignObject` holds HTML, so a script inside it is raw text"
+        );
+    }
+
+    #[test]
+    fn should_mask_style_inside_a_mathml_html_annotation() {
+        let html =
+            r#"<math><annotation-xml encoding="text/html"><style><a href="/in"></style></annotation-xml></math>"#;
+        assert_eq!(
+            mask_raw_text_markup(html).text,
+            r#"<math><annotation-xml encoding="text/html"><style> a href="/in"></style></annotation-xml></math>"#,
+            "an HTML annotation holds HTML, so a style inside it is raw text"
+        );
+    }
+
+    #[test]
+    fn should_end_a_double_escaped_script_at_its_second_end_tag() {
+        let html = r#"<script><!--<script></script><a href="/in"></script><a href="/real">"#;
+        assert_eq!(
+            mask_raw_text_markup(html).text,
+            r#"<script> !-- script> /script> a href="/in"></script><a href="/real">"#,
+            "inside `<!--<script>` the first `</script>` does not end the script"
+        );
+    }
+
+    #[test]
+    fn should_not_open_a_quote_inside_an_unquoted_attribute_value() {
+        let html = r#"<p b=x'y>one</p><i c='><title>' >two</i><a href="/real">"#;
+        assert_eq!(
+            mask_raw_text_markup(html).text,
+            html,
+            "the `'` in `x'y` is part of the value, so `<title>` sits inside a quoted value"
         );
     }
 
@@ -376,7 +273,7 @@ mod tests {
     fn should_not_apply_the_raw_text_rule_inside_foreign_content() {
         let html = r#"<svg><title><a href="/x">t</a></title></svg><a href="/real">r</a>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             html,
             "inside SVG the tokenizer stays in the data state, so `title` is not raw text"
         );
@@ -386,7 +283,7 @@ mod tests {
     fn should_resume_the_raw_text_rule_after_foreign_content_closes() {
         let html = r#"<svg></svg><script><a href="/x"></script>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<svg></svg><script> a href="/x"></script>"#,
             "a closed `<svg>` should restore raw-text handling"
         );
@@ -396,7 +293,7 @@ mod tests {
     fn should_not_end_a_tag_at_a_greater_than_inside_a_quoted_attribute_value() {
         let html = r#"<script data-x="a>b"><a href="/x"></script>"#;
         assert_eq!(
-            mask_raw_text_markup(html),
+            mask_raw_text_markup(html).text,
             r#"<script data-x="a>b"> a href="/x"></script>"#,
             "a `>` inside a quoted attribute value should not end the start tag"
         );
@@ -409,27 +306,53 @@ mod tests {
             html in r#"(<[a-z]{1,4}( [a-z]{1,3}="[^"<>]{0,6}")?/?>|</[a-z]{1,4}>|<!--[^<>-]{0,6}-->|[a-z0-9 <>&;"'/!?=-]){0,40}"#
         ) {
             prop_assume!(!contains_raw_text_element(&html));
-            let masked = mask_raw_text_markup(&html);
+            let masked = mask_raw_text_markup(&html).text;
             prop_assert_eq!(masked.as_ref(), html.as_str());
         }
 
         /// Masking is idempotent and length-preserving on arbitrary markup-ish input.
         #[test]
         fn masking_is_idempotent_and_length_preserving(
-            html in r#"(<script>|</script>|<style>|</style>|<title>|</title>|<textarea>|</textarea>|<svg>|</svg>|<!--|-->|<a href="/x">|</a>|[a-z0-9 <>"'/!-]){0,60}"#
+            html in MARKUP_ISH
         ) {
-            let once = mask_raw_text_markup(&html).into_owned();
+            let once = mask_raw_text_markup(&html).text.into_owned();
             prop_assert_eq!(once.len(), html.len(), "masking changed the byte length");
-            let twice = mask_raw_text_markup(&once).into_owned();
+            let twice = mask_raw_text_markup(&once).text.into_owned();
             prop_assert_eq!(&twice, &once, "masking is not idempotent");
+        }
+
+        /// An HTML parser reads the masked copy as it reads the source: the same tags, raw text
+        /// and base address, with scripting on and off.
+        #[test]
+        fn masking_keeps_the_html5ever_reading(html in MARKUP_ISH, scripting in any::<bool>()) {
+            let source = scan(&html, scripting, |_| Some(&[("href", ())]));
+            let masked = mask(&html, &source.raw_text);
+            let reread = scan(&masked, scripting, |_| Some(&[("href", ())]));
+            prop_assert_eq!(&reread.tags, &source.tags);
+            prop_assert_eq!(&reread.raw_text, &source.raw_text);
+            prop_assert_eq!(&reread.base_href, &source.base_href);
         }
     }
 
-    /// Whether `html` opens any element this pass treats as raw text.
+    /// Markup-ish input built from every element an HTML parser may read as raw text, foreign
+    /// content and its integration points, comments and `<base href>`.
+    const MARKUP_ISH: &str = r#"(<script>|<script/>|</script>|<style>|</style>|<title>|</title>|<textarea>|</textarea>|<xmp>|</xmp>|<iframe>|</iframe>|<noembed>|</noembed>|<noframes>|</noframes>|<noscript>|</noscript>|<plaintext>|<template>|</template>|<svg>|</svg>|<foreignObject>|<math>|</math>|<!--|-->|<a href="/x">|<base href="/b/">|</a>|&lt;|[a-z0-9 <>"'/!=-]){0,60}"#;
+
+    /// Whether `html` opens any element an HTML parser reads as raw text with scripting off.
     fn contains_raw_text_element(html: &str) -> bool {
-        RAW_TEXT_ELEMENTS.iter().any(|name| {
-            let opener = format!("<{}", String::from_utf8_lossy(name));
-            html.to_ascii_lowercase().contains(&opener)
-        })
+        let html = html.to_ascii_lowercase();
+        [
+            "script",
+            "style",
+            "title",
+            "textarea",
+            "xmp",
+            "iframe",
+            "noembed",
+            "noframes",
+            "plaintext",
+        ]
+        .iter()
+        .any(|name| html.contains(&format!("<{name}")))
     }
 }
