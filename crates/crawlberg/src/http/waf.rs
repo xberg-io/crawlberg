@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use super::HttpResponse;
+use crate::error::CrawlError;
 use crate::types::WafClassifier;
 use crate::waf::TomlClassifier;
 
@@ -61,19 +62,80 @@ pub(super) fn waf_vendor_from_body(
     classify_vendor(&build_partial_response(status, body, headers_map))
 }
 
-/// As [`waf_vendor_from_body`], for a body whose raw bytes the caller already holds.
-pub(super) fn waf_vendor_from_bytes(
+/// The evidence that decided a 2xx response carries a WAF interstitial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WafEvidence {
+    /// The response headers named the vendor and the body corroborated it.
+    Headers,
+    /// A body signal took part in the match.
+    Body,
+}
+
+impl WafEvidence {
+    /// The word this evidence class is named by in a block message.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Headers => "header",
+            Self::Body => "body",
+        }
+    }
+}
+
+/// The [`CrawlError::WafBlocked`] a 2xx is refused with, or `None` when it is ordinary content.
+///
+/// ~keep A fingerprint matching on response headers alone proves only that a WAF or CDN is in
+/// the request path, which every page that product proxies carries — and unlike a 403 or a 503,
+/// a 2xx carries no status evidence to go with it. So a header-only match refuses the response
+/// only when the body shows the interstitial too, and an ordinary page served through Akamai,
+/// Imperva or F5 is returned as content instead of failing the fetch with the real page in hand
+/// (crawlberg#231).
+pub(crate) fn waf_2xx_error(
     status: u16,
     body_bytes: &[u8],
     body: &str,
     headers_map: &HashMap<String, Vec<String>>,
-) -> Option<String> {
-    classify_vendor(&build_partial_response_with_bytes(
+) -> Option<CrawlError> {
+    let (vendor, evidence) = confirmed_2xx_waf(status, body_bytes, body, headers_map)?;
+    Some(CrawlError::WafBlocked {
+        message: format!("waf/blocked detected on 2xx ({}): {vendor}", evidence.label()),
+        vendor,
+    })
+}
+
+/// The vendor a 2xx is refused for, with the evidence class that decided it.
+fn confirmed_2xx_waf(
+    status: u16,
+    body_bytes: &[u8],
+    body: &str,
+    headers_map: &HashMap<String, Vec<String>>,
+) -> Option<(String, WafEvidence)> {
+    let vendor = classify_vendor(&build_partial_response_with_bytes(
         status,
         body_bytes,
         body,
         headers_map,
+    ))?;
+
+    // ~keep An empty body reproduces exactly the header-only subset of a classification:
+    // `Rules::classify` evaluates its header-only fingerprints first and returns before it scans
+    // the body, and a `body_substring` signal cannot match an empty body. So a `None` here means
+    // a body signal took part in the match above and the match needs no further corroboration.
+    if waf_vendor_from_body(status, "", headers_map).is_none() {
+        return Some((vendor, WafEvidence::Body));
+    }
+
+    // ~keep Corroboration has to be asked of the body on its own: re-classifying with the
+    // headers would short-circuit on the same header-only fingerprint and never reach the body.
+    // Dropping them loses nothing, because the only header+body fingerprints in the corpus are
+    // Cloudflare's and `server: cloudflare` is not a header-only match, so none of them can be
+    // what reached this branch.
+    classify_vendor(&build_partial_response_with_bytes(
+        status,
+        body_bytes,
+        body,
+        &HashMap::new(),
     ))
+    .map(|_| (vendor, WafEvidence::Headers))
 }
 
 fn classify_vendor(response: &HttpResponse) -> Option<String> {
@@ -82,69 +144,4 @@ fn classify_vendor(response: &HttpResponse) -> Option<String> {
         .ok()
         .flatten()
         .map(|signal| signal.vendor)
-}
-
-/// Identify the WAF vendor from server header value and body content.
-///
-/// Delegates to [`TomlClassifier::builtin`]. Kept for backward compatibility
-/// with callers in `tower/service.rs`.
-///
-/// Callers are all gated behind `#[cfg(not(target_arch = "wasm32"))]`; the
-/// function is gated here to keep the wasm build warning-free under `-D warnings`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn detect_waf_vendor(server: &str, body: &str) -> String {
-    let body_bytes = body.as_bytes().to_vec();
-    let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
-    if !server.is_empty() {
-        headers_map
-            .entry("server".to_string())
-            .or_default()
-            .push(server.to_string());
-    }
-    let response = HttpResponse {
-        status: 403,
-        content_type: String::new(),
-        body: body.to_string(),
-        body_bytes,
-        headers: headers_map,
-        browser_extras: None,
-        final_url: String::new(),
-        screenshot: None,
-    };
-    WAF_CLASSIFIER
-        .classify(&response)
-        .ok()
-        .flatten()
-        .map(|s| s.vendor)
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Returns true if `response` is a WAF block.
-///
-/// Delegates to [`TomlClassifier::builtin`]. Kept for backward compatibility
-/// with callers outside `http_fetch` (e.g. the browser backend).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn is_waf_blocked(server: &str, body: &str, headers: &HashMap<String, Vec<String>>) -> bool {
-    let body_bytes = body.as_bytes().to_vec();
-    let mut headers_map: HashMap<String, Vec<String>> = HashMap::new();
-    for (k, values) in headers {
-        headers_map.insert(k.to_lowercase(), values.clone());
-    }
-    if !server.is_empty() {
-        headers_map
-            .entry("server".to_string())
-            .or_default()
-            .push(server.to_string());
-    }
-    let response = HttpResponse {
-        status: 403,
-        content_type: String::new(),
-        body: body.to_string(),
-        body_bytes,
-        headers: headers_map,
-        browser_extras: None,
-        final_url: String::new(),
-        screenshot: None,
-    };
-    WAF_CLASSIFIER.classify(&response).ok().flatten().is_some()
 }
