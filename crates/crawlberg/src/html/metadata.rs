@@ -254,9 +254,8 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
         let Some(offset) = meta_refresh_target_offset(&content) else {
             continue;
         };
-        let target = content[offset..].trim().to_owned();
-        if !target.is_empty() {
-            return Some(target);
+        if let Some(target) = super::clean_url(Cow::Borrowed(&content[offset..])) {
+            return Some(target.into_owned());
         }
     }
     None

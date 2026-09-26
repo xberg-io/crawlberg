@@ -745,6 +745,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_blank_or_inline_image_sources_and_splits_srcset_as_a_browser_does() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"  \">\
+             <meta name=\"twitter:image\" content=\"\t\u{1}\"></head><body>\
+             <img src=\" \"><img src=\"\u{B}\"><img src=\"i.png\">\
+             <picture><source srcset=\"a\u{A0}b.png 2x, c.png 1x\"></picture>\
+             <picture><source srcset=\"\u{1} 1x, d.png 2x\"></picture>\
+             <picture><source srcset=\"data:image/png;base64,AA 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/i.png", "https://example.com/a%C2%A0b.png"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_treats_an_address_of_only_c0_controls_as_blank() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"canonical\" href=\"\u{B}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\u{1}\u{B}\u{1F}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\u{1}feed.xml\u{1F}\">\
+             <link rel=\"icon\" href=\"\u{1C}\"><link rel=\"icon\" href=\"\u{1C}f.ico\"></head><body>\
+             <a href=\"\u{1}\">a</a><a href=\"java\tscript:alert(1)\">j</a>\
+             <a href=\"\u{B}next.html\">b</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(result.metadata.canonical_url, None);
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/f.ico"]);
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
     async fn scrape_keeps_unicode_spaces_at_the_ends_of_a_link_address() {
         let resp = response(
             "text/html",

@@ -63,15 +63,24 @@ pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a
         .map(decode_attr_value)
 }
 
-/// Get a URL attribute value such as `href`, decoded and without surrounding ASCII whitespace.
-///
-/// Returns `None` when the value is missing or blank: a blank URL points at the page itself.
-/// Other Unicode spaces stay, as they do in a browser.
+/// Get a URL attribute value such as `href` or `src`, decoded and cleaned by [`clean_url`].
 pub(crate) fn get_url_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
-    let value = get_attr(tag, attr)?;
-    let trimmed = value.trim_ascii();
+    get_attr(tag, attr).and_then(clean_url)
+}
+
+/// Remove what the WHATWG URL parser removes from a URL string: the C0 controls and spaces
+/// (U+0000 to U+0020) at either end, and every tab, LF and CR inside.
+///
+/// Returns `None` when nothing is left: a blank URL points at the page itself. Other Unicode
+/// spaces, such as U+00A0, stay, as they do in a browser.
+pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
+    let is_tab_or_newline = |c: char| matches!(c, '\t' | '\n' | '\r');
+    let trimmed = value.trim_matches(|c: char| c <= ' ');
     if trimmed.is_empty() {
         return None;
+    }
+    if trimmed.contains(is_tab_or_newline) {
+        return Some(Cow::Owned(trimmed.replace(is_tab_or_newline, "")));
     }
     if trimmed.len() == value.len() {
         return Some(value);

@@ -167,8 +167,19 @@ All notable changes to crawlberg are documented here.
   skipped, as a canonical or hreflang link is. (#187)
 - **The links list dropped Unicode spaces from the ends of an address.** A link such as
   `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
-  keep the no-break space. The links list now trims only ASCII whitespace from an address, as
-  it does for other attribute values. (#191)
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
 
 ### Added
 
