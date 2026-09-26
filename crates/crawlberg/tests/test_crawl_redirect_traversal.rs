@@ -311,3 +311,38 @@ async fn page_reachable_both_directly_and_via_redirect_is_fetched_once() {
         "the seed plus exactly one reported page for /shared -- the duplicate path is skipped, not double-reported"
     );
 }
+
+/// A redirected page's markdown resolves its relative links against the URL that served it,
+/// the same base the page's `links` list uses (issue #63).
+#[tokio::test]
+async fn redirected_page_markdown_resolves_relative_links_against_the_final_url() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, ALLOW_ALL).await;
+    mount_page(&mock, "/", "<html><body><a href=\"/old\">Link</a></body></html>").await;
+    mount_redirect(&mock, "/old", "/landing/index.html").await;
+    mount_page(
+        &mock,
+        "/landing/index.html",
+        "<html><body><p><a href=\"next.html\">next</a></p></body></html>",
+    )
+    .await;
+
+    let result = crawl_seed(config().build(), &format!("{}/", mock.uri())).await;
+
+    let redirected_page = result
+        .pages
+        .iter()
+        .find(|p| p.url.ends_with("/old"))
+        .expect("the /old entry must be reported as a page");
+    let expected = format!("{}/landing/next.html", mock.uri());
+    let markdown = &redirected_page.markdown.as_ref().expect("markdown is produced").content;
+    assert!(
+        markdown.contains(&format!("[next]({expected})")),
+        "the markdown link must resolve against the final URL, got {markdown:?}"
+    );
+    assert!(
+        redirected_page.links.iter().any(|link| link.url == expected),
+        "the links list must agree with the markdown, got {:?}",
+        redirected_page.links
+    );
+}

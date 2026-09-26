@@ -72,7 +72,9 @@ dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
+html-escape = { workspace = true }
 html-to-markdown-rs = { workspace = true }
+html5ever = { workspace = true }
 ipnet = { workspace = true }
 liter-llm = { workspace = true, optional = true }
 memchr = { workspace = true }
