@@ -391,7 +391,7 @@ fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &
             "sitemap-index child <loc> failed to parse; skipping it"
         );
     }
-    resolved
+    resolved.map(String::from)
 }
 
 /// Fetch one child sitemap named by an index and walk whatever it turns out to be.

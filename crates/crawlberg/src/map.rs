@@ -113,7 +113,7 @@ fn resolve_sitemap_directive(url: &str, sitemap_ref: &str, parsed_url: &Url) -> 
         );
         return None;
     };
-    Some(rewrite_url_host(&resolved, parsed_url))
+    Some(rewrite_url_host(resolved.as_str(), parsed_url))
 }
 
 /// Collect URLs from the conventional `/sitemap.xml`, if the origin serves one.
