@@ -6,10 +6,10 @@ use url::Url;
 use crate::assets;
 use crate::browser_detect;
 use crate::error::CrawlError;
-use crate::helpers::{RobotsOutcome, fetch_robots_outcome};
+use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    detect_charset, detect_nofollow, detect_noindex, extract_page_data, is_binary_content_type, is_binary_url,
-    is_html_content, is_pdf_content, mask_raw_text_markup,
+    detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content, is_pdf_content,
+    mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
 use crate::robots::is_path_allowed;
@@ -19,9 +19,10 @@ use crate::types::{CrawlConfig, ScrapeResult};
 /// the raw value is reported on `ScrapeResult` while the directives gate link following.
 fn header_robots_directives(
     headers: &std::collections::HashMap<String, Vec<String>>,
+    user_agent: &str,
 ) -> (Option<String>, RobotsDirectives) {
     let value = x_robots_tag(headers);
-    let directives = RobotsDirectives::from_header(value.as_deref());
+    let directives = RobotsDirectives::from_header_values(headers.get("x-robots-tag"), user_agent);
     (value, directives)
 }
 
@@ -47,7 +48,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let content_type = resp.content_type.clone();
     let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
 
-    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers);
+    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers, default_robots_user_agent(config));
 
     let downloaded_document = crate::document::build_downloaded_document_with_filter(
         url,
@@ -128,7 +129,7 @@ fn extract_from_body(
     let parsed_html = mask_raw_text_markup(&decoded.body);
     let doc = tl::parse(&parsed_html, ParserOptions::default())
         .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-    let page_robots = header_robots.with_meta_tags(&doc);
+    let page_robots = header_robots.with_meta_tags(&doc, default_robots_user_agent(config));
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
     Ok(BodyExtraction {
@@ -262,28 +263,85 @@ pub(crate) struct RobotsDirectives {
     pub(crate) nofollow: bool,
 }
 
+/// Directive keys that carry their own `key: value` argument, so a leading one in an
+/// `X-Robots-Tag` value is a directive and not a crawler name.
+const VALUE_BEARING_DIRECTIVES: [&str; 4] = [
+    "unavailable_after",
+    "max-snippet",
+    "max-image-preview",
+    "max-video-preview",
+];
+
 impl RobotsDirectives {
-    pub(crate) fn from_header(x_robots_tag: Option<&str>) -> Self {
-        let Some(value) = x_robots_tag else {
-            return Self {
-                noindex: false,
-                nofollow: false,
-            };
+    /// Parse the `X-Robots-Tag` values a response sent, dropping any addressed to another crawler.
+    ///
+    /// ~keep Each header value is parsed on its own rather than from the `, `-joined string
+    /// `x_robots_tag` reports: joining loses the header boundaries, so a `googlebot: noindex` in
+    /// one header would swallow the next header's unscoped directives into googlebot's scope.
+    pub(crate) fn from_header_values(values: Option<&Vec<String>>, user_agent: &str) -> Self {
+        let ua_lower = user_agent.to_lowercase();
+        let mut directives = Self {
+            noindex: false,
+            nofollow: false,
         };
-        let lower = value.to_lowercase();
-        Self {
-            noindex: lower.contains("noindex"),
-            nofollow: lower.contains("nofollow"),
+        for value in values.into_iter().flatten() {
+            if let Some(unscoped) = strip_crawler_scope(value, &ua_lower) {
+                directives.apply_directives(unscoped);
+            }
         }
+        directives
     }
 
     /// Add the directives from the document's robots meta tags.
-    pub(crate) fn with_meta_tags(self, doc: &tl::VDom<'_>) -> Self {
-        Self {
-            noindex: self.noindex || detect_noindex(doc),
-            nofollow: self.nofollow || detect_nofollow(doc),
+    pub(crate) fn with_meta_tags(mut self, doc: &tl::VDom<'_>, user_agent: &str) -> Self {
+        for content in robots_meta_contents(doc, user_agent) {
+            self.apply_directives(&content);
+        }
+        self
+    }
+
+    /// Fold one directive list into `self`.
+    ///
+    /// ~keep Split on whitespace as well as commas: a page that writes `content="noindex nofollow"`
+    /// without the comma is read by every other crawler, and was read here too while this parsed by
+    /// substring search.
+    fn apply_directives(&mut self, value: &str) {
+        for token in value.split(|c: char| c == ',' || c.is_whitespace()) {
+            match token.to_lowercase().as_str() {
+                // ~keep `none` is defined as `noindex, nofollow`, and a page that says only
+                // `none` was previously read as neither.
+                "none" => {
+                    self.noindex = true;
+                    self.nofollow = true;
+                }
+                "noindex" => self.noindex = true,
+                "nofollow" => self.nofollow = true,
+                _ => {}
+            }
         }
     }
+}
+
+/// Strip a leading `crawler:` scope from an `X-Robots-Tag` value.
+///
+/// Returns the directives that bind us: `value` unchanged when it names no crawler, the
+/// remainder when it names ours, and `None` when it names another crawler.
+fn strip_crawler_scope<'a>(value: &'a str, ua_lower: &str) -> Option<&'a str> {
+    let Some((head, rest)) = value.split_once(':') else {
+        return Some(value);
+    };
+    let head_lower = head.trim().to_lowercase();
+    // ~keep A crawler name is a bare product token and comes first, so anything carrying a comma
+    // or whitespace -- `nofollow, unavailable_after: <date>` -- is a directive list, not a scope.
+    // Dropping such a value as another crawler's would discard directives addressed to everyone.
+    let is_product_token = !head_lower.contains(',') && !head_lower.contains(char::is_whitespace);
+    if !is_product_token || VALUE_BEARING_DIRECTIVES.contains(&head_lower.as_str()) {
+        return Some(value);
+    }
+    if crate::robots::product_token_addresses_us(&head_lower, ua_lower) {
+        return Some(rest);
+    }
+    None
 }
 
 /// Asset references to download for this page, if asset downloading is enabled.
@@ -409,6 +467,98 @@ mod tests {
 
         assert!(result.nofollow_detected, "every X-Robots-Tag header must be read");
         assert_eq!(result.x_robots_tag.as_deref(), Some("noarchive, nofollow"));
+    }
+
+    /// ~keep A guard, not evidence the fix works: the pre-fix substring parse read this too. It
+    /// exists to catch the plausible mis-implementation of splitting the directive list on commas
+    /// alone, which would stop reading a comma-less `content` every other crawler honours.
+    #[tokio::test]
+    async fn scrape_reads_a_space_separated_directive_list() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="robots" content="noindex nofollow"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "a space-separated list must still be read");
+        assert!(result.nofollow_detected, "a space-separated list must still be read");
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_none_as_both_noindex_and_nofollow() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="robots" content="None"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "`none` must be read as noindex");
+        assert!(result.nofollow_detected, "`none` must be read as nofollow");
+    }
+
+    #[tokio::test]
+    async fn scrape_ignores_an_x_robots_tag_addressed_to_another_crawler() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["googlebot: noindex, nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(!result.noindex_detected, "googlebot's noindex does not bind us");
+        assert!(!result.nofollow_detected, "googlebot's nofollow does not bind us");
+        assert_eq!(
+            result.x_robots_tag.as_deref(),
+            Some("googlebot: noindex, nofollow"),
+            "the raw header is still reported verbatim"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_directives_from_a_header_beside_one_scoped_to_another_crawler() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["googlebot: noindex".to_owned(), "nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            !result.noindex_detected,
+            "the scoped header binds googlebot only, and its scope must not reach the next header"
+        );
+        assert!(result.nofollow_detected, "the unscoped header binds every crawler");
+    }
+
+    /// ~keep A guard, not evidence the fix works: it passes with the pre-fix substring parse too.
+    /// It exists to catch the plausible mis-implementation of reading any leading `key:` as a
+    /// crawler name, which would discard the whole value's directives.
+    #[tokio::test]
+    async fn scrape_reads_a_directive_beside_a_value_bearing_one() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["nofollow, unavailable_after: 25 Jun 2010 15:00:00 PST".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.nofollow_detected,
+            "`unavailable_after` names a directive, not a crawler, so the value still binds us"
+        );
     }
 
     #[tokio::test]

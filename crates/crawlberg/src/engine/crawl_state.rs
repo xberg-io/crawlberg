@@ -202,7 +202,8 @@ impl CrawlState {
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
-    x_robots_tag: Option<&str>,
+    header_robots: RobotsDirectives,
+    user_agent: &str,
     body: String,
     body_bytes: Vec<u8>,
 ) -> PageExtraction {
@@ -218,14 +219,13 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
-    let header_robots = RobotsDirectives::from_header(x_robots_tag);
     // ~keep Parse the masked source, never `body`: `tl` reads the contents of raw-text elements
     // ~keep as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&body);
     let (extraction, robots) = if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
         (
             extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false),
-            header_robots.with_meta_tags(&doc),
+            header_robots.with_meta_tags(&doc, user_agent),
         )
     } else {
         let extraction = HtmlExtraction {

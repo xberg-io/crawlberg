@@ -19,7 +19,8 @@ pub(super) static META_RE_CONTENT_NAME: LazyLock<Regex> = LazyLock::new(|| {
 pub(super) const SEL_META: &str = "meta";
 pub(super) const SEL_TITLE: &str = "title";
 pub(super) const SEL_CANONICAL: &str = "link[rel='canonical']";
-pub(super) const SEL_ROBOTS_META: &str = "meta[name='robots']";
+/// The `name` of a robots meta tag addressed to every crawler rather than to a named one.
+pub(super) const ROBOTS_META_NAME: &str = "robots";
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) const SEL_META_REFRESH: &str = "meta[http-equiv='refresh']";
 pub(super) const SEL_A_HREF: &str = "a[href]";

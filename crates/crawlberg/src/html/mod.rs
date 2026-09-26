@@ -113,5 +113,5 @@ pub(crate) use link_targets::resolve_link_targets;
 pub(crate) use links::extract_links;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::detect_meta_refresh;
-pub(crate) use metadata::{detect_nofollow, detect_noindex};
+pub(crate) use metadata::robots_meta_contents;
 pub(crate) use raw_text::mask_raw_text_markup;
