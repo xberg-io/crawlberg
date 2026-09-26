@@ -40,6 +40,10 @@ title: "Changelog"
   `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
   every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
   serialised config as secret-bearing.
+- **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
+  the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
+  now prints without its userinfo and query, each query value prints as `***`, and so does the body
+  template. (#144)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
