@@ -1,4 +1,5 @@
-//! Rewriting the relative addresses that the markdown converter renders into absolute URLs.
+//! Rewriting the relative addresses that the markdown converter renders into absolute URLs,
+//! and emptying the `data:` addresses of images so their payload stays out of the markdown.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -61,8 +62,9 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// the address the links resolve against.
 ///
 /// Character references in a value are decoded before resolution, as a browser decodes them.
-/// Absolute URLs of any scheme, fragment-only references and empty values are left as written.
-/// Every byte outside a rewritten attribute value is kept.
+/// Absolute URLs of any scheme, fragment-only references and empty values are left as written,
+/// except that a `data:` address on an `<img>` is removed, so its encoded payload stays out of
+/// the markdown. Every byte outside a rewritten attribute value is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
     let Ok(dom) = tl::parse(html, ParserOptions::default()) else {
         return Cow::Borrowed(html);
@@ -115,13 +117,17 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
         else {
             continue;
         };
+        // ~keep An image's `data:` address carries the whole encoded image, and the converter
+        // ~keep would write all of it into the markdown (#97). Emptying it keeps the alt text,
+        // ~keep and the converter then falls back to the image's other address attributes.
+        let drop_inline_data = name.eq_ignore_ascii_case(b"img");
         for &(attr, shape) in *attributes {
             let Some(raw) = borrowed_attr(tag, attr) else {
                 continue;
             };
             if let Some(rewritten) = std::str::from_utf8(raw)
                 .ok()
-                .and_then(|v| rewrite_value(v, shape, base))
+                .and_then(|v| rewrite_value(v, shape, base, drop_inline_data))
             {
                 push_edit(raw, &rewritten);
             }
@@ -135,13 +141,22 @@ fn borrowed_attr<'h>(tag: &tl::HTMLTag<'h>, attr: &'static str) -> Option<&'h [u
     tag.attributes().get(attr).flatten().and_then(|v| v.as_bytes_borrowed())
 }
 
-/// The new, unencoded value for a raw attribute value, or `None` when nothing in it is relative.
-fn rewrite_value(raw: &str, shape: Shape, base: &Url) -> Option<String> {
+/// The new, unencoded value for a raw attribute value, or `None` when nothing in it changes.
+///
+/// With `drop_inline_data`, a `data:` address is removed: a single address becomes empty, and
+/// a candidate list loses that candidate.
+fn rewrite_value(raw: &str, shape: Shape, base: &Url, drop_inline_data: bool) -> Option<String> {
     let decoded = decode_attr_value(raw);
     match shape {
+        Shape::Single if drop_inline_data && is_inline_data(&decoded) => Some(String::new()),
         Shape::Single => resolve_reference(&decoded, base),
-        Shape::Candidates => resolve_candidates(&decoded, base),
+        Shape::Candidates => resolve_candidates(&decoded, base, drop_inline_data),
     }
+}
+
+/// Whether `reference` is a `data:` URL, which holds its content inline.
+fn is_inline_data(reference: &str) -> bool {
+    Url::parse(reference).is_ok_and(|url| url.scheme() == "data")
 }
 
 /// Resolve `reference` against `base` when it is a relative reference.
@@ -160,12 +175,13 @@ fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
     }
 }
 
-/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor.
+/// Resolve each candidate URL of a `srcset`-style list, keeping its descriptor, and leave out
+/// each `data:` candidate when `drop_inline_data` is set.
 ///
 /// ~keep Follows the HTML "parse a srcset attribute" split: a candidate URL is a run of
 /// ~keep non-whitespace (so a `data:` URL's own comma stays inside it), trailing commas end
 /// ~keep the candidate, and otherwise the descriptor runs to the next comma.
-fn resolve_candidates(list: &str, base: &Url) -> Option<String> {
+fn resolve_candidates(list: &str, base: &Url, drop_inline_data: bool) -> Option<String> {
     let mut candidates = Vec::new();
     let mut changed = false;
     let mut rest = list;
@@ -185,6 +201,10 @@ fn resolve_candidates(list: &str, base: &Url) -> Option<String> {
             let descriptor_end = after_url.find(',').unwrap_or(after_url.len());
             descriptor = after_url[..descriptor_end].trim();
             rest = &after_url[descriptor_end..];
+        }
+        if drop_inline_data && is_inline_data(candidate_url) {
+            changed = true;
+            continue;
         }
         let resolved = resolve_reference(candidate_url, base);
         changed |= resolved.is_some();
@@ -259,7 +279,7 @@ mod tests {
 
     #[test]
     fn returns_the_input_unchanged_when_nothing_is_relative() {
-        let html = r##"<a href="https://example.com/x">x</a><a href="#top">t</a><img src="data:image/png;base64,AA">"##;
+        let html = r##"<a href="https://example.com/x">x</a><a href="#top">t</a><a href="data:text/plain,x">d</a>"##;
         let url = Url::parse("https://example.com/").expect("valid URL");
         assert!(matches!(resolve_link_targets(html, &url), Cow::Borrowed(_)));
     }
@@ -343,16 +363,41 @@ mod tests {
     fn resolves_each_srcset_candidate_and_keeps_its_descriptor() {
         let base = Url::parse("https://example.com/p/").expect("valid URL");
         assert_eq!(
-            resolve_candidates("a.png 1x, /b.png 2x,https://cdn.example/c.png 3x", &base).as_deref(),
+            resolve_candidates("a.png 1x, /b.png 2x,https://cdn.example/c.png 3x", &base, false).as_deref(),
             Some("https://example.com/p/a.png 1x, https://example.com/b.png 2x, https://cdn.example/c.png 3x")
         );
+    }
+
+    #[test]
+    fn empties_an_image_data_address_and_keeps_a_link_data_address() {
+        assert_eq!(
+            resolve(
+                r#"<img src="data:image/png;base64,AA" alt="a"><IMG data-src=" DATA:image/png,x"><a href="data:text/plain,x">d</a>"#,
+                "https://example.com/"
+            ),
+            r#"<img src="" alt="a"><IMG data-src=""><a href="data:text/plain,x">d</a>"#
+        );
+    }
+
+    #[test]
+    fn leaves_image_data_candidates_out_of_a_candidate_list() {
+        let base = Url::parse("https://example.com/p/").expect("valid URL");
+        assert_eq!(
+            resolve_candidates("data:image/gif;base64,R0lGOD 1x, big.png 800w", &base, true).as_deref(),
+            Some("https://example.com/p/big.png 800w")
+        );
+        assert_eq!(
+            resolve_candidates("data:image/gif;base64,R0lGOD 2x", &base, true).as_deref(),
+            Some("")
+        );
+        assert_eq!(resolve_candidates("https://cdn.example/a.png 1x", &base, true), None);
     }
 
     #[test]
     fn a_data_url_candidate_keeps_its_own_comma() {
         let base = Url::parse("https://example.com/p/").expect("valid URL");
         assert_eq!(
-            resolve_candidates("data:image/gif;base64,R0lGOD 1x, big.png 800w", &base).as_deref(),
+            resolve_candidates("data:image/gif;base64,R0lGOD 1x, big.png 800w", &base, false).as_deref(),
             Some("data:image/gif;base64,R0lGOD 1x, https://example.com/p/big.png 800w")
         );
     }
@@ -360,14 +405,17 @@ mod tests {
     #[test]
     fn a_candidate_list_of_absolute_urls_is_left_alone() {
         let base = Url::parse("https://example.com/p/").expect("valid URL");
-        assert_eq!(resolve_candidates("https://cdn.example/a.png 1x, #x", &base), None);
+        assert_eq!(
+            resolve_candidates("https://cdn.example/a.png 1x, #x", &base, false),
+            None
+        );
     }
 
     #[test]
     fn a_trailing_comma_ends_a_candidate_without_a_descriptor() {
         let base = Url::parse("https://example.com/p/").expect("valid URL");
         assert_eq!(
-            resolve_candidates("a.png, b.png 2x", &base).as_deref(),
+            resolve_candidates("a.png, b.png 2x", &base, false).as_deref(),
             Some("https://example.com/p/a.png, https://example.com/p/b.png 2x")
         );
     }

@@ -14,12 +14,17 @@ All notable changes to crawlberg are documented here.
   `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
   addresses of `<graphic>`. Character references in an address are decoded first, so
   `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `javascript:` and `data:` links stay as written. Because resolved links are longer,
   `fit_content` can now drop a line of relative links that it kept before, the same way it
   already treated absolute links. (#63)
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+- **An image embedded in the page copied its whole encoded data into the markdown.** An
+  `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
+  icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
+  and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
+  real URL is still used in its place. `fit_content` follows the same rule. (#97)
 
 ## [1.8.0] - 2026-09-25
 
