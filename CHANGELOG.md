@@ -32,10 +32,14 @@ All notable changes to crawlberg are documented here.
 - **A proxy address with an upper-case scheme lost its configured credentials.** The native
   browser backend matched the proxy's scheme with a case-sensitive `http://`/`https://` prefix
   check, so `HTTP://user:pass@proxy:8080` matched neither arm and the proxy was used with no
-  credentials — requests then failed with a 407, or went out unauthenticated on an open proxy.
+  credentials, so requests then failed with a 407 or went out unauthenticated on an open proxy.
   The scheme now comes from the URL parser, so its case no longer matters, and credentials are
   embedded with `Url::set_username`/`set_password` instead of a raw string splice, so a `:`, `@`,
-  or `/` in a credential can no longer corrupt the proxy's authority. (#222)
+  or `/` in a credential can no longer corrupt the proxy's authority. One shared fix now covers
+  the crawl, scrape and interact paths: every proxy scheme keeps its credentials, not only
+  `http`/`https`, a literal `%` in a credential survives byte-for-byte, and a proxy address that
+  fails to parse is reported as a configuration error instead of silently dropping the
+  credentials. (#222)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
