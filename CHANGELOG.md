@@ -4,6 +4,14 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The bypass provider could expose a vendor API key.** It reported the vendor's API request URL
+  as the page's `final_url`, and its send and body-read errors printed the same URL. For a vendor
+  that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
+  field's contract allows when the vendor does not report the resolved URL, and the errors no
+  longer include the request URL. (#89)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
