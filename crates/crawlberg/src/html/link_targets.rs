@@ -64,13 +64,18 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// Character references in a value are decoded before resolution, as a browser decodes them.
 /// Absolute URLs of any scheme, fragment-only references and empty values are left as written,
 /// except that a `data:` address on an `<img>` is removed, so its encoded payload stays out of
-/// the markdown. Every byte outside a rewritten attribute value is kept.
+/// the markdown. Tags written inside raw-text content, such as a `<base>` in `<title>` text, are
+/// not read. Every byte outside a rewritten attribute value is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
-    let Ok(dom) = tl::parse(html, ParserOptions::default()) else {
+    // ~keep Parse the masked source, as link extraction does: `tl` reads raw-text content as
+    // ~keep markup, which both invents tags and hides real ones. Masking keeps every byte
+    // ~keep offset, so a span found in the masked source addresses the same bytes in `html`.
+    let masked = super::mask_raw_text_markup(html);
+    let Ok(dom) = tl::parse(&masked, ParserOptions::default()) else {
         return Cow::Borrowed(html);
     };
     let base = effective_base_url(&dom, document_url);
-    let mut edits = collect_edits(&dom, html, &base);
+    let mut edits = collect_edits(&dom, &masked, html, &base);
     if edits.is_empty() {
         return Cow::Borrowed(html);
     }
@@ -89,25 +94,29 @@ pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow
 
 /// The byte span of each attribute value that needs rewriting, with its encoded replacement.
 ///
+/// The tags come from `dom`, parsed from `masked`, and each value is read from `html` at the
+/// same span.
+///
 /// ~keep One pass over tl's flat node list rather than a selector query per element name:
 /// ~keep each query walks the whole tree, and there are eight element names to look for.
-fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, String)> {
+fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(Range<usize>, String)> {
+    // ~keep The value comes from `html`, not from the masked source: where the masking scan
+    // ~keep and `tl` disagree on where a tag ends, a value can hold a masked `<`.
+    let original = |raw: &[u8]| span_within(masked, raw).map(|span| (&html[span.clone()], span));
     let mut edits = Vec::new();
-    let mut push_edit = |raw: &[u8], rewritten: &str| {
-        if let Some(span) = span_within(html, raw) {
-            let quoted = span.start > 0 && matches!(html.as_bytes()[span.start - 1], b'"' | b'\'');
-            edits.push((span, encode_attribute_value(rewritten, quoted)));
-        }
+    let mut push_edit = |span: Range<usize>, rewritten: &str| {
+        let quoted = span.start > 0 && matches!(html.as_bytes()[span.start - 1], b'"' | b'\'');
+        edits.push((span, encode_attribute_value(rewritten, quoted)));
     };
     for tag in dom.nodes().iter().filter_map(|node| node.as_tag()) {
         let name = tag.name().as_bytes();
         if name.eq_ignore_ascii_case(b"base") {
             // ~keep Every `<base href>`, not only the first: the converter's front matter
             // ~keep keeps the last one it meets, and only the first one counts in HTML.
-            if let Some(raw) = borrowed_attr(tag, "href")
-                && std::str::from_utf8(raw).is_ok_and(|v| decode_attr_value(v) != base.as_str())
+            if let Some((value, span)) = borrowed_attr(tag, "href").and_then(original)
+                && decode_attr_value(value) != base.as_str()
             {
-                push_edit(raw, base.as_str());
+                push_edit(span, base.as_str());
             }
             continue;
         }
@@ -122,14 +131,11 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
         // ~keep and the converter then falls back to the image's other address attributes.
         let drop_inline_data = name.eq_ignore_ascii_case(b"img");
         for &(attr, shape) in *attributes {
-            let Some(raw) = borrowed_attr(tag, attr) else {
+            let Some((value, span)) = borrowed_attr(tag, attr).and_then(original) else {
                 continue;
             };
-            if let Some(rewritten) = std::str::from_utf8(raw)
-                .ok()
-                .and_then(|v| rewrite_value(v, shape, base, drop_inline_data))
-            {
-                push_edit(raw, &rewritten);
+            if let Some(rewritten) = rewrite_value(value, shape, base, drop_inline_data) {
+                push_edit(span, &rewritten);
             }
         }
     }
@@ -356,6 +362,52 @@ mod tests {
         assert_eq!(
             out,
             r#"<base href="https://example.com/it&#x27;s/"><a href='https://example.com/it&#x27;s/leaf.html' onclick='x'>x</a>"#
+        );
+    }
+
+    #[test]
+    fn a_base_written_inside_title_text_does_not_count() {
+        assert_eq!(
+            resolve(
+                r#"<title>x <base href="https://evil.example/"></title><a href="leaf.html">x</a>"#,
+                "https://example.com/dir/page.html"
+            ),
+            r#"<title>x <base href="https://evil.example/"></title><a href="https://example.com/dir/leaf.html">x</a>"#
+        );
+    }
+
+    #[test]
+    fn a_comment_opener_inside_script_text_does_not_hide_a_later_link() {
+        assert_eq!(
+            resolve(
+                r#"<script>var a = "<!--";</script><a href="leaf.html">x</a>"#,
+                "https://example.com/dir/page.html"
+            ),
+            r#"<script>var a = "<!--";</script><a href="https://example.com/dir/leaf.html">x</a>"#
+        );
+    }
+
+    #[test]
+    fn a_comment_opener_inside_script_text_does_not_hide_a_later_inline_image() {
+        assert_eq!(
+            resolve(
+                r#"<script>var a = "<!--";</script><img alt="icon" src="data:image/png;base64,iVBORw0KGgo=">"#,
+                "https://example.com/dir/page.html"
+            ),
+            r#"<script>var a = "<!--";</script><img alt="icon" src="">"#
+        );
+    }
+
+    #[test]
+    fn a_value_is_read_from_the_source_where_the_masking_scan_misreads_a_quote() {
+        // ~keep The masking scan opens a quote at the `'` of `x'y` and masks `t<i` as title
+        // ~keep text, while `tl`, like a browser, reads all of it as the `href` value.
+        assert_eq!(
+            resolve(
+                r#"<a b=x'y href="d'><title>t<i</title>">x</a>"#,
+                "https://example.com/dir/"
+            ),
+            r#"<a b=x'y href="https://example.com/dir/d&#x27;%3E%3Ctitle%3Et%3Ci%3C/title%3E">x</a>"#
         );
     }
 
