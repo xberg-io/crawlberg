@@ -29,6 +29,15 @@ title: "Changelog"
 
 ### Fixed
 
+- **An address whose scheme was written in upper or mixed case was reported as a real address.**
+  The images list, the links list and asset discovery skipped `data:` addresses with a
+  case-sensitive check, so `<img src="DATA:image/png;base64,...">` or `<a href="Data:...">` came
+  back as an entry. The links list skipped `javascript:`, `mailto:` and `tel:` links the same way,
+  so `JAVASCRIPT:alert(1)` or `Mailto:...` stayed in it. URL schemes are case-insensitive, and
+  these checks now read the scheme the way the URL parser does, as the markdown pass already did.
+  An `og:image` or `twitter:image` whose content is a `data:` address is now skipped too, as an
+  `<img>` with one is. (#200)
+
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
   `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
   canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every

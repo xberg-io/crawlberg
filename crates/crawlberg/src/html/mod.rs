@@ -88,6 +88,18 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
+/// Whether `address`, already cleaned by [`clean_url`], has the URL scheme `scheme` (given in lower
+/// case, without the colon). The scheme matches in any ASCII case, as the URL parser reads it.
+///
+/// ~keep A prefix test rather than `Url::parse(..).scheme()`: both give the same answer on a
+/// ~keep cleaned value, and the prefix test does not parse every kept address a second time.
+pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
+    address.as_bytes().get(scheme.len()) == Some(&b':')
+        && address
+            .get(..scheme.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+}
+
 /// Whether the tag's `attr` value, without surrounding ASCII whitespace, equals `expected` in any
 /// ASCII case.
 ///
@@ -240,5 +252,44 @@ mod tests {
             }
         }
         assert_eq!(checked, (1..=5).map(|n| 8_usize.pow(n)).sum::<usize>());
+    }
+
+    #[test]
+    fn a_scheme_is_recognised_as_the_url_parser_reads_it() {
+        let addresses = [
+            "data:",
+            "data:image/png;base64,AA",
+            "DATA:image/png;base64,AA",
+            "Data:text/plain,x",
+            "dAtA:,",
+            "data:text/html,<b>\u{e9}</b>",
+            "",
+            "dat",
+            "data",
+            "data/x.png",
+            "database.png",
+            "data%3Ax",
+            "data :x",
+            "d\u{e4}ta:x",
+            "x-data:y",
+            "javascript:x",
+            "JAVASCRIPT:alert(1)",
+            "Mailto:x@example.com",
+            "mailto:",
+            "TEL:+1",
+            "tel",
+            "telx:1",
+            "https://example.com/data:x",
+            "https://example.com/tel:1",
+        ];
+        let mut matches = 0;
+        for scheme in ["data", "javascript", "mailto", "tel"] {
+            for address in addresses {
+                let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == scheme);
+                assert_eq!(has_scheme(address, scheme), parsed, "for {scheme:?} in {address:?}");
+                matches += usize::from(parsed);
+            }
+        }
+        assert_eq!(matches, 11);
     }
 }
