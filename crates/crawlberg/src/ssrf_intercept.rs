@@ -135,16 +135,19 @@ pub(crate) async fn start_ssrf_interception(
             {
                 if redirect_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
                     // ~keep `Fetch.continueResponse` is the contract-correct call for a
-                    // ~keep response-stage pause and `continueRequest` is the request-stage one,
-                    // ~keep but Chrome accepts this and the switch was reverted. The one CI run
-                    // ~keep carrying `continueResponse` (2d2089793) was the only run in which the
-                    // ~keep two script-navigation tests in test_browser_max_redirects.rs failed,
-                    // ~keep on macos-latest only, while Linux and a local macOS Chrome stayed
-                    // ~keep green. That is a correlation on a single run, not a proven cause: the
-                    // ~keep macos-latest leg deliberately uses the preinstalled Chrome (see the
-                    // ~keep Setup Chrome step in ci-rust.yaml, Linux-only), so its Chrome version
-                    // ~keep is neither pinned nor reproducible locally. Pin Chrome on that leg
-                    // ~keep before revisiting the call.
+                    // ~keep response-stage pause; `continueRequest` is the request-stage one, and
+                    // ~keep Chrome accepts it here. Switching was tried and reverted. Measured on
+                    // ~keep the macos-latest CI leg, which runs the preinstalled Chrome (the
+                    // ~keep Setup Chrome step in ci-rust.yaml is Linux-only), so it is neither
+                    // ~keep pinned nor reproducible locally:
+                    // ~keep   2d2089793, continueResponse: 5 passed, 2 failed, 60.17s
+                    // ~keep   7422fd541, continueRequest:  6 passed, 1 failed, 16.35s
+                    // ~keep `a_redirect_after_a_script_navigation_is_not_counted` fails either
+                    // ~keep way, so it is INDEPENDENT of this call and pre-existing.
+                    // ~keep `a_javascript_navigation_after_load_is_not_counted_as_a_redirect`
+                    // ~keep differed, but that is one run each way and could be flake. Pin Chrome
+                    // ~keep on that leg before drawing a conclusion or revisiting the call.
+                    // ~keep Left as `continueRequest` only to keep this change minimal.
                     let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
                 } else {
                     let _ = listener_page
