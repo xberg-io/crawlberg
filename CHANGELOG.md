@@ -4,15 +4,78 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
+  `nofollow_detected` are always serialised, and `CrawlPageResult` carries
+  `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
+  every older crawlberg** — even when both values are `false`. The break is one-directional: an
+  older result still loads here, because both fields default to `false`.
+
+  What this affects:
+
+  - A cross-version pipeline that serialises a crawl result on one crawlberg and reads it on
+    another. Upgrade the readers before, or with, the writers.
+  - A persisted `CrawlCache`: entries written by this version cannot be read back by an older
+    build, so a rollback must treat the cache as cold rather than reuse it.
+  - Any binding that round-trips a page result through JSON across the FFI boundary
+    (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
+    versions.
+
+- **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
+  constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
+  Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
+  and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
+
 ### Fixed
 
+- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
+  and the page result kept the URL that was asked for, so relative links on the landed page
+  resolved against the wrong path and `final_url` named a page that never served the content. The
+  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
+  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
+  landed URL is refused is dropped. (#75)
+
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
+
+- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
+  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
+  statuses; only a status that raised no error of its own was checked against the list. A non-empty
+  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
+  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
+  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
+  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
+  empty list they retry these failures up to `retry_count` instead of never. (#76)
+
+  This narrows retries for any configuration that already sets `retry_codes`, including a list
+  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
+  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
+  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
+  0, so a configuration that never raised it sends one request either way and is unaffected.
+
+- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
+  whether or not a response caused it, so a transport timeout was retried under
+  `retry_codes = [408]`. An error raised for a response status now carries that status, and
+  `retry_codes` matches only that. (#92)
+- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
+  success on these paths, while `map()` already reported it as a server error, so an empty
+  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
+  path now maps a status to the same error, so a 504 is a server error everywhere and is
+  retried like a 503. The messages of these errors on `map()` now match the other paths:
+  `timeout`, `service unavailable` and `gateway timeout`. (#76)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
   it is a hint and not a robots directive. A `noindex` page is still crawled and its links
   followed. Each page result now reports both directives in `noindex_detected` and
-  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. Older crawlberg versions
-  reject a page result serialised with the two new fields. (#135)
+  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
+  **Upgrading** above for the wire-format consequence of the two new fields. (#135)
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)

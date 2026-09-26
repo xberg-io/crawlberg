@@ -166,7 +166,9 @@ pub struct CrawlConfig {
     pub max_redirects: usize,
     /// Number of retry attempts for failed requests. Bounded by [`MAX_RETRY_COUNT`].
     pub retry_count: usize,
-    /// HTTP status codes that should trigger a retry.
+    /// HTTP status codes that should trigger a retry. When empty, every rate limit, server
+    /// error, bad gateway and timeout is retried. When set, only a failure whose status is
+    /// listed is retried, so a timeout without a response is not.
     #[serde(default)]
     pub retry_codes: Vec<u16>,
     /// Initial delay, in milliseconds, before the first retry. Doubled on each

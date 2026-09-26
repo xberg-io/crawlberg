@@ -355,6 +355,24 @@ pub(crate) async fn follow_redirects(
         };
         browser_used = hop_browser_used;
 
+        // ~keep The browser tier follows redirects itself, so the chain learns of the hop only
+        // ~keep after the request went out. Its landed URL still passes the SSRF check and the
+        // ~keep policy a 3xx target does before its content is used, and a refusal discards it.
+        if let Some((landed, landed_key)) = landed_redirect(&resp, &chain) {
+            chain
+                .advance_to(landed, landed_key, HashMap::new(), &engine.config.ssrf)
+                .await?;
+            if let Some(policy) = policy.as_deref_mut()
+                && let Some(refusal) = policy.admits(&chain.current_url, true).await?
+            {
+                return Ok(RedirectResolution::Refused {
+                    refusal,
+                    redirect_count: chain.redirect_count,
+                    intermediate_headers: chain.intermediate_headers,
+                });
+            }
+        }
+
         let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects) else {
             return Ok(RedirectResolution::Fetched(chain.into_outcome(resp, browser_used)));
         };
@@ -437,7 +455,19 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         body: String::new(),
         body_bytes: Vec::new(),
         headers: HashMap::new(),
+        landed_url: None,
     }
+}
+
+/// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
+/// the one requested, paired with the cycle key it will occupy.
+fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(String, String)> {
+    let landed = resp.landed_url.as_deref()?;
+    let parsed = Url::parse(landed).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    chain.unseen_key(landed).map(|key| (landed.to_owned(), key))
 }
 
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
@@ -525,6 +555,7 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: map,
+            landed_url: None,
         }
     }
 

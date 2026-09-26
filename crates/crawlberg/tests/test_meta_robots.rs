@@ -86,6 +86,13 @@ async fn should_not_follow_links_from_an_x_robots_tag_nofollow_page_when_respect
     drop(mock);
 }
 
+/// A `rel="nofollow"` link is a hint, not a robots directive, so it is still followed.
+///
+/// ~keep A guard, not evidence the fix works: `REL_NOFOLLOW_PAGE` carries no robots meta tag and
+/// ~keep no `X-Robots-Tag`, so the suppression conjunct never fires and this passes with the
+/// ~keep production change reverted. It exists to catch the plausible mis-implementation -- also
+/// ~keep the literal wording of #135 -- of filtering on `LinkInfo::nofollow` as well, which would
+/// ~keep make `crawl()` contradict `map()`. Keep it; do not read it as coverage of the fix.
 #[tokio::test]
 async fn should_follow_a_rel_nofollow_link_when_respecting_robots() {
     let mock = MockServer::start().await;
@@ -127,6 +134,12 @@ async fn should_not_follow_links_when_a_second_x_robots_tag_header_says_nofollow
     drop(mock);
 }
 
+/// With `respect_robots_txt` off -- the default -- a nofollow page's links are still followed.
+///
+/// ~keep A guard, not evidence the fix works: `config(false)` makes the suppression conjunct
+/// ~keep `!(false && _)`, so this passes with the production change reverted. It exists to catch
+/// ~keep a mis-implementation that applied nofollow unconditionally, which would silently narrow
+/// ~keep every default-configured crawl. Keep it; do not read it as coverage of the fix.
 #[tokio::test]
 async fn should_follow_nofollow_links_when_not_respecting_robots() {
     let mock = MockServer::start().await;

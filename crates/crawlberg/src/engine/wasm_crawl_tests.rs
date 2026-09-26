@@ -662,6 +662,13 @@ async fn sequential_crawl_honours_nofollow_when_respecting_robots() {
 }
 
 /// With robots not respected, the same links are all followed.
+///
+/// ~keep A guard, not evidence the fix works: `CrawlConfig::default()` leaves
+/// ~keep `respect_robots_txt` false, so the suppression conjunct is `!(false && _)` and this
+/// ~keep passes with the production change reverted. It exists to catch a mis-implementation that
+/// ~keep applied nofollow unconditionally on the sequential loop, which would silently narrow
+/// ~keep every default-configured crawl. Its assertions are the two `.expect(1)` mounts, verified
+/// ~keep on `drop(mock)`. Keep it; do not read it as coverage of the fix.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {

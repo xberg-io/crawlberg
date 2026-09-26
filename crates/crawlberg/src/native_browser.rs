@@ -111,7 +111,11 @@ async fn native_browser_fetch_inner(
         body_bytes,
         headers: rendered.headers.into_iter().map(|(k, v)| (k, vec![v])).collect(),
         browser_extras: Some(extras),
-        final_url: url.to_owned(),
+        final_url: if rendered.final_url.is_empty() {
+            url.to_owned()
+        } else {
+            rendered.final_url
+        },
         // ~keep Native-backend screenshot capture lives in the off-limits crawlberg-browser
         // ~keep crate and is out of scope here; `browser::browser_fetch` warns the caller
         // ~keep when `capture_screenshot` is set with this backend.
