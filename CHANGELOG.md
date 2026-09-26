@@ -6,15 +6,23 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- **`retry_codes` did not gate error retries.** A 500 or a timeout was retried the full
-  `retry_count` even when `retry_codes` did not list it; only a status with no error of its own was
-  checked against the list. A non-empty `retry_codes` is now an allowlist: a failure is retried only
-  when its status is listed, and a timeout without a response is not retried. An empty list still
-  retries every rate limit, server error, bad gateway and timeout. `map()` and the wasm scrape path
-  now follow the same rule, so with an empty list they retry these failures up to `retry_count`
-  instead of never. (#76)
-- **A 408 was told apart from other timeouts by guesswork.** A timeout counted as a 408 whenever
-  it had no underlying error, so a timeout that never saw a response could be retried under
+- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
+  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
+  statuses; only a status that raised no error of its own was checked against the list. A non-empty
+  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
+  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
+  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
+  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
+  empty list they retry these failures up to `retry_count` instead of never. (#76)
+
+  This narrows retries for any configuration that already sets `retry_codes`, including a list
+  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
+  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
+  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
+  0, so a configuration that never raised it sends one request either way and is unaffected.
+
+- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
+  whether or not a response caused it, so a transport timeout was retried under
   `retry_codes = [408]`. An error raised for a response status now carries that status, and
   `retry_codes` matches only that. (#92)
 - **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
