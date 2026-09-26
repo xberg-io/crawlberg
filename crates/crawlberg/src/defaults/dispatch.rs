@@ -269,10 +269,7 @@ mod tests {
     #[tokio::test]
     async fn waf_blocked_escalates() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::WafBlocked {
-            vendor: "cloudflare".into(),
-            message: "cloudflare detected".into(),
-        };
+        let err = CrawlError::waf_blocked("cloudflare", "cloudflare detected");
         let directive = policy.decide(&outcome_with_error(err, 0)).await;
         assert!(matches!(directive, RetryDirective::Escalate { .. }));
     }
@@ -280,10 +277,7 @@ mod tests {
     #[tokio::test]
     async fn waf_blocked_escalation_carries_vendor() {
         let policy = SimpleRetryPolicy::new();
-        let err = CrawlError::WafBlocked {
-            vendor: "cloudflare".into(),
-            message: "challenge".into(),
-        };
+        let err = CrawlError::waf_blocked("cloudflare", "challenge");
         let outcome = outcome_with_error(err, 0);
         match policy.decide(&outcome).await {
             RetryDirective::Escalate {

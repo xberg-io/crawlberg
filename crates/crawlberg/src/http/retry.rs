@@ -63,6 +63,7 @@ pub(crate) async fn fetch_with_retry(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::http::status::HttpStatus;
     use crate::http::status_error;
 
     fn from_status(status: u16) -> CrawlError {
@@ -87,6 +88,36 @@ mod tests {
                     "{error:?} must NOT retry when only {other} is listed"
                 );
             }
+        }
+    }
+
+    /// Guard, not a red-green test: a 403 and a WAF block carry their response status since
+    /// crawlberg#133, and `should_retry_error` gates on the error variant before it reads that
+    /// status — so listing 403, 429 or 503 in `retry_codes` must not make either retryable.
+    #[test]
+    fn a_forbidden_or_a_waf_block_is_not_retried_even_when_its_status_is_listed() {
+        let listed = [403_u16, 429, 503];
+        let cases = [
+            (CrawlError::forbidden_with_source("forbidden", HttpStatus(403)), 403_u16),
+            (
+                CrawlError::waf_blocked_with_source("datadome", "waf/blocked on 429", HttpStatus(429)),
+                429,
+            ),
+            (
+                CrawlError::waf_blocked_with_source("cloudflare", "waf/blocked on 503", HttpStatus(503)),
+                503,
+            ),
+        ];
+        for (error, status) in cases {
+            assert_eq!(
+                error_status(&error),
+                Some(status),
+                "the error must carry its status: {error:?}"
+            );
+            assert!(
+                !should_retry_error(&error, &listed),
+                "{error:?} must not be retried even with retry_codes {listed:?}"
+            );
         }
     }
 

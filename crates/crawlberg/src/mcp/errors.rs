@@ -263,10 +263,7 @@ mod tests {
             CrawlError::not_found("test".to_string()),
             CrawlError::unauthorized("test".to_string()),
             CrawlError::forbidden("test".to_string()),
-            CrawlError::WafBlocked {
-                vendor: "unknown".to_string(),
-                message: "test".to_string(),
-            },
+            CrawlError::waf_blocked("unknown", "test"),
             CrawlError::timeout("test".to_string()),
             CrawlError::rate_limited("test".to_string()),
             CrawlError::server_error("test".to_string()),
@@ -323,10 +320,7 @@ mod tests {
         let cases: Vec<CrawlError> = vec![
             CrawlError::unauthorized("no credentials".to_string()),
             CrawlError::forbidden("blocked".to_string()),
-            CrawlError::WafBlocked {
-                vendor: "cloudflare".to_string(),
-                message: "challenge page".to_string(),
-            },
+            CrawlError::waf_blocked("cloudflare", "challenge page"),
             CrawlError::timeout("request exceeded 30s".to_string()),
             CrawlError::rate_limited("too many requests".to_string()),
             CrawlError::server_error("upstream 500".to_string()),

@@ -27,7 +27,22 @@ title: "Changelog"
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+- **`CrawlError::WafBlocked` gained a `source` field.** Rust code that constructs the variant by
+  hand must now pass `source: None`, or call the new `CrawlError::waf_blocked(vendor, message)`
+  instead; `CrawlError::waf_blocked_with_source` attaches an underlying error. Matching the variant
+  with `..` is unaffected, and no binding exposes an error's source, so the bindings do not change.
+  (#133)
+
 ### Fixed
+
+- **A 403 and a WAF block reached a retry policy with no status.** `status_error` deliberately
+  skips 403, and `CrawlError::WafBlocked` carried no source at all, so neither error could say
+  which response raised it — a block fingerprinted from a 403, 429 or 503 included. A plain 403 now
+  carries its status as the source of `CrawlError::Forbidden` and a fingerprinted block carries it
+  on `WafBlocked`, so whatever reads the status of a failed attempt finds one. Which errors are
+  retried does not change: only `RateLimited`, `ServerError`, `BadGateway` and `Timeout` are
+  retryable at all, so listing 403 in `retry_codes` still does not retry a forbidden or a block.
+  (#133)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had

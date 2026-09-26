@@ -175,10 +175,9 @@ impl CrawlEngine {
     pub(super) fn escalation_reason_to_error(reason: &crate::types::EscalationReason, url: &str) -> CrawlError {
         use crate::types::EscalationReason;
         match reason {
-            EscalationReason::WafBlocked { vendor } => CrawlError::WafBlocked {
-                vendor: vendor.clone(),
-                message: format!("waf/blocked: {vendor} detected at {url}"),
-            },
+            EscalationReason::WafBlocked { vendor } => {
+                CrawlError::waf_blocked(vendor.clone(), format!("waf/blocked: {vendor} detected at {url}"))
+            }
             EscalationReason::SoftBlock => CrawlError::forbidden(format!("soft_block: {url}")),
             EscalationReason::RenderNeeded => {
                 CrawlError::unsupported(format!("js_render_needed but no browser tier available: {url}"))
@@ -186,10 +185,10 @@ impl CrawlEngine {
             EscalationReason::OriginUnreliable => {
                 CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
-            EscalationReason::AntibotEscalate => CrawlError::WafBlocked {
-                vendor: "antibot".to_string(),
-                message: format!("antibot strategy forced browser escalation at {url}"),
-            },
+            EscalationReason::AntibotEscalate => CrawlError::waf_blocked(
+                "antibot",
+                format!("antibot strategy forced browser escalation at {url}"),
+            ),
         }
     }
 
