@@ -4,6 +4,7 @@ mod body;
 mod client;
 mod headers;
 mod retry;
+mod status;
 mod waf;
 
 use std::collections::HashMap;
@@ -16,7 +17,6 @@ use crate::net::ssrf::validate_url;
 use crate::types::{AuthConfig, CrawlConfig};
 
 use headers::build_headers_map;
-use retry::{GATEWAY_TIMEOUT_SUFFIX, SERVICE_UNAVAILABLE_SUFFIX};
 
 pub(crate) use body::{
     effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
@@ -26,7 +26,8 @@ pub(crate) use client::build_client;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
-pub(crate) use retry::fetch_with_retry;
+pub(crate) use retry::{fetch_with_retry, should_retry_error};
+pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
 
@@ -250,7 +251,7 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     if head.status == 403 {
         return Err(forbidden_error(context.config, resp, &head, &mut headers_map_cache).await);
     }
-    if let Some(error) = terminal_status_error(head.status, context.url) {
+    if let Some(error) = status_error(head.status, context.url) {
         return Err(error);
     }
 
@@ -385,23 +386,6 @@ async fn forbidden_error(
         },
         None => CrawlError::forbidden("forbidden"),
     }
-}
-
-/// The error a status ends the fetch with, for every status that ends it without
-/// needing the response body. 403 is handled separately because it reads the body.
-fn terminal_status_error(status: u16, url: &str) -> Option<CrawlError> {
-    Some(match status {
-        401 => CrawlError::unauthorized("unauthorized"),
-        404 => CrawlError::not_found(format!("not_found: {url}")),
-        408 => CrawlError::timeout("timeout: request timed out"),
-        410 => CrawlError::gone("gone"),
-        429 => CrawlError::rate_limited("rate_limited"),
-        500 => CrawlError::server_error("server_error"),
-        502 => CrawlError::bad_gateway("bad_gateway"),
-        503 => CrawlError::server_error(format!("server_error: {SERVICE_UNAVAILABLE_SUFFIX}")),
-        504 => CrawlError::server_error(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")),
-        _ => return None,
-    })
 }
 
 /// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
@@ -719,13 +703,9 @@ mod tests {
             (
                 503,
                 |e| matches!(e, CrawlError::ServerError { .. }),
-                SERVICE_UNAVAILABLE_SUFFIX,
+                "service unavailable",
             ),
-            (
-                504,
-                |e| matches!(e, CrawlError::ServerError { .. }),
-                GATEWAY_TIMEOUT_SUFFIX,
-            ),
+            (504, |e| matches!(e, CrawlError::ServerError { .. }), "gateway timeout"),
         ];
 
         for (status, is_expected_variant, message_fragment) in cases {
@@ -738,6 +718,7 @@ mod tests {
                 error.to_string().contains(message_fragment),
                 "status {status} message must contain {message_fragment:?}, got: {error}"
             );
+            assert_eq!(status::error_status(&error), Some(*status), "{error:?}");
         }
     }
 
