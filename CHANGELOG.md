@@ -29,6 +29,15 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A whitespace-only favicon `href` or image `src` reported the page as its own favicon or image.**
+  The guard was `is_empty()`, which is false for `"  "`, and resolving a whitespace-only reference
+  against a base yields the base itself, so `<link rel="icon" href="  ">`, `<img src="  ">` and a
+  blank `og:image`/`twitter:image` `content` all listed the page URL. Such an address is now
+  skipped, via a shared `is_blank_address` helper. Only ASCII whitespace counts as blank, because
+  HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
+  percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
+  they do not resolve at all. (#220)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
