@@ -5,7 +5,10 @@
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
 
+use chromiumoxide::browser::Browser;
+use chromiumoxide::cdp::browser_protocol::target::TargetId;
 use tokio::sync::OwnedSemaphorePermit;
+use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
@@ -248,6 +251,9 @@ async fn release_pooled_page(
 /// background, bounded by its own `BrowserConfig::shutdown_timeout`: a
 /// completed page result is returned to the caller without waiting for a
 /// Chrome process that refuses to exit.
+///
+/// Teardown is owned by [`OneShotSession`]'s `Drop`, so a caller that drops this future while
+/// the fetch runs gets the same teardown as a fetch that ran to completion.
 async fn one_shot_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -255,7 +261,6 @@ async fn one_shot_fetch(
     want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
-    let shutdown_timeout = config.browser.shutdown_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
     let (browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
@@ -265,42 +270,95 @@ async fn one_shot_fetch(
     };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let mut session = OneShotSession {
+        browser: Some(browser),
+        open_tab: None,
+        handler_handle: Some(handler_handle),
+        data_dir,
+        shutdown_timeout: config.browser.shutdown_timeout,
+    };
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-    // ~keep The tab's target id lives outside the deadline future so a fetch cut off by the
-    // ~keep deadline still hands the tab to `release_browser`: an external Chrome
-    // ~keep (`browser.endpoint`) is left running, so a tab left open there would outlive this fetch.
-    let mut open_target = None;
     let fetch_outcome = tokio::time::timeout(remaining, async {
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
-        open_target = Some(page.target_id().clone());
-
+        let page = session.open_page().await?;
         page_fetch(url, config, &page, prior_cookies, want_screenshot).await
     })
     .await;
 
-    let result = fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)));
+    // ~keep `session` is dropped as this function returns, after the result below is computed,
+    // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
+    // ~keep behind a blocking OS dialog (the originally reported case: a macOS keychain prompt)
+    // ~keep must not hold up delivery of a result that was already computed. `release_browser`
+    // ~keep bounds its work by `shutdown_timeout` and force-kills a launched Chrome on expiry,
+    // ~keep so that background task always finishes.
+    fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
+}
 
-    // ~keep Shutdown is spawned rather than awaited inline: a Chrome process stuck behind a
-    // ~keep blocking OS dialog (the originally reported case: a macOS keychain prompt) must
-    // ~keep not hold up delivery of a result that was already computed above.
-    // ~keep `release_browser` bounds its work by `shutdown_timeout` and force-kills a launched
-    // ~keep Chrome on expiry, so this background task always finishes.
-    tokio::spawn(async move {
+/// Everything one [`one_shot_fetch`] has to tear down, owned by a single value whose `Drop`
+/// runs that teardown.
+///
+/// ~keep Teardown used to be straight-line code after the fetch, reached only once the fetch
+/// ~keep had finished, so a caller that dropped the future while it ran got none of it: the CDP
+/// ~keep connection to a `browser.endpoint` Chrome stayed open with the tab crawlberg had
+/// ~keep opened, and a launched Chrome's `--user-data-dir` was left on disk
+/// ~keep (xberg-io/crawlberg#131). Owning it in a value makes cancellation and completion the
+/// ~keep same path by construction, instead of two blocks that have to be kept in step by hand.
+struct OneShotSession {
+    browser: Option<Browser>,
+    /// The tab this fetch opened, recorded as soon as it exists so teardown can close it in a
+    /// caller's Chrome even when the fetch never reaches its own cleanup.
+    open_tab: Option<TargetId>,
+    handler_handle: Option<JoinHandle<()>>,
+    data_dir: Option<std::path::PathBuf>,
+    shutdown_timeout: Duration,
+}
+
+impl OneShotSession {
+    /// Open this fetch's tab, recording it for teardown, and hand back a handle to it.
+    async fn open_page(&mut self) -> Result<chromiumoxide::Page, CrawlError> {
+        let browser = self.browser.as_ref().expect("browser is taken only by Drop");
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        self.open_tab = Some(page.target_id().clone());
+        Ok(page)
+    }
+}
+
+impl Drop for OneShotSession {
+    // ~keep `tokio::spawn` panics when no runtime is active on the current thread, and these
+    // ~keep futures cross an FFI boundary into host GC/finalizer threads, so an unguarded spawn
+    // ~keep here turns a late drop into a panic that aborts the embedding process -- the same
+    // ~keep reasoning as `PooledPage`'s Drop in browser_pool.rs.
+    fn drop(&mut self) {
+        let (Some(browser), Some(handler_handle)) = (self.browser.take(), self.handler_handle.take()) else {
+            return;
+        };
         let cleanup = ExternalTabCleanup {
-            open_tab: open_target,
+            open_tab: self.open_tab.take(),
             ..ExternalTabCleanup::default()
         };
-        release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
-        if let Some(dir) = data_dir {
-            let _ = tokio::fs::remove_dir_all(&dir).await;
-        }
-    });
+        let data_dir = self.data_dir.take();
+        let shutdown_timeout = self.shutdown_timeout;
 
-    result
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
+                    if let Some(dir) = data_dir {
+                        let _ = tokio::fs::remove_dir_all(&dir).await;
+                    }
+                });
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "dropping a one-shot browser session outside a Tokio runtime; its Chrome \
+                     teardown is left to the process"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(feature = "browser-native")]

@@ -238,6 +238,7 @@ fn endpoint_config(ws_url: &str) -> CrawlConfig {
 
 /// A one-shot fetch through `browser.endpoint` leaves the external Chrome running.
 #[tokio::test]
+#[serial_test::serial(external_chrome)]
 async fn one_shot_fetch_leaves_the_external_chrome_running() {
     let Some(mut chrome) = ExternalChrome::start("one_shot_fetch_leaves_the_external_chrome_running") else {
         return;
@@ -257,6 +258,7 @@ async fn one_shot_fetch_leaves_the_external_chrome_running() {
 /// A one-shot fetch that hits `overall_timeout` through `browser.endpoint` closes the tab it
 /// opened in the external Chrome, even though the fetch itself was cut short.
 #[tokio::test]
+#[serial_test::serial(external_chrome)]
 async fn one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome() {
     let Some(mut chrome) =
         ExternalChrome::start("one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome")
@@ -279,8 +281,55 @@ async fn one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome(
     chrome.assert_still_serving(Duration::from_secs(3), pages_before).await;
 }
 
+/// A one-shot fetch dropped by its caller while it runs closes the tab it opened in the external
+/// Chrome, and leaves that Chrome running.
+///
+/// ~keep Fails before xberg-io/crawlberg#131's fix, where teardown was straight-line code after
+/// ~keep the fetch and an aborted task reached none of it. Dropping a connected
+/// ~keep `chromiumoxide::Browser` is a no-op — it owns no child process — and its handler task
+/// ~keep keeps the CDP websocket open, so the tab stayed open in the caller's Chrome. This is a
+/// ~keep different path from `one_shot_fetch_past_its_deadline_closes_its_tab_in_the_external_chrome`:
+/// ~keep that fetch returns normally and runs its own teardown, this one never returns at all.
+#[tokio::test]
+#[serial_test::serial(external_chrome)]
+async fn dropping_a_one_shot_fetch_closes_its_tab_in_the_external_chrome() {
+    const TEST_NAME: &str = "dropping_a_one_shot_fetch_closes_its_tab_in_the_external_chrome";
+    let Some(mut chrome) = ExternalChrome::start(TEST_NAME) else {
+        return;
+    };
+    let pages_before = chrome.page_count();
+    let url = spawn_stalling_server();
+    let mut config = endpoint_config(&chrome.ws_url);
+    // ~keep Both deadlines outlast the test: the drop under test has to be the caller's, not
+    // ~keep `overall_timeout` expiring and running the teardown on its behalf.
+    config.browser.timeout = Duration::from_secs(120);
+    config.browser.overall_timeout = Duration::from_secs(180);
+
+    let fetch = tokio::spawn(async move {
+        let engine = create_engine(Some(config)).expect("engine must build");
+        let _ = crawlberg::scrape(&engine, &url).await;
+    });
+
+    // ~keep The tab has to exist before the drop, or the teardown under test would have nothing
+    // ~keep to close and the test would pass having observed nothing.
+    let tab_deadline = Instant::now() + Duration::from_secs(30);
+    while chrome.page_count() == pages_before && Instant::now() < tab_deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        chrome.page_count(),
+        pages_before + 1,
+        "precondition: the fetch never opened a tab in the external Chrome"
+    );
+
+    fetch.abort();
+
+    chrome.assert_still_serving(Duration::from_secs(3), pages_before).await;
+}
+
 /// Shutting down a pool connected through `browser_endpoint` leaves the external Chrome running.
 #[tokio::test]
+#[serial_test::serial(external_chrome)]
 async fn pool_shutdown_leaves_the_external_chrome_running() {
     let Some(mut chrome) = ExternalChrome::start("pool_shutdown_leaves_the_external_chrome_running") else {
         return;
@@ -310,6 +359,7 @@ async fn pool_shutdown_leaves_the_external_chrome_running() {
 /// ~keep `pool_shutdown_leaves_the_external_chrome_running` awaits `page.close()` explicitly and
 /// ~keep therefore never exercised this path.
 #[tokio::test]
+#[serial_test::serial(external_chrome)]
 async fn pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close() {
     let Some(mut chrome) =
         ExternalChrome::start("pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close")
@@ -340,6 +390,7 @@ async fn pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close() 
 /// An interaction run through `browser.endpoint` leaves the external Chrome running.
 #[cfg(feature = "interact")]
 #[tokio::test]
+#[serial_test::serial(external_chrome)]
 async fn interact_leaves_the_external_chrome_running() {
     let Some(mut chrome) = ExternalChrome::start("interact_leaves_the_external_chrome_running") else {
         return;

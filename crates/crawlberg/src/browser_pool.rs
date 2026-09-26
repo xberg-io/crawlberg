@@ -194,12 +194,42 @@ struct BrowserState {
     pending_closes: PendingCloses,
 }
 
-/// Wait for the CDP handler loop to finish, aborting it if it outlives the timeout.
+/// How a browser left [`close_browser_within`]: under its own steam, or killed.
+///
+/// ~keep This distinction is the whole point of the return value: a killed Chrome never
+/// ~keep answers the CDP `Browser.close` its handler loop is waiting on, so teardown has to
+/// ~keep treat the two cases differently (xberg-io/crawlberg#146). `#[must_use]` sits on the
+/// ~keep type so a call site that discards the outcome is a warning, not a silent 5-second wait.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserCloseOutcome {
+    /// `Browser::close` and `Browser::wait` both finished inside `shutdown_timeout`.
+    Exited,
+    /// `shutdown_timeout` expired, so the process was force-killed via [`Browser::kill`].
+    Killed,
+}
+
+/// Stop the task running the CDP handler loop of a browser that has just been closed.
+///
+/// A browser that exited on its own ends its handler loop, so that case waits briefly for the
+/// loop to finish and aborts it only if it overruns. A killed browser never will, so its handler
+/// is aborted at once.
 ///
 /// ~keep Dropping a `JoinHandle` detaches its task rather than stopping it, so simply
 /// ~keep discarding the timeout result leaked one handler loop per relaunch — unbounded
 /// ~keep for a domain that keeps crashing Chrome.
-async fn abort_handler_after_timeout(handle: JoinHandle<()>) {
+/// ~keep The `Killed` shortcut is not an optimisation of a wait that would have succeeded:
+/// ~keep chromiumoxide 0.9.1's `Handler::poll_next` (`src/handler/mod.rs`) returns
+/// ~keep `Ready(None)` only when a `Browser.close` response arrives while it is `closing`. A
+/// ~keep closed websocket makes its `while let Ready(Some(_))` loop fall through to
+/// ~keep `Poll::Pending`, so after a kill the loop parks for good and this wait always burned
+/// ~keep the full `HANDLER_SHUTDOWN_TIMEOUT` before aborting anyway (xberg-io/crawlberg#146).
+async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: BrowserCloseOutcome) {
+    if close_outcome == BrowserCloseOutcome::Killed {
+        handle.abort();
+        return;
+    }
+
     let abort = handle.abort_handle();
     if tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handle).await.is_err() {
         tracing::warn!(
@@ -240,9 +270,9 @@ pub(crate) async fn release_browser(
         handler_handle.abort();
         return;
     }
-    close_browser_within(&mut browser, shutdown_timeout).await;
+    let close_outcome = close_browser_within(&mut browser, shutdown_timeout).await;
     drop(browser);
-    abort_handler_after_timeout(handler_handle).await;
+    stop_handler_after_close(handler_handle, close_outcome).await;
 }
 
 /// Wait for the page-close tasks [`PooledPage`]'s `Drop` spawned, bounding the wait by
@@ -287,7 +317,10 @@ async fn await_pending_closes(pending: &PendingCloses, wait_timeout: Duration) {
 /// ~keep use your confidential information" keychain prompt) previously held this call
 /// ~keep open indefinitely. `close` sends a real CDP `Browser.close` even to a browser this
 /// ~keep process only connected to, so only `release_browser` calls this, for a launched one.
-async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) {
+///
+/// Returns which of the two happened, so the caller can hand it to [`stop_handler_after_close`]
+/// instead of waiting on a handler loop that a killed process will never end.
+async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration) -> BrowserCloseOutcome {
     let closed = tokio::time::timeout(shutdown_timeout, async {
         let _ = browser.close().await;
         let _ = browser.wait().await;
@@ -300,7 +333,10 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
             "browser did not close before the shutdown timeout; killing the process"
         );
         let _ = browser.kill().await;
+        return BrowserCloseOutcome::Killed;
     }
+
+    BrowserCloseOutcome::Exited
 }
 
 /// Remove a Chrome profile directory, logging rather than ignoring a failure.
@@ -650,341 +686,5 @@ pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_defaults() {
-        let config = BrowserPoolConfig::default();
-        assert_eq!(config.max_pages, 8);
-        assert_eq!(config.launch_timeout, Duration::from_secs(30));
-        assert!(config.browser_endpoint.is_none());
-        assert!(config.chrome_args.is_empty());
-    }
-
-    #[test]
-    fn test_pool_creation() {
-        let pool = BrowserPool::new(BrowserPoolConfig::default());
-        assert!(!pool.shutdown.load(Ordering::Relaxed));
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_idempotent() {
-        let pool = BrowserPool::new(BrowserPoolConfig::default());
-        pool.shutdown().await;
-        pool.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn test_acquire_after_shutdown_fails() {
-        let pool = BrowserPool::new(BrowserPoolConfig::default());
-        pool.shutdown().await;
-        let result = pool.acquire_page().await;
-        assert!(result.is_err());
-    }
-
-    /// `close_browser_within` must return near its configured `shutdown_timeout`, and the
-    /// process must actually be dead afterward, even when `Browser::close`/`wait` cannot make
-    /// progress -- the reported case was a Chrome process blocked behind an OS dialog
-    /// (see the `~keep` on `close_browser_within`'s own doc comment).
-    ///
-    /// ~keep Simulates that without a real dialog: `SIGSTOP` freezes a genuinely launched
-    /// ~keep Chrome process so it cannot respond to the CDP `Browser.close` command or exit,
-    /// ~keep without killing it -- `close()`/`wait()` then hang exactly as they did against
-    /// ~keep the keychain-prompt report. Skipped (not failed) when this machine has no usable
-    /// ~keep Chrome or `kill -STOP` is unavailable (non-Unix), matching the browser
-    /// ~keep integration tests' skip convention. Requires a real Chrome binary; a fully mocked
-    /// ~keep `Browser` was not practical here (`chromiumoxide::Browser` wraps a real child
-    /// ~keep process and CDP connection with no test seam for either).
-    #[tokio::test]
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
-    )]
-    async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
-        if !cfg!(unix) {
-            eprintln!("skipping close_browser_within_returns_promptly_when_the_process_is_stopped: not unix");
-            return;
-        }
-
-        let user_data_dir =
-            std::env::temp_dir().join(format!("crawlberg-shutdown-timeout-test-{}", std::process::id()));
-        let browser_config = match build_pool_launch_builder(&user_data_dir, &[]).build() {
-            Ok(config) => config,
-            Err(error) => {
-                eprintln!(
-                    "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
-                     because no usable Chrome was found: {error}"
-                );
-                return;
-            }
-        };
-        let (mut browser, mut handler) = match Browser::launch(browser_config).await {
-            Ok(pair) => pair,
-            Err(error) => {
-                eprintln!(
-                    "skipping close_browser_within_returns_promptly_when_the_process_is_stopped \
-                     because no usable Chrome was found: {error}"
-                );
-                return;
-            }
-        };
-        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
-
-        let pid = browser
-            .get_mut_child()
-            .and_then(|child| child.as_mut_inner().id())
-            .expect("a freshly launched child must have a pid");
-
-        let stopped = std::process::Command::new("kill")
-            .args(["-STOP", &pid.to_string()])
-            .status()
-            .expect("`kill -STOP` must run")
-            .success();
-        assert!(stopped, "failed to SIGSTOP the launched Chrome process (pid {pid})");
-
-        let shutdown_timeout = Duration::from_millis(500);
-        let start = std::time::Instant::now();
-        close_browser_within(&mut browser, shutdown_timeout).await;
-        let elapsed = start.elapsed();
-
-        // ~keep Always sent, even if the assertions below fail: a stopped process left behind
-        // ~keep by a broken implementation would otherwise leak past this test.
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .status();
-        handler_task.abort();
-
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "close_browser_within must return near its configured budget ({shutdown_timeout:?}) \
-             even when close()/wait() cannot make progress on a stopped process; took {elapsed:?}"
-        );
-
-        let still_running = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .expect("`kill -0` must run")
-            .success();
-        assert!(
-            !still_running,
-            "the Chrome process (pid {pid}) must be dead after close_browser_within returns, \
-             via its Browser::kill() fallback"
-        );
-    }
-
-    /// Releasing a launched Chrome that has stopped responding kills it within one
-    /// `shutdown_timeout`, even when a tab is handed over for closing: the tab dies with the
-    /// browser, so no separate tab close may run ahead of the close-and-kill.
-    ///
-    /// ~keep `SIGSTOP` freezes the process so every CDP call hangs, as in
-    /// ~keep `close_browser_within_returns_promptly_when_the_process_is_stopped`.
-    #[tokio::test]
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
-    )]
-    async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_timeout() {
-        const TEST_NAME: &str = "release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_timeout";
-        if !cfg!(unix) {
-            eprintln!("skipping {TEST_NAME}: not unix");
-            return;
-        }
-        let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-stopped-test-{}", std::process::id()));
-        let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
-            Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
-            Err(error) => Err(error),
-        };
-        let (mut browser, mut handler) = match launched {
-            Ok(pair) => pair,
-            Err(error) => {
-                eprintln!("skipping {TEST_NAME} because no usable Chrome was found: {error}");
-                return;
-            }
-        };
-        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .expect("a launched Chrome must open a tab");
-        let tab = page.target_id().clone();
-        let pid = browser
-            .get_mut_child()
-            .and_then(|child| child.as_mut_inner().id())
-            .expect("a freshly launched child must have a pid");
-        let stopped = std::process::Command::new("kill")
-            .args(["-STOP", &pid.to_string()])
-            .status()
-            .expect("`kill -STOP` must run")
-            .success();
-        assert!(stopped, "failed to SIGSTOP the launched Chrome process (pid {pid})");
-
-        // ~keep Time the process's death, not `release_browser`'s return: after the kill it
-        // ~keep still waits up to `HANDLER_SHUTDOWN_TIMEOUT` for the handler task to wind down.
-        let alive = move || {
-            std::process::Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .status()
-                .is_ok_and(|status| status.success())
-        };
-        let start = std::time::Instant::now();
-        let died_after = std::thread::spawn(move || {
-            while alive() && start.elapsed() < Duration::from_secs(20) {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            start.elapsed()
-        });
-        let shutdown_timeout = Duration::from_secs(1);
-        let cleanup = ExternalTabCleanup {
-            open_tab: Some(tab),
-            ..ExternalTabCleanup::default()
-        };
-        release_browser(browser, handler_task, cleanup, shutdown_timeout).await;
-        let died_after = died_after.join().expect("the watcher thread must not panic");
-
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .status();
-        let _ = std::fs::remove_dir_all(&user_data_dir);
-
-        // ~keep The kill lands one `shutdown_timeout` after the release starts. A tab close run
-        // ~keep ahead of the close-and-kill would add a second timeout before it.
-        assert!(
-            died_after < shutdown_timeout + Duration::from_millis(700),
-            "a stopped launched Chrome must be killed within one shutdown_timeout \
-             ({shutdown_timeout:?}); it died after {died_after:?}"
-        );
-    }
-
-    /// Releasing a connected browser disconnects from it: the handler task that owns the CDP
-    /// websocket stops at once, and the Chrome at the other end keeps running.
-    #[tokio::test]
-    #[allow(
-        clippy::print_stderr,
-        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
-    )]
-    async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
-        let user_data_dir =
-            std::env::temp_dir().join(format!("crawlberg-release-connected-test-{}", std::process::id()));
-        let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
-            Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
-            Err(error) => Err(error),
-        };
-        let (mut owner, mut owner_handler) = match launched {
-            Ok(pair) => pair,
-            Err(error) => {
-                eprintln!(
-                    "skipping release_browser_disconnects_from_a_connected_browser_without_closing_it \
-                     because no usable Chrome was found: {error}"
-                );
-                return;
-            }
-        };
-        let owner_task = tokio::spawn(async move { while owner_handler.next().await.is_some() {} });
-
-        let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
-            .await
-            .expect("connecting to the launched Chrome must succeed");
-        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
-        let handler_abort = handler_task.abort_handle();
-
-        release_browser(
-            connected,
-            handler_task,
-            ExternalTabCleanup::default(),
-            Duration::from_secs(5),
-        )
-        .await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let disconnected = handler_abort.is_finished();
-        let version = tokio::time::timeout(Duration::from_secs(5), owner.version()).await;
-
-        let _ = owner.kill().await;
-        owner_task.abort();
-        let _ = std::fs::remove_dir_all(&user_data_dir);
-
-        assert!(
-            disconnected,
-            "the handler task for a connected browser must stop, closing its websocket"
-        );
-        assert!(
-            matches!(version, Ok(Ok(_))),
-            "the connected Chrome must still answer CDP after release: {version:?}"
-        );
-    }
-
-    #[test]
-    fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
-        // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an
-        // ~keep already-`--`-prefixed entry would render as `----...` and Chrome discards
-        // ~keep it as an unknown flag (see chrome_args.rs).
-        for arg in safe_default_args() {
-            let rendered = format!("--{arg}");
-            assert!(!rendered.starts_with("----"), "double-prefixed flag: {rendered}");
-        }
-    }
-
-    #[test]
-    fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
-        let args = safe_default_args();
-        if cfg!(target_os = "macos") {
-            assert!(
-                args.contains(&"use-mock-keychain"),
-                "missing --use-mock-keychain on macOS"
-            );
-        } else {
-            assert!(
-                !args.contains(&"use-mock-keychain"),
-                "use-mock-keychain should be macOS-only"
-            );
-        }
-    }
-
-    #[test]
-    fn test_apply_default_args_produces_normalized_flags() {
-        let builder = apply_default_args(BrowserConfig::builder());
-        assert_launch_flags_are_normalized(&builder);
-    }
-
-    #[test]
-    fn the_pool_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
-        // ~keep Behavioral, not textual: this calls the exact function `launch_browser`
-        // ~keep uses to build its `BrowserConfig`, so a path that stops calling
-        // ~keep `apply_default_args` (even by looping over a raw flag instead) fails here
-        // ~keep because the returned flags actually change.
-        let builder = build_pool_launch_builder(std::path::Path::new("/tmp/pool-test-profile"), &[]);
-        assert_launch_flags_are_normalized(&builder);
-    }
-
-    #[test]
-    fn test_every_known_launch_path_calls_the_shared_apply_default_args_helper() {
-        // ~keep Textual guard, kept alongside the behavioral tests above and in browser.rs's
-        // ~keep and interact/chromiumoxide.rs's own test modules (each builds the real
-        // ~keep launch config for its path and inspects the flags). Comments are stripped
-        // ~keep and apply_default_args' own definition line is excluded, so a path that
-        // ~keep only mentions the helper's name in a comment, or is the file that defines
-        // ~keep it, does not satisfy this; only a real call site does.
-        // ~keep Limitation: this can only check the three files named here. A fourth
-        // ~keep launch path added in a new file is NOT caught by this test; it needs its
-        // ~keep own behavioral test or a new entry in this list.
-        for (path, src) in [
-            ("browser/launch.rs", include_str!("browser/launch.rs")),
-            ("browser_pool.rs", include_str!("browser_pool.rs")),
-            ("interact/chromiumoxide.rs", include_str!("interact/chromiumoxide.rs")),
-        ] {
-            let code_only: String = src
-                .split("#[cfg(test)]")
-                .next()
-                .unwrap_or(src)
-                .lines()
-                .filter(|line| !line.contains("fn apply_default_args("))
-                .map(|line| line.split("//").next().unwrap_or(""))
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(
-                code_only.contains("apply_default_args("),
-                "{path} does not call the shared apply_default_args helper outside a comment or its own definition"
-            );
-        }
-    }
-}
+#[path = "browser_pool_tests.rs"]
+mod tests;

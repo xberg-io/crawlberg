@@ -22,6 +22,33 @@ struct UserDataDir {
     /// When `false`, the directory is left in place so its contents persist
     /// (a named profile launched with `save_browser_profile: true`).
     cleanup_on_exit: bool,
+    /// Set by [`UserDataDir::hand_over`] once the launched session owns the directory, so this
+    /// value's `Drop` leaves it alone.
+    handed_over: bool,
+}
+
+impl UserDataDir {
+    /// Pass ownership of the directory to a launched session, yielding the path that session
+    /// must delete when it ends, or `None` when the directory is meant to persist.
+    fn hand_over(mut self) -> Option<std::path::PathBuf> {
+        self.handed_over = true;
+        self.cleanup_on_exit.then(|| self.path.clone())
+    }
+}
+
+impl Drop for UserDataDir {
+    /// ~keep Covers every way the launch can fail to hand the directory on, including the one
+    /// ~keep straight-line cleanup cannot reach: the launch future being dropped because the
+    /// ~keep caller cancelled the fetch. The directory is created before Chrome starts, so it
+    /// ~keep exists for the whole of `Browser::launch` with nothing else owning it, and a
+    /// ~keep cancellation there used to leave tens of megabytes in the temp directory for good
+    /// ~keep (xberg-io/crawlberg#131). `std::fs`, not `tokio::fs`: `Drop` cannot await.
+    fn drop(&mut self) {
+        if self.handed_over || !self.cleanup_on_exit {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 /// Unique-per-launch temp directory name, avoiding Chrome `SingletonLock` collisions
@@ -50,6 +77,7 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
         return Ok(UserDataDir {
             path: unique_temp_dir("crawlberg-browser"),
             cleanup_on_exit: true,
+            handed_over: false,
         });
     };
 
@@ -62,6 +90,7 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
         Ok(UserDataDir {
             path: profile.user_data_dir,
             cleanup_on_exit: false,
+            handed_over: false,
         })
     } else {
         let scratch = unique_temp_dir(&format!("crawlberg-profile-{name}"));
@@ -69,6 +98,7 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
         Ok(UserDataDir {
             path: scratch,
             cleanup_on_exit: true,
+            handed_over: false,
         })
     }
 }
@@ -121,13 +151,9 @@ pub(super) async fn launch_or_connect(
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, user_data.cleanup_on_exit.then_some(user_data.path))),
-            Err(e) => {
-                if user_data.cleanup_on_exit {
-                    let _ = std::fs::remove_dir_all(&user_data.path);
-                }
-                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
-            }
+            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over())),
+            // ~keep `user_data`'s `Drop` removes the directory on this path and on cancellation.
+            Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
         }
     }
 }
@@ -307,5 +333,73 @@ mod tests {
         // ~keep here because the returned flags actually change.
         let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"));
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    /// A profile directory nobody took ownership of is removed when its guard drops.
+    ///
+    /// ~keep This is the cancellation case stated as a unit: the launch future being dropped
+    /// ~keep drops `user_data` without `hand_over` ever running, which is indistinguishable here
+    /// ~keep from `Browser::launch` returning an error. Proven at this level rather than through
+    /// ~keep a real Chrome because an integration test cannot reliably choose which window a
+    /// ~keep cancellation lands in -- see xberg-io/crawlberg#198.
+    #[test]
+    fn an_unclaimed_ephemeral_profile_directory_is_removed_when_its_guard_drops() {
+        let path = unique_temp_dir("crawlberg-launch-guard-test");
+        std::fs::create_dir_all(&path).expect("the directory must be creatable");
+        assert!(path.exists(), "the directory must exist before the guard drops");
+
+        drop(UserDataDir {
+            path: path.clone(),
+            cleanup_on_exit: true,
+            handed_over: false,
+        });
+
+        assert!(
+            !path.exists(),
+            "an unclaimed ephemeral profile directory must be removed"
+        );
+    }
+
+    /// `hand_over` passes the path on and stops the guard from removing it.
+    #[test]
+    fn handing_an_ephemeral_profile_directory_over_leaves_it_for_the_session_to_remove() {
+        let path = unique_temp_dir("crawlberg-launch-guard-test");
+        std::fs::create_dir_all(&path).expect("the directory must be creatable");
+
+        let handed = UserDataDir {
+            path: path.clone(),
+            cleanup_on_exit: true,
+            handed_over: false,
+        }
+        .hand_over();
+
+        assert_eq!(
+            handed.as_deref(),
+            Some(path.as_path()),
+            "the session must be given the path"
+        );
+        assert!(path.exists(), "the guard must not remove a directory it handed over");
+        std::fs::remove_dir_all(&path).expect("test cleanup");
+    }
+
+    /// A saved named profile is never removed, handed over or not.
+    #[test]
+    fn a_persistent_profile_directory_is_never_removed() {
+        let path = unique_temp_dir("crawlberg-launch-guard-test");
+        std::fs::create_dir_all(&path).expect("the directory must be creatable");
+
+        let handed = UserDataDir {
+            path: path.clone(),
+            cleanup_on_exit: false,
+            handed_over: false,
+        }
+        .hand_over();
+
+        assert!(
+            handed.is_none(),
+            "a persistent profile must not be handed over for removal"
+        );
+        assert!(path.exists(), "a persistent profile directory must survive its guard");
+        std::fs::remove_dir_all(&path).expect("test cleanup");
     }
 }

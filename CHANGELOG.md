@@ -29,6 +29,29 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Dropping a one-shot browser fetch ran no teardown at all.** Teardown was straight-line code
+  after the fetch, reached only once the fetch had finished, so a caller that dropped the future
+  while it ran — a cancelled request, a `select!` that lost, a deadline above crawlberg — got none
+  of it. Against a `browser.endpoint` Chrome that left crawlberg's CDP websocket open, and the tab
+  it had opened open with it: a connected `chromiumoxide::Browser` owns no child process, so
+  dropping it does nothing, and its handler loop never ends by itself. Against a launched Chrome
+  the process went with the dropped handle, but its `--user-data-dir` stayed on disk. Teardown now
+  belongs to a value whose `Drop` runs it, so a dropped fetch and a finished one take the same
+  path, and the profile directory is owned by a guard from the moment it is created rather than
+  from the moment the launch succeeds — a fetch cancelled mid-launch never had a session to tear
+  down. One window remains open: the Chrome process that `Browser::launch` is still building
+  cannot be reaped from outside it, so a fetch cancelled during the launch can leave that process
+  behind, and it recreates the directory it was just removed from (#198). (#131)
+
+- **Teardown waited five seconds for the CDP handler after killing a hung Chrome.** Killing the
+  process does not end the task that runs its CDP handler: chromiumoxide's handler loop returns
+  only when a `Browser.close` response reaches it, and a closed websocket merely parks the loop, so
+  the wait could never do anything but expire in full and abort the task anyway — about five
+  seconds added to every teardown that had to kill a Chrome that had stopped responding. The close
+  now reports whether the process exited or had to be killed, and the handler is aborted at once in
+  the killed case. A browser that closed cleanly is unchanged, still given the same grace period to
+  wind its handler down. (#146)
+
 - **A pooled browser fetch that hit its overall deadline leaked its page.** `overall_timeout`
   wrapped the whole pooled fetch, so expiry dropped that future before it could release the page it
   had borrowed from the shared browser — and `chromiumoxide::Page` has no closing `Drop`, so the CDP
