@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use regex::Regex;
-use tl::ParserOptions;
 use url::Url;
 
 use super::CrawlEngine;
@@ -531,7 +530,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = tl::parse(&parsed_html, ParserOptions::default())
+    let target = crate::html::parse_html(&parsed_html)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
     Some(resolve_redirect(current_url, &target))

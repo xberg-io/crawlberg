@@ -28,11 +28,37 @@ pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
         .unwrap_or_else(|_| src.to_owned())
 }
 
-/// Get a string attribute value from an HTMLTag.
+/// Parse an HTML document with every tag name in lowercase.
 ///
-/// Returns `None` if the attribute does not exist or has no value.
-pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<&'a str> {
-    tag.attributes().get(attr).flatten().and_then(|b| b.try_as_utf8_str())
+/// ~keep HTML tag names are case-insensitive, but tl's selectors compare them byte for byte,
+/// ~keep so `a[href]` would miss `<A HREF>`. tl already lowercases attribute names. Parse
+/// ~keep every document crawlberg queries through here, so no selector needs its own fix.
+/// ~keep A renamed tag name is an owned copy, no longer a slice of `html`. `link_targets` finds a
+/// ~keep value's offset in the source by pointer, so it reads only attribute values that way, and
+/// ~keep it compares tag names exactly because this rename has already run.
+pub(crate) fn parse_html(html: &str) -> Result<VDom<'_>, tl::ParseError> {
+    let mut dom = tl::parse(html, tl::ParserOptions::default())?;
+    for tag in dom.nodes_mut().iter_mut().filter_map(|node| node.as_tag_mut()) {
+        let name = tag.name().as_bytes();
+        if name.iter().any(u8::is_ascii_uppercase) {
+            let lowercase = name.to_ascii_lowercase();
+            tag.name_mut()
+                .set(lowercase)
+                .expect("a tag name tl parsed is at most u32::MAX bytes");
+        }
+    }
+    Ok(dom)
+}
+
+/// Get an attribute value from an HTMLTag, with its character references decoded.
+///
+/// Returns `None` if the attribute does not exist, has no value, or is not UTF-8.
+pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
+    tag.attributes()
+        .get(attr)
+        .flatten()
+        .and_then(|b| b.try_as_utf8_str())
+        .map(decode_attr_value)
 }
 
 /// Decode the character references in a raw attribute value (`&amp;`, `&#x2F;`), as an HTML
@@ -72,18 +98,6 @@ impl TokenSink for FirstAttrValue {
         }
         TokenSinkResult::Continue
     }
-}
-
-/// Every element named `name`, in document order, with the name compared regardless of ASCII
-/// case as HTML compares it.
-///
-/// ~keep tl lowercases attribute names when it parses, but its selectors compare tag names
-/// ~keep byte for byte, so a `base[href]` query misses `<BASE HREF>`.
-pub(crate) fn elements_named<'d, 'a>(dom: &'d VDom<'a>, name: &'d str) -> impl Iterator<Item = &'d HTMLTag<'a>> {
-    dom.nodes()
-        .iter()
-        .filter_map(|node| node.as_tag())
-        .filter(move |tag| tag.name().as_bytes().eq_ignore_ascii_case(name.as_bytes()))
 }
 
 /// Iterate over nodes matching a CSS selector, calling the closure for each tag.

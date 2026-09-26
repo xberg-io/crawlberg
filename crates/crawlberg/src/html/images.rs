@@ -1,19 +1,25 @@
 //! Image extraction from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
-use super::get_attr;
-use super::resolve_url;
+use super::links::effective_base_url;
 use super::selectors::{SEL_IMG_SRC, SEL_OG_IMAGE, SEL_SOURCE_SRCSET, SEL_TWITTER_IMAGE};
+use super::{get_attr, resolve_url};
 
 /// Extract all images from a parsed HTML document.
 ///
+/// Relative addresses resolve against the same base as the links list: the first `<base href>`,
+/// else `document_url`.
+///
 /// Sources are appended in a fixed order — `<img>`, `<picture><source>`, `og:image`,
 /// `twitter:image` — and downstream dedup depends on it. ~keep
-pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
+pub(crate) fn extract_images(dom: &VDom<'_>, document_url: &Url) -> Vec<ImageInfo> {
+    let base_url = &effective_base_url(dom, document_url);
     let mut images = Vec::new();
     collect_img_elements(dom, base_url, &mut images);
     collect_picture_sources(dom, base_url, &mut images);
@@ -38,13 +44,17 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let src = get_attr(tag, "src").unwrap_or("");
-        if src.is_empty() || src.starts_with("data:") {
+        let src = get_attr(tag, "src").unwrap_or_default();
+        if src.is_empty() {
+            continue;
+        }
+        let resolved = base_url.join(&src);
+        if resolved.as_ref().is_ok_and(|u| u.scheme() == "data") {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(src, base_url),
-            alt: get_attr(tag, "alt").map(String::from),
+            url: resolved.map_or_else(|_| src.into_owned(), String::from),
+            alt: get_attr(tag, "alt").map(Cow::into_owned),
             width: get_attr(tag, "width").and_then(|w| w.parse::<u32>().ok()),
             height: get_attr(tag, "height").and_then(|h| h.parse::<u32>().ok()),
             source: ImageSource::Img,
@@ -62,7 +72,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let srcset = get_attr(tag, "srcset").unwrap_or("");
+        let srcset = get_attr(tag, "srcset").unwrap_or_default();
         if srcset.is_empty() {
             continue;
         }
@@ -104,7 +114,7 @@ fn collect_meta_images(
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(content, base_url),
+            url: resolve_url(&content, base_url),
             alt: None,
             width: None,
             height: None,
@@ -115,8 +125,6 @@ fn collect_meta_images(
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
     /// Flattened `ImageInfo` used so a whole extraction can be compared in one
@@ -124,7 +132,7 @@ mod tests {
     type Flat = (String, Option<String>, Option<u32>, Option<u32>, String);
 
     fn extract(html: &str) -> Vec<Flat> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         let base_url = Url::parse("https://example.com/dir/page.html").expect("valid base URL");
         extract_images(&dom, &base_url)
             .into_iter()
@@ -176,6 +184,14 @@ mod tests {
     #[test]
     fn unresolvable_src_falls_back_to_the_raw_value() {
         assert_eq!(extract(r#"<img src="http://[bad">"#), vec![flat("http://[bad", "img")]);
+    }
+
+    #[test]
+    fn inline_data_images_are_skipped_in_any_spelling() {
+        assert_eq!(
+            extract(r#"<img src="DATA:image/png;base64,AA"><img src="&#68;ata:image/gif;base64,R0"><img src="i.png">"#),
+            [flat("https://example.com/dir/i.png", "img")]
+        );
     }
 
     #[test]

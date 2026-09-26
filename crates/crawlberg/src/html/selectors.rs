@@ -23,6 +23,7 @@ pub(super) const SEL_ROBOTS_META: &str = "meta[name='robots']";
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) const SEL_META_REFRESH: &str = "meta[http-equiv='refresh']";
 pub(super) const SEL_A_HREF: &str = "a[href]";
+pub(super) const SEL_BASE_HREF: &str = "base[href]";
 pub(crate) const SEL_IMG_SRC: &str = "img[src]";
 pub(super) const SEL_SOURCE_SRCSET: &str = "source[srcset]";
 pub(super) const SEL_OG_IMAGE: &str = "meta[property='og:image']";

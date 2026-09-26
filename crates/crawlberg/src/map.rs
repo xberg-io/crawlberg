@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 
 use regex::Regex;
-use tl::ParserOptions;
 use url::Url;
 
 use crate::error::CrawlError;
@@ -160,7 +159,7 @@ async fn urls_from_direct_response(
 
     if is_html_content(&resp.content_type, &resp.body) {
         let parsed_html = mask_raw_text_markup(&resp.body);
-        if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
+        if let Ok(doc) = crate::html::parse_html(&parsed_html) {
             return links_as_sitemap_urls(&doc, parsed_url);
         }
     }

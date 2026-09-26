@@ -6,7 +6,6 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use tl::ParserOptions;
 
 /// Minimum word count to consider a page as having substantial content.
 const MIN_CONTENT_WORD_COUNT: usize = 50;
@@ -33,7 +32,7 @@ pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
     }
 
     let parsed_html = crate::html::mask_raw_text_markup(body);
-    let Ok(dom) = tl::parse(&parsed_html, ParserOptions::default()) else {
+    let Ok(dom) = crate::html::parse_html(&parsed_html) else {
         return false;
     };
     let parser = dom.parser();

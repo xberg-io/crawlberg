@@ -1,5 +1,7 @@
 //! Feed, favicon, hreflang, and heading extraction from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
@@ -19,16 +21,16 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let link_type = get_attr(tag, "type").unwrap_or("");
-            let raw_href = get_attr(tag, "href").unwrap_or("");
+            let link_type = get_attr(tag, "type").unwrap_or_default();
+            let raw_href = get_attr(tag, "href").unwrap_or_default();
             let href = if raw_href.is_empty() {
                 String::new()
             } else {
-                resolve_url(raw_href, base_url)
+                resolve_url(&raw_href, base_url)
             };
-            let title = get_attr(tag, "title").map(String::from);
+            let title = get_attr(tag, "title").map(Cow::into_owned);
 
-            let feed_type = match link_type {
+            let feed_type = match link_type.as_ref() {
                 "application/rss+xml" => Some(FeedType::Rss),
                 "application/atom+xml" => Some(FeedType::Atom),
                 "application/json" | "application/feed+json" => Some(FeedType::JsonFeed),
@@ -56,8 +58,8 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let lang = get_attr(tag, "hreflang").unwrap_or("").to_owned();
-            let url = get_attr(tag, "href").unwrap_or("").to_owned();
+            let lang = get_attr(tag, "hreflang").unwrap_or_default().into_owned();
+            let url = get_attr(tag, "href").unwrap_or_default().into_owned();
             if !lang.is_empty() && !url.is_empty() {
                 entries.push(HreflangEntry { lang, url });
             }
@@ -83,20 +85,20 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let rel = get_attr(tag, "rel").unwrap_or("");
-            if !FAVICON_RELS.contains(&rel) {
+            let rel = get_attr(tag, "rel").unwrap_or_default();
+            if !FAVICON_RELS.contains(&rel.as_ref()) {
                 continue;
             }
-            let raw_href = get_attr(tag, "href").unwrap_or("");
+            let raw_href = get_attr(tag, "href").unwrap_or_default();
             if raw_href.is_empty() {
                 continue;
             }
-            let url = resolve_url(raw_href, base_url);
-            let sizes = get_attr(tag, "sizes").map(String::from);
-            let mime_type = get_attr(tag, "type").map(String::from);
+            let url = resolve_url(&raw_href, base_url);
+            let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
+            let mime_type = get_attr(tag, "type").map(Cow::into_owned);
             favicons.push(FaviconInfo {
                 url,
-                rel: rel.to_owned(),
+                rel: rel.into_owned(),
                 sizes,
                 mime_type,
             });
@@ -133,12 +135,10 @@ pub(crate) fn extract_headings(dom: &VDom<'_>) -> Vec<HeadingInfo> {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
     fn parse(html: &str) -> tl::VDom<'_> {
-        tl::parse(html, ParserOptions::default()).expect("valid HTML")
+        crate::html::parse_html(html).expect("valid HTML")
     }
 
     #[test]
