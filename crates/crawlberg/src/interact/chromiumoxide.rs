@@ -1,19 +1,17 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-use chromiumoxide::cdp::browser_protocol::target::{
-    CloseTargetParams, EventTargetDestroyed, GetTargetsParams, TargetId,
-};
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{BrowserIntercept, StoppedResponse, start_browser_interception};
+use crate::ssrf_intercept::{BrowserFirewall, StoppedResponse, Watch};
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -21,14 +19,24 @@ pub(super) async fn run(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let (mut browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    let (browser, mut handler, data_dir) = launch_or_connect(config).await?;
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    let result = run_with_browser(&browser, url, actions, config).await;
+    let browser = Arc::new(browser);
+    let result = match BrowserFirewall::start(Arc::clone(&browser)).await {
+        Ok(firewall) => {
+            let result = run_with_browser(&browser, &firewall, url, actions, config).await;
+            firewall.stop().await;
+            result
+        }
+        Err(error) => Err(error),
+    };
 
-    let _ = browser.close().await;
-    let _ = browser.wait().await;
-    drop(browser);
+    // ~keep The stopped firewall held the only other reference, so this is the browser itself.
+    if let Some(mut browser) = Arc::into_inner(browser) {
+        let _ = browser.close().await;
+        let _ = browser.wait().await;
+    }
     let _ = tokio::time::timeout(Duration::from_secs(5), handler_handle).await;
     if let Some(dir) = data_dir {
         let _ = std::fs::remove_dir_all(dir);
@@ -95,6 +103,7 @@ async fn run_action_with_timeout(
 
 async fn run_with_browser(
     browser: &Browser,
+    firewall: &BrowserFirewall,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
@@ -103,108 +112,38 @@ async fn run_with_browser(
         .new_page("about:blank")
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
-    let mut close_on_drop = ClosePageOnDrop(Some(page.clone()));
 
-    let result = async {
-        prepare_page(&page, config).await?;
-        // ~keep The SSRF check holds for the whole session, not just the first navigation: the
-        // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
-        // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
-        let (intercept, listener) =
-            start_browser_interception(browser, &page, &config.ssrf, config.max_redirects).await?;
-        // ~keep The pages close while the listener still answers their requests: once the check
-        // ~keep is off, a page that is still open reaches any address.
-        let session = tokio::select! {
-            session = async {
-                let session = run_session(&page, &intercept, url, actions, config).await;
-                close_session_targets(browser, &page).await;
-                session
-            } => session,
-            () = listener => {
-                close_session_targets(browser, &page).await;
-                Err(CrawlError::browser_error("request interception stopped before the session ended"))
+    // ~keep The SSRF check holds for the whole session, not just the first navigation: the
+    // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
+    // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
+    // ~keep Closing the watch closes the popups, children first, then the page, and stops
+    // ~keep watching only once Chrome has destroyed them, so the check answers until then.
+    match firewall.handle().watch(&page, &config.ssrf, config.max_redirects).await {
+        Ok(watch) => {
+            let result = async {
+                prepare_page(&page, config).await?;
+                run_session(&page, &watch, url, actions, config).await
             }
-        };
-        intercept.finish(browser).await;
-        session
-    }
-    .await;
-
-    close_session_targets(browser, &page).await;
-    close_on_drop.0 = None;
-    result
-}
-
-/// Closes the page when the session is dropped before it closed the page itself. The check is
-/// never turned off on that path, so the page's pending requests stay paused until it closes.
-struct ClosePageOnDrop(Option<chromiumoxide::Page>);
-
-impl Drop for ClosePageOnDrop {
-    fn drop(&mut self) {
-        if let Some(page) = self.0.take()
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
-        {
-            runtime.spawn(async move {
-                let _ = page.close().await;
-            });
+            .await;
+            watch.close().await;
+            result
+        }
+        Err(error) => {
+            let _ = page.close().await;
+            Err(error)
         }
     }
-}
-
-/// How long closing the session's pages may take before the check is turned off anyway.
-const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Close `page` and every page it opened, directly or through another popup, and wait until
-/// Chrome has destroyed them. A page already closed is skipped.
-async fn close_session_targets(browser: &Browser, page: &chromiumoxide::Page) {
-    let Ok(mut destroyed) = browser.event_listener::<EventTargetDestroyed>().await else {
-        return;
-    };
-    let targets = match browser.execute(GetTargetsParams::default()).await {
-        Ok(response) => response.result.target_infos,
-        Err(_) => Vec::new(),
-    };
-    let mut open: Vec<TargetId> = targets
-        .iter()
-        .filter(|target| target.target_id == *page.target_id())
-        .map(|target| target.target_id.clone())
-        .collect();
-    let mut index = 0;
-    while index < open.len() {
-        let opener = open[index].clone();
-        open.extend(
-            targets
-                .iter()
-                .filter(|target| target.opener_id.as_ref() == Some(&opener))
-                .map(|target| target.target_id.clone()),
-        );
-        index += 1;
-    }
-    // ~keep Popups close before the page that opened them: closing the opener first let a
-    // ~keep popup's request through the check in some runs.
-    for target in open.iter().rev() {
-        let _ = browser.execute(CloseTargetParams::new(target.clone())).await;
-    }
-    let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
-        while !open.is_empty() {
-            let Some(event) = destroyed.next().await else {
-                return;
-            };
-            open.retain(|target| *target != event.target_id);
-        }
-    })
-    .await;
 }
 
 /// Navigate to `url`, then run the actions and read the final page.
 async fn run_session(
     page: &chromiumoxide::Page,
-    intercept: &BrowserIntercept,
+    watch: &Watch,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    if let Some(stop) = navigate_and_wait(page, intercept, url, config).await? {
+    if let Some(stop) = navigate_and_wait(page, watch, url, config).await? {
         return Ok(no_document_result(&stop, actions));
     }
     if let Some(ref script) = config.browser.eval_script {
@@ -308,11 +247,11 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 /// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
 /// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
 // ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows
-// ~keep redirects/client-side navigations internally, so `intercept` checks every request the
+// ~keep redirects/client-side navigations internally, so `watch` checks every request the
 // ~keep navigation makes, the same way the scrape/crawl path does (xberg-io/crawlberg#74).
 async fn navigate_and_wait(
     page: &chromiumoxide::Page,
-    intercept: &BrowserIntercept,
+    watch: &Watch,
     url: &str,
     config: &CrawlConfig,
 ) -> Result<Option<StoppedResponse>, CrawlError> {
@@ -329,7 +268,7 @@ async fn navigate_and_wait(
     })
     .await;
 
-    let intercepted = intercept.take_outcome();
+    let intercepted = watch.take_outcome();
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {

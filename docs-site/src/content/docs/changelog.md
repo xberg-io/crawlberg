@@ -38,6 +38,13 @@ title: "Changelog"
   of the whole session, in the page, its frames and workers, and in any popup or new tab. Only
   the redirect limit stays with the first navigation. This applies to the Chromiumoxide backend.
   (#153)
+- **Browser-mode scrape and crawl reached addresses the SSRF policy refuses.** The request check
+  covered one page and stopped when the navigation finished, so a popup the page opened on load,
+  and a request it sent during the extra wait or while it was screenshotted, reached private and
+  loopback addresses. The check now runs on the browser as a whole for the whole fetch, and the
+  popups a page opened are closed before it ends. Pages that share one `BrowserPool` browser are
+  checked by one listener, each against its own policy. This applies to the Chromiumoxide
+  backend. (#165)
 
 ## [1.8.0] - 2026-09-25
 

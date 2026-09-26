@@ -2,10 +2,10 @@
 //!
 //! ~keep This module is feature-gated behind `#[cfg(feature = "browser-chromiumoxide")]` at
 //! ~keep the module level in `lib.rs` (the narrower flag -- `browser` implies it, see the
-//! ~keep `~keep` there). One method compiled under this module, `PooledPage::into_parts`, is
-//! ~keep only called from code gated on the wider `browser` feature, so it carries its own
-//! ~keep `#[cfg(feature = "browser")]` inline with a `~keep` explaining why; that is the one
-//! ~keep sanctioned in-file feature gate, not a precedent for adding more.
+//! ~keep `~keep` there). Two methods compiled under this module, `PooledPage::into_parts` and
+//! ~keep `BrowserPool::firewall`, are only called from code gated on the wider `browser`
+//! ~keep feature, so each carries its own `#[cfg(feature = "browser")]` inline; those are the
+//! ~keep sanctioned in-file feature gates, not a precedent for adding more.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +18,7 @@ use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
+use crate::ssrf_intercept::BrowserFirewall;
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -172,9 +173,26 @@ impl Default for BrowserPoolConfig {
 }
 
 struct BrowserState {
-    browser: Browser,
+    browser: Arc<Browser>,
+    /// The SSRF check every page of this browser runs under. It holds the other reference
+    /// to `browser` until it is stopped.
+    firewall: BrowserFirewall,
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<std::path::PathBuf>,
+}
+
+impl BrowserState {
+    /// Stop the SSRF check and close the browser, bounded by the handler shutdown timeout.
+    async fn close(self) {
+        self.firewall.stop().await;
+        if let Some(mut browser) = Arc::into_inner(self.browser) {
+            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
+        }
+        abort_handler_after_timeout(self.handler_handle).await;
+        if let Some(dir) = self.user_data_dir {
+            remove_profile_dir(dir).await;
+        }
+    }
 }
 
 /// Wait for the CDP handler loop to finish, aborting it if it outlives the timeout.
@@ -338,14 +356,19 @@ impl BrowserPool {
 
         let mut guard = self.state.lock().await;
         if let Some(bs) = guard.take() {
-            let mut browser = bs.browser;
-            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(browser);
-            abort_handler_after_timeout(bs.handler_handle).await;
-            if let Some(dir) = bs.user_data_dir {
-                remove_profile_dir(dir).await;
-            }
+            bs.close().await;
         }
+    }
+
+    /// The SSRF check of the running browser, which a page of this pool must be watched by.
+    #[cfg(feature = "browser")]
+    pub(crate) async fn firewall(&self) -> Result<crate::ssrf_intercept::FirewallHandle, CrawlError> {
+        self.state
+            .lock()
+            .await
+            .as_ref()
+            .map(|bs| bs.firewall.handle())
+            .ok_or_else(|| CrawlError::browser_error("browser pool has no running browser"))
     }
 
     /// Try to create a new page from the current browser. Takes the mutex
@@ -356,6 +379,7 @@ impl BrowserPool {
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
+                old.firewall.stop().await;
                 old.handler_handle.abort();
                 if let Some(dir) = old.user_data_dir {
                     remove_profile_dir(dir).await;
@@ -387,13 +411,7 @@ impl BrowserPool {
 
         self.healthy.store(false, Ordering::Release);
         if let Some(old) = guard.take() {
-            let mut browser = old.browser;
-            close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
-            drop(browser);
-            abort_handler_after_timeout(old.handler_handle).await;
-            if let Some(dir) = old.user_data_dir {
-                remove_profile_dir(dir).await;
-            }
+            old.close().await;
         }
 
         let bs = self.launch_browser().await?;
@@ -431,9 +449,24 @@ impl BrowserPool {
         };
 
         let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let browser = Arc::new(browser);
+        let firewall = match BrowserFirewall::start(Arc::clone(&browser)).await {
+            Ok(firewall) => firewall,
+            Err(error) => {
+                if let Some(mut browser) = Arc::into_inner(browser) {
+                    close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
+                }
+                abort_handler_after_timeout(handler_handle).await;
+                if let Some(dir) = data_dir {
+                    remove_profile_dir(dir).await;
+                }
+                return Err(error);
+            }
+        };
 
         Ok(BrowserState {
             browser,
+            firewall,
             handler_handle,
             user_data_dir: data_dir,
         })

@@ -2,6 +2,7 @@
 //!
 //! This module is only compiled when the `browser` feature is enabled.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use crate::browser_pool::{BrowserPool, close_browser_within};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
+use crate::ssrf_intercept::BrowserFirewall;
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
@@ -203,7 +205,18 @@ async fn pooled_fetch_inner(
         pooled.into_parts()
     };
 
-    let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
+    let watch = match pool.firewall().await {
+        Ok(firewall) => firewall.watch(&page, &config.ssrf, config.max_redirects).await,
+        Err(error) => Err(error),
+    };
+    let watch = match watch {
+        Ok(watch) => watch,
+        Err(error) => {
+            let _ = page.close().await;
+            return Err(error);
+        }
+    };
+    let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot).await;
 
     if config.browser.session_affinity
         && result.is_ok()
@@ -213,9 +226,10 @@ async fn pooled_fetch_inner(
         )
         && let Some(session_pool) = config.browser_session_pool.as_deref()
     {
+        watch.park().await;
         session_pool.insert(session_key, page, permit).await;
     } else {
-        let _ = page.close().await;
+        watch.close().await;
         drop(permit);
     }
 
@@ -240,8 +254,7 @@ async fn one_shot_fetch(
     let shutdown_timeout = config.browser.shutdown_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let (mut browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await
-    {
+    let (browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
         Ok(Ok(launched)) => launched,
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(overall_deadline_error(overall_timeout)),
@@ -249,20 +262,35 @@ async fn one_shot_fetch(
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
+    let browser = Arc::new(browser);
+    let firewall = BrowserFirewall::start(Arc::clone(&browser)).await;
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     let fetch_outcome = tokio::time::timeout(remaining, async {
+        let firewall = firewall.as_ref().map_err(Clone::clone)?;
         let page = browser
             .new_page("about:blank")
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        let watch = match firewall.handle().watch(&page, &config.ssrf, config.max_redirects).await {
+            Ok(watch) => watch,
+            Err(error) => {
+                let _ = page.close().await;
+                return Err(error);
+            }
+        };
 
-        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
-        let _ = page.close().await;
+        let result = page_fetch(url, config, &page, &watch, prior_cookies, want_screenshot).await;
+        watch.close().await;
         result
     })
     .await;
 
     let result = fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)));
+    if let Ok(firewall) = firewall {
+        firewall.stop().await;
+    }
+    // ~keep The stopped firewall held the only other reference, so this is the browser itself.
+    let browser = Arc::into_inner(browser);
 
     // ~keep Shutdown is spawned rather than awaited inline: a Chrome process stuck behind a
     // ~keep blocking OS dialog (the originally reported case: a macOS keychain prompt) must
@@ -270,8 +298,9 @@ async fn one_shot_fetch(
     // ~keep `close_browser_within` still bounds close()/wait() by `shutdown_timeout` and
     // ~keep force-kills the process on expiry, so this background task always finishes.
     tokio::spawn(async move {
-        close_browser_within(&mut browser, shutdown_timeout).await;
-        drop(browser);
+        if let Some(mut browser) = browser {
+            close_browser_within(&mut browser, shutdown_timeout).await;
+        }
         let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handler_handle).await;
         if let Some(dir) = data_dir {
             let _ = tokio::fs::remove_dir_all(&dir).await;
