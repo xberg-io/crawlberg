@@ -13,7 +13,7 @@ use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::{StoppedResponse, start_ssrf_interception};
+use crate::ssrf_intercept::{SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -21,7 +21,8 @@ use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 const STEALTH_VIEWPORT_WIDTH: u32 = 1920;
 const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 
-/// Synthetic status and content type reported for a CDP-rendered page.
+/// Status reported for a CDP-rendered page when no main-frame response was intercepted,
+/// and the content type reported for every rendered page.
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 
@@ -54,10 +55,25 @@ pub(super) async fn page_fetch(
     apply_prior_cookies(page, prior_cookies).await;
     apply_extra_headers(page, config).await?;
 
-    let timeout = config.browser.timeout;
-
     let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
+    let rendered = render(url, config, page, &interceptor, want_screenshot).await;
+    interceptor.finish().await;
+    rendered
+}
 
+/// Navigate `page` to `url` under `interceptor` and read the rendered page.
+///
+/// ~keep The interception stays on until the HTML is read, so the reported status is the one
+/// ~keep of the main-frame document the HTML comes from, even when the page navigates during
+/// ~keep `extra_wait` (a challenge page that moves to the real page, for example).
+async fn render(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    interceptor: &SsrfInterceptGuard,
+    want_screenshot: bool,
+) -> Result<BrowserPage, CrawlError> {
+    let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
@@ -71,7 +87,7 @@ pub(super) async fn page_fetch(
     })
     .await;
 
-    let intercepted = interceptor.finish().await;
+    let intercepted = interceptor.navigation_outcome();
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
@@ -90,6 +106,7 @@ pub(super) async fn page_fetch(
         .content()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
+    let status = interceptor.document_status().unwrap_or(RENDERED_PAGE_STATUS);
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
     // ~keep resolve against. An unreadable URL falls back to the requested one.
@@ -98,10 +115,9 @@ pub(super) async fn page_fetch(
     let body_bytes = html.as_bytes().to_vec();
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
-    // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
     Ok(BrowserPage {
         response: HttpResponse {
-            status: RENDERED_PAGE_STATUS,
+            status,
             content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
             body: html,
             body_bytes,

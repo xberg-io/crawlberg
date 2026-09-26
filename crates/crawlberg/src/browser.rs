@@ -43,7 +43,8 @@ pub(crate) struct BrowserPage {
 /// instance and tears it down afterwards.
 ///
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
-/// the HTTP redirects the browser followed to reach it.
+/// the HTTP redirects the browser followed to reach it. The page's status is handled the way
+/// HTTP mode handles it: a 404 or 500 page is the error the HTTP fetch returns.
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -52,8 +53,8 @@ pub(crate) async fn browser_fetch(
     want_screenshot: bool,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
 ) -> Result<BrowserPage, CrawlError> {
-    match config.browser.backend {
-        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await,
+    let page = match config.browser.backend {
+        BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await?,
         BrowserBackend::Native => {
             // ~keep Screenshot capture is implemented only for the chromiumoxide fetch path
             // ~keep (`page_fetch`, in `browser/navigation.rs`); the native backend lives in the
@@ -69,12 +70,16 @@ pub(crate) async fn browser_fetch(
             let response = native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
             let response = native_fetch(url, config, prior_cookies).await?;
-            Ok(BrowserPage {
+            BrowserPage {
                 redirects: usize::from(response.final_url != url),
                 response,
-            })
+            }
         }
-    }
+    };
+    Ok(BrowserPage {
+        response: crate::http::rendered_status_outcome(page.response, page.redirects > 0, config)?,
+        redirects: page.redirects,
+    })
 }
 
 async fn chromiumoxide_fetch(
