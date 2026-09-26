@@ -907,13 +907,16 @@ async fn fetch_and_extract(
     // ~keep page against the wrong origin.
     let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
-    let x_robots_tag = crate::scrape::x_robots_tag(&headers);
+    let robots_user_agent = crate::helpers::default_robots_user_agent(&engine.config).to_owned();
+    let header_robots =
+        crate::scrape::RobotsDirectives::from_header_values(headers.get("x-robots-tag"), &robots_user_agent);
 
     let page_ext = tokio::task::spawn_blocking(move || {
         blocking_extract_page(
             &url_for_extract,
             &content_type_clone,
-            x_robots_tag.as_deref(),
+            header_robots,
+            &robots_user_agent,
             body,
             body_bytes,
         )
