@@ -387,7 +387,7 @@ fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &
     if resolved.is_none() {
         tracing::debug!(
             sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
-            child_url = %crate::net::redact_url_credentials(child_url),
+            target_len = child_url.len(),
             "sitemap-index child <loc> failed to parse; skipping it"
         );
     }

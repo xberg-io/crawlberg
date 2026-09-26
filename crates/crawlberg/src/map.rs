@@ -108,7 +108,7 @@ fn resolve_sitemap_directive(url: &str, sitemap_ref: &str, parsed_url: &Url) -> 
     let Some(resolved) = resolved else {
         tracing::debug!(
             url = %crate::net::redact_url_credentials(url),
-            sitemap_ref = %crate::net::redact_url_credentials(sitemap_ref),
+            target_len = sitemap_ref.len(),
             "robots.txt Sitemap: directive failed to parse; skipping it"
         );
         return None;

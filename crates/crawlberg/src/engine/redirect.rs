@@ -516,7 +516,7 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
     if target.is_none() {
         tracing::debug!(
             current_url = %crate::net::redact_url_credentials(current_url),
-            location = %crate::net::redact_url_credentials(location),
+            target_len = location.len(),
             "Location redirect target failed to parse; this source contributes nothing"
         );
     }
@@ -532,7 +532,7 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     if target.is_none() {
         tracing::debug!(
             current_url = %crate::net::redact_url_credentials(current_url),
-            target = %crate::net::redact_url_credentials(target_path),
+            target_len = target_path.len(),
             "Refresh header target failed to parse; this source contributes nothing"
         );
     }
@@ -554,7 +554,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     if target.is_none() {
         tracing::debug!(
             current_url = %crate::net::redact_url_credentials(current_url),
-            target = %crate::net::redact_url_credentials(&raw_target),
+            target_len = raw_target.len(),
             "meta refresh target failed to parse; this source contributes nothing"
         );
     }
@@ -745,6 +745,76 @@ mod tests {
         assert!(
             meta_refresh_target(&resp, "https://example.com/start").is_none(),
             "a meta refresh target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    /// `Visit` that records every field name/value pair, formatted with `Debug` (which is
+    /// how tracing dispatches both `%value` and plain `Display`/`Debug` fields). Same shape
+    /// as `tests/test_crawl_span_credential_redaction.rs`; duplicated rather than shared,
+    /// matching this crate's existing convention of one capturing subscriber per test.
+    struct FieldVisitor<'a>(&'a mut Vec<(String, String)>);
+
+    impl tracing::field::Visit for FieldVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            self.0.push((field.name().to_owned(), format!("{value:?}")));
+        }
+    }
+
+    /// Minimal `tracing::Subscriber` that captures every event's fields into `sink`.
+    struct CapturingSubscriber {
+        sink: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    impl tracing::Subscriber for CapturingSubscriber {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut fields = self.sink.lock().expect("sink mutex must not be poisoned");
+            event.record(&mut FieldVisitor(&mut fields));
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// Regression coverage for the round-3 review finding on PR #219: the debug log fired
+    /// when a redirect target fails to parse must never carry the raw target, since
+    /// `redact_url_credentials` returns an unparseable string unchanged -- exactly the case
+    /// this log line hits every time. `https://user:hunter2@ex ample.com/bad` is the
+    /// reviewer's own example.
+    #[test]
+    fn an_unparseable_location_with_credentials_is_never_logged() {
+        const RAW_PASSWORD: &str = "hunter2";
+        let resp = response(302, &[("location", "https://user:hunter2@ex ample.com/bad")], "");
+        let sink: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(CapturingSubscriber { sink: sink.clone() });
+
+        assert!(
+            http_redirect_target(&resp, "https://example.com/start").is_none(),
+            "an unparseable Location must not be followed"
+        );
+
+        let recorded = sink.lock().expect("sink mutex must not be poisoned");
+        assert!(
+            !recorded.is_empty(),
+            "expected the debug log to fire, got no recorded events"
+        );
+        let leaking: Vec<&(String, String)> = recorded.iter().filter(|(_, v)| v.contains(RAW_PASSWORD)).collect();
+        assert!(
+            leaking.is_empty(),
+            "no log field may contain the raw password '{RAW_PASSWORD}', but found: {leaking:?}"
+        );
+        // Positive twin: the already-parsed page URL must still be logged, so the absence
+        // assertion above is not vacuously true of an empty or unrelated capture.
+        assert!(
+            recorded.iter().any(|(_, v)| v.contains("example.com/start")),
+            "expected the already-parsed page URL to still be logged, got {recorded:?}"
         );
     }
 }
