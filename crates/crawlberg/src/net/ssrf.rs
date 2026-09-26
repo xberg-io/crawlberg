@@ -81,13 +81,30 @@ pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     // A position that reads as multicast is skipped: 8.8.8.230 after a /64 prefix reads as
     // 230.0.0.0 at the /96 position.
     ("64:ff9b:1:0:8:808:e600:0", None),
-    // An address whose every position reads as 0.0.0.0/8 or multicast carries no real
+    // An address whose every position reads as 0.0.0.0/8, multicast or 240.0.0.0/4 carries no real
     // destination, and a stateful NAT64 translator can forward 0.0.0.0 to its own host.
     ("64:ff9b:1::", Some("unspecified")),
     ("64:ff9b:1::1", Some("unspecified")),
     ("64:ff9b:1:0:0:1::", Some("unspecified")),
     ("64:ff9b:1:e000::", Some("multicast")),
     ("64:ff9b:1::e000:1", Some("unspecified")),
+    // The reserved range 240.0.0.0/4, which holds the broadcast address 255.255.255.255, in
+    // each form, and in local-use NAT64 at the /48, /56, /64 and /96 positions.
+    ("::ffff:240.0.0.1", Some("private_network")),
+    ("::ffff:255.255.255.255", Some("private_network")),
+    ("64:ff9b::240.0.0.1", Some("private_network")),
+    ("64:ff9b::255.255.255.255", Some("private_network")),
+    ("2002:f000:1::", Some("private_network")),
+    ("2002:ffff:ffff::", Some("private_network")),
+    ("2001:db8::5efe:240.0.0.1", Some("private_network")),
+    ("64:ff9b:1:f000:0:100::", Some("private_network")),
+    ("64:ff9b:1:f0:0:1::", Some("unspecified")),
+    ("64:ff9b:1:0:f0::", Some("unspecified")),
+    ("64:ff9b:1::240.0.0.1", Some("unspecified")),
+    ("64:ff9b:1:ffff:ffff:ffff:ffff:ffff", Some("private_network")),
+    // A position that reads as 240.0.0.0/4 is skipped like a multicast one: 8.8.240.1 after a
+    // /48 prefix reads as 240.1.0.0 at the /64 position.
+    ("64:ff9b:1:808:f0:100::", None),
     // ISATAP, RFC 5214 section 6.1: the interface identifier 0000:5efe or 0200:5efe carries
     // the IPv4 address under any prefix.
     ("2001:db8::5efe:10.0.0.5", Some("private_network")),
@@ -484,6 +501,21 @@ mod tests {
             validate_url(&url, &policy)
                 .await
                 .unwrap_or_else(|e| panic!("{host} is outside 100.64.0.0/10 and must be permitted: {e:?}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_the_reserved_range_and_broadcast() {
+        let policy = SsrfPolicy::default();
+        for host in ["240.0.0.1", "250.1.2.3", "255.255.255.254", "255.255.255.255"] {
+            let url = format!("http://{host}/").parse::<url::Url>().unwrap();
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err("240.0.0.0/4 must be denied");
+            assert!(
+                matches!(err, SsrfError::DeniedByPolicy { .. }),
+                "expected DeniedByPolicy for {host}, got {err:?}"
+            );
         }
     }
 
