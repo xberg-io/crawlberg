@@ -135,7 +135,7 @@ pub struct JsonLdEntry {
 }
 
 /// Information about an HTTP cookie received from a response.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CookieInfo {
@@ -147,6 +147,33 @@ pub struct CookieInfo {
     pub domain: Option<String>,
     /// The cookie path, if specified.
     pub path: Option<String>,
+}
+
+impl std::fmt::Debug for CookieInfo {
+    /// Redacted: a cookie value is often a session credential, and the engine sends
+    /// these cookies back on later browser fetches. Shows whether a value is set, never
+    /// the value itself.
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface.
+    #[cfg_attr(alef, alef(skip))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            name,
+            value,
+            domain,
+            path,
+        } = self;
+        f.debug_struct("CookieInfo")
+            .field("name", name)
+            .field(
+                "value",
+                &(!value.is_empty()).then_some(crate::net::redact::REDACTED_PLACEHOLDER),
+            )
+            .field("domain", domain)
+            .field("path", path)
+            .finish()
+    }
 }
 
 /// A downloaded asset from a page.

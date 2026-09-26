@@ -42,8 +42,8 @@ fn parse_yaml(raw: &str, env_vars: &HashMap<String, String>) -> Result<ProviderC
         .next()
         .ok_or_else(|| ConfigError::Parse("empty YAML document".into()))?;
 
-    let vendor_name = interp(req_str(&doc, "vendor_name")?, env_vars)?;
-    let endpoint = interp(req_str(&doc, "endpoint")?, env_vars)?;
+    let vendor_name = interp("vendor_name", req_str(&doc, "vendor_name")?, env_vars)?;
+    let endpoint = interp("endpoint", req_str(&doc, "endpoint")?, env_vars)?;
     let method = parse_method(req_str(&doc, "method")?)?;
 
     let auth_node = req_child(&doc, "auth")?;
@@ -87,21 +87,21 @@ fn parse_auth(node: &YamlOwned, env_vars: &HashMap<String, String>) -> Result<Au
     match kind {
         "none" => Ok(AuthScheme::None),
         "bearer" => {
-            let token = interp(req_str(node, "token")?, env_vars)?;
+            let token = interp("auth.token", req_str(node, "token")?, env_vars)?;
             Ok(AuthScheme::Bearer { token })
         }
         "basic_username" => {
-            let username = interp(req_str(node, "username")?, env_vars)?;
+            let username = interp("auth.username", req_str(node, "username")?, env_vars)?;
             Ok(AuthScheme::BasicUsername { username })
         }
         "header" => {
-            let name = interp(req_str(node, "name")?, env_vars)?;
-            let value = interp(req_str(node, "value")?, env_vars)?;
+            let name = interp("auth.name", req_str(node, "name")?, env_vars)?;
+            let value = interp("auth.value", req_str(node, "value")?, env_vars)?;
             Ok(AuthScheme::Header { name, value })
         }
         "query_param" => {
-            let name = interp(req_str(node, "name")?, env_vars)?;
-            let value = interp(req_str(node, "value")?, env_vars)?;
+            let name = interp("auth.name", req_str(node, "name")?, env_vars)?;
+            let value = interp("auth.value", req_str(node, "value")?, env_vars)?;
             Ok(AuthScheme::QueryParam { name, value })
         }
         other => Err(ConfigError::UnknownValue {
@@ -118,7 +118,7 @@ fn parse_request(node: &YamlOwned, env_vars: &HashMap<String, String>) -> Result
             let body_kind = req_str(body_node, "kind")?;
             match body_kind {
                 "json" => {
-                    let template = interp(req_str(body_node, "template")?, env_vars)?;
+                    let template = interp("request.body.template", req_str(body_node, "template")?, env_vars)?;
                     Some(RequestBody::Json { template })
                 }
                 other => {
@@ -141,7 +141,7 @@ fn parse_request(node: &YamlOwned, env_vars: &HashMap<String, String>) -> Result
             let mut pairs = Vec::new();
             for item in items {
                 let name = req_str(item, "name")?;
-                let value = interp(req_str(item, "value")?, env_vars)?;
+                let value = interp("request.query[].value", req_str(item, "value")?, env_vars)?;
                 pairs.push((name.to_owned(), value));
             }
             pairs
@@ -219,7 +219,7 @@ fn parse_cost_extraction(node: &YamlOwned, env_vars: &HashMap<String, String>) -
         "none" => Ok(CostExtraction::None),
         "static" => Ok(CostExtraction::Static),
         "header" => {
-            let name = interp(req_str(node, "name")?, env_vars)?;
+            let name = interp("response.cost_extraction.name", req_str(node, "name")?, env_vars)?;
             let currency_node = req_child(node, "currency")?;
             let currency = parse_currency(currency_node)?;
             Ok(CostExtraction::Header { name, currency })
@@ -314,17 +314,20 @@ fn req_str<'a>(node: &'a YamlOwned, key: &str) -> Result<&'a str, ConfigError> {
     }
 }
 
-/// Substitute `${VAR_NAME}` placeholders in `s` using `env_vars`.
-pub(crate) fn interp(s: &str, env_vars: &HashMap<String, String>) -> Result<String, ConfigError> {
+/// Substitute `${VAR_NAME}` placeholders in the value of `field` using `env_vars`.
+///
+/// An error names `field` and a byte offset, never the value: the value can hold a secret.
+pub(crate) fn interp(field: &str, s: &str, env_vars: &HashMap<String, String>) -> Result<String, ConfigError> {
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
     while let Some(start) = remaining.find("${") {
         let prefix = &remaining[..start];
         result.push_str(prefix);
         let rest = &remaining[start + 2..];
-        let end = rest
-            .find('}')
-            .ok_or_else(|| ConfigError::Parse(format!("unclosed '${{' in: {s}")))?;
+        let end = rest.find('}').ok_or_else(|| {
+            let offset = s.len() - remaining.len() + start;
+            ConfigError::Parse(format!("unclosed '${{' in field '{field}' at byte {offset}"))
+        })?;
         let var_name = &rest[..end];
         let value = env_vars
             .get(var_name)

@@ -11,6 +11,12 @@ All notable changes to crawlberg are documented here.
   that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
   field's contract allows when the vendor does not report the resolved URL, and the errors no
   longer include the request URL. (#89)
+- **Debug output printed secrets.** Formatting a bypass provider config with `{:?}` printed its API
+  key, token or auth header value. The same held for custom request headers, a CDP endpoint token,
+  proxy credentials in a browser session key, the REST API token, and cookie values. Each now prints
+  `***` in place of the secret and keeps the non-secret fields. (#118)
+- **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
+  whole config value, which can hold a secret. It now names the field and the byte position. (#119)
 
 ## [1.8.0] - 2026-09-25
 

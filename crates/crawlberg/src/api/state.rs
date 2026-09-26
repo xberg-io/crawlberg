@@ -54,7 +54,7 @@ const DEFAULT_MAX_CONCURRENT_JOBS: usize = 50;
 /// Resolved from environment variables at startup via [`ApiSecurityConfig::from_env`].
 /// Tests construct this directly instead of mutating process environment, which keeps
 /// them independent and safe to run in parallel.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ApiSecurityConfig {
     /// Bearer token required in `Authorization: Bearer <token>`. `None` disables auth.
     pub auth_token: Option<Arc<str>>,
@@ -64,6 +64,27 @@ pub struct ApiSecurityConfig {
     pub max_batch_urls: usize,
     /// Hard ceiling on concurrently active (pending/in-progress) jobs.
     pub max_concurrent_jobs: usize,
+}
+
+impl std::fmt::Debug for ApiSecurityConfig {
+    /// Redacted: shows whether a bearer token is set, never the token itself.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            auth_token,
+            max_pages_ceiling,
+            max_batch_urls,
+            max_concurrent_jobs,
+        } = self;
+        f.debug_struct("ApiSecurityConfig")
+            .field(
+                "auth_token",
+                &auth_token.as_ref().map(|_| crate::net::redact::REDACTED_PLACEHOLDER),
+            )
+            .field("max_pages_ceiling", max_pages_ceiling)
+            .field("max_batch_urls", max_batch_urls)
+            .field("max_concurrent_jobs", max_concurrent_jobs)
+            .finish()
+    }
 }
 
 impl ApiSecurityConfig {
@@ -132,6 +153,21 @@ impl ApiState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_hides_the_auth_token() {
+        let config = ApiSecurityConfig {
+            auth_token: Some(Arc::from("sk-live-9f8e7d6c5b4a")),
+            ..ApiSecurityConfig::default()
+        };
+        for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+            assert!(!rendered.contains("sk-live-9f8e7d6c5b4a"), "token printed: {rendered}");
+        }
+        assert!(
+            format!("{config:?}").contains(r#"auth_token: Some("***")"#),
+            "unexpected: {config:?}"
+        );
+    }
 
     #[test]
     fn env_usize_falls_back_to_default_when_unset_or_invalid() {

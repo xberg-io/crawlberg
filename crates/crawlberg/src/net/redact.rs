@@ -6,7 +6,7 @@
 //! since both are routinely shipped to logs, OTLP collectors, and issue trackers. This
 //! module centralizes that redaction so every call site applies the same rule.
 
-const REDACTED_PLACEHOLDER: &str = "***";
+pub(crate) const REDACTED_PLACEHOLDER: &str = "***";
 
 /// Redact `user[:password]@` userinfo from a URL-like string.
 ///
@@ -38,6 +38,36 @@ pub fn redact_url_credentials(input: &str) -> String {
         let _ = url.set_password(Some(REDACTED_PLACEHOLDER));
     }
     url.to_string()
+}
+
+/// Redact userinfo and the whole query string from a URL-like string.
+///
+/// For an endpoint that authenticates through its query, such as a CDP WebSocket URL with
+/// a `?token=` parameter. Returns `input` unchanged when it does not parse as an absolute
+/// URL or carries neither.
+#[must_use]
+pub(crate) fn redact_url_secrets(input: &str) -> String {
+    let redacted = redact_url_credentials(input);
+    let Ok(mut url) = url::Url::parse(&redacted) else {
+        return redacted;
+    };
+    if url.query().is_none() {
+        return redacted;
+    }
+    url.set_query(Some(REDACTED_PLACEHOLDER));
+    url.to_string()
+}
+
+/// `Debug` view of a string map that shows each key and hides each value, for maps of
+/// header values or cookie values set by the caller.
+pub(crate) struct RedactedValues<'a>(pub(crate) &'a std::collections::HashMap<String, String>);
+
+impl std::fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|key| (key, REDACTED_PLACEHOLDER)))
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -80,6 +110,24 @@ mod tests {
             redact_url_credentials("https://example.com/path?query=1"),
             "https://example.com/path?query=1"
         );
+    }
+
+    #[test]
+    fn redact_url_secrets_hides_userinfo_and_query() {
+        assert_eq!(
+            redact_url_secrets("wss://user:pw@chrome.example:3000/devtools?token=abc123&x=1"),
+            "wss://***:***@chrome.example:3000/devtools?***"
+        );
+        assert_eq!(
+            redact_url_secrets("ws://127.0.0.1:9222/devtools/browser/42"),
+            "ws://127.0.0.1:9222/devtools/browser/42"
+        );
+    }
+
+    #[test]
+    fn redacted_values_shows_keys_only() {
+        let map = std::collections::HashMap::from([("Authorization".to_owned(), "Bearer abc123".to_owned())]);
+        assert_eq!(format!("{:?}", RedactedValues(&map)), r#"{"Authorization": "***"}"#);
     }
 
     #[test]
