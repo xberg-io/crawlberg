@@ -157,4 +157,33 @@ mod tests {
             <script src="/app.js"></script></body></html>"#;
         assert!(detect_js_render_needed(html, 0));
     }
+
+    // ~keep The word count sits between SPARSE_CONTENT_WORD_COUNT and MIN_CONTENT_WORD_COUNT in
+    // ~keep the next two tests, so neither the early return nor the sparse-content-with-scripts
+    // ~keep rule decides them: only the SPA-mount and noscript-warning checks can, and both read
+    // ~keep the parsed document. Without the raw-text masking `tl` reads the markup written inside
+    // ~keep the script and title text and both pages are reported as needing a browser.
+    #[test]
+    fn should_not_report_js_render_needed_when_the_spa_mount_only_appears_in_script_text() {
+        let html = r#"<html><body>
+            <p>This server-rendered article has real prose in it, enough words that the
+            sparse-content rule cannot decide the page on its own.</p>
+            <script>var shell = '<div id="root"></div>';</script>
+            </body></html>"#;
+        assert!(
+            !detect_js_render_needed(html, 30),
+            "an SPA mount div written inside script text is not an element a browser sees"
+        );
+    }
+
+    #[test]
+    fn should_not_report_js_render_needed_when_the_noscript_warning_only_appears_in_title_text() {
+        let html = r#"<html><head><title>Docs <noscript>You need JavaScript</noscript></title></head>
+            <body><p>This server-rendered article has real prose in it, enough words that the
+            sparse-content rule cannot decide the page on its own.</p></body></html>"#;
+        assert!(
+            !detect_js_render_needed(html, 30),
+            "a noscript warning written inside title text is not an element a browser sees"
+        );
+    }
 }
