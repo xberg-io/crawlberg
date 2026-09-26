@@ -468,9 +468,9 @@ struct SequentialPlan {
     base_host_suffix: String,
     max_depth: usize,
     max_pages: usize,
-    exclude_regexes: Vec<regex::Regex>,
-    include_regexes: Vec<regex::Regex>,
-    match_query: bool,
+    exclude_regexes: Vec<crate::helpers::PathPattern>,
+    include_regexes: Vec<crate::helpers::PathPattern>,
+    target: crate::helpers::PathPatternTarget,
 }
 
 impl SequentialPlan {
@@ -484,7 +484,7 @@ impl SequentialPlan {
             max_pages: config.max_pages.unwrap_or(usize::MAX),
             exclude_regexes: crate::helpers::compile_regexes(&config.exclude_paths)?,
             include_regexes: crate::helpers::compile_regexes(&config.include_paths)?,
-            match_query: config.path_patterns_match_query,
+            target: crate::helpers::PathPatternTarget::from_config(config),
         })
     }
 }
@@ -566,7 +566,7 @@ fn passes_url_filters(
         &plan.exclude_regexes,
         &plan.include_regexes,
         entry.depth > 0,
-        plan.match_query,
+        plan.target,
         &mut state.urls_filtered,
     ) {
         return false;

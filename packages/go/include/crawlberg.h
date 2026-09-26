@@ -1509,6 +1509,13 @@ char *cberg_crawl_config_exclude_paths(CBERGAlefHandle handle);
 int32_t cberg_crawl_config_path_patterns_match_query(CBERGAlefHandle handle);
 
 /**
+ * Get the `path_patterns_match_url` field from a `CrawlConfig`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+int32_t cberg_crawl_config_path_patterns_match_url(CBERGAlefHandle handle);
+
+/**
  * Get the `dedup_include_query` field from a `CrawlConfig`.
  * # Safety
  * Pointer must be a valid handle returned by this library.

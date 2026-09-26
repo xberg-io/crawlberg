@@ -132,9 +132,18 @@ pub struct CrawlConfig {
     /// Whether `include_paths`/`exclude_paths` match against `path?query` instead of just
     /// `path`. Defaults to `false`, matching path only: a pattern anchored with `$` (e.g.
     /// `/feed/?$`) changes meaning once the query joins the matched text, so this must stay
-    /// opt-in rather than silently changing what an existing config matches.
+    /// opt-in rather than silently changing what an existing config matches. Has no effect
+    /// when [`Self::path_patterns_match_url`] is `true`.
     #[serde(default)]
     pub path_patterns_match_query: bool,
+    /// Whether `include_paths`/`exclude_paths` match against the full URL,
+    /// `scheme://host[:port]/path?query`, so a pattern can scope by host. Defaults to `false`.
+    /// When `true` it takes precedence over [`Self::path_patterns_match_query`]: the query is
+    /// part of the full URL whatever that flag says. The matched text never contains a
+    /// `user:password@`, a fragment or a default port, and the host is in punycode
+    /// (`bücher.de` is matched as `xn--bcher-kva.de`).
+    #[serde(default)]
+    pub path_patterns_match_url: bool,
     /// Whether the crawl-dedup key includes the (sorted) query string. Defaults to `false`,
     /// matching historical behavior: `/item?id=1` and `/item?id=2` are treated as one page and
     /// only the first is fetched. `true` keeps the query, sorted, in the key, so each distinct
@@ -360,6 +369,7 @@ impl Default for CrawlConfig {
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
             path_patterns_match_query: false,
+            path_patterns_match_url: false,
             dedup_include_query: false,
             strip_tracking_params: false,
             tracking_params: default_tracking_params(),
@@ -535,11 +545,11 @@ impl CrawlConfig {
 
     fn validate_path_patterns(&self) -> Result<(), CrawlError> {
         for pattern in &self.include_paths {
-            regex::Regex::new(pattern)
+            crate::helpers::PathPattern::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid include_path regex '{pattern}': {e}")))?;
         }
         for pattern in &self.exclude_paths {
-            regex::Regex::new(pattern)
+            crate::helpers::PathPattern::new(pattern)
                 .map_err(|e| CrawlError::invalid_config(format!("invalid exclude_path regex '{pattern}': {e}")))?;
         }
         Ok(())

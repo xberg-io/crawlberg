@@ -1964,6 +1964,7 @@ const _: fn() = || {
         let _: Vec<String> = CrawlConfig.include_paths;
         let _: Vec<String> = CrawlConfig.exclude_paths;
         let _: bool = CrawlConfig.path_patterns_match_query;
+        let _: bool = CrawlConfig.path_patterns_match_url;
         let _: bool = CrawlConfig.dedup_include_query;
         let _: bool = CrawlConfig.strip_tracking_params;
         let _: Vec<String> = CrawlConfig.tracking_params;
@@ -2804,6 +2805,7 @@ impl SseDecode for crate::CrawlConfig {
         let mut var_includePaths = <Vec<String>>::sse_decode(deserializer);
         let mut var_excludePaths = <Vec<String>>::sse_decode(deserializer);
         let mut var_pathPatternsMatchQuery = <bool>::sse_decode(deserializer);
+        let mut var_pathPatternsMatchUrl = <bool>::sse_decode(deserializer);
         let mut var_dedupIncludeQuery = <bool>::sse_decode(deserializer);
         let mut var_stripTrackingParams = <bool>::sse_decode(deserializer);
         let mut var_trackingParams = <Vec<String>>::sse_decode(deserializer);
@@ -2859,6 +2861,7 @@ impl SseDecode for crate::CrawlConfig {
             include_paths: var_includePaths,
             exclude_paths: var_excludePaths,
             path_patterns_match_query: var_pathPatternsMatchQuery,
+            path_patterns_match_url: var_pathPatternsMatchUrl,
             dedup_include_query: var_dedupIncludeQuery,
             strip_tracking_params: var_stripTrackingParams,
             tracking_params: var_trackingParams,
@@ -4800,6 +4803,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlConfig> {
             self.0.include_paths.into_into_dart().into_dart(),
             self.0.exclude_paths.into_into_dart().into_dart(),
             self.0.path_patterns_match_query.into_into_dart().into_dart(),
+            self.0.path_patterns_match_url.into_into_dart().into_dart(),
             self.0.dedup_include_query.into_into_dart().into_dart(),
             self.0.strip_tracking_params.into_into_dart().into_dart(),
             self.0.tracking_params.into_into_dart().into_dart(),
@@ -5954,6 +5958,7 @@ impl SseEncode for crate::CrawlConfig {
         <Vec<String>>::sse_encode(self.include_paths, serializer);
         <Vec<String>>::sse_encode(self.exclude_paths, serializer);
         <bool>::sse_encode(self.path_patterns_match_query, serializer);
+        <bool>::sse_encode(self.path_patterns_match_url, serializer);
         <bool>::sse_encode(self.dedup_include_query, serializer);
         <bool>::sse_encode(self.strip_tracking_params, serializer);
         <Vec<String>>::sse_encode(self.tracking_params, serializer);

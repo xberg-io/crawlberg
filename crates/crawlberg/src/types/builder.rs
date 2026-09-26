@@ -119,6 +119,13 @@ impl CrawlConfigBuilder {
         self
     }
 
+    /// Set whether `include_paths`/`exclude_paths` match against the full URL
+    /// (`scheme://host[:port]/path?query`). Takes precedence over `path_patterns_match_query`.
+    pub fn path_patterns_match_url(mut self, value: bool) -> Self {
+        self.inner.path_patterns_match_url = value;
+        self
+    }
+
     /// Set whether the crawl-dedup key includes the (sorted) query string.
     pub fn dedup_include_query(mut self, value: bool) -> Self {
         self.inner.dedup_include_query = value;

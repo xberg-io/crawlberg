@@ -199,7 +199,7 @@ pub async fn crawl_handler(
     ensure_job_capacity(&state)?;
 
     let mut config = state.engine.config.clone();
-    apply_crawl_overrides(&mut config, &req);
+    apply_crawl_overrides(&mut config, &req)?;
     let crawl_engine = rebuild_engine_with_config(&state.engine, config)?;
 
     let job_id = state.jobs.create_job();
@@ -214,9 +214,26 @@ pub async fn crawl_handler(
     ))
 }
 
+/// Refuse an `include_paths`/`exclude_paths` pattern that needs look-around or a backreference.
+///
+/// ~keep Such a pattern runs on a backtracking engine, and its cost grows faster than linearly
+/// with the URL. A REST caller is not trusted to choose one. Patterns in the server's own config
+/// are not checked here: they come from the operator.
+fn refuse_backtracking_patterns(field: &str, patterns: &[String]) -> Result<(), ApiError> {
+    for pattern in patterns {
+        if crate::helpers::PathPattern::new(pattern).is_ok_and(|compiled| compiled.needs_backtracking()) {
+            return Err(ApiError::bad_request(format!(
+                "{field} pattern \"{pattern}\" uses look-around or a backreference, \
+                 which the REST API does not accept"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Apply `CrawlRequest` overrides to a crawl config. Mirrors the fields
 /// `scrape`/`map` honor so REST exposes the same crawl-shaping knobs consistently.
-fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) {
+fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) -> Result<(), ApiError> {
     if let Some(depth) = req.max_depth {
         config.max_depth = Some(depth);
     }
@@ -227,14 +244,17 @@ fn apply_crawl_overrides(config: &mut CrawlConfig, req: &CrawlRequest) {
         config.content.preprocessing_preset = "aggressive".to_owned();
     }
     if let Some(ref includes) = req.include_paths {
+        refuse_backtracking_patterns("includePaths", includes)?;
         config.include_paths = includes.clone();
     }
     if let Some(ref excludes) = req.exclude_paths {
+        refuse_backtracking_patterns("excludePaths", excludes)?;
         config.exclude_paths = excludes.clone();
     }
     if let Some(stay) = req.stay_on_domain {
         config.stay_on_domain = stay;
     }
+    Ok(())
 }
 
 /// Spawn the background task that runs a crawl job to completion and records
