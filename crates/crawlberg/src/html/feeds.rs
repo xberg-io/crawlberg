@@ -6,6 +6,7 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::get_attr;
+use super::is_blank_address;
 use super::resolve_url;
 use super::selectors::{SEL_FAVICON, SEL_FEED_ALTERNATE, SEL_HEADINGS, SEL_HREFLANG};
 
@@ -88,7 +89,7 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
                 continue;
             }
             let raw_href = get_attr(tag, "href").unwrap_or("");
-            if raw_href.is_empty() {
+            if is_blank_address(raw_href) {
                 continue;
             }
             let url = resolve_url(raw_href, base_url);
@@ -163,6 +164,31 @@ mod tests {
         assert_eq!(
             favicons[0].url, "https://example.com/en/favicon.ico",
             "relative favicon href should resolve against the document URL, got {}",
+            favicons[0].url
+        );
+    }
+
+    #[test]
+    fn should_skip_a_favicon_whose_href_is_only_whitespace() {
+        let dom = parse("<link rel=\"icon\" href=\" \t\r\n \">");
+        let base = Url::parse("https://example.com/en/page.html").unwrap();
+        let favicons = extract_favicons(&dom, &base);
+        assert_eq!(
+            favicons.len(),
+            0,
+            "a whitespace-only favicon href must not be reported as the page's own favicon, got {favicons:?}"
+        );
+    }
+
+    #[test]
+    fn should_keep_a_favicon_whose_href_is_only_a_unicode_space() {
+        let dom = parse("<link rel=\"icon\" href=\"\u{a0}\">");
+        let base = Url::parse("https://example.com/en/page.html").unwrap();
+        let favicons = extract_favicons(&dom, &base);
+        assert_eq!(favicons.len(), 1, "expected one favicon, got {favicons:?}");
+        assert_eq!(
+            favicons[0].url, "https://example.com/en/%C2%A0",
+            "an NBSP-only href is part of the address and must be percent-encoded, not treated as blank, got {}",
             favicons[0].url
         );
     }

@@ -6,6 +6,7 @@ use url::Url;
 use crate::types::{ImageInfo, ImageSource};
 
 use super::get_attr;
+use super::is_blank_address;
 use super::resolve_url;
 use super::selectors::{SEL_IMG_SRC, SEL_OG_IMAGE, SEL_SOURCE_SRCSET, SEL_TWITTER_IMAGE};
 
@@ -28,7 +29,7 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     images
 }
 
-/// Collect `<img src>` images, skipping empty and inline `data:` sources.
+/// Collect `<img src>` images, skipping blank and inline `data:` sources.
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -39,7 +40,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
             continue;
         };
         let src = get_attr(tag, "src").unwrap_or("");
-        if src.is_empty() || src.starts_with("data:") {
+        if is_blank_address(src) || src.starts_with("data:") {
             continue;
         }
         images.push(ImageInfo {
@@ -100,7 +101,7 @@ fn collect_meta_images(
         let Some(content) = get_attr(tag, "content") else {
             continue;
         };
-        if content.is_empty() {
+        if is_blank_address(content) {
             continue;
         }
         images.push(ImageInfo {
@@ -169,6 +170,31 @@ mod tests {
         assert_eq!(extract(r#"<img src="" alt="empty">"#), Vec::<Flat>::new());
         assert_eq!(
             extract(r#"<img src="data:image/png;base64,iVBOR" alt="inline">"#),
+            Vec::<Flat>::new()
+        );
+    }
+
+    #[test]
+    fn img_with_whitespace_only_src_is_skipped() {
+        assert_eq!(extract("<img src=\" \t\r\n \" alt=\"blank\">"), Vec::<Flat>::new());
+    }
+
+    #[test]
+    fn img_with_a_unicode_space_src_is_kept_as_a_browser_keeps_it() {
+        assert_eq!(
+            extract("<img src=\"\u{a0}\">"),
+            vec![flat("https://example.com/dir/%C2%A0", "img")]
+        );
+    }
+
+    #[test]
+    fn meta_image_with_whitespace_only_content_is_skipped() {
+        assert_eq!(
+            extract("<meta property=\"og:image\" content=\" \t\r\n \">"),
+            Vec::<Flat>::new()
+        );
+        assert_eq!(
+            extract("<meta name=\"twitter:image\" content=\" \t\r\n \">"),
             Vec::<Flat>::new()
         );
     }
