@@ -19,7 +19,7 @@ use crate::error::CrawlError;
 /// stable as the native HTTP/browser fetchers evolve, and so bypass
 /// adapters can populate cost + vendor metadata without surfacing
 /// `HttpResponse`'s native/browser-specific fields.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BypassResponse {
     /// HTTP status code returned by the vendor for the target URL.
     pub status: u16,
@@ -45,6 +45,33 @@ pub struct BypassResponse {
     pub vendor_request_id: Option<String>,
 }
 
+impl fmt::Debug for BypassResponse {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            status,
+            content_type,
+            body,
+            body_bytes,
+            headers,
+            final_url,
+            cost_usd,
+            vendor_request_id,
+        } = self;
+        f.debug_struct("BypassResponse")
+            .field("status", status)
+            .field("content_type", content_type)
+            .field("body", body)
+            .field("body_bytes", body_bytes)
+            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .field("final_url", final_url)
+            .field("cost_usd", cost_usd)
+            .field("vendor_request_id", vendor_request_id)
+            .finish()
+    }
+}
+
 /// Caller-supplied bypass backend. Implementations are responsible for
 /// vendor authentication, request shaping, response decoding, and mapping
 /// vendor errors into `CrawlError`.
@@ -63,3 +90,30 @@ pub trait BypassProvider: Send + Sync + fmt::Debug {
 
 /// Convenience type alias used on `CrawlConfig.bypass`.
 pub type DynBypassProvider = Arc<dyn BypassProvider>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bypass_response_debug_hides_set_cookie_values() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let response = BypassResponse {
+            status: 200,
+            content_type: "text/html".into(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+            headers: HashMap::from([
+                ("set-cookie".to_owned(), vec![format!("sid={SECRET}")]),
+                ("content-type".to_owned(), vec!["text/html".to_owned()]),
+            ]),
+            final_url: "https://example.com/".into(),
+            cost_usd: None,
+            vendor_request_id: None,
+        };
+        for text in [format!("{response:?}"), format!("{response:#?}")] {
+            assert!(!text.contains(SECRET), "secret printed: {text}");
+            assert!(text.contains("set-cookie") && text.contains("***"), "got {text}");
+        }
+    }
+}

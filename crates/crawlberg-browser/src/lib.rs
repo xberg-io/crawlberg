@@ -7,6 +7,7 @@
 extern crate html5ever;
 
 pub mod adapter;
+pub mod redact;
 
 #[allow(dead_code)]
 pub(crate) mod context;

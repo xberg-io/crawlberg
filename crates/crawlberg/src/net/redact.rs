@@ -96,6 +96,37 @@ impl std::fmt::Debug for RedactedValues<'_> {
     }
 }
 
+/// Request and response headers whose values are credentials: the caller's own
+/// `Authorization`, a proxy's, and session cookies in either direction. Names are
+/// lowercase and matched without case.
+pub(crate) const SENSITIVE_HEADERS: [&str; 4] = ["authorization", "proxy-authorization", "cookie", "set-cookie"];
+
+/// Whether `name` is one of [`SENSITIVE_HEADERS`], in any case.
+pub(crate) fn is_sensitive_header(name: &str) -> bool {
+    SENSITIVE_HEADERS
+        .iter()
+        .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+}
+
+/// `Debug` view of a header map that shows every name and every value, except the value
+/// of a [`SENSITIVE_HEADERS`] entry, which prints as the placeholder.
+pub(crate) struct RedactedHeaders<'a, K, V>(pub(crate) &'a std::collections::HashMap<K, V>);
+
+impl<K: AsRef<str> + std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for RedactedHeaders<'_, K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(name, value)| {
+                let value: &dyn std::fmt::Debug = if is_sensitive_header(name.as_ref()) {
+                    &REDACTED_PLACEHOLDER
+                } else {
+                    value
+                };
+                (name, value)
+            }))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +212,27 @@ mod tests {
     fn textual_userinfo_strip_handles_a_missing_scheme_and_a_plain_string() {
         assert_eq!(redact_userinfo_textually("user:hunter2@proxy:8080"), "***@proxy:8080");
         assert_eq!(redact_userinfo_textually("not a url at all"), "not a url at all");
+    }
+
+    #[test]
+    fn redacted_headers_hide_only_sensitive_values_in_any_case() {
+        let map = std::collections::HashMap::from([
+            ("Authorization".to_owned(), vec!["Bearer abc123".to_owned()]),
+            ("set-cookie".to_owned(), vec!["sid=s3cr3t".to_owned()]),
+            ("content-type".to_owned(), vec!["text/html".to_owned()]),
+        ]);
+        let debug = format!("{:?}", RedactedHeaders(&map));
+        assert!(!debug.contains("abc123") && !debug.contains("s3cr3t"), "got {debug}");
+        assert!(debug.contains(r#""Authorization": "***""#), "got {debug}");
+        assert!(debug.contains(r#""set-cookie": "***""#), "got {debug}");
+        assert!(debug.contains(r#""content-type": ["text/html"]"#), "got {debug}");
+    }
+
+    #[cfg(feature = "browser-native")]
+    #[test]
+    fn sensitive_headers_match_the_native_browser_crate() {
+        assert_eq!(SENSITIVE_HEADERS, crawlberg_browser::redact::SENSITIVE_HEADERS);
+        assert_eq!(REDACTED_PLACEHOLDER, crawlberg_browser::redact::REDACTED);
     }
 
     #[test]

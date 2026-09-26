@@ -11,14 +11,36 @@ use url::Url;
 use crate::net::cookies::CookieJar;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
+use crate::redact::{RedactedHeaders, RedactedValues};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Response {
     pub url: Url,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub redirected_from: Vec<Url>,
+}
+
+impl std::fmt::Debug for Response {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            status,
+            headers,
+            body,
+            redirected_from,
+        } = self;
+        f.debug_struct("Response")
+            .field("url", url)
+            .field("status", status)
+            .field("headers", &RedactedHeaders(headers))
+            .field("body", body)
+            .field("redirected_from", redirected_from)
+            .finish()
+    }
 }
 
 impl Response {
@@ -39,12 +61,31 @@ impl Response {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestInfo {
     pub url: Url,
     pub method: String,
     pub headers: HashMap<String, String>,
     pub resource_type: ResourceType,
+}
+
+impl std::fmt::Debug for RequestInfo {
+    /// Redacted: `headers` is a *request* map populated from caller configuration, so every
+    /// value is hidden and only the names print.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            method,
+            headers,
+            resource_type,
+        } = self;
+        f.debug_struct("RequestInfo")
+            .field("url", url)
+            .field("method", method)
+            .field("headers", &RedactedValues(headers))
+            .field("resource_type", resource_type)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
