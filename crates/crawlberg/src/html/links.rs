@@ -5,8 +5,8 @@ use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
+use super::get_attr;
 use super::selectors::SEL_A_HREF;
-use super::{decode_attr_value, elements_named, get_attr};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -44,22 +44,20 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
     }
 }
 
-/// The URL a document's relative references resolve against: the `href` of its first `<base>`
-/// that has one, decoded and joined to the document URL, or the document URL itself.
-pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
-    elements_named(dom, "base")
-        .find_map(|tag| tag.attributes().get("href"))
-        .map(|value| value.and_then(|v| v.try_as_utf8_str()).unwrap_or(""))
-        // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
-        // the document URL instead of requiring it to already be absolute.
-        .and_then(|href| document_url.join(&decode_attr_value(href)).ok())
+/// The URL a document's relative references resolve against: its decoded `<base href>` joined to
+/// the document URL, or the document URL itself.
+///
+/// ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against the document
+/// ~keep URL instead of requiring it to already be absolute.
+pub(crate) fn effective_base_url(base_href: Option<&str>, document_url: &Url) -> Url {
+    base_href
+        .and_then(|href| document_url.join(href).ok())
         .unwrap_or_else(|| document_url.clone())
 }
 
-/// Extract all links from a parsed HTML document.
-pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
+/// Extract all links from a parsed HTML document, resolved against `effective_base`.
+pub(crate) fn extract_links(dom: &VDom<'_>, effective_base: &Url) -> Vec<LinkInfo> {
     let parser = dom.parser();
-    let effective_base = effective_base_url(dom, base_url);
 
     let mut links = Vec::new();
 
@@ -84,7 +82,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
 
             // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
             // per the WHATWG URL spec, so no special-casing is needed here.
-            let link_type = classify_link(href, &effective_base);
+            let link_type = classify_link(href, effective_base);
 
             let resolved_url = if let Ok(u) = effective_base.join(href) {
                 u.to_string()
@@ -113,11 +111,13 @@ mod tests {
     use tl::ParserOptions;
 
     use super::*;
+    use crate::html::mask_raw_text_markup;
 
     fn extract(html: &str, base: &str) -> Vec<LinkInfo> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let masked = mask_raw_text_markup(html);
+        let dom = tl::parse(&masked.text, ParserOptions::default()).expect("valid HTML");
         let base_url = Url::parse(base).expect("valid base URL");
-        extract_links(&dom, &base_url)
+        extract_links(&dom, &effective_base_url(masked.base_href.as_deref(), &base_url))
     }
 
     #[test]

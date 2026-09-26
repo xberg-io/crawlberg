@@ -55,19 +55,22 @@ title: "Changelog"
   now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
   was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
 
-- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
-  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
-  element handling and parses the contents of these elements as markup, so
-  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+- **Links, images and the base address were read from raw text, and a comment opener in raw text
+  hid the real markup after it.** A browser reads the contents of `script`, `style`, `title`,
+  `textarea`, `xmp`, `iframe`, `noembed`, `noframes` and `plaintext` as text. `tl` parses them as
+  markup, so `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
   `<base href>` inside title text changed the base for the whole page. In the other direction a
-  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
-  every tag up to the next `-->`: real links after the script were missing from the links list
-  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
-  masked in the source before it is parsed — the point at which a browser stops reading markup —
-  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
-  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
-  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
-  `math` are left alone, because a browser parses those as markup too. (#124, #125)
+  `<!--` in that text started a comment for the parser, which then swallowed every tag up to the
+  next `-->`: real links after it were missing from the links list altogether, not merely
+  mis-resolved. The `<` characters inside raw-text content are now masked before the page is
+  parsed, at the places an HTML parser finds that content, so link, image, feed, favicon,
+  heading, meta-tag and `<meta http-equiv="refresh">` extraction all see the document a browser
+  sees. Inside `svg` and `math` these elements are markup, as in a browser, except under
+  `foreignObject` and an HTML annotation. Link extraction reads `<noscript>` as markup, as a
+  browser without scripting does; the markdown reads it as text, as the converter does. The base
+  address is the first `<base href>` an HTML parser puts in the document, so one in raw text or in
+  `<template>` contents does not count. Title text and JSON-LD payloads are unchanged unless they
+  contain a literal `<`, which valid HTML writes as `&lt;`. (#124, #125, #201)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
@@ -128,9 +131,9 @@ title: "Changelog"
   icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
   and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
   real URL is still used in its place. `fit_content` follows the same rule. The markdown
-  also reads `script`, `style`, `title` and `textarea` text as text, the way link extraction
-  does: a `<base href>` inside title text no longer changes where the markdown's links resolve,
-  and a `<!--` inside script text no longer leaves the links and images after it untouched. (#97)
+  also reads raw text as text, the way link extraction does: a `<base href>` inside title text
+  no longer changes where the markdown's links resolve, and a `<!--` inside script text no
+  longer leaves the links and images after it untouched. (#97)
 - **Link-shaped text in a page title was rewritten.** `<title>use <a href="x.html"> tags</title>`
   got a full address in its front matter title, because the rewrite of relative links read the
   title's text as markup. The contents of `<title>`, `<textarea>`, `<script>`, `<style>`,
