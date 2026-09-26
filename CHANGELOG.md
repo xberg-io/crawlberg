@@ -29,6 +29,15 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A browser fetch reported no response headers at all on the crawl path.**
+  `browser_http_to_crawl` built an empty header map, so every header a browser backend had
+  collected was discarded before the crawl or the escalation path could read it — `ETag`,
+  `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF classifier, however faithfully the
+  backend reported them. This is why a `nofollow` sent only as an `X-Robots-Tag` header had no effect
+  in browser mode even after the crawl learned to honour it. Headers are now carried through. The
+  chromiumoxide backend still hardcodes its own status, content type and headers, so this reaches
+  callers today on the native backend only; #166 covers the rest. (#148)
+
 - **Dropping a one-shot browser fetch ran no teardown at all.** Teardown was straight-line code
   after the fetch, reached only once the fetch had finished, so a caller that dropped the future
   while it ran — a cancelled request, a `select!` that lost, a deadline above crawlberg — got none

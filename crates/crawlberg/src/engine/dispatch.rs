@@ -138,7 +138,11 @@ impl CrawlEngine {
                 content_type: r.content_type,
                 body: r.body,
                 body_bytes: r.body_bytes,
-                headers: std::collections::HashMap::new(),
+                // ~keep Both browser backends collect the response headers; discarding them here
+                // ~keep discarded them for every browser fetch on the crawl and escalation paths,
+                // ~keep so `ETag`, `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF
+                // ~keep classifier however faithfully the backend had reported them (crawlberg#148).
+                headers: r.headers,
                 landed_url: Some(r.final_url),
             },
             extras,
@@ -282,5 +286,38 @@ impl CrawlEngine {
             "dispatch.policy" = policy,
             "dispatch.content_density" = content_density,
         );
+    }
+}
+
+#[cfg(all(test, feature = "browser"))]
+mod tests {
+    use super::CrawlEngine;
+
+    #[test]
+    fn a_browser_response_carries_its_headers_onto_the_crawl_path() {
+        let response = crate::http::HttpResponse {
+            status: 304,
+            content_type: String::new(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+            headers: std::collections::HashMap::from([
+                ("etag".to_owned(), vec!["\"v1\"".to_owned()]),
+                ("x-robots-tag".to_owned(), vec!["noindex".to_owned()]),
+            ]),
+            browser_extras: None,
+            final_url: "https://example.com/".to_owned(),
+            screenshot: None,
+        };
+
+        let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(response);
+
+        let etag = crawl.headers.get("etag").expect("a browser fetch must report its ETag");
+        assert_eq!(etag.as_slice(), ["\"v1\""]);
+        let robots = crawl
+            .headers
+            .get("x-robots-tag")
+            .expect("a browser fetch must report its X-Robots-Tag");
+        assert_eq!(robots.as_slice(), ["noindex"]);
+        assert_eq!(crawl.status, 304, "the status must survive the conversion too");
     }
 }
