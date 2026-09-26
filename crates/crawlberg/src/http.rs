@@ -1,9 +1,11 @@
 //! HTTP fetching with redirect handling, retry logic, and cookie extraction.
 
 mod body;
+mod challenge;
 mod client;
 mod headers;
 mod retry;
+mod status;
 mod waf;
 
 use std::collections::HashMap;
@@ -16,17 +18,18 @@ use crate::net::ssrf::validate_url;
 use crate::types::{AuthConfig, CrawlConfig};
 
 use headers::build_headers_map;
-use retry::{GATEWAY_TIMEOUT_SUFFIX, SERVICE_UNAVAILABLE_SUFFIX};
 
 pub(crate) use body::{
     effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
     truncate_body_at_char_boundary,
 };
+pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::build_client;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
-pub(crate) use retry::fetch_with_retry;
+pub(crate) use retry::{fetch_with_retry, should_retry_error};
+pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
 
@@ -239,14 +242,27 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     }
 
     // ~keep Computed lazily and cached below rather than unconditionally up front: most
-    // non-2xx statuses (404, 429, 500, ...) return before ever needing a header map, so
-    // building one here would add an allocation to paths that previously had none.
+    // non-2xx statuses (404, 500, 502, ...) return before ever needing a header map, so
+    // building one here would add an allocation to paths that previously had none. The
+    // challenge statuses below are the exception and always need it.
     let mut headers_map_cache: Option<HashMap<String, Vec<String>>> = None;
 
-    if head.status == 403 {
-        return Err(forbidden_error(context.config, resp, &head, &mut headers_map_cache).await);
+    // ~keep Fingerprinting has to precede `status_error`: once a 429/503 has become a
+    // `RateLimited`/`ServerError` the retry policy answers it with `Retry`, and a challenge
+    // is then re-requested by the client that provoked it instead of escalating to the
+    // browser tier (crawlberg#169).
+    if is_challenge_status(head.status) {
+        let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
+        return Err(challenge_status_error(
+            head.status,
+            context.url,
+            headers_map,
+            resp,
+            effective_max_body_size(context.config),
+        )
+        .await);
     }
-    if let Some(error) = terminal_status_error(head.status, context.url) {
+    if let Some(error) = status_error(head.status, context.url) {
         return Err(error);
     }
 
@@ -365,41 +381,6 @@ async fn unresolvable_redirect_response(
     head.into_response(body, body_bytes, headers_map)
 }
 
-/// Classify a 403: a WAF block when the body fingerprints, a plain forbidden otherwise.
-async fn forbidden_error(
-    config: &CrawlConfig,
-    resp: reqwest::Response,
-    head: &ResponseHead,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> CrawlError {
-    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    match waf::waf_vendor_from_body(head.status, &body, headers_map) {
-        Some(vendor) => CrawlError::WafBlocked {
-            message: format!("waf/blocked detected: {vendor}"),
-            vendor,
-        },
-        None => CrawlError::forbidden("forbidden"),
-    }
-}
-
-/// The error a status ends the fetch with, for every status that ends it without
-/// needing the response body. 403 is handled separately because it reads the body.
-fn terminal_status_error(status: u16, url: &str) -> Option<CrawlError> {
-    Some(match status {
-        401 => CrawlError::unauthorized("unauthorized"),
-        404 => CrawlError::not_found(format!("not_found: {url}")),
-        408 => CrawlError::timeout("timeout: request timed out"),
-        410 => CrawlError::gone("gone"),
-        429 => CrawlError::rate_limited("rate_limited"),
-        500 => CrawlError::server_error("server_error"),
-        502 => CrawlError::bad_gateway("bad_gateway"),
-        503 => CrawlError::server_error(format!("server_error: {SERVICE_UNAVAILABLE_SUFFIX}")),
-        504 => CrawlError::server_error(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")),
-        _ => return None,
-    })
-}
-
 /// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
 fn header_only_waf_vendor(
     head: &ResponseHead,
@@ -409,7 +390,7 @@ fn header_only_waf_vendor(
         return None;
     }
     let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    waf::waf_vendor_from_body(head.status, "", headers_map)
+    challenge::header_waf_vendor(head.status, headers_map)
 }
 
 /// Re-run classification over the body of a 2xx its headers already flagged, preferring
@@ -697,8 +678,12 @@ mod tests {
         );
         assert_eq!(resp.status, 200, "final status must be 200, got {}", resp.status);
     }
-    /// Characterization for the status dispatch `fetch_one_hop` performs: every status
-    /// that ends a fetch without reading the body maps to one specific error. ~keep
+    /// Characterization for the status dispatch `fetch_one_hop` performs: every terminal
+    /// status maps to one specific error carrying that status. ~keep
+    ///
+    /// ~keep 429 and 503 reach this table through `challenge::challenge_status_error`, which
+    /// reads their body first; the bodyless responses below carry no fingerprint, so they fall
+    /// through to the same `status_error` mapping as the rest.
     #[tokio::test]
     async fn http_fetch_maps_each_body_free_terminal_status_to_its_own_error() {
         /// (status, the variant it must raise, a fragment its message must carry).
@@ -715,13 +700,9 @@ mod tests {
             (
                 503,
                 |e| matches!(e, CrawlError::ServerError { .. }),
-                SERVICE_UNAVAILABLE_SUFFIX,
+                "service unavailable",
             ),
-            (
-                504,
-                |e| matches!(e, CrawlError::ServerError { .. }),
-                GATEWAY_TIMEOUT_SUFFIX,
-            ),
+            (504, |e| matches!(e, CrawlError::ServerError { .. }), "gateway timeout"),
         ];
 
         for (status, is_expected_variant, message_fragment) in cases {
@@ -734,6 +715,7 @@ mod tests {
                 error.to_string().contains(message_fragment),
                 "status {status} message must contain {message_fragment:?}, got: {error}"
             );
+            assert_eq!(status::error_status(&error), Some(*status), "{error:?}");
         }
     }
 
@@ -761,8 +743,113 @@ mod tests {
         );
     }
 
+    /// A 503 stamped by a WAF vendor header is a challenge, not a server fault, so it must
+    /// escalate rather than be retried blindly (crawlberg#169).
+    #[tokio::test]
+    async fn http_fetch_reports_a_waf_block_when_a_503_carries_a_vendor_header() {
+        let error = fetch_status(
+            503,
+            ResponseTemplate::new(503)
+                .append_header("x-datadome", "blocked")
+                .set_body_string("<html>challenge</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "datadome"),
+            "expected a datadome WafBlocked, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("waf/blocked detected on 503: datadome"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// A 503 that only fingerprints once its body is read is still a challenge. This is the
+    /// Cloudflare interstitial shape from crawlberg#169: `server: cloudflare` alone is not a
+    /// block signal in the corpus, so the header check is inconclusive and the body decides.
+    #[tokio::test]
+    async fn http_fetch_reports_a_waf_block_when_a_503_body_fingerprints() {
+        let error = fetch_status(
+            503,
+            ResponseTemplate::new(503)
+                .append_header("server", "cloudflare")
+                .set_body_string(
+                    "<html><head><title>Just a moment...</title></head>\
+                 <body><script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1\"></script>\
+                 </body></html>",
+                ),
+        )
+        .await;
+        assert!(
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "cloudflare"),
+            "expected a cloudflare WafBlocked, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("waf/blocked detected on 503: cloudflare"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// A 429 challenge fingerprints exactly like a 503 one.
+    #[tokio::test]
+    async fn http_fetch_reports_a_waf_block_when_a_429_challenge_fingerprints() {
+        let error = fetch_status(
+            429,
+            ResponseTemplate::new(429)
+                .append_header("x-px-block", "1")
+                .set_body_string("<html>px-captcha</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&error, CrawlError::WafBlocked { vendor, .. } if vendor == "perimeterx"),
+            "expected a perimeterx WafBlocked, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("waf/blocked detected on 429: perimeterx"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// A 503 or 429 carrying no WAF signal must come out of the new classification step
+    /// untouched: the same variant, the same message, its status still attached, and still
+    /// retryable for the `retry_codes` that list it (crawlberg#84).
+    #[tokio::test]
+    async fn http_fetch_keeps_a_challenge_status_without_a_waf_signal_retryable() {
+        let cases: &[(u16, &str)] = &[(503, "service unavailable"), (429, "rate_limited")];
+        for (status, message_fragment) in cases {
+            let error = fetch_status(
+                *status,
+                ResponseTemplate::new(*status)
+                    .append_header("content-type", "text/html")
+                    .set_body_string("<html><body><h1>Service Unavailable</h1></body></html>"),
+            )
+            .await;
+            assert!(
+                matches!(&error, CrawlError::ServerError { .. } | CrawlError::RateLimited { .. }),
+                "status {status} must stay an ordinary retryable error, got {error:?}"
+            );
+            assert!(
+                error.to_string().contains(message_fragment),
+                "status {status} message must contain {message_fragment:?}, got: {error}"
+            );
+            assert_eq!(
+                status::error_status(&error),
+                Some(*status),
+                "status {status} must stay attached to its error: {error:?}"
+            );
+            assert!(
+                should_retry_error(&error, &[*status]),
+                "status {status} must still be retryable when retry_codes lists it: {error:?}"
+            );
+        }
+    }
+
     /// A 2xx whose headers alone fingerprint is a WAF interstitial, reported before the
     /// body is treated as page content. ~keep
+    ///
+    /// ~keep Also the regression guard for crawlberg#169: this and the body-block test below
+    /// pin the 2xx wording, which the challenge-status work must not reword. Both pass with
+    /// and without that change, which is the point of a guard.
     #[tokio::test]
     async fn http_fetch_reports_a_header_waf_block_on_a_2xx() {
         let error = fetch_status(

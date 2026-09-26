@@ -380,46 +380,94 @@ jobs:
       - name: Install Task
         uses: xberg-io/actions/install-task@v1
 
-      # ~keep This drift check is only sound when the formatting alef applies
-      # here is byte-identical to the formatting already in the committed tree.
-      # `alef e2e generate` formats in-process as part of generation and it
-      # CANNOT be turned off (the --format flag was removed upstream), so any
-      # formatter skew between this runner and the machine that committed the
-      # tree surfaces as drift that has nothing to do with fixture staleness.
-      # Four langs are excluded for two distinct kinds of skew:
+      # ~keep This drift check is only sound when the formatting alef applies here is
+      # byte-identical to the formatting already in the committed tree. `alef e2e generate`
+      # formats in-process as part of generation and it CANNOT be turned off (the --format flag
+      # was removed upstream), so formatter skew between this runner and the machine that
+      # committed the tree surfaces as drift that has nothing to do with fixture staleness.
       #
-      #   python, php — formatter MISSING here. alef calls a bare `ruff`
-      #   binary (not `uv run ruff`) and ruff is not a dependency anywhere in
-      #   this repo; php's is packages/php/vendor/bin/php-cs-fixer, which this
-      #   job never installs. Both would emit UNformatted output against a
-      #   formatted tree.
+      # This check used to exclude python, php, ruby and c — a quarter of the 16-leg matrix
+      # silently ungated. Each exclusion was measured against alef 0.96.4 rather than assumed,
+      # by shimming each formatter binary and counting its invocations, and all four are now
+      # gone:
       #
-      #   ruby, c — formatter PRESENT here but not equivalent to the one that
-      #   produced the committed tree, which is the inverse failure and was
-      #   observed live on 9aaaf3410. ruby's formatter is `bundle exec
-      #   rubocop`; when bundler is not set up alef degrades to a WARN and
-      #   silently skips formatting, so the committed spec files still use the
-      #   multi-line `expect {` form that rubocop rewrites the moment it does
-      #   run. c is gated on require_tool("clang-format") and formats in both
-      #   places, but clang-format output is version-dependent and the runner's
-      #   version differs from the one used locally.
+      #   python — `ruff` IS invoked (`ruff check --fix` then `ruff format`, 2 logged calls) and
+      #   IS version-sensitive, and it was genuinely absent here: with ruff unavailable,
+      #   generation drifts 30 files (+629/-838) and alef only WARNs. Fixed by pinning the ruff
+      #   binary below; ruff 0.16.7 is a verified fixed point of the committed tree (drift 0).
       #
-      # dart hits the same "formatter PRESENT but not equivalent" skew, but is
-      # handled by pinning rather than exclusion: its SDK version in the matrix
-      # above is chosen so the runner's `dart format` is a fixed point of the
-      # committed tree. See the ~keep note on the dart matrix entry.
+      #   php — already reproducible and never needed excluding. alef.toml's php formatter is
+      #   `composer install && composer exec -- php-cs-fixer`, version-pinned by composer.lock
+      #   and self-bootstrapping, and `Setup PHP` above installs composer before this step.
+      #   Verified: drift 0 from a clean checkout with no vendor/ directory.
       #
-      # Excluding these keeps the check meaningful for the 12 remaining legs of
-      # the 16-leg matrix rather than shipping one that fails for toolchain
-      # reasons. The real
-      # fix is pinning the formatter toolchain so generation is reproducible;
-      # tracked separately, and the silent WARN-and-skip is an alef defect.
+      #   ruby — the "bundle exec rubocop" premise was stale. alef.toml's ruby formatter is
+      #   `poly fmt`, and poly's own discovery config excludes `e2e/**`, so it reports "0 files
+      #   checked" and changes nothing. Verified drift 0 both with poly 0.28.0 present and with
+      #   poly failing as not-installed.
+      #
+      #   c — alef 0.96.4 does not invoke clang-format for c e2e output at all: 0 shim
+      #   invocations even on a run that wrote a file, and the committed files are not a
+      #   clang-format fixed point under this repo's .clang-format. There is no skew to exclude.
+      #
+      # dart hits a real "formatter present but not equivalent" skew and is handled by pinning
+      # its SDK version in the matrix above, the same pattern as the ruff pin. See the ~keep
+      # note on the dart matrix entry.
+      #
+      # ~keep Pinned, not "latest": the point is that this runner formats exactly as the tree
+      # was formatted. The version assertion is deliberate — alef downgrades a missing formatter
+      # to a WARN and generates UNFORMATTED output, and because it skips writing a file whose
+      # pre-format content already matches disk, one unformatted generation then persists through
+      # every later formatted run. A silent PATH miss here would reintroduce exactly the failure
+      # this pin removes.
+      - name: Install pinned ruff (python formatter parity)
+        if: matrix.lang == 'python'
+        shell: bash
+        env:
+          RUFF_VERSION: 0.16.7
+        run: |
+          set -euo pipefail
+          target="aarch64-unknown-linux-gnu"
+          base="https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}"
+          tmp="$(mktemp -d)"
+          curl -fsSL "${base}/ruff-${target}.tar.gz" -o "${tmp}/ruff.tar.gz"
+          curl -fsSL "${base}/ruff-${target}.tar.gz.sha256" -o "${tmp}/ruff.tar.gz.sha256"
+          expected="$(awk '{print $1}' "${tmp}/ruff.tar.gz.sha256")"
+          actual="$(sha256sum "${tmp}/ruff.tar.gz" | awk '{print $1}')"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::ruff ${RUFF_VERSION} checksum mismatch: expected ${expected}, got ${actual}"
+            exit 1
+          fi
+          tar -xzf "${tmp}/ruff.tar.gz" -C "${tmp}"
+          binary="$(find "${tmp}" -type f -name ruff -perm -u+x | head -1)"
+          if [ -z "$binary" ]; then
+            echo "::error::ruff binary not found in the ${RUFF_VERSION} archive"
+            exit 1
+          fi
+          mkdir -p "${HOME}/.local/bin"
+          install -m 0755 "$binary" "${HOME}/.local/bin/ruff"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          rm -rf "${tmp}"
+
+      - name: Assert ruff on PATH is the pinned version
+        if: matrix.lang == 'python'
+        shell: bash
+        env:
+          RUFF_VERSION: 0.16.7
+        run: |
+          set -euo pipefail
+          found="$(ruff --version)"
+          echo "expected: ruff ${RUFF_VERSION}"
+          echo "found:    ${found}"
+          if [ "$found" != "ruff ${RUFF_VERSION}" ]; then
+            echo "::error::ruff on PATH is '${found}', not the pinned 'ruff ${RUFF_VERSION}' — generated python would drift"
+            exit 1
+          fi
+
       - name: Install alef (pinned)
-        if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
         uses: xberg-io/actions/install-alef@v1
 
       - name: Check e2e/${{ matrix.lang }} freshness against fixtures/
-        if: matrix.lang != 'python' && matrix.lang != 'php' && matrix.lang != 'ruby' && matrix.lang != 'c'
         shell: bash
         run: |
           set -euo pipefail
@@ -430,6 +478,14 @@ jobs:
             swift) e2e_dir="e2e/swift_e2e" ;;
             *) e2e_dir="e2e/${{ matrix.lang }}" ;;
           esac
+          # ~keep A drift check over an empty or mistyped directory reports clean and is
+          # indistinguishable from a real pass, so state the population first and fail on zero.
+          tracked_before="$(git ls-files -- "$e2e_dir" | wc -l | tr -d ' ')"
+          echo "tracked files under ${e2e_dir}: ${tracked_before}"
+          if [ "$tracked_before" -eq 0 ]; then
+            echo "::error::${e2e_dir} contains no tracked files — this check would examine nothing" >&2
+            exit 1
+          fi
           alef e2e generate --lang "${{ matrix.lang }}"
           # git diff alone only reports tracked files, so a fixture that adds a
           # brand-new test file would regenerate as an UNTRACKED file and slip

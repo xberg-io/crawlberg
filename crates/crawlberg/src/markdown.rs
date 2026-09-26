@@ -6,7 +6,7 @@ use crate::types::{ContentConfig, MarkdownResult};
 
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
 ///
-/// ~keep html-to-markdown-rs has no base URL option and writes each address as found, so
+/// ~keep html-to-markdown-rs 3.14 has no base URL option and writes each address as found, so
 /// ~keep relative addresses are made absolute, and image `data:` addresses removed, in the
 /// ~keep HTML first; see `resolve_link_targets`.
 fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConfig) -> Option<MarkdownResult> {
@@ -36,6 +36,13 @@ fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConf
         wrap: config.wrap,
         wrap_width: config.wrap_width,
         extract_metadata: config.extract_metadata,
+        // ~keep Every option crawlberg has no opinion on stays at the library's default on
+        // ~keep purpose, with one option that must never be picked up by accident: from 3.15 on,
+        // ~keep html-to-markdown-rs has a `base_url` that resolves relative addresses the way
+        // ~keep `resolve_link_targets` above already does. Setting it is only safe after #123 --
+        // ~keep it resolves the empty `src=""` left by a dropped inline-data payload to the page
+        // ~keep itself, and rewrites the fragment-only hrefs this crate leaves as written. See
+        // ~keep #190; `html_to_markdown_has_no_base_url_option` below fails when 3.15 arrives.
         ..Default::default()
     };
 
@@ -538,5 +545,33 @@ mod tests {
                 "attribute {attr} gave: {md}"
             );
         }
+    }
+
+    /// The converter option whose arrival makes this crate's link pre-pass redundant.
+    const BASE_URL_OPTION: &str = "base_url";
+
+    /// ~keep A canary on the dependency, not a behaviour test. The `html-to-markdown-rs`
+    /// ~keep requirement is a caret range, so 3.15 -- the first version with a `base_url`
+    /// ~keep conversion option -- arrives on a routine `cargo update` with nothing to compile
+    /// ~keep against it and nothing to fail. From that point crawlberg carries two relative-link
+    /// ~keep resolvers, and this is the only thing that says so. Read #190 before deleting it;
+    /// ~keep do not silence it by setting `base_url`, which is unsafe until #123.
+    #[test]
+    fn html_to_markdown_has_no_base_url_option() {
+        let options = html_to_markdown_rs::options::ConversionOptions::default();
+        let serialized = serde_json::to_value(&options).expect("conversion options should serialize");
+        let fields = serialized
+            .as_object()
+            .expect("conversion options should be a JSON object");
+
+        assert!(
+            !fields.contains_key(BASE_URL_OPTION),
+            "html-to-markdown-rs now has a `{BASE_URL_OPTION}` conversion option, so crawlberg has two \
+             relative-link resolvers: this one and `crate::html::resolve_link_targets`. Reconcile them \
+             before landing this dependency bump -- see issue #190. Do not just set `base_url`: it is \
+             only safe after #123, because it resolves the empty `src=\"\"` that marks a dropped \
+             inline-data payload to the page URL, and it rewrites the fragment-only hrefs that \
+             `resolve_link_targets` deliberately leaves as written."
+        );
     }
 }

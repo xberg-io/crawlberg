@@ -81,7 +81,13 @@ impl CrawlEngine {
         #[cfg(target_arch = "wasm32")]
         let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url).await?;
 
-        let mut result = crate::scrape::scrape_from_crawl_response(&final_url, &response, &self.config).await?;
+        let mut result = crate::scrape::scrape_from_crawl_response(
+            &final_url,
+            &response,
+            &self.config,
+            self.document_filter.as_deref(),
+        )
+        .await?;
         result.browser_used = browser_used_for_fetch;
 
         // ~keep Without the browser feature, BrowserMode::Always still reports browser_used for binding parity.
@@ -139,8 +145,13 @@ impl CrawlEngine {
             headers: std::collections::HashMap::new(),
             landed_url: None,
         };
-        let mut result =
-            crate::scrape::scrape_from_crawl_response(&http_resp.final_url, &crawl_resp, &self.config).await?;
+        let mut result = crate::scrape::scrape_from_crawl_response(
+            &http_resp.final_url,
+            &crawl_resp,
+            &self.config,
+            self.document_filter.as_deref(),
+        )
+        .await?;
         result.browser_used = true;
         if let Some(ex) = raw_extras {
             result.browser = Some(crate::types::BrowserExtras {
@@ -172,7 +183,13 @@ impl CrawlEngine {
         let screenshot = http_resp.screenshot.take();
         let final_url = http_resp.final_url.clone();
         let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
-        let mut result = crate::scrape::scrape_from_crawl_response(&final_url, &crawl_resp, &self.config).await?;
+        let mut result = crate::scrape::scrape_from_crawl_response(
+            &final_url,
+            &crawl_resp,
+            &self.config,
+            self.document_filter.as_deref(),
+        )
+        .await?;
         result.browser_used = true;
         if let Some(bytes) = screenshot {
             result.screenshot_base64 = Some(crate::interact::encode_screenshot_base64(&bytes));

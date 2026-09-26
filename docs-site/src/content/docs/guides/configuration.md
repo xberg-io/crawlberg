@@ -122,7 +122,7 @@ match config.validate() {
 | `request_timeout` | `Duration`                | 30 seconds  | Timeout for individual HTTP requests. Serialized as milliseconds in JSON. |
 | `max_redirects`   | `usize`                   | `10`        | Maximum redirects to follow. Must be <= 100.                              |
 | `retry_count`     | `usize`                   | `0`         | Number of retry attempts for failed requests.                             |
-| `retry_codes`     | `Vec<u16>`                | `[]`        | HTTP status codes that trigger a retry. Each must be 100-599.             |
+| `retry_codes`     | `Vec<u16>`                | `[]`        | HTTP status codes that trigger a retry. Empty retries every rate limit (429), server error (500, 503, 504), bad gateway (502) and timeout. A non-empty list retries only a failure whose status it lists, so a timeout without a response is not retried. Each must be 100-599. |
 | `max_body_size`   | `Option<usize>`           | `None`      | Maximum response body size in bytes. Responses are truncated.             |
 | `user_agent`      | `Option<String>`          | `None`      | Custom User-Agent string.                                                 |
 | `user_agents`     | `Vec<String>`             | `[]`        | User-Agent strings for rotation. When non-empty, overrides `user_agent`.  |
@@ -195,9 +195,11 @@ When both static `proxy` and an injected provider are set, the provider takes pr
 
 ### Robots and compliance
 
-| Field                | Type   | Default | Description                                                                   |
-| -------------------- | ------ | ------- | ----------------------------------------------------------------------------- |
-| `respect_robots_txt` | `bool` | `false` | Fetch and honor robots.txt directives (allow/disallow, crawl-delay, sitemap). |
+| Field                | Type   | Default | Description                                                                                                                         |
+| -------------------- | ------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `respect_robots_txt` | `bool` | `false` | Fetch and honor robots.txt directives (allow/disallow, crawl-delay, sitemap), and in a crawl the page's own `nofollow` instruction. |
+
+When `respect_robots_txt` is on, a crawl does not follow the links of a page marked `nofollow` by its robots meta tag or by any of its `X-Robots-Tag` headers. A link marked `rel="nofollow"` is a hint, not a robots directive, so the crawl still follows it. A `noindex` page is still crawled and its links followed. Every page result reports the two directives in `noindex_detected` and `nofollow_detected`, whatever the setting.
 
 ### Content processing
 

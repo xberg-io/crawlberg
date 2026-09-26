@@ -225,7 +225,7 @@ pub struct CrawlArgs {
     /// Request timeout in milliseconds
     #[arg(long, default_value = "30000")]
     pub timeout: u64,
-    /// Respect robots.txt
+    /// Respect robots.txt and each page's own nofollow instructions
     #[arg(long)]
     pub respect_robots_txt: bool,
     /// Stay on the same domain
@@ -364,7 +364,7 @@ pub struct BatchCrawlArgs {
     /// Request timeout in milliseconds
     #[arg(long, default_value = "30000")]
     pub timeout: u64,
-    /// Respect robots.txt
+    /// Respect robots.txt and each page's own nofollow instructions
     #[arg(long)]
     pub respect_robots_txt: bool,
     /// Stay on the same domain
