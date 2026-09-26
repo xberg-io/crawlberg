@@ -91,7 +91,9 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let sitemap_url = resolve_redirect(url, sitemap_ref);
+        let Some(sitemap_url) = resolve_redirect(url, sitemap_ref) else {
+            continue;
+        };
         let resolved = rewrite_url_host(&sitemap_url, parsed_url);
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);

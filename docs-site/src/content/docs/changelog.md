@@ -29,6 +29,17 @@ title: "Changelog"
 
 ### Fixed
 
+- **An absolute redirect target was followed exactly as sent, without going through the URL
+  parser.** A relative redirect target was resolved through `Url::join`, which parses it and
+  reports the parser's normalized form, stripped of an embedded tab or newline and trimmed of
+  leading/trailing spaces. An absolute `http://`/`https://` target skipped that parse entirely
+  and came back byte-for-byte as received, so a `Location`, `Refresh`, or `<meta refresh>` value
+  crafted with stray whitespace was followed and reported exactly as sent. Both forms now go
+  through the same parser, and a target that fails to parse, absolute or relative, is refused
+  rather than followed: the redirect source it came from contributes nothing, and the chain
+  falls through to the next source or stops. A target that already parsed cleanly is unchanged.
+  (#207)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,

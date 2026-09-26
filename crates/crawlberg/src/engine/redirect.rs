@@ -512,7 +512,7 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    resolve_redirect(current_url, location)
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -520,7 +520,7 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+    resolve_redirect(current_url, target_path)
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -534,7 +534,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     let target = tl::parse(&parsed_html, ParserOptions::default())
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+    resolve_redirect(current_url, &target)
 }
 
 #[cfg(test)]
@@ -665,6 +665,38 @@ mod tests {
         assert!(
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
             "no further hop is allowed once max_redirects is reached"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_location_is_not_followed_but_falls_through_to_the_refresh_header() {
+        let resp = response(
+            302,
+            &[
+                ("location", "https://ex ample.com/bad"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
+        assert_eq!(
+            target, "https://example.com/from-refresh",
+            "an unparseable Location must not be followed as raw text; the chain falls \
+             through to the next redirect source instead"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_location_with_no_other_source_ends_the_chain() {
+        let resp = response(302, &[("location", "https://ex ample.com/bad")], "");
+        let chain = chain_at("https://example.com/start", &[]);
+
+        assert!(
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
+            "an unparseable Location with no other redirect source must not be followed"
         );
     }
 }
