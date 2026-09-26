@@ -111,6 +111,7 @@ mod tests {
                 ("proxy-authorization".to_owned(), vec![format!("Basic {SECRET}")]),
                 ("server".to_owned(), vec!["nginx".to_owned()]),
             ]),
+            landed_url: None,
         };
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
@@ -172,6 +173,12 @@ pub struct CrawlResponse {
     pub body: String,
     pub body_bytes: Vec<u8>,
     pub headers: HashMap<String, Vec<String>>,
+    /// The URL the content came from, when the fetcher followed redirects itself (the
+    /// browser tier). `None` when the response belongs to the requested URL.
+    ///
+    /// ~keep Read only by the native redirect chain; wasm has no browser tier to set it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub landed_url: Option<String>,
 }
 
 impl std::fmt::Debug for CrawlResponse {
@@ -184,6 +191,7 @@ impl std::fmt::Debug for CrawlResponse {
             body,
             body_bytes,
             headers,
+            landed_url,
         } = self;
         f.debug_struct("CrawlResponse")
             .field("status", status)
@@ -191,6 +199,7 @@ impl std::fmt::Debug for CrawlResponse {
             .field("body", body)
             .field("body_bytes", body_bytes)
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .field("landed_url", landed_url)
             .finish()
     }
 }

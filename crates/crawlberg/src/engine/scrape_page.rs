@@ -137,8 +137,10 @@ impl CrawlEngine {
             body: http_resp.body,
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
+            landed_url: None,
         };
-        let mut result = crate::scrape::scrape_from_crawl_response(url, &crawl_resp, &self.config).await?;
+        let mut result =
+            crate::scrape::scrape_from_crawl_response(&http_resp.final_url, &crawl_resp, &self.config).await?;
         result.browser_used = true;
         if let Some(ex) = raw_extras {
             result.browser = Some(crate::types::BrowserExtras {
@@ -168,8 +170,9 @@ impl CrawlEngine {
         let mut http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
 
         let screenshot = http_resp.screenshot.take();
+        let final_url = http_resp.final_url.clone();
         let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
-        let mut result = crate::scrape::scrape_from_crawl_response(url, &crawl_resp, &self.config).await?;
+        let mut result = crate::scrape::scrape_from_crawl_response(&final_url, &crawl_resp, &self.config).await?;
         result.browser_used = true;
         if let Some(bytes) = screenshot {
             result.screenshot_base64 = Some(crate::interact::encode_screenshot_base64(&bytes));
@@ -234,6 +237,7 @@ impl CrawlEngine {
             body: resp.body,
             body_bytes: resp.body_bytes,
             headers: resp.headers,
+            landed_url: None,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }
