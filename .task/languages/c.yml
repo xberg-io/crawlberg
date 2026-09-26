@@ -50,6 +50,11 @@ tasks:
     cmds:
       - cargo build --locked -p crawlberg-ffi
 
+  headers:check:
+    desc: Check every tracked C header copy against the canonical one
+    cmds:
+      - ./scripts/ci/check-vendored-headers.sh
+
   build:release:
     desc: Build crawlberg-ffi C library in release mode
     cmds:

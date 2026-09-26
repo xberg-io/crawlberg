@@ -18,6 +18,18 @@ permissions:
   contents: read
 
 jobs:
+  # ~keep docs-site/src/content/docs/changelog.md mirrors CHANGELOG.md by hand and nothing synced
+  # them (#127), so they drifted on main: the mirror was missing two whole [Unreleased] entries.
+  # This job lives in ci-lint because ci-lint is the only workflow with no path filter, so it
+  # fires whichever of the two files a commit touches.
+  changelog-mirror:
+    name: Changelog mirror
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the docs-site changelog mirror
+        run: ./scripts/ci/check-changelog-mirror.sh
+
   release-contracts:
     name: Release package contracts
     runs-on: ubuntu-latest
