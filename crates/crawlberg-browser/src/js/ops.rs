@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
-use crate::redact::RedactedHeaders;
+use crate::redact::{RedactedHeaders, RedactedValues};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
 use deno_core::OpState;
@@ -34,8 +34,9 @@ pub enum InterceptResolution {
 }
 
 impl std::fmt::Debug for InterceptResolution {
-    /// Redacted: the headers a CDP client sets can carry `Authorization` and `Cookie`.
-    /// Header names stay visible; sensitive values print as `***`.
+    /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the four
+    /// well-known credential names.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Continue {
@@ -47,7 +48,7 @@ impl std::fmt::Debug for InterceptResolution {
                 .debug_struct("Continue")
                 .field("url", url)
                 .field("method", method)
-                .field("headers", &headers.as_ref().map(RedactedHeaders))
+                .field("headers", &headers.as_ref().map(RedactedValues))
                 .field("body", body)
                 .finish(),
             Self::Fulfill { status, headers, body } => f

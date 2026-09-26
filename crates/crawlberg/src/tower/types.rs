@@ -29,8 +29,13 @@ pub struct CrawlRequest {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for CrawlRequest {
-    /// Redacted: `headers` can hold an `Authorization` or cookie header set on this request.
-    /// Header names stay visible; sensitive values print as `***`.
+    /// Redacted: every header value is hidden, not just the four well-known credential
+    /// names. This map is populated from `CrawlConfig.custom_headers`, whose values
+    /// `CrawlConfig`'s own `Debug` already hides wholesale — a caller puts an API key under
+    /// whatever name the vendor asks for (`X-Api-Key`, `apikey`, ...), so a name denylist
+    /// cannot cover it and would contradict `CrawlConfig` on the same data. Names stay
+    /// visible. Response headers keep the name-based rule, where `content-type` and `server`
+    /// are the debugging value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             url,
@@ -40,7 +45,7 @@ impl std::fmt::Debug for CrawlRequest {
         } = self;
         f.debug_struct("CrawlRequest")
             .field("url", url)
-            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .field("headers", &crate::net::redact::RedactedValues(headers))
             .field("tier", tier)
             .field("origin_host", origin_host)
             .finish()
@@ -117,8 +122,41 @@ mod tests {
             assert!(!text.contains(SECRET), "secret printed: {text}");
             assert!(text.contains("***"), "placeholder missing: {text}");
         }
-        assert!(format!("{request:?}").contains("text/html"));
+        // ~keep A request header's value is hidden whatever its name is, so `accept` does not
+        // ~keep keep its value here; only the name stays. A response header keeps a
+        // ~keep non-sensitive value, which is why `server: nginx` is still readable.
+        let request_debug = format!("{request:?}");
+        assert!(
+            !request_debug.contains("text/html"),
+            "no request header value may print: {request_debug}"
+        );
+        assert!(
+            request_debug.contains("accept"),
+            "header names must stay: {request_debug}"
+        );
         assert!(format!("{response:?}").contains("nginx"));
+    }
+
+    /// The scenario that made the name denylist and `CrawlConfig`'s hide-everything rule
+    /// disagree on the same data: a vendor key under a name no denylist can predict.
+    #[test]
+    fn a_request_header_with_an_unguessable_credential_name_is_hidden() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let mut request = CrawlRequest::new("https://example.com/");
+        request.headers = HashMap::from([("X-Api-Key".to_owned(), SECRET.to_owned())]);
+
+        let config = crate::CrawlConfig {
+            custom_headers: HashMap::from([("X-Api-Key".to_owned(), SECRET.to_owned())]),
+            ..crate::CrawlConfig::default()
+        };
+
+        for text in [format!("{request:?}"), format!("{config:?}")] {
+            assert!(!text.contains(SECRET), "the vendor key printed: {text}");
+            assert!(
+                text.contains(r#""X-Api-Key": "***""#),
+                "the name must stay and the value must be the placeholder: {text}"
+            );
+        }
     }
 
     #[test]

@@ -21,7 +21,14 @@ pub(crate) fn is_sensitive_header(name: &str) -> bool {
         .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
 }
 
-/// `Debug` view of a header map that shows each name and hides each value.
+/// `Debug` view of a **request** header map: every name stays visible, every value is hidden.
+///
+/// ~keep Request headers are populated from caller configuration (`CrawlConfig.custom_headers`,
+/// ~keep `NativeBrowserConfig.extra_headers`), whose values are hidden wholesale at the config
+/// ~keep type. A caller sends an API key under whatever name the vendor asks for (`X-Api-Key`,
+/// ~keep `apikey`, ...), so a name denylist cannot cover it and would contradict the config
+/// ~keep type on the same data. [`RedactedHeaders`] stays for *response* headers, where
+/// ~keep `content-type` and `server` are the debugging value.
 pub(crate) struct RedactedValues<'a>(pub(crate) &'a HashMap<String, String>);
 
 impl fmt::Debug for RedactedValues<'_> {
@@ -30,8 +37,12 @@ impl fmt::Debug for RedactedValues<'_> {
     }
 }
 
-/// `Debug` view of a header map that shows every name and every value, except the value
-/// of a [`SENSITIVE_HEADERS`] entry, which prints as [`REDACTED`].
+/// `Debug` view of a **response** header map: every name and every value print, except the
+/// value of a [`SENSITIVE_HEADERS`] entry, which prints as [`REDACTED`].
+///
+/// ~keep Response headers come from the server, not from caller configuration, so
+/// ~keep `content-type`, `server` and the rest are worth keeping. Use [`RedactedValues`] for
+/// ~keep a request header map.
 pub(crate) struct RedactedHeaders<'a>(pub(crate) &'a HashMap<String, String>);
 
 impl fmt::Debug for RedactedHeaders<'_> {

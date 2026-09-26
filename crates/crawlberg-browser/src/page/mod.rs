@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, parse_html};
 use crate::js::runtime::BrowserJsRuntime;
 use crate::net::{HttpClient, NetError, Response};
-use crate::redact::RedactedHeaders;
+use crate::redact::{RedactedHeaders, RedactedValues};
 use url::Url;
 
 use crate::context::BrowserContext;
@@ -40,8 +40,9 @@ pub struct NetworkEvent {
 }
 
 impl std::fmt::Debug for NetworkEvent {
-    /// Redacted: the headers carry `Authorization`, `Cookie` and `Set-Cookie`. Header names
-    /// stay visible; sensitive values print as `***`.
+    /// Redacted: names stay visible throughout. `headers` is the *request* map, so every
+    /// value is hidden; `response_headers` keeps every value but the four well-known
+    /// credential names.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             request_id,
@@ -60,7 +61,7 @@ impl std::fmt::Debug for NetworkEvent {
             .field("method", method)
             .field("resource_type", resource_type)
             .field("status", status)
-            .field("headers", &RedactedHeaders(headers))
+            .field("headers", &RedactedValues(headers))
             .field("response_headers", &RedactedHeaders(response_headers))
             .field("body_size", body_size)
             .field("timestamp", timestamp)
