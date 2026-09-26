@@ -7,7 +7,7 @@ pub(super) fn validate_url(url: &str) -> Result<(), rmcp::ErrorData> {
     if url.is_empty() {
         return Err(rmcp::ErrorData::invalid_params("url is required", None));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !crate::net::has_http_scheme(url) {
         return Err(rmcp::ErrorData::invalid_params(
             "url must start with http:// or https://",
             None,
