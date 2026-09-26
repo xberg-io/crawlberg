@@ -78,6 +78,10 @@ pub(super) async fn page_fetch(
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
 
+    // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
+    // ~keep resolve against. An unreadable URL falls back to the requested one.
+    let final_url = page.url().await.ok().flatten().unwrap_or_else(|| url.to_owned());
+
     let body_bytes = html.as_bytes().to_vec();
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
@@ -89,8 +93,7 @@ pub(super) async fn page_fetch(
         body_bytes,
         headers: std::collections::HashMap::new(),
         browser_extras: None,
-        // ~keep CDP final URL is unavailable here; this path only feeds browser backends, not wasm final_url tracking.
-        final_url: url.to_owned(),
+        final_url,
         screenshot,
     })
 }
