@@ -13,7 +13,7 @@ use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::{SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
+use crate::ssrf_intercept::{StoppedResponse, Watch};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -30,6 +30,10 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
 ///
+/// `watch` is the SSRF check on the page's browser. The caller keeps it until the page is
+/// closed or parked, so the requests the page sends during the extra wait, while it is read,
+/// and while it is screenshotted are checked too.
+///
 /// Chrome follows at most `config.max_redirects` HTTP redirects. A chain longer than
 /// that ends on the redirect response at the limit, the way the HTTP fetch path ends.
 /// A response Chrome does not commit (204, 205, 304) ends the fetch the same way.
@@ -37,6 +41,7 @@ pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
+    watch: &Watch,
     prior_cookies: Option<&[CookieInfo]>,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
@@ -55,22 +60,19 @@ pub(super) async fn page_fetch(
     apply_prior_cookies(page, prior_cookies).await;
     apply_extra_headers(page, config).await?;
 
-    let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
-    let rendered = render(url, config, page, &interceptor, want_screenshot).await;
-    interceptor.finish().await;
-    rendered
+    render(url, config, page, watch, want_screenshot).await
 }
 
-/// Navigate `page` to `url` under `interceptor` and read the rendered page.
+/// Navigate `page` to `url` under `watch` and read the rendered page.
 ///
-/// ~keep The interception stays on until the HTML is read, so the reported status is the one
-/// ~keep of the main-frame document the HTML comes from, even when the page navigates during
+/// ~keep The watch stays on until the HTML is read, so the reported status is the one of the
+/// ~keep main-frame document the HTML comes from, even when the page navigates during
 /// ~keep `extra_wait` (a challenge page that moves to the real page, for example).
 async fn render(
     url: &str,
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
-    interceptor: &SsrfInterceptGuard,
+    watch: &Watch,
     want_screenshot: bool,
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
@@ -87,7 +89,7 @@ async fn render(
     })
     .await;
 
-    let intercepted = interceptor.navigation_outcome();
+    let intercepted = watch.take_outcome();
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
@@ -106,7 +108,7 @@ async fn render(
         .content()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-    let status = interceptor.document_status().unwrap_or(RENDERED_PAGE_STATUS);
+    let status = watch.document_status().unwrap_or(RENDERED_PAGE_STATUS);
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
     // ~keep resolve against. An unreadable URL falls back to the requested one.

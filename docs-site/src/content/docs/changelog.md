@@ -32,6 +32,18 @@ title: "Changelog"
   the URL that answered, empty HTML, and a failed result for each action that names the status.
   The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
   (#116, #140)
+- **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
+  and stopped when the navigation finished. In `interact`, a click, a form submission, a script
+  `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
+  crawl, a popup the page opened, and a request it sent during the extra wait or while it was
+  screenshotted, did too. Each browser now has one check for every page it serves, and each
+  request is judged by the policy of the page it belongs to: the page, its frames, and the
+  popups it opened. A request that belongs to no checked page is refused. When a fetch or a
+  session ends, its page and popups are closed while their requests are still refused, and the
+  check is turned off only after that. This applies to the Chromiumoxide backend. (#153, #165)
+- **An `interact` action whose request the SSRF check refused was reported as successful.** The
+  action now fails with the SSRF policy error that names the refused URL. A request counts for the
+  action that was running when Chrome sent it. This applies to the Chromiumoxide backend. (#167)
 - **A page rendered in browser mode always reported status 200.** The Chromiumoxide backend now
   reports the status the server answered for the page whose HTML it returns, and both browser
   backends handle it the way HTTP mode does. A status that HTTP mode reports as an error is the same
