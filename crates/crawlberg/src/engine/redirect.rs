@@ -512,7 +512,15 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    let target = resolve_redirect(current_url, location);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = location.len(),
+            "Location redirect target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -520,7 +528,15 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+    let target = resolve_redirect(current_url, target_path);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = target_path.len(),
+            "Refresh header target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -531,15 +547,24 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = tl::parse(&parsed_html, ParserOptions::default())
+    let raw_target = tl::parse(&parsed_html, ParserOptions::default())
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+    let target = resolve_redirect(current_url, &raw_target);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = raw_target.len(),
+            "meta refresh target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tracing_capture::{assert_logged_without_secret, capture_events};
 
     const MAX_REDIRECTS: usize = 5;
 
@@ -666,5 +691,114 @@ mod tests {
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
             "no further hop is allowed once max_redirects is reached"
         );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_is_not_followed_but_falls_through_to_the_refresh_header() {
+        let resp = response(
+            302,
+            &[
+                ("location", "https://ex ample.com/bad"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
+        assert_eq!(
+            target, "https://example.com/from-refresh",
+            "an unparseable Location must not be followed as raw text; the chain falls \
+             through to the next redirect source instead"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_with_no_other_source_ends_the_chain() {
+        let resp = response(302, &[("location", "https://ex ample.com/bad")], "");
+        let chain = chain_at("https://example.com/start", &[]);
+
+        assert!(
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
+            "an unparseable Location with no other redirect source must not be followed"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_refresh_header_target_is_refused() {
+        let resp = response(200, &[("refresh", "0; url=https://ex ample.com/bad")], "");
+
+        assert!(
+            refresh_header_target(&resp, "https://example.com/start").is_none(),
+            "a Refresh header target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_meta_refresh_target_is_refused() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=https://ex ample.com/bad"></head></html>"#,
+        );
+
+        assert!(
+            meta_refresh_target(&resp, "https://example.com/start").is_none(),
+            "a meta refresh target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    /// `redact_url_credentials` returns an unparseable string unchanged, and each debug
+    /// log in this module fires only for an unparseable target, so none may carry it.
+    /// `https://user:hunter2@ex ample.com/bad` is the reviewer's own example.
+    const CREDENTIAL_TARGET: &str = "https://user:hunter2@ex ample.com/bad";
+    const RAW_PASSWORD: &str = "hunter2";
+    const PAGE_URL: &str = "https://example.com/start";
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_with_credentials_is_never_logged() {
+        let resp = response(302, &[("location", CREDENTIAL_TARGET)], "");
+
+        let (target, fields) = capture_events(|| http_redirect_target(&resp, PAGE_URL));
+
+        assert!(target.is_none(), "an unparseable Location must not be followed");
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_refresh_header_target_with_credentials_is_never_logged() {
+        let refresh = format!("0; url={CREDENTIAL_TARGET}");
+        let resp = response(200, &[("refresh", refresh.as_str())], "");
+
+        let (target, fields) = capture_events(|| refresh_header_target(&resp, PAGE_URL));
+
+        assert!(
+            target.is_none(),
+            "an unparseable Refresh header target must not be followed"
+        );
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_meta_refresh_target_with_credentials_is_never_logged() {
+        let body =
+            format!(r#"<html><head><meta http-equiv="refresh" content="0; url={CREDENTIAL_TARGET}"></head></html>"#);
+        let resp = response(200, &[], &body);
+
+        let (target, fields) = capture_events(|| meta_refresh_target(&resp, PAGE_URL));
+
+        assert!(
+            target.is_none(),
+            "an unparseable meta refresh target must not be followed"
+        );
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
     }
 }

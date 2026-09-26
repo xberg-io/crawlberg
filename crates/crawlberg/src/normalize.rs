@@ -158,20 +158,20 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
     url_str.to_owned()
 }
 
-/// Resolve a redirect target against a base URL.
+/// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
+/// `Url::join` parses either form on its own and returns the parser's normalized string.
+/// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
+/// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
+/// caller must refuse the target rather than follow or report it as raw text.
 ///
-/// If the target is already absolute, returns it as-is. Otherwise, resolves
-/// it relative to the base URL.
-pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> String {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return target.to_owned();
+/// ~keep The return is always the parser's normalized form, never raw input, so a caller that
+/// ~keep re-checks it (SSRF, policy) is checking what will actually be fetched.
+pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<String> {
+    if let Ok(base) = Url::parse(base_url) {
+        return base.join(target).ok().map(|resolved| resolved.to_string());
     }
-    if let Ok(base) = Url::parse(base_url)
-        && let Ok(resolved) = base.join(target)
-    {
-        return resolved.to_string();
-    }
-    target.to_owned()
+    // base_url itself fails to parse; a target that stands on its own can still resolve.
+    Url::parse(target).ok().map(|resolved| resolved.to_string())
 }
 
 #[cfg(test)]
@@ -322,6 +322,82 @@ mod tests {
             normalize_url_for_dedup("http://example.com/a//b", false),
             normalize_url_for_dedup("http://example.com/a/b", false),
             "a doubled path separator must not produce a second frontier entry for one page"
+        );
+    }
+
+    #[test]
+    fn absolute_target_with_embedded_tab_and_newline_is_parser_normalized() {
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/\ta\nb");
+        assert_eq!(
+            resolved,
+            Some("https://example.com/ab".to_owned()),
+            "an embedded tab/newline in an absolute target must be stripped the same way \
+             the URL parser strips it from a relative target, got {resolved:?}"
+        );
+    }
+
+    /// A leading space never reached the old prefix branch (`starts_with` doesn't match), so
+    /// it was already trimmed by the relative-join fallback whenever `base_url` parsed. Using
+    /// a `base_url` that fails to parse instead exercises the case the old dispatch got wrong.
+    #[test]
+    fn absolute_target_with_leading_space_is_trimmed_even_when_base_fails_to_parse() {
+        let resolved = resolve_redirect("not a url", "   https://example.com/next");
+        assert_eq!(
+            resolved,
+            Some("https://example.com/next".to_owned()),
+            "a leading space on an absolute target must be trimmed even when the base \
+             doesn't parse, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn absolute_target_with_trailing_space_is_trimmed() {
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/next   ");
+        assert_eq!(
+            resolved,
+            Some("https://example.com/next".to_owned()),
+            "trailing spaces on an absolute target must be trimmed like a relative target's \
+             are, got {resolved:?}"
+        );
+    }
+
+    /// A `base_url` that fails to parse is the only case where the old prefix check
+    /// (`starts_with("https://")`, case-sensitive) mattered: with a valid base, the relative
+    /// branch already resolves an absolute target on its own, uppercase scheme included.
+    #[test]
+    fn uppercase_scheme_target_still_resolves_when_base_fails_to_parse() {
+        let resolved = resolve_redirect("not a url", "HTTPS://example.com/x");
+        assert_eq!(
+            resolved,
+            Some("https://example.com/x".to_owned()),
+            "an absolute target must resolve on its own when the base doesn't parse, \
+             whatever case its scheme is written in, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn unparseable_absolute_target_is_refused() {
+        let resolved = resolve_redirect("https://example.com/start", "https://ex ample.com/x");
+        assert_eq!(
+            resolved, None,
+            "a target the URL parser refuses must come back as None, so a caller refuses it \
+             instead of following or reporting it as raw text, got {resolved:?}"
+        );
+    }
+
+    /// This target already IS the parser's normalized form (lower-case host, default path,
+    /// no IDN/port/dot-segment to rewrite), so parsing it is a no-op. It does not show that
+    /// every clean target survives unchanged: parsing still rewrites an IDN host to punycode,
+    /// drops a default port, lower-cases the host, adds `/` to a bare origin, removes dot
+    /// segments, percent-encodes a space, and canonicalizes `127.1` to `127.0.0.1`.
+    #[test]
+    fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
+        let clean = "https://example.com/page?a=1&b=2";
+        let resolved = resolve_redirect("https://example.com/start", clean);
+        assert_eq!(
+            resolved,
+            Some(clean.to_owned()),
+            "a target with nothing left to normalize must come back byte-identical, got {resolved:?}"
         );
     }
 }
