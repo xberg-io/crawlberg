@@ -21,6 +21,16 @@ All notable changes to crawlberg are documented here.
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
 
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
