@@ -4,6 +4,23 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a

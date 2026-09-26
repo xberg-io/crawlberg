@@ -64,7 +64,8 @@ pub(crate) async fn scrape_from_crawl_response(
     let word_count = extraction.metadata.word_count.unwrap_or(0);
     let js_render_hint = decoded.is_html && browser_detect::detect_js_render_needed(&decoded.body, word_count);
     let downloaded_assets = download_discovered_assets(asset_refs, config, &client).await;
-    let markdown = crate::markdown::convert_to_markdown(&decoded.body, &merged_content_config(config)).await;
+    let markdown =
+        crate::markdown::convert_to_markdown(&decoded.body, &parsed_url, &merged_content_config(config)).await;
 
     Ok(ScrapeResult {
         status_code: resp.status,
