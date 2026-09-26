@@ -22,6 +22,20 @@ title: "Changelog"
     (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
     versions.
 
+- **`CrawlConfig` gained `path_patterns_match_url` and rejects unknown fields.** The field is
+  always serialised, and `CrawlConfig` carries `#[serde(deny_unknown_fields)]`, so **a config
+  serialised by this version is rejected by every older crawlberg**, even when the value is
+  `false`. The break is one-directional: an older config still loads here, because the field
+  defaults to `false`.
+
+  What this affects:
+
+  - A config serialised on one crawlberg and read by another. Upgrade the readers before, or
+    with, the writers.
+  - Any binding that round-trips a config through JSON across the FFI boundary
+    (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
+    can be at different versions.
+
 - **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
@@ -128,6 +142,18 @@ title: "Changelog"
   unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
   `math` are left alone, because a browser parses those as markup too. (#124, #125)
 
+- **One look-around pattern refused the whole configuration.** `include_paths` and `exclude_paths`
+  compiled on an engine without look-around or backreferences, so a single `(?!...)` pattern made
+  `create_engine` reject every pattern in the list. Both lists now compile with `fancy-regex`: a
+  plain pattern keeps its old meaning, and look-around and backreferences work. A pattern that
+  `fancy-regex` refuses, such as an inline `(?-u)` flag, compiles with the previous engine, so
+  every pattern that worked before still works. A pattern that still fails to compile refuses the
+  configuration and names the pattern. A look-around or backreference pattern backtracks at
+  most 100,000 times per URL, a tenth of the `fancy-regex` default, so one pattern costs at most
+  a few milliseconds per URL. A pattern that hits that limit fails closed: an exclude pattern
+  counts as a match, an include pattern as no match, and one warning per crawl names the
+  pattern. (#78)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The
@@ -212,6 +238,11 @@ title: "Changelog"
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+
+- `CrawlConfig.path_patterns_match_url` matches `include_paths`/`exclude_paths` against the full
+  URL, `scheme://host[:port]/path?query`, so a pattern can scope by host. The matched text leaves
+  out any userinfo and the fragment, and the host is in punycode. It defaults to `false` and takes
+  precedence over `path_patterns_match_query`. (#78)
 
 ### Internal
 

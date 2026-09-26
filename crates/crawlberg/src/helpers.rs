@@ -1,7 +1,10 @@
 //! Shared helper functions used by the crawl engine.
 
-use regex::Regex;
-use url::Url;
+use std::borrow::Cow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use url::{Position, Url};
 
 use crate::error::CrawlError;
 use crate::http::http_fetch;
@@ -29,11 +32,91 @@ pub(crate) fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Optio
     })
 }
 
-/// Compile a slice of regex pattern strings, returning an error if any pattern is invalid.
-pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlError> {
+/// How many times one `include_paths`/`exclude_paths` match may backtrack before it gives up.
+///
+/// ~keep The patterns can come from a remote caller (the REST crawl endpoint), and a match runs
+/// on the async executor for every discovered URL, so this bounds the executor time one pattern
+/// can take per URL. Measured on fancy-regex 0.19.2: a failing match costs about 26 ns per
+/// backtrack, so 2.6 ms here against 26 ms at the library's default of 1,000,000. Look-around
+/// patterns of the usual shape, such as `^(?:(?!/private/).)*$`, need about two backtracks per
+/// character of the URL; `.*(?<!\.html)$` needs about the square of the URL length, so it gives
+/// up on URLs longer than about 300 characters.
+const PATH_PATTERN_BACKTRACK_LIMIT: usize = 100_000;
+
+/// The largest compiled size, in bytes, of one `include_paths`/`exclude_paths` pattern.
+///
+/// ~keep The default of both the `regex` crate and `regex-automata`: a lower limit refuses
+/// patterns the `regex` crate accepts (1 MiB already refuses `\w{30}`), and a pattern is
+/// compiled once per crawl, not once per URL.
+const PATH_PATTERN_SIZE_LIMIT: usize = 10 * (1 << 20);
+
+/// A compiled `include_paths`/`exclude_paths` pattern.
+#[derive(Clone)]
+pub(crate) struct PathPattern {
+    engine: PatternEngine,
+    /// Set once a match of this pattern has failed and been logged. Clones share it, so every
+    /// task of one crawl logs a failing pattern once.
+    warned: Arc<AtomicBool>,
+}
+
+/// ~keep `fancy_regex` parses every pattern with its own parser, and runs one without
+/// look-around or backreferences on `regex-automata`, the engine behind the `regex` crate.
+/// Its parser refuses a few constructs the `regex` crate accepts, such as inline Unicode-mode
+/// flags (`(?-u)`), so a pattern it refuses is compiled with the `regex` crate instead: every
+/// pattern the `regex` crate accepts keeps compiling, with the meaning it has there.
+#[derive(Clone)]
+enum PatternEngine {
+    /// Compiled by `fancy_regex`; may backtrack, so a match can fail.
+    Fancy(fancy_regex::Regex),
+    /// Refused by `fancy_regex`, compiled by the `regex` crate.
+    Plain(regex::Regex),
+}
+
+impl PathPattern {
+    /// Compile `pattern`, or return `fancy_regex`'s error when neither engine accepts it.
+    pub(crate) fn new(pattern: &str) -> Result<Self, fancy_regex::Error> {
+        let engine = match fancy_regex::RegexBuilder::new(pattern)
+            .backtrack_limit(PATH_PATTERN_BACKTRACK_LIMIT)
+            .delegate_size_limit(PATH_PATTERN_SIZE_LIMIT)
+            .build()
+        {
+            Ok(regex) => PatternEngine::Fancy(regex),
+            Err(error) => regex::RegexBuilder::new(pattern)
+                .size_limit(PATH_PATTERN_SIZE_LIMIT)
+                .build()
+                .map(PatternEngine::Plain)
+                .map_err(|_| error)?,
+        };
+        Ok(Self {
+            engine,
+            warned: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// The pattern as written in the config.
+    pub(crate) fn as_str(&self) -> &str {
+        match &self.engine {
+            PatternEngine::Fancy(regex) => regex.as_str(),
+            PatternEngine::Plain(regex) => regex.as_str(),
+        }
+    }
+
+    /// Whether the pattern matches `text`; an error means the backtracking limit was hit.
+    pub(crate) fn is_match(&self, text: &str) -> Result<bool, fancy_regex::Error> {
+        match &self.engine {
+            PatternEngine::Fancy(regex) => regex.is_match(text),
+            PatternEngine::Plain(regex) => Ok(regex.is_match(text)),
+        }
+    }
+}
+
+/// Compile `include_paths`/`exclude_paths` patterns, returning an error naming the first invalid one.
+pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<PathPattern>, CrawlError> {
     patterns
         .iter()
-        .map(|pat| Regex::new(pat).map_err(|e| CrawlError::other(format!("invalid regex pattern \"{pat}\": {e}"))))
+        .map(|pat| {
+            PathPattern::new(pat).map_err(|e| CrawlError::other(format!("invalid regex pattern \"{pat}\": {e}")))
+        })
         .collect()
 }
 
@@ -51,17 +134,70 @@ pub(crate) fn strip_seed_tracking_params(config: &CrawlConfig, url: &str) -> Str
     }
 }
 
-/// The text an `include_paths`/`exclude_paths` regex is matched against: the path alone, or
-/// the path with `?query` appended when `match_query` is set.
-///
-/// ~keep Path-only stays the default because a pattern anchored with `$` changes meaning once
-/// the query joins the text (`/feed/?$` stops matching `/feed?x=1`), so flipping the default
-/// would silently change what today's `exclude_paths`/`include_paths` configs match.
-pub(crate) fn path_pattern_target(url: &Url, match_query: bool) -> String {
-    match (match_query, url.query()) {
-        (true, Some(query)) => format!("{}?{query}", url.path()),
-        _ => url.path().to_owned(),
+/// The text an `include_paths`/`exclude_paths` regex is matched against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PathPatternTarget {
+    /// The path alone, the default.
+    Path,
+    /// The path with `?query` appended (`path_patterns_match_query`).
+    PathAndQuery,
+    /// The whole URL up to and including the query, without userinfo or the fragment
+    /// (`path_patterns_match_url`).
+    FullUrl,
+}
+
+impl PathPatternTarget {
+    /// The target `config` selects; `path_patterns_match_url` wins over `path_patterns_match_query`.
+    pub(crate) fn from_config(config: &CrawlConfig) -> Self {
+        if config.path_patterns_match_url {
+            Self::FullUrl
+        } else if config.path_patterns_match_query {
+            Self::PathAndQuery
+        } else {
+            Self::Path
+        }
     }
+
+    /// The text of `url` a pattern is matched against.
+    ///
+    /// ~keep Path-only stays the default because a pattern anchored with `$` changes meaning
+    /// once the query joins the text (`/feed/?$` stops matching `/feed?x=1`), so flipping the
+    /// default would silently change what today's `exclude_paths`/`include_paths` configs match.
+    pub(crate) fn text<'u>(self, url: &'u Url) -> Cow<'u, str> {
+        match (self, url.query()) {
+            (Self::FullUrl, _) if url.username().is_empty() && url.password().is_none() => {
+                Cow::Borrowed(&url[..Position::AfterQuery])
+            }
+            (Self::FullUrl, _) => Cow::Owned(format!(
+                "{}{}",
+                &url[..Position::BeforeUsername],
+                &url[Position::BeforeHost..Position::AfterQuery]
+            )),
+            (Self::PathAndQuery, Some(query)) => Cow::Owned(format!("{}?{query}", url.path())),
+            _ => Cow::Borrowed(url.path()),
+        }
+    }
+}
+
+/// Whether `pattern` matches `text`, or `on_error` when the match cannot finish.
+///
+/// ~keep A look-around or backreference pattern runs on a backtracking engine that gives up
+/// at its backtrack limit. The caller passes the answer that keeps the URL out of the crawl
+/// (excluded, or not included), so a pattern that cannot be evaluated never widens the crawl.
+/// The warning is logged for the first such URL only, so its count does not grow with the
+/// number of URLs.
+fn pattern_matches(pattern: &PathPattern, text: &str, on_error: bool) -> bool {
+    pattern.is_match(text).unwrap_or_else(|error| {
+        if !pattern.warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                pattern = pattern.as_str(),
+                %error,
+                "path pattern could not be evaluated; URLs it cannot evaluate are kept out of the crawl, \
+                 and later ones are not logged"
+            );
+        }
+        on_error
+    })
 }
 
 /// Whether `url` survives `exclude_paths`/`include_paths`, incrementing `urls_filtered` and
@@ -72,18 +208,21 @@ pub(crate) fn path_pattern_target(url: &Url, match_query: bool) -> String {
 /// this only to genuine redirect targets and not to the chain's own starting URL.
 pub(crate) fn passes_path_patterns(
     url: &Url,
-    exclude_regexes: &[Regex],
-    include_regexes: &[Regex],
+    exclude_regexes: &[PathPattern],
+    include_regexes: &[PathPattern],
     check_include: bool,
-    match_query: bool,
+    target: PathPatternTarget,
     urls_filtered: &mut usize,
 ) -> bool {
-    let target = path_pattern_target(url, match_query);
-    if !exclude_regexes.is_empty() && exclude_regexes.iter().any(|re| re.is_match(&target)) {
+    let text = target.text(url);
+    if exclude_regexes.iter().any(|re| pattern_matches(re, &text, true)) {
         *urls_filtered += 1;
         return false;
     }
-    if check_include && !include_regexes.is_empty() && !include_regexes.iter().any(|re| re.is_match(&target)) {
+    if check_include
+        && !include_regexes.is_empty()
+        && !include_regexes.iter().any(|re| pattern_matches(re, &text, false))
+    {
         *urls_filtered += 1;
         return false;
     }
@@ -273,7 +412,7 @@ mod tests {
         let exclude = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
         let mut urls_filtered = 0usize;
         assert!(
-            passes_path_patterns(&url, &exclude, &[], true, false, &mut urls_filtered),
+            passes_path_patterns(&url, &exclude, &[], true, PathPatternTarget::Path, &mut urls_filtered),
             "path-only matching must not see the query string, so /blog?p=42 must still be fetched"
         );
         assert_eq!(urls_filtered, 0);
@@ -285,7 +424,14 @@ mod tests {
         let exclude = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
         let mut urls_filtered = 0usize;
         assert!(
-            !passes_path_patterns(&url, &exclude, &[], true, true, &mut urls_filtered),
+            !passes_path_patterns(
+                &url,
+                &exclude,
+                &[],
+                true,
+                PathPatternTarget::PathAndQuery,
+                &mut urls_filtered
+            ),
             "with match_query on, /blog?p=42 must be excluded"
         );
         assert_eq!(urls_filtered, 1);
@@ -297,7 +443,7 @@ mod tests {
         let include = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
         let mut urls_filtered = 0usize;
         assert!(
-            !passes_path_patterns(&url, &[], &include, true, false, &mut urls_filtered),
+            !passes_path_patterns(&url, &[], &include, true, PathPatternTarget::Path, &mut urls_filtered),
             "path-only matching must not see the query string, so the include pattern never matches"
         );
     }
@@ -308,7 +454,14 @@ mod tests {
         let include = compile_regexes(&[r"\?p=\d+".to_owned()]).expect("valid pattern");
         let mut urls_filtered = 0usize;
         assert!(
-            passes_path_patterns(&url, &[], &include, true, true, &mut urls_filtered),
+            passes_path_patterns(
+                &url,
+                &[],
+                &include,
+                true,
+                PathPatternTarget::PathAndQuery,
+                &mut urls_filtered
+            ),
             "with match_query on, /blog?p=42 must satisfy the include pattern"
         );
     }
@@ -319,8 +472,269 @@ mod tests {
         let include = compile_regexes(&["^/docs".to_owned()]).expect("valid pattern");
         let mut urls_filtered = 0usize;
         assert!(
-            passes_path_patterns(&url, &[], &include, false, false, &mut urls_filtered),
+            passes_path_patterns(&url, &[], &include, false, PathPatternTarget::Path, &mut urls_filtered),
             "check_include=false must admit a URL even when it fails every include pattern"
+        );
+    }
+
+    #[test]
+    fn full_url_target_keeps_scheme_host_port_and_query_and_drops_the_fragment() {
+        let url = Url::parse("http://127.0.0.1:8080/private/x?p=1#top").expect("valid URL");
+        assert_eq!(
+            PathPatternTarget::FullUrl.text(&url),
+            "http://127.0.0.1:8080/private/x?p=1"
+        );
+        assert_eq!(PathPatternTarget::PathAndQuery.text(&url), "/private/x?p=1");
+        assert_eq!(PathPatternTarget::Path.text(&url), "/private/x");
+
+        let url = Url::parse("https://user:pw@example.com:443/x").expect("valid URL");
+        assert_eq!(
+            PathPatternTarget::FullUrl.text(&url),
+            "https://example.com/x",
+            "userinfo and the default port are not part of the text"
+        );
+
+        let url = Url::parse("https://b\u{fc}cher.de/x").expect("valid URL");
+        assert_eq!(
+            PathPatternTarget::FullUrl.text(&url),
+            "https://xn--bcher-kva.de/x",
+            "the host is matched in punycode"
+        );
+    }
+
+    #[test]
+    fn host_anchored_exclude_pattern_matches_a_url_that_carries_userinfo() {
+        let url = Url::parse("https://x@example.com/private/a").expect("valid URL");
+        let exclude = compile_regexes(&[r"^https://example\.com/private/".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(
+                &url,
+                &exclude,
+                &[],
+                true,
+                PathPatternTarget::FullUrl,
+                &mut urls_filtered
+            ),
+            "userinfo in a link must not let it escape a host-anchored exclude pattern"
+        );
+    }
+
+    /// Inline Unicode-mode flags that the `regex` crate accepts and `fancy_regex` refuses.
+    const REGEX_ONLY_PATTERNS: [&str; 4] = [r"(?-u)\w", r"(?-u:\w)", r"(?i-u)a", r"(?-u:\b)x"];
+
+    #[test]
+    fn patterns_the_regex_crate_accepts_still_compile_and_match() {
+        let patterns: Vec<String> = REGEX_ONLY_PATTERNS.iter().map(|p| (*p).to_owned()).collect();
+        let compiled = compile_regexes(&patterns).expect("every pattern the regex crate accepts must compile");
+        let url = Url::parse("https://example.com/xA").expect("valid URL");
+        for (pattern, source) in compiled.iter().zip(REGEX_ONLY_PATTERNS) {
+            assert!(
+                matches!(pattern.engine, PatternEngine::Plain(_)),
+                "{source} must be compiled by the regex crate fallback"
+            );
+            let mut urls_filtered = 0usize;
+            assert!(
+                !passes_path_patterns(
+                    &url,
+                    std::slice::from_ref(pattern),
+                    &[],
+                    true,
+                    PathPatternTarget::Path,
+                    &mut urls_filtered
+                ),
+                "{source} must match /xA and exclude it"
+            );
+        }
+    }
+
+    #[test]
+    fn config_validation_accepts_patterns_the_regex_crate_accepts() {
+        let config = CrawlConfig {
+            include_paths: REGEX_ONLY_PATTERNS.iter().map(|p| (*p).to_owned()).collect(),
+            exclude_paths: REGEX_ONLY_PATTERNS.iter().map(|p| (*p).to_owned()).collect(),
+            ..CrawlConfig::default()
+        };
+        assert!(config.validate().is_ok(), "{:?}", config.validate());
+    }
+
+    #[test]
+    fn path_patterns_match_url_wins_over_path_patterns_match_query() {
+        let mut config = CrawlConfig::default();
+        assert_eq!(PathPatternTarget::from_config(&config), PathPatternTarget::Path);
+        config.path_patterns_match_query = true;
+        assert_eq!(PathPatternTarget::from_config(&config), PathPatternTarget::PathAndQuery);
+        config.path_patterns_match_url = true;
+        assert_eq!(PathPatternTarget::from_config(&config), PathPatternTarget::FullUrl);
+    }
+
+    #[test]
+    fn host_anchored_exclude_pattern_excludes_only_with_the_full_url_target() {
+        let url = Url::parse("https://example.com/private/x").expect("valid URL");
+        let exclude = compile_regexes(&[r"^https://example\.com/private/".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(passes_path_patterns(
+            &url,
+            &exclude,
+            &[],
+            true,
+            PathPatternTarget::PathAndQuery,
+            &mut urls_filtered
+        ));
+        assert!(!passes_path_patterns(
+            &url,
+            &exclude,
+            &[],
+            true,
+            PathPatternTarget::FullUrl,
+            &mut urls_filtered
+        ));
+        assert_eq!(urls_filtered, 1);
+    }
+
+    /// A backreference after an ambiguous repetition: matching it against a long run of `a`s
+    /// with no `b` exhausts the backtracking engine's limit instead of answering.
+    const BACKTRACK_BOMB: &str = r"^/(a|aa)+\1b";
+
+    fn backtrack_bomb_url() -> Url {
+        Url::parse(&format!("https://example.com/{}", "a".repeat(64))).expect("valid URL")
+    }
+
+    #[test]
+    fn backtrack_bomb_pattern_cannot_be_evaluated() {
+        let pattern = PathPattern::new(BACKTRACK_BOMB).expect("valid pattern");
+        let url = backtrack_bomb_url();
+        assert!(
+            pattern.is_match(url.path()).is_err(),
+            "the fixture must hit the backtrack limit, or the fail-closed tests below prove nothing"
+        );
+    }
+
+    #[test]
+    fn exclude_pattern_that_cannot_be_evaluated_excludes_the_url() {
+        let exclude = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(
+                &backtrack_bomb_url(),
+                &exclude,
+                &[],
+                true,
+                PathPatternTarget::Path,
+                &mut urls_filtered
+            ),
+            "an exclude pattern that hits the backtrack limit must count as a match"
+        );
+        assert_eq!(urls_filtered, 1);
+    }
+
+    #[test]
+    fn include_pattern_that_cannot_be_evaluated_does_not_admit_the_url() {
+        let include = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(
+                &backtrack_bomb_url(),
+                &[],
+                &include,
+                true,
+                PathPatternTarget::Path,
+                &mut urls_filtered
+            ),
+            "an include pattern that hits the backtrack limit must count as no match"
+        );
+        assert_eq!(urls_filtered, 1);
+    }
+
+    /// A URL of `len` characters ending in `.html`, which `.*(?<!\.html)$` never matches: every
+    /// start position is tried, so the backtracks needed grow with the square of `len`.
+    fn html_url_text(len: usize) -> String {
+        format!("https://example.com/{}.html", "x".repeat(len - 25))
+    }
+
+    #[test]
+    fn backtrack_limit_is_lower_than_the_library_default() {
+        const QUADRATIC: &str = r".*(?<!\.html)$";
+        let long = html_url_text(600);
+        assert!(
+            fancy_regex::Regex::new(QUADRATIC)
+                .expect("valid pattern")
+                .is_match(&long)
+                .is_ok(),
+            "the fixture must finish under the library's default limit, or it cannot tell the limits apart"
+        );
+        let pattern = PathPattern::new(QUADRATIC).expect("valid pattern");
+        assert!(
+            pattern.is_match(&long).is_err(),
+            "a 600-character URL must exceed the path pattern backtrack limit"
+        );
+        assert_eq!(
+            pattern.is_match(&html_url_text(150)).ok(),
+            Some(false),
+            "the same pattern must still be evaluated on a 150-character URL"
+        );
+    }
+
+    /// A `tracing` subscriber that counts WARN events.
+    struct WarnCounter(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn a_pattern_that_cannot_be_evaluated_warns_once_per_compilation() {
+        let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let subscriber = WarnCounter(Arc::clone(&warnings));
+        tracing::subscriber::with_default(subscriber, || {
+            let exclude = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+            let cloned = exclude.clone();
+            let mut urls_filtered = 0usize;
+            for patterns in [&exclude, &cloned, &exclude, &cloned] {
+                passes_path_patterns(
+                    &backtrack_bomb_url(),
+                    patterns,
+                    &[],
+                    true,
+                    PathPatternTarget::Path,
+                    &mut urls_filtered,
+                );
+            }
+            assert_eq!(urls_filtered, 4, "every URL must still be kept out of the crawl");
+            assert_eq!(
+                warnings.load(Ordering::SeqCst),
+                1,
+                "a pattern and its clones must warn once, not once per URL"
+            );
+
+            let recompiled = compile_regexes(&[BACKTRACK_BOMB.to_owned()]).expect("valid pattern");
+            passes_path_patterns(
+                &backtrack_bomb_url(),
+                &recompiled,
+                &[],
+                true,
+                PathPatternTarget::Path,
+                &mut urls_filtered,
+            );
+        });
+        assert_eq!(
+            warnings.load(Ordering::SeqCst),
+            2,
+            "a pattern compiled for another crawl must warn again"
         );
     }
 

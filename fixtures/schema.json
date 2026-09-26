@@ -149,6 +149,10 @@
 							"type": "boolean",
 							"description": "Match include_paths/exclude_paths against path?query instead of just path. Defaults to false"
 						},
+						"path_patterns_match_url": {
+							"type": "boolean",
+							"description": "Match include_paths/exclude_paths against the full URL (scheme://host[:port]/path?query, no fragment). Takes precedence over path_patterns_match_query. Defaults to false"
+						},
 						"dedup_include_query": {
 							"type": "boolean",
 							"description": "Include the sorted query string in the crawl-dedup key. Defaults to false, so ?id=1 and ?id=2 collapse to one page"

@@ -78,6 +78,7 @@ encoding_rs = "0.8"
 
 # Binding framework dependencies
 ext-php-rs = "0.15.15"
+fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
 html-escape = "0.2.15"

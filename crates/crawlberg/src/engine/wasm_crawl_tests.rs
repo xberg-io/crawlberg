@@ -266,6 +266,31 @@ async fn sequential_crawl_excludes_by_query_when_match_query_is_enabled() {
     );
 }
 
+/// With `path_patterns_match_url` on, a pattern anchored on scheme and host matches.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_excludes_by_full_url_when_match_url_is_enabled() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", r#"<html><body><a href="/private/x">x</a></body></html>"#).await;
+    mount_html(&mock, "/private/x", "<html><body>private</body></html>").await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        exclude_paths: vec![r"^https?://127\.0\.0\.1:\d+/private/".to_owned()],
+        path_patterns_match_url: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned()],
+        "with path_patterns_match_url on, a host-anchored pattern must exclude /private/x"
+    );
+}
+
 /// The dedup key drops the query by default, so `?id=1` and `?id=2` collapse to one page.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
