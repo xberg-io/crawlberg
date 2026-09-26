@@ -126,7 +126,7 @@ fn extract_from_body(
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&decoded.body);
-    let doc = tl::parse(&parsed_html, ParserOptions::default())
+    let doc = tl::parse(&parsed_html.text, ParserOptions::default())
         .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
     let page_robots = header_robots.with_meta_tags(&doc);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
