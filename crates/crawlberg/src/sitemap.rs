@@ -373,16 +373,25 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
     true
 }
 
-/// Resolve one child `<loc>` of a sitemap index against the index's own URL.
-fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> String {
+/// Resolve one child `<loc>` of a sitemap index against the index's own URL. `None` when
+/// `child_url` cannot be resolved against `sitemap_url` at all, which the caller treats the
+/// same as a child it could not fetch.
+fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> Option<String> {
     let Some(base_parsed) = base else {
-        return child_url.to_owned();
+        return Some(child_url.to_owned());
     };
     if Url::parse(child_url).is_ok() {
-        rewrite_url_host(child_url, base_parsed)
-    } else {
-        resolve_redirect(sitemap_url, child_url)
+        return Some(rewrite_url_host(child_url, base_parsed));
     }
+    let resolved = resolve_redirect(sitemap_url, child_url);
+    if resolved.is_none() {
+        tracing::debug!(
+            sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
+            target_len = child_url.len(),
+            "sitemap-index child <loc> failed to parse; skipping it"
+        );
+    }
+    resolved
 }
 
 /// Fetch one child sitemap named by an index and walk whatever it turns out to be.
@@ -462,7 +471,9 @@ async fn process_sitemap_response_inner(
         if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let resolved = resolve_child_sitemap_url(base.as_ref(), document.url, child_url);
+        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.url, child_url) else {
+            continue;
+        };
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
@@ -505,6 +516,7 @@ pub(crate) fn decompress_gzip(data: &[u8]) -> Result<String, std::io::Error> {
 mod tests {
     use super::*;
     use crate::map::MapFilter;
+    use crate::tracing_capture::{assert_logged_without_secret, capture_events};
     use crate::types::CrawlConfig;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -543,6 +555,38 @@ mod tests {
         }
         body.push_str("</sitemapindex>");
         body
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_sitemap_index_child_loc_is_refused_not_followed_raw() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        let base = Url::parse(sitemap_url).expect("valid URL");
+
+        let resolved = resolve_child_sitemap_url(Some(&base), sitemap_url, "https://ex ample.com/bad.xml");
+
+        assert!(
+            resolved.is_none(),
+            "a sitemap-index child <loc> that fails to parse must not be followed as raw text, \
+             got {resolved:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_sitemap_index_child_loc_with_credentials_is_never_logged() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        let base = Url::parse(sitemap_url).expect("valid URL");
+
+        let (resolved, fields) = capture_events(|| {
+            resolve_child_sitemap_url(Some(&base), sitemap_url, "https://user:hunter2@ex ample.com/bad.xml")
+        });
+
+        assert!(
+            resolved.is_none(),
+            "an unparseable sitemap-index child <loc> must not be followed"
+        );
+        assert_logged_without_secret(&fields, "hunter2", sitemap_url);
     }
 
     async fn mount_xml(mock: &MockServer, route: &str, body: String) {
