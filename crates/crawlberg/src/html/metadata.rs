@@ -14,10 +14,16 @@ use super::{attr_eq, decode_attr_value, get_attr, has_rel, resolve_url};
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();
     for cap in META_RE_NAME_CONTENT.captures_iter(body) {
-        results.push((cap[1].to_lowercase(), decode_attr_value(&cap[2]).into_owned()));
+        results.push((
+            cap[1].trim_ascii().to_lowercase(),
+            decode_attr_value(&cap[2]).into_owned(),
+        ));
     }
     for cap in META_RE_CONTENT_NAME.captures_iter(body) {
-        results.push((cap[2].to_lowercase(), decode_attr_value(&cap[1]).into_owned()));
+        results.push((
+            cap[2].trim_ascii().to_lowercase(),
+            decode_attr_value(&cap[1]).into_owned(),
+        ));
     }
     results
 }
@@ -135,7 +141,8 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 
 /// Extract metadata from a parsed HTML document, with regex fallback for malformed content.
 ///
-/// The canonical URL resolves against `base_url`, the document's base URL.
+/// The canonical URL resolves against `base_url`, the document's base URL. A blank `href` gives no
+/// canonical URL: it points at the page itself.
 pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
     let parser = dom.parser();
 
@@ -148,7 +155,9 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
     let canonical_url = dom.query_selector(SEL_LINK_REL).and_then(|iter| {
         iter.filter_map(|h| h.get(parser).and_then(|node| node.as_tag()))
             .find(|tag| has_rel(tag, "canonical"))
-            .and_then(|tag| get_attr(tag, "href").map(|href| resolve_url(&href, base_url)))
+            .and_then(|tag| get_attr(tag, "href"))
+            .filter(|href| !href.trim_ascii().is_empty())
+            .map(|href| resolve_url(&href, base_url))
     });
 
     let mut md = PageMetadata {
@@ -174,7 +183,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
         if content.is_empty() {
             return;
         }
-        accumulator.apply(&name.to_lowercase(), content);
+        accumulator.apply(&name.trim_ascii().to_lowercase(), content);
     });
 
     let mut md = accumulator.finish();
@@ -465,6 +474,18 @@ mod tests {
         let md = extract_metadata(
             &dom,
             r#"<META NAME="Description" CONTENT="rd"><Meta Content="rt" Name="OG:Title">"#,
+            &document_url(),
+        );
+        assert_eq!(md.description.as_deref(), Some("rd"));
+        assert_eq!(md.og_title.as_deref(), Some("rt"));
+    }
+
+    #[test]
+    fn raw_body_fallback_trims_the_meta_name() {
+        let dom = crate::html::parse_html("").expect("valid HTML");
+        let md = extract_metadata(
+            &dom,
+            r#"<meta name=" description " content="rd"><meta content="rt" name=" og:title ">"#,
             &document_url(),
         );
         assert_eq!(md.description.as_deref(), Some("rd"));
