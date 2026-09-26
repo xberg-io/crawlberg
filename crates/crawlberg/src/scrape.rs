@@ -868,6 +868,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_script_image_sources_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"JavaScript:alert(1)\">\
+             <meta name=\"twitter:image\" content=\"vbscript:x\"></head><body>\
+             <img src=\"javascript:alert(1)\"><img src=\"VBScript:msgbox(1)\"><img src=\"i.png\">\
+             <picture><source srcset=\"JAVASCRIPT:alert(1) 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
+    }
+
+    #[tokio::test]
     async fn scrape_skips_inline_data_meta_images_in_any_case() {
         let resp = response(
             "text/html",

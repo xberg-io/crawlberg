@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{attr_eq, clean_url, get_attr, get_url_attr, has_scheme, resolve_url};
+use super::{INLINE_SCHEMES, attr_eq, clean_url, get_attr, get_url_attr, has_scheme, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -38,7 +38,7 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     images
 }
 
-/// Collect `<img src>` images, skipping blank and inline `data:` sources.
+/// Collect `<img src>` images, skipping blank sources and inline `data:` or script sources.
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -52,7 +52,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
             continue;
         };
         let resolved = base_url.join(&src);
-        if resolved.as_ref().is_ok_and(|u| u.scheme() == "data") {
+        if resolved.as_ref().is_ok_and(|u| INLINE_SCHEMES.contains(&u.scheme())) {
             continue;
         }
         images.push(ImageInfo {
@@ -66,7 +66,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
 }
 
 /// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
-/// skipping blank and inline `data:` candidates.
+/// skipping blank candidates and inline `data:` or script candidates.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -83,7 +83,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         else {
             continue;
         };
-        if has_scheme(&raw_url, "data") {
+        if INLINE_SCHEMES.iter().any(|scheme| has_scheme(&raw_url, scheme)) {
             continue;
         }
         images.push(ImageInfo {
@@ -97,7 +97,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
 }
 
 /// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
-/// skipping inline `data:` contents.
+/// skipping inline `data:` or script contents.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
@@ -120,7 +120,7 @@ fn collect_meta_images(
         let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
-        if has_scheme(&content, "data") {
+        if INLINE_SCHEMES.iter().any(|scheme| has_scheme(&content, scheme)) {
             continue;
         }
         images.push(ImageInfo {
@@ -226,6 +226,30 @@ mod tests {
         assert_eq!(
             extract(r#"<img src="DATA:image/png;base64,AA"><img src="&#68;ata:image/gif;base64,R0"><img src="i.png">"#),
             [flat("https://example.com/dir/i.png", "img")]
+        );
+    }
+
+    #[test]
+    fn script_sources_are_skipped_in_any_spelling() {
+        let html = concat!(
+            r#"<img src="javascript:alert(1)"><img src="VBScript:msgbox(1)"><img src="&#74;ava&#9;script:x">"#,
+            r#"<img src="i.png">"#,
+            r#"<source srcset="JavaScript:alert(1) 1x"><source srcset="vbscript:x"><source srcset="s.png">"#,
+            r#"<meta property="og:image" content="javascript:alert(1)">"#,
+            r#"<meta property="og:image" content="VBSCRIPT:x">"#,
+            r#"<meta property="og:image" content="og.png">"#,
+            r#"<meta name="twitter:image" content="Javascript:alert(1)">"#,
+            r#"<meta name="twitter:image" content="vbscript:x">"#,
+            r#"<meta name="twitter:image" content="tw.png">"#,
+        );
+        assert_eq!(
+            extract(html),
+            [
+                flat("https://example.com/dir/i.png", "img"),
+                flat("https://example.com/dir/s.png", "picture_source"),
+                flat("https://example.com/dir/og.png", "og:image"),
+                flat("https://example.com/dir/tw.png", "twitter:image"),
+            ]
         );
     }
 

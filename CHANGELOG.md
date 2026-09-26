@@ -236,6 +236,7 @@ All notable changes to crawlberg are documented here.
 
 - **The images list ignored `<base href>`.** Image addresses now resolve against the same
   base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
 - **Attribute values were matched with exact case.** HTML compares values such as `rel`,
   `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
   `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
@@ -243,10 +244,12 @@ All notable changes to crawlberg are documented here.
   any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
   and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
   nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+
 - **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
   against the page URL, and the canonical URL was not resolved at all, so
   `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
   same base as the links list, as a browser resolves a `<link href>`. (#101)
+
 - **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
   was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
   `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
@@ -254,36 +257,51 @@ All notable changes to crawlberg are documented here.
   without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
   not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
   spaces is a deliberate leniency for pages that add them. (#136)
+
 - **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
   gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
   the page now has no canonical URL. (#137)
+
 - **hreflang addresses were not resolved.** The alternate-language links kept each address as
   the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
   the links list. The language code is reported without the spaces around it, and a link whose
   language or `href` is only whitespace is skipped, as an empty one was. (#126)
+
 - **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
   value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
   reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
   rewrite. (#160)
+
 - **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
   type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
   `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
   skipped, as a canonical or hreflang link is. (#187)
+
 - **The links list dropped Unicode spaces from the ends of an address.** A link such as
   `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
   keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
   images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
   parser removes: control characters and spaces up to U+0020 at either end, and tabs and
   newlines inside. An address with nothing else in it counts as blank. (#191)
+
 - **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
   an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
   with a blank address each resolved to the page itself. They are now skipped.
+
 - **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
   a no-break space, and leading commas hid the candidate after them. The list is now split as
   a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
   as an `<img>` one is.
+
 - **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
   browser does, and a target of only control characters is no redirect.
+
+- **Images and assets with a script address were reported.** The images list skipped only `data:`
+  addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
+  `javascript:...` came back as an image. Asset discovery skipped `data:` only for images, so an
+  image, stylesheet or script asset with a script address, or a stylesheet or script with a `data:`
+  address, was discovered. Both now skip `data:`, `javascript:` and `vbscript:` addresses in any
+  case, as the links list does. (#276)
 
 ### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
