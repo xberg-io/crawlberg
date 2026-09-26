@@ -173,6 +173,13 @@ All notable changes to crawlberg are documented here.
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, or a bare `user:pass@host` with no scheme, which parses but never gets a
+  host either, was logged exactly as received, credentials included. It now strips a leading
+  `user[:pass]@` from such a value directly instead of returning it unchanged. Three sitemap
+  warnings (the document budget cap, the index depth cap, and cycle detection) also logged their
+  address without going through the redactor at all; they now do. (#236, #243)
 
 ### Added
 
