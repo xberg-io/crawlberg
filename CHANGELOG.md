@@ -4,6 +4,32 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A browser-rendered page now reports the server's real status, content type and headers.**
+  Every CDP-rendered response previously claimed `200`, `text/html` and no headers at all, so a
+  rendered 404, 403 or 410 was indistinguishable from a rendered 200. Code that assumed a browser
+  fetch's `status` is always 200, or that the header-derived fields of a `ScrapeResult` — `etag`,
+  `cache_control`, `x_robots_tag` and the rest — are always empty in browser mode, will now see
+  real values. Cookies are affected the same way: a crawl run with `cookies_enabled` now collects
+  `Set-Cookie` from browser responses, which previously contributed none.
+
+  **No status is newly turned into an error.** The browser path deliberately does not map a status
+  to a `CrawlError` the way the HTTP tier's `status_error` does, so a rendered 404 is still returned
+  as a page, with its body and a `status` of 404. `BrowserMode::Auto` therefore still works when the
+  browser tier was entered precisely *because* the HTTP tier was blocked with a 403: escalation
+  still happens, the browser still renders, and a challenge the browser clears still lands on the
+  real page under its own 200.
+
+  **One pre-existing rule does reach browser fetches for the first time.** A crawl already records
+  `HTTP <status>` against a seed whose redirect chain ends on a status of 400 or above, and reports
+  such a seed without crawling it. No browser fetch could reach that rule while they all claimed
+  200; now a seed Chrome redirects to a 4xx or 5xx page is treated exactly as the HTTP tier has
+  always treated it. This is deliberate: if the browser tier is *also* blocked then the fallback did
+  not succeed and there is no content to crawl, and rendering a WAF interstitial into results as
+  though it were the page is precisely the behaviour being removed. A browser fetch that succeeds,
+  and any seed reached without a redirect, are both unaffected. (#166, #148)
+
 ### Fixed
 
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
@@ -105,6 +131,26 @@ All notable changes to crawlberg are documented here.
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+- **A browser-rendered page reported invented metadata, and a crawl discarded whatever the backend
+  had collected.** `page_fetch` hardcoded a synthetic `200` status, a `text/html` content type and
+  an empty header map for every chromiumoxide navigation, so nothing a rendered page's own response
+  said could reach a caller. Independently, `browser_http_to_crawl` — the one conversion both the
+  crawl loop and every escalation to the browser tier pass through — substituted an empty header
+  map, discarding the headers the native backend had been collecting faithfully all along. Either
+  alone was enough to lose the data, so a 304's `ETag` went missing in browser mode whichever
+  backend was in use. The CDP `Network.responseReceived` and `responseReceivedExtraInfo` events for
+  the main frame's document are now recorded during navigation and reported as the response's real
+  status, content type and headers, and the crawl conversion passes the headers through. The
+  extra-info status wins where the two disagree: for a revalidated response `responseReceived`
+  reports the `200` Chrome served from its own cache and only the extra-info event carries the
+  `304` that actually came back. A navigation that produces no observable document response — an
+  `about:` or `data:` URL — still reports the previous synthetic defaults. (#166, #148)
+- **A page that navigated again just after load failed with a missing execution context.**
+  `page_fetch` asked for the HTML exactly once, and `page.content()` evaluates against an execution
+  context id pinned when the page loaded, so a meta refresh or a client-side router navigating
+  inside the `extra_wait` window destroyed that context and the whole fetch failed with Chrome's
+  verbatim "Cannot find context with specified id". The extraction now retries briefly, resolving
+  against the replacement document once it commits. (#170)
 
 ### Internal
 
