@@ -130,11 +130,23 @@ impl SsrfValidator for DefaultSsrfValidator {
     }
 }
 
+/// First hextet of the Teredo prefix `2001:0000::/32` (RFC 4380 section 2.6).
+const TEREDO_PREFIX_HIGH: u16 = 0x2001;
+
+/// Second hextet of the Teredo prefix. `2001:db8::/32` and every other `2001:` allocation
+/// has a non-zero value here and is not Teredo.
+const TEREDO_PREFIX_LOW: u16 = 0x0000;
+
+/// RFC 4380 section 4 stores the Teredo client's IPv4 address as its one's complement.
+const TEREDO_CLIENT_IPV4_MASK: u8 = 0xff;
+
 /// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
 ///
 /// Mirrors `crawlberg::net::ssrf::canonicalize_ip`. Without it, `::ffff:127.0.0.1` is
 /// only tested against the IPv6 deny-nets and slips past `127.0.0.0/8`, while a
 /// dual-stack host routes it straight to loopback.
+///
+/// Covers the IPv4-mapped form, the NAT64 well-known prefix, and Teredo.
 fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     let IpAddr::V6(v6) = ip else { return ip };
 
@@ -146,6 +158,16 @@ fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
         let octets = v6.octets();
         return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
+    }
+
+    if segments[0] == TEREDO_PREFIX_HIGH && segments[1] == TEREDO_PREFIX_LOW {
+        let octets = v6.octets();
+        return IpAddr::V4(std::net::Ipv4Addr::new(
+            octets[12] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[13] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[14] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[15] ^ TEREDO_CLIENT_IPV4_MASK,
+        ));
     }
 
     ip
@@ -208,6 +230,9 @@ mod tests {
             "http://[::ffff:127.0.0.1]/",
             "http://[::ffff:169.254.169.254]/",
             "http://[64:ff9b::7f00:1]/",
+            // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
+            // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
+            "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),

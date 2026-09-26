@@ -142,6 +142,16 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
     })
 }
 
+/// First hextet of the Teredo prefix `2001:0000::/32` (RFC 4380 section 2.6).
+const TEREDO_PREFIX_HIGH: u16 = 0x2001;
+
+/// Second hextet of the Teredo prefix. `2001:db8::/32` and every other `2001:` allocation has a
+/// non-zero value here and is not Teredo.
+const TEREDO_PREFIX_LOW: u16 = 0x0000;
+
+/// RFC 4380 section 4 stores the Teredo client's IPv4 address as its one's complement.
+const TEREDO_CLIENT_IPV4_MASK: u8 = 0xff;
+
 /// Test if an IP address is permitted by the SSRF policy.
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
@@ -152,8 +162,13 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
 /// dual-stack host the kernel routes such an address to the IPv4 destination, so
 /// without this the deny-list is bypassable by writing the literal in IPv6 form.
 ///
-/// Covers the IPv4-mapped form (`::ffff:a.b.c.d`) and the NAT64 well-known prefix
-/// (`64:ff9b::/96`, RFC 6052), which embeds an IPv4 address the same way.
+/// Covers the IPv4-mapped form (`::ffff:a.b.c.d`), the NAT64 well-known prefix
+/// (`64:ff9b::/96`, RFC 6052), which embeds an IPv4 address the same way, and Teredo
+/// (`2001:0000::/32`, RFC 4380), which embeds the client's IPv4 address inverted.
+///
+/// RFC 4380 section 5.2.4 obliges a Teredo node to drop a packet whose embedded address is
+/// not global, but that binds a *remote* node: crawlberg can neither observe nor enforce it,
+/// so it is not a defence this deny-list can rely on.
 fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     let IpAddr::V6(v6) = ip else { return ip };
 
@@ -165,6 +180,16 @@ fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
         let octets = v6.octets();
         return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
+    }
+
+    if segments[0] == TEREDO_PREFIX_HIGH && segments[1] == TEREDO_PREFIX_LOW {
+        let octets = v6.octets();
+        return IpAddr::V4(std::net::Ipv4Addr::new(
+            octets[12] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[13] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[14] ^ TEREDO_CLIENT_IPV4_MASK,
+            octets[15] ^ TEREDO_CLIENT_IPV4_MASK,
+        ));
     }
 
     ip
