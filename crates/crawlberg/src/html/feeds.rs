@@ -7,30 +7,28 @@ use url::Url;
 
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
-use super::get_attr;
-use super::resolve_url;
-use super::selectors::{SEL_FAVICON, SEL_FEED_ALTERNATE, SEL_HEADINGS, SEL_HREFLANG};
+use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
+use super::{get_attr, has_rel, resolve_url};
 
-/// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document.
+/// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
+/// document's base URL.
 pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     let parser = dom.parser();
     let mut feeds = Vec::new();
 
-    if let Some(iter) = dom.query_selector(SEL_FEED_ALTERNATE) {
+    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
         for handle in iter {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let link_type = get_attr(tag, "type").unwrap_or_default();
-            let raw_href = get_attr(tag, "href").unwrap_or_default();
-            let href = if raw_href.is_empty() {
-                String::new()
-            } else {
-                resolve_url(&raw_href, base_url)
-            };
+            if !has_rel(tag, "alternate") {
+                continue;
+            }
+            let link_type = get_attr(tag, "type").unwrap_or_default().to_ascii_lowercase();
+            let href = resolve_url(&get_attr(tag, "href").unwrap_or_default(), base_url);
             let title = get_attr(tag, "title").map(Cow::into_owned);
 
-            let feed_type = match link_type.as_ref() {
+            let feed_type = match link_type.as_str() {
                 "application/rss+xml" => Some(FeedType::Rss),
                 "application/atom+xml" => Some(FeedType::Atom),
                 "application/json" | "application/feed+json" => Some(FeedType::JsonFeed),
@@ -58,6 +56,9 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
+            if !has_rel(tag, "alternate") {
+                continue;
+            }
             let lang = get_attr(tag, "hreflang").unwrap_or_default().into_owned();
             let url = get_attr(tag, "href").unwrap_or_default().into_owned();
             if !lang.is_empty() && !url.is_empty() {
@@ -68,27 +69,23 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
     entries
 }
 
-/// Icon `rel` values recognized as favicons.
-const FAVICON_RELS: &[&str] = &["icon", "shortcut icon", "apple-touch-icon"];
+/// `rel` tokens recognized as favicons. `rel="shortcut icon"` holds the `icon` token.
+const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 
-/// Extract favicon and icon links from a parsed HTML document.
+/// Extract favicon and icon links from a parsed HTML document, resolved against the document's
+/// base URL.
 pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let parser = dom.parser();
     let mut favicons = Vec::new();
-    // ~keep `tl`'s selector matcher does not reliably OR together multiple
-    // `link[rel='x']` alternatives that share the same tag name (verified: a grouped
-    // selector like `link[rel='icon'], link[rel='shortcut icon']` matches nothing even
-    // though each alternative matches on its own). Select on attribute presence once
-    // and filter the value in Rust instead of relying on the comma-grouped selector.
-    if let Some(iter) = dom.query_selector(SEL_FAVICON) {
+    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
         for handle in iter {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let rel = get_attr(tag, "rel").unwrap_or_default();
-            if !FAVICON_RELS.contains(&rel.as_ref()) {
+            if !FAVICON_RELS.iter().any(|token| has_rel(tag, token)) {
                 continue;
             }
+            let rel = get_attr(tag, "rel").unwrap_or_default();
             let raw_href = get_attr(tag, "href").unwrap_or_default();
             if raw_href.is_empty() {
                 continue;

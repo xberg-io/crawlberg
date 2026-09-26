@@ -10,8 +10,8 @@ use tl::VDom;
 use tokio::sync::Semaphore;
 use url::Url;
 
-use crate::html::get_attr;
-use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_CSS, SEL_SCRIPT_SRC};
+use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
+use crate::html::{effective_base_url, get_attr, has_rel};
 use crate::http::http_fetch;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
@@ -22,14 +22,16 @@ pub(crate) struct AssetRef {
     html_tag: String,
 }
 
-/// Discover downloadable assets from a parsed HTML document.
-pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
+/// Discover downloadable assets from a parsed HTML document, resolved against its base URL.
+pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRef> {
     let parser = dom.parser();
+    let base_url = &effective_base_url(dom, document_url);
     let mut assets = Vec::new();
 
-    if let Some(iter) = dom.query_selector(SEL_LINK_CSS) {
+    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
+                && has_rel(tag, "stylesheet")
                 && let Some(href) = get_attr(tag, "href")
                 && let Ok(url) = base_url.join(&href)
             {
@@ -177,12 +179,61 @@ pub(crate) async fn download_assets(
 mod tests {
     use super::*;
 
+    fn discovered(html: &str, document_url: &str) -> Vec<String> {
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let document_url = Url::parse(document_url).expect("valid URL");
+        discover_assets(&dom, &document_url)
+            .into_iter()
+            .map(|a| a.url)
+            .collect()
+    }
+
+    #[test]
+    fn stylesheets_match_the_rel_token_in_any_case() {
+        assert_eq!(
+            discovered(
+                r#"<link rel="StyleSheet" href="a.css"><link rel="alternate stylesheet" href="b.css">"#,
+                "https://example.com/"
+            ),
+            ["https://example.com/a.css", "https://example.com/b.css"]
+        );
+    }
+
+    #[test]
+    fn a_comma_does_not_separate_stylesheet_from_other_rel_words() {
+        assert_eq!(
+            discovered(
+                r#"<link rel="stylesheet,icon" href="a.css"><link rel="stylesheet" href="b.css">"#,
+                "https://example.com/"
+            ),
+            ["https://example.com/b.css"]
+        );
+    }
+
+    #[test]
+    fn assets_resolve_against_the_base_href() {
+        assert_eq!(
+            discovered(
+                r#"<base href="/other/"><link rel="stylesheet" href="s.css"><script src="j.js"></script>
+                <img src="i.png">"#,
+                "https://example.com/dir/page.html"
+            ),
+            [
+                "https://example.com/other/s.css",
+                "https://example.com/other/j.js",
+                "https://example.com/other/i.png"
+            ]
+        );
+    }
+
     #[test]
     fn inline_data_images_are_skipped_in_any_spelling() {
-        let html = r#"<img src="Data:image/png;base64,AA"><img src="&#100;ata&#9;:,x"><img src="i.png">"#;
-        let dom = crate::html::parse_html(html).expect("valid HTML");
-        let base_url = Url::parse("https://example.com/page").expect("valid base URL");
-        let urls: Vec<String> = discover_assets(&dom, &base_url).into_iter().map(|a| a.url).collect();
-        assert_eq!(urls, ["https://example.com/i.png"]);
+        assert_eq!(
+            discovered(
+                r#"<img src="Data:image/png;base64,AA"><img src="&#100;ata&#9;:,x"><img src="i.png">"#,
+                "https://example.com/page"
+            ),
+            ["https://example.com/i.png"]
+        );
     }
 }

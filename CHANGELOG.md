@@ -27,6 +27,13 @@ All notable changes to crawlberg are documented here.
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+- **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
+  the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
+  resolved against the page's base URL and normalized as the links list is, so it gives
+  `https://example.com/en/page`, and `https://Example.com` gives `https://example.com/`. If your
+  code joins a relative canonical URL to the page URL, remove that step. If it compares the value
+  with a literal, compare with the normalized form. (#101)
+
 ### Fixed
 
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
@@ -136,6 +143,17 @@ All notable changes to crawlberg are documented here.
   were skipped the same way. Tag names now match in any case. (#87)
 - **The images list ignored `<base href>`.** Image addresses now resolve against the same
   base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. (#101)
 
 ### Added
 

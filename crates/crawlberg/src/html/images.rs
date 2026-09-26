@@ -7,27 +7,30 @@ use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
-use super::links::effective_base_url;
-use super::selectors::{SEL_IMG_SRC, SEL_OG_IMAGE, SEL_SOURCE_SRCSET, SEL_TWITTER_IMAGE};
-use super::{get_attr, resolve_url};
+use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
+use super::{attr_eq, get_attr, resolve_url};
 
-/// Extract all images from a parsed HTML document.
-///
-/// Relative addresses resolve against the same base as the links list: the first `<base href>`,
-/// else `document_url`.
+/// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
 /// Sources are appended in a fixed order — `<img>`, `<picture><source>`, `og:image`,
 /// `twitter:image` — and downstream dedup depends on it. ~keep
-pub(crate) fn extract_images(dom: &VDom<'_>, document_url: &Url) -> Vec<ImageInfo> {
-    let base_url = &effective_base_url(dom, document_url);
+pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     let mut images = Vec::new();
     collect_img_elements(dom, base_url, &mut images);
     collect_picture_sources(dom, base_url, &mut images);
-    collect_meta_images(dom, base_url, SEL_OG_IMAGE, &ImageSource::OgImage, &mut images);
     collect_meta_images(
         dom,
         base_url,
-        SEL_TWITTER_IMAGE,
+        "property",
+        "og:image",
+        &ImageSource::OgImage,
+        &mut images,
+    );
+    collect_meta_images(
+        dom,
+        base_url,
+        "name",
+        "twitter:image",
         &ImageSource::TwitterImage,
         &mut images,
     );
@@ -91,22 +94,26 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
     }
 }
 
-/// Collect images from `<meta ... content>` tags matched by `selector`.
+/// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
-    selector: &str,
+    attr: &str,
+    name: &str,
     source: &ImageSource,
     images: &mut Vec<ImageInfo>,
 ) {
     let parser = dom.parser();
-    let Some(iter) = dom.query_selector(selector) else {
+    let Some(iter) = dom.query_selector(SEL_META) else {
         return;
     };
     for handle in iter {
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
+        if !attr_eq(tag, attr, name) {
+            continue;
+        }
         let Some(content) = get_attr(tag, "content") else {
             continue;
         };
