@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::release_browser;
+use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -23,7 +23,13 @@ pub(super) async fn run(
 
     let result = run_with_browser(&browser, url, actions, config).await;
 
-    release_browser(browser, handler_handle, None, config.browser.shutdown_timeout).await;
+    release_browser(
+        browser,
+        handler_handle,
+        ExternalTabCleanup::default(),
+        config.browser.shutdown_timeout,
+    )
+    .await;
     if let Some(dir) = data_dir {
         let _ = std::fs::remove_dir_all(dir);
     }

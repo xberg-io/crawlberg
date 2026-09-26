@@ -301,6 +301,42 @@ async fn pool_shutdown_leaves_the_external_chrome_running() {
     chrome.assert_still_serving(Duration::from_secs(1), pages_before).await;
 }
 
+/// A pooled page dropped without `close().await` still has its tab closed in the external
+/// Chrome, because pool shutdown waits for the close `Drop` spawned.
+///
+/// ~keep `PooledPage::drop` cannot await, so it spawns `page.close()`. Pool teardown aborts the
+/// ~keep task that owns the CDP websocket, and before `release_browser` learned to wait, that
+/// ~keep abort cancelled the spawned close and left the tab open in the caller's Chrome.
+/// ~keep `pool_shutdown_leaves_the_external_chrome_running` awaits `page.close()` explicitly and
+/// ~keep therefore never exercised this path.
+#[tokio::test]
+async fn pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close() {
+    let Some(mut chrome) =
+        ExternalChrome::start("pool_shutdown_closes_a_pooled_tab_dropped_without_awaiting_its_close")
+    else {
+        return;
+    };
+    let pages_before = chrome.page_count();
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some(chrome.ws_url.clone()),
+        ..BrowserPoolConfig::default()
+    });
+
+    let page = pool
+        .acquire_page()
+        .await
+        .expect("the pool must connect to the external Chrome");
+    assert_eq!(
+        chrome.page_count(),
+        pages_before + 1,
+        "acquiring a pooled page must open exactly one tab in the external Chrome"
+    );
+    drop(page);
+    pool.shutdown().await;
+
+    chrome.assert_still_serving(Duration::from_secs(1), pages_before).await;
+}
+
 /// An interaction run through `browser.endpoint` leaves the external Chrome running.
 #[cfg(feature = "interact")]
 #[tokio::test]

@@ -10,7 +10,7 @@ use tracing::Instrument as _;
 
 use self::launch::launch_or_connect;
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, release_browser};
+use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
@@ -259,7 +259,11 @@ async fn one_shot_fetch(
     // ~keep `release_browser` bounds its work by `shutdown_timeout` and force-kills a launched
     // ~keep Chrome on expiry, so this background task always finishes.
     tokio::spawn(async move {
-        release_browser(browser, handler_handle, open_target, shutdown_timeout).await;
+        let cleanup = ExternalTabCleanup {
+            open_tab: open_target,
+            ..ExternalTabCleanup::default()
+        };
+        release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
         if let Some(dir) = data_dir {
             let _ = tokio::fs::remove_dir_all(&dir).await;
         }
