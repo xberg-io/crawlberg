@@ -87,12 +87,20 @@ async fn native_browser_fetch_inner(
         tokio::time::sleep(extra).await;
     }
 
-    let content_type = rendered
-        .headers
-        .get("content-type")
-        .cloned()
-        .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_owned());
-    let body_bytes = rendered.html.as_bytes().to_vec();
+    let status = rendered.status.unwrap_or(DEFAULT_RENDERED_STATUS);
+    // ~keep The native backend parses even an empty body into a skeleton document. A status
+    // ~keep that carries no document reports the empty body and the real content type, as the
+    // ~keep HTTP fetch does.
+    let no_document = crate::http::NO_DOCUMENT_STATUSES.contains(&status);
+    let content_type = rendered.headers.get("content-type").cloned().unwrap_or_else(|| {
+        if no_document {
+            String::new()
+        } else {
+            DEFAULT_CONTENT_TYPE.to_owned()
+        }
+    });
+    let body = if no_document { String::new() } else { rendered.html };
+    let body_bytes = body.as_bytes().to_vec();
 
     let extras = BrowserExtras {
         eval_result: rendered.eval_result,
@@ -105,9 +113,9 @@ async fn native_browser_fetch_inner(
     };
 
     Ok(HttpResponse {
-        status: rendered.status.unwrap_or(DEFAULT_RENDERED_STATUS),
+        status,
         content_type,
-        body: rendered.html,
+        body,
         body_bytes,
         headers: rendered.headers.into_iter().map(|(k, v)| (k, vec![v])).collect(),
         browser_extras: Some(extras),

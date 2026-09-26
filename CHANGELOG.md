@@ -29,6 +29,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
+  a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
+  then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
+  fetch at once with the status, final URL and empty body that HTTP mode reports. The native
+  backend already returned at once, but it reported an empty HTML skeleton as the body; it now
+  reports an empty body too. (#121)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately
