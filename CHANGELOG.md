@@ -38,6 +38,11 @@ All notable changes to crawlberg are documented here.
   means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
   copy is merely missing are reported as lag. (#162)
 
+- **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
+  caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
+  and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
+  case-insensitive. Both entry points now parse the address and read the parsed scheme instead. (#221)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,

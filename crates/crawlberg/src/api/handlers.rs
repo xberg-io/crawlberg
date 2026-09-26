@@ -59,7 +59,7 @@ fn validate_url(url: &str) -> Result<(), ApiError> {
     if url.is_empty() {
         return Err(ApiError::bad_request("url is required"));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !crate::net::has_http_scheme(url) {
         return Err(ApiError::bad_request("url must start with http:// or https://"));
     }
     if url.len() > 8192 {
