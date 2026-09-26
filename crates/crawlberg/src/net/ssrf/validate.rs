@@ -217,8 +217,8 @@ pub(crate) fn classify_private_ip(ip: IpAddr) -> &'static str {
                     "loopback"
                 }
                 0x0000 if ipv6.segments() == [0; 8] => "unspecified",
-                0xfe80 => "link_local",
-                0xfc00 | 0xfd00 => "unique_local",
+                0xfe80..=0xfebf => "link_local",
+                0xfc00..=0xfdff => "unique_local",
                 0xff00..=0xffff => "multicast",
                 _ => "private_network",
             }

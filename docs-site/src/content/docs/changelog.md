@@ -173,6 +173,12 @@ title: "Changelog"
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
+  matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
+  reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
+  common case, since RFC 4193 randomises the unique-local global id. Both prefixes are now matched
+  as ranges. These addresses were refused before and are refused now; only the reason string in the
+  error and the log field changes. (#205)
 
 ### Added
 
