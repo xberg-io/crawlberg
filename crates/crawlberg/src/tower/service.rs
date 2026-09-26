@@ -219,10 +219,10 @@ fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<
         return None;
     }
     let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-    Some(CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-        vendor,
-    })
+    Some(CrawlError::waf_blocked(
+        vendor.clone(),
+        format!("waf/blocked detected on 2xx (body): {vendor}"),
+    ))
 }
 
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.

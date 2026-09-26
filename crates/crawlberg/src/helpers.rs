@@ -370,10 +370,10 @@ mod tests {
     fn should_disallow_all_when_robots_txt_is_behind_a_waf() {
         // ~keep `WafBlocked` is raised for a WAF fingerprint on a 2xx body as well as for a 403, so
         // the file was not read in either case and "unavailable" would be the wrong reading.
-        let outcome = outcome_for_fetch_error(&CrawlError::WafBlocked {
-            vendor: "cloudflare".to_owned(),
-            message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
-        });
+        let outcome = outcome_for_fetch_error(&CrawlError::waf_blocked(
+            "cloudflare",
+            "waf/blocked detected on 2xx (body): cloudflare",
+        ));
         assert!(
             is_disallow_all(&outcome),
             "a WAF interstitial in place of robots.txt must fail closed"
@@ -416,10 +416,7 @@ mod tests {
             CrawlError::bad_gateway("bad_gateway"),
             CrawlError::data_loss("data_loss"),
             CrawlError::other("other"),
-            CrawlError::WafBlocked {
-                vendor: "cloudflare".to_owned(),
-                message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
-            },
+            CrawlError::waf_blocked("cloudflare", "waf/blocked detected on 2xx (body): cloudflare"),
         ] {
             let outcome = outcome_for_fetch_error(&error);
             assert!(is_disallow_all(&outcome), "{error} must still fail closed");

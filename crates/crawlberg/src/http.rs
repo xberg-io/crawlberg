@@ -279,10 +279,10 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
 
     // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
     if let Some(vendor) = body_waf_vendor(&head, &body, &body_bytes, &mut headers_map_cache) {
-        return Err(CrawlError::WafBlocked {
-            message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-            vendor,
-        });
+        return Err(CrawlError::waf_blocked(
+            vendor.clone(),
+            format!("waf/blocked detected on 2xx (body): {vendor}"),
+        ));
     }
 
     // ~keep Reuses the cached header map (built at most once above) instead of walking
@@ -405,10 +405,10 @@ async fn body_confirmed_waf_error(
     let body = read_text_bounded(resp, effective_max_body_size(config)).await;
     let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
     let vendor = waf::waf_vendor_from_body(head.status, &body, headers_map).unwrap_or(header_vendor);
-    CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (header): {vendor}"),
-        vendor,
-    }
+    CrawlError::waf_blocked(
+        vendor.clone(),
+        format!("waf/blocked detected on 2xx (header): {vendor}"),
+    )
 }
 
 /// The WAF vendor a 2xx's already-read body fingerprints.
@@ -716,6 +716,44 @@ mod tests {
                 "status {status} message must contain {message_fragment:?}, got: {error}"
             );
             assert_eq!(status::error_status(&error), Some(*status), "{error:?}");
+        }
+    }
+
+    /// A custom retry policy decides on the status of the response that failed, so a plain 403
+    /// and a fingerprinted block must both carry the status they were raised for (crawlberg#133).
+    #[tokio::test]
+    async fn http_fetch_carries_the_response_status_on_a_403_and_on_a_fingerprinted_block() {
+        let plain = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain 403 must carry its status: {plain:?}"
+        );
+
+        let fingerprinted = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
+        assert_eq!(
+            status::error_status(&fingerprinted),
+            Some(403),
+            "a fingerprinted 403 must carry its status: {fingerprinted:?}"
+        );
+
+        for status in [429_u16, 503] {
+            let blocked = fetch_status(
+                status,
+                ResponseTemplate::new(status)
+                    .append_header("x-datadome", "blocked")
+                    .set_body_string("<html>challenge</html>"),
+            )
+            .await;
+            assert!(
+                matches!(&blocked, CrawlError::WafBlocked { .. }),
+                "status {status} must fingerprint as a block: {blocked:?}"
+            );
+            assert_eq!(
+                status::error_status(&blocked),
+                Some(status),
+                "a block fingerprinted from a {status} must carry it: {blocked:?}"
+            );
         }
     }
 
