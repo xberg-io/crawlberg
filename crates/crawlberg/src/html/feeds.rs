@@ -21,11 +21,13 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
             };
             let link_type = get_attr(tag, "type").unwrap_or("");
             let raw_href = get_attr(tag, "href").unwrap_or("");
-            let href = if raw_href.is_empty() {
-                String::new()
-            } else {
-                resolve_url(raw_href, base_url)
-            };
+            // ~keep An empty or ASCII-whitespace-only reference joins to the base itself, so
+            // resolving one reports the page as its own feed. Only ASCII whitespace is blank here:
+            // HTML strips nothing else from a URL attribute, so an NBSP-only href is a real value.
+            if raw_href.bytes().all(|byte| byte.is_ascii_whitespace()) {
+                continue;
+            }
+            let href = resolve_url(raw_href, base_url);
             let title = get_attr(tag, "title").map(String::from);
 
             let feed_type = match link_type {
@@ -151,6 +153,30 @@ mod tests {
             feeds[0].url, "https://example.com/feed.xml",
             "relative feed href should resolve against the document URL, got {}",
             feeds[0].url
+        );
+    }
+
+    #[test]
+    fn should_skip_a_feed_link_whose_href_is_only_whitespace() {
+        let dom = parse("<link rel=\"alternate\" type=\"application/rss+xml\" href=\" \t\r\n \" title=\"Feed\">");
+        let base = Url::parse("https://example.com/blog/index.html").unwrap();
+        let feeds = extract_feeds(&dom, &base);
+        assert_eq!(
+            feeds.len(),
+            0,
+            "a whitespace-only feed href must not be reported as a feed at the page URL, got {feeds:?}"
+        );
+    }
+
+    #[test]
+    fn should_skip_a_feed_link_whose_href_is_empty() {
+        let dom = parse(r#"<link rel="alternate" type="application/atom+xml" href="">"#);
+        let base = Url::parse("https://example.com/blog/index.html").unwrap();
+        let feeds = extract_feeds(&dom, &base);
+        assert_eq!(
+            feeds.len(),
+            0,
+            "an empty feed href must not be reported as a feed, got {feeds:?}"
         );
     }
 
