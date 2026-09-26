@@ -424,3 +424,26 @@ impl TestServer {
         }
     }
 }
+
+#[test]
+fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
+    const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+    let config = NativeBrowserConfig {
+        extra_headers: HashMap::from([("Authorization".to_owned(), format!("Bearer {SECRET}"))]),
+        proxy_url: Some(format!("http://user:{SECRET}@proxy.internal:8080")),
+        prior_cookies: vec![NativeCookie {
+            name: "session".into(),
+            value: SECRET.into(),
+            domain: None,
+            path: None,
+            secure: true,
+            http_only: true,
+        }],
+        ..NativeBrowserConfig::default()
+    };
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
+        assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
+        assert!(rendered.contains("session"), "cookie name missing: {rendered}");
+    }
+}

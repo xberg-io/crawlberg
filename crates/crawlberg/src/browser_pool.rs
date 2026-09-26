@@ -147,7 +147,7 @@ fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[Str
 /// Rust-only: this type is excluded from alef-generated polyglot bindings.
 /// Pool reuse is intended for long-lived Rust processes (e.g. the cloud
 /// worker); language bindings construct pools internally per-call.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BrowserPoolConfig {
     /// Maximum number of concurrent pages (tabs) the pool will open.
     pub max_pages: usize,
@@ -158,6 +158,27 @@ pub struct BrowserPoolConfig {
     pub chrome_args: Vec<String>,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
+}
+
+impl std::fmt::Debug for BrowserPoolConfig {
+    /// Redacted: a CDP `browser_endpoint` can carry credentials or an access token.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            max_pages,
+            browser_endpoint,
+            chrome_args,
+            launch_timeout,
+        } = self;
+        f.debug_struct("BrowserPoolConfig")
+            .field("max_pages", max_pages)
+            .field(
+                "browser_endpoint",
+                &browser_endpoint.as_deref().map(crate::net::redact::redact_url_secrets),
+            )
+            .field("chrome_args", chrome_args)
+            .field("launch_timeout", launch_timeout)
+            .finish()
+    }
 }
 
 impl Default for BrowserPoolConfig {

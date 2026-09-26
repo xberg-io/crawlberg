@@ -89,7 +89,7 @@ impl Default for ContentConfig {
 }
 
 /// Browser fallback configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
@@ -153,6 +153,55 @@ pub struct BrowserConfig {
     /// requests so cookies + fingerprint + solved challenges persist.
     /// Default: true. When false, each request gets a fresh Page.
     pub session_affinity: bool,
+}
+
+impl std::fmt::Debug for BrowserConfig {
+    /// Redacted: a CDP `endpoint` can carry credentials in its userinfo or an access token
+    /// in its query, so both print as `***`. `proxy` redacts its own secrets. The
+    /// exhaustive destructure makes a new field a compile error here, not a silent gap.
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface.
+    #[cfg_attr(alef, alef(skip))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            mode,
+            backend,
+            endpoint,
+            timeout,
+            overall_timeout,
+            shutdown_timeout,
+            wait,
+            wait_selector,
+            extra_wait,
+            proxy,
+            block_url_patterns,
+            eval_script,
+            robots_user_agent,
+            capture_network_events,
+            session_affinity,
+        } = self;
+        f.debug_struct("BrowserConfig")
+            .field("mode", mode)
+            .field("backend", backend)
+            .field(
+                "endpoint",
+                &endpoint.as_deref().map(crate::net::redact::redact_url_secrets),
+            )
+            .field("timeout", timeout)
+            .field("overall_timeout", overall_timeout)
+            .field("shutdown_timeout", shutdown_timeout)
+            .field("wait", wait)
+            .field("wait_selector", wait_selector)
+            .field("extra_wait", extra_wait)
+            .field("proxy", proxy)
+            .field("block_url_patterns", block_url_patterns)
+            .field("eval_script", eval_script)
+            .field("robots_user_agent", robots_user_agent)
+            .field("capture_network_events", capture_network_events)
+            .field("session_affinity", session_affinity)
+            .finish()
+    }
 }
 
 impl Default for BrowserConfig {

@@ -11,7 +11,7 @@ pub enum HttpMethod {
 }
 
 /// Authentication scheme to apply to every outbound request.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum AuthScheme {
     /// No authentication.
     None,
@@ -24,6 +24,36 @@ pub enum AuthScheme {
     Header { name: String, value: String },
     /// Append `?<name>=<value>` to the request URL.
     QueryParam { name: String, value: String },
+}
+
+impl std::fmt::Debug for AuthScheme {
+    /// Redacted: shows which scheme is configured and whether its secret is non-empty,
+    /// never the secret itself. `ProviderConfig`'s derived `Debug` prints through this.
+    // ~keep `BasicUsername.username` is hidden although `crawlberg`'s `AuthConfig::Basic`
+    // ~keep prints its username in clear. That is deliberate, not an inconsistency: this
+    // ~keep field carries the vendor API key (Zyte sends the key as the Basic username),
+    // ~keep whereas `AuthConfig::Basic.username` is an account name.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = |secret: &String| (!secret.is_empty()).then_some("***");
+        match self {
+            Self::None => f.write_str("None"),
+            Self::Bearer { token } => f.debug_struct("Bearer").field("token", &redacted(token)).finish(),
+            Self::BasicUsername { username } => f
+                .debug_struct("BasicUsername")
+                .field("username", &redacted(username))
+                .finish(),
+            Self::Header { name, value } => f
+                .debug_struct("Header")
+                .field("name", name)
+                .field("value", &redacted(value))
+                .finish(),
+            Self::QueryParam { name, value } => f
+                .debug_struct("QueryParam")
+                .field("name", name)
+                .field("value", &redacted(value))
+                .finish(),
+        }
+    }
 }
 
 /// Location where the target URL is injected into the outbound request.
