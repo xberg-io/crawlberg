@@ -90,6 +90,11 @@ async fn native_follows_redirect() {
     assert!(result.is_ok(), "should succeed after redirect: {:?}", result.err());
     let page = result.unwrap();
     assert!(page.html.contains("Redirected"), "final body expected");
+    assert_eq!(
+        page.final_url,
+        format!("{}/final", mock.uri()),
+        "the result must report the URL the redirect landed on"
+    );
 }
 
 #[tokio::test]

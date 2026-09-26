@@ -21,6 +21,21 @@ All notable changes to crawlberg are documented here.
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
 
+- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
+  and the page result kept the URL that was asked for, so relative links on the landed page
+  resolved against the wrong path and `final_url` named a page that never served the content. The
+  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
+  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
+  landed URL is refused is dropped. (#75)
+
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
