@@ -29,6 +29,24 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A pooled browser fetch that hit its overall deadline leaked its page.** `overall_timeout`
+  wrapped the whole pooled fetch, so expiry dropped that future before it could release the page it
+  had borrowed from the shared browser — and `chromiumoxide::Page` has no closing `Drop`, so the CDP
+  target stayed open for the rest of the process's life, still running scripts. The deadline now
+  bounds page acquisition and navigation individually and the release runs on every path, the
+  deadline one included. That release is bounded by `shutdown_timeout` rather than by the overall
+  deadline, so a browser too wedged to close a page cannot hold a fetch open, and an
+  already-computed result is no longer replaced by a timeout error because teardown was slow.
+  Closing a timed-out page's popups is not covered here. (#179)
+
+- **A refused URL's credentials reached the error text.** The browser navigation path and interact
+  mode built the SSRF violation error with a struct literal instead of the redacting constructor, so
+  a request Chrome was refused at a redirect — `https://user:secret@10.0.0.1/` — carried its
+  `user:pass@` userinfo into the error message, and from there into API error bodies, MCP error
+  payloads and tracing fields. Both sites now build the error through `CrawlError::ssrf_violation`,
+  which redacts the userinfo before it is stored. The pre-navigation seed check and the HTTP
+  redirect path already used the redacting path and are unchanged. (#180)
+
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
   `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
   canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every

@@ -227,11 +227,11 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
+        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
+        // ~keep refused request had. xberg-io/crawlberg#180.
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
 }
@@ -515,6 +515,39 @@ mod tests {
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
             "proxy-server flag missing or mis-normalized: {debug}"
+        );
+    }
+
+    /// A refused redirect target that carries `user:pass@` userinfo must be reported with its
+    /// credentials redacted.
+    ///
+    /// ~keep The seed URL is deliberately not the vector: the pre-navigation check refuses a
+    /// ~keep credential-bearing seed through an already-redacting path, so a test built on one
+    /// ~keep would pass with or without this fix. What leaks is the *intercepted* URL - Chrome
+    /// ~keep follows the redirect itself and `Fetch.requestPaused` reports the target verbatim,
+    /// ~keep which `ssrf_intercept` records unchanged. xberg-io/crawlberg#180.
+    #[test]
+    fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
+        let blocked = Some((
+            "https://user:secret@10.0.0.1/".to_owned(),
+            "denied by SSRF policy: private_network".to_owned(),
+        ));
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+
+        let error = resolve_navigation_outcome(navigation, blocked, Duration::from_secs(7))
+            .expect_err("a blocked request must surface as an error");
+
+        let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
+            panic!("expected an SSRF policy violation, got: {error:?}");
+        };
+        assert_eq!(
+            url.as_str(),
+            "https://***:***@10.0.0.1/",
+            "the refused URL must be stored credential-redacted"
+        );
+        assert!(
+            !error.to_string().contains("secret"),
+            "the rendered error must not carry the refused URL's password, got: {error}"
         );
     }
 }

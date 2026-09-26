@@ -185,11 +185,12 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        // ~keep Built through `ssrf_violation`, never a struct literal. `blocked_url` is the raw
+        // ~keep `Fetch.requestPaused` URL that `ssrf_intercept` recorded, so a redirect to
+        // ~keep `https://user:secret@10.0.0.1/` arrives here with its userinfo intact, and this
+        // ~keep value goes on to API error bodies, MCP error payloads and tracing fields.
+        // ~keep xberg-io/crawlberg#180.
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
 }
@@ -285,6 +286,22 @@ mod tests {
         ))
     }
 
+    /// A blocked request whose URL carries `user:pass@` userinfo.
+    ///
+    /// ~keep The seed URL is deliberately NOT the vector here. `chromiumoxide_fetch_inner`
+    /// ~keep (`browser.rs`) already routes a credential-bearing *seed* through
+    /// ~keep `CrawlError::ssrf_violation`, so a test that merely passes a credential-bearing
+    /// ~keep seed passes with or without the fix this covers. The leak is the *intercepted*
+    /// ~keep URL: Chrome follows a redirect itself, `Fetch.requestPaused` reports the redirect
+    /// ~keep target verbatim, and `ssrf_intercept` stores that string unchanged — so the URL
+    /// ~keep arriving here is the refused redirect target, credentials and all.
+    fn blocked_with_credentials() -> Option<(String, String)> {
+        Some((
+            "https://user:secret@10.0.0.1/".to_owned(),
+            "denied by SSRF policy: private_network".to_owned(),
+        ))
+    }
+
     #[test]
     fn a_successful_navigation_with_nothing_blocked_is_ok() {
         assert!(resolve_navigation_outcome(Ok(Ok(())), None, TEST_TIMEOUT).is_ok());
@@ -346,6 +363,26 @@ mod tests {
         assert!(
             error.to_string().contains("7s"),
             "the timeout message must name the configured timeout, got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+        let error = resolve_navigation_outcome(navigation, blocked_with_credentials(), TEST_TIMEOUT)
+            .expect_err("a blocked request must surface as an error");
+
+        let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
+            panic!("expected an SSRF policy violation, got: {error:?}");
+        };
+        assert_eq!(
+            url.as_str(),
+            "https://***:***@10.0.0.1/",
+            "the refused URL must be stored credential-redacted"
+        );
+        assert!(
+            !error.to_string().contains("secret"),
+            "the rendered error must not carry the refused URL's password, got: {error}"
         );
     }
 }

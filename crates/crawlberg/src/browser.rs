@@ -5,6 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
 
+use tokio::sync::OwnedSemaphorePermit;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
@@ -124,10 +125,10 @@ fn overall_deadline_error(overall_timeout: Duration) -> CrawlError {
 /// Fetch using a page borrowed from a shared [`BrowserPool`], returning the page
 /// to the session pool on success when session affinity is enabled.
 ///
-/// The whole operation -- page acquisition, navigation, rendering, and the
-/// page close that follows -- is bounded by `BrowserConfig::overall_timeout`,
-/// closing the gap where an unbounded semaphore wait or an unbounded
-/// `page.close()` could hold a fetch open indefinitely.
+/// Page acquisition, navigation and rendering are bounded as a single
+/// `BrowserConfig::overall_timeout` deadline, closing the gap where an unbounded semaphore
+/// wait could hold a fetch open indefinitely. The page release that follows runs on every
+/// path including the deadline path, and is bounded by `BrowserConfig::shutdown_timeout`.
 async fn pooled_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -136,24 +137,8 @@ async fn pooled_fetch(
     want_screenshot: bool,
 ) -> Result<HttpResponse, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
-    match tokio::time::timeout(
-        overall_timeout,
-        pooled_fetch_inner(url, config, prior_cookies, pool, want_screenshot),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(overall_deadline_error(overall_timeout)),
-    }
-}
+    let deadline = tokio::time::Instant::now() + overall_timeout;
 
-async fn pooled_fetch_inner(
-    url: &str,
-    config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
-    pool: &BrowserPool,
-    want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
         // ~keep profile named later cannot retroactively change that process's
@@ -165,11 +150,41 @@ async fn pooled_fetch_inner(
         );
     }
 
-    // ~keep `page` + `permit` are held across `page_fetch` below: the previous code let the
-    // ~keep acquisition guard drop as the tail expression of this block, which released the
-    // ~keep semaphore permit AND spawned a `Target.closeTarget` race against the navigation
-    // ~keep that was about to start on the very same CDP target.
-    let (page, permit) = if config.browser.session_affinity {
+    let (page, permit) = match tokio::time::timeout_at(deadline, acquire_pooled_page(url, config, pool)).await {
+        Ok(acquired) => acquired?,
+        Err(_) => return Err(overall_deadline_error(overall_timeout)),
+    };
+
+    // ~keep The deadline is applied to each stage here rather than by wrapping this whole
+    // ~keep function in `tokio::time::timeout` at the call site. Wrapping dropped this future
+    // ~keep the instant the deadline expired, which skipped the `release_pooled_page` below;
+    // ~keep `chromiumoxide::Page` has no closing `Drop`, so every pooled fetch that hit its
+    // ~keep overall deadline left its CDP target open in the shared browser for the rest of the
+    // ~keep process's life. xberg-io/crawlberg#179.
+    let result =
+        match tokio::time::timeout_at(deadline, page_fetch(url, config, &page, prior_cookies, want_screenshot)).await {
+            Ok(result) => result,
+            Err(_) => Err(overall_deadline_error(overall_timeout)),
+        };
+
+    release_pooled_page(url, config, page, permit, result.is_ok()).await;
+
+    result
+}
+
+/// Take a page and its semaphore permit for this fetch, reusing a parked session-affinity
+/// page when one exists for this URL.
+///
+/// ~keep The page and its permit are returned as a pair for the caller to hold across
+/// ~keep `page_fetch`: letting a `PooledPage` guard drop as the tail expression of the
+/// ~keep acquisition released the semaphore permit AND spawned a `Target.closeTarget` race
+/// ~keep against the navigation that was about to start on the very same CDP target.
+async fn acquire_pooled_page(
+    url: &str,
+    config: &CrawlConfig,
+    pool: &BrowserPool,
+) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>), CrawlError> {
+    if config.browser.session_affinity {
         let session_key = crate::browser_session_pool::SessionKey::from_url(
             url,
             config.browser.proxy.as_ref().map(|p| p.url.as_str()),
@@ -180,33 +195,49 @@ async fn pooled_fetch_inner(
             .ok_or_else(|| CrawlError::browser_error("session_affinity enabled but session pool is not configured"))?;
 
         if let Some(reused) = session_pool.acquire(&session_key).await {
-            reused
-        } else {
-            let pooled = pool.acquire_page().await?;
-            pooled.into_parts()
+            return Ok(reused);
         }
-    } else {
-        let pooled = pool.acquire_page().await?;
-        pooled.into_parts()
-    };
+    }
 
-    let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
+    Ok(pool.acquire_page().await?.into_parts())
+}
 
+/// Park `page` for reuse when session affinity wants it and the fetch succeeded, otherwise
+/// close its CDP target and release the permit.
+///
+/// ~keep This runs on the overall-deadline path too, which is the whole reason `pooled_fetch`
+/// ~keep bounds its stages individually, so `page.close()` here must itself be bounded: an
+/// ~keep unbounded close against a browser already wedged enough to blow the overall deadline
+/// ~keep would reintroduce exactly the hang that deadline exists to cut short.
+async fn release_pooled_page(
+    url: &str,
+    config: &CrawlConfig,
+    page: chromiumoxide::Page,
+    permit: Option<OwnedSemaphorePermit>,
+    reusable: bool,
+) {
     if config.browser.session_affinity
-        && result.is_ok()
+        && reusable
         && let Ok(session_key) = crate::browser_session_pool::SessionKey::from_url(
             url,
             config.browser.proxy.as_ref().map(|p| p.url.as_str()),
         )
         && let Some(session_pool) = config.browser_session_pool.as_deref()
     {
+        tracing::debug!("parking a pooled browser page for session reuse");
         session_pool.insert(session_key, page, permit).await;
-    } else {
-        let _ = page.close().await;
-        drop(permit);
+        return;
     }
 
-    result
+    let shutdown_timeout = config.browser.shutdown_timeout;
+    tracing::debug!(reusable, "releasing a pooled browser page");
+    if tokio::time::timeout(shutdown_timeout, page.close()).await.is_err() {
+        tracing::warn!(
+            timeout_secs = shutdown_timeout.as_secs_f64(),
+            "a pooled page did not close before the shutdown timeout; its CDP target is left to Chrome"
+        );
+    }
+    drop(permit);
 }
 
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
