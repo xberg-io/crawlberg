@@ -17,8 +17,8 @@ asset download, and link-following enqueue.
 | Unspecified | 0.0.0.0/8 |
 | Multicast | 224.0.0.0/4, ff00::/8 |
 | IPv6 unique-local | fc00::/7 |
-| IPv6 local-use NAT64 (RFC 8215) | 64:ff9b:1::/48 |
-| IPv6 forms that embed an IPv4 address | IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96), IPv4-translated (::ffff:0:0:0/96), NAT64 (64:ff9b::/96) and 6to4 (2002::/16): the embedded IPv4 address is checked against the rows above |
+| IPv6 forms that embed an IPv4 address | IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96), IPv4-translated (::ffff:0:0:0/96), NAT64 (64:ff9b::/96), 6to4 (2002::/16) and ISATAP (interface identifier 0000:5efe or 0200:5efe): the embedded IPv4 address is checked against the rows above |
+| IPv6 local-use NAT64 (64:ff9b:1::/48, RFC 8215) | The IPv4 address is read at each position a /48, /56, /64 or /96 network prefix puts it, and the address is refused when any reading falls in the rows above. A reading in 0.0.0.0/8 or 224.0.0.0/4 is skipped, because the unused positions of a real address read that way. An address whose every reading is skipped is refused |
 | Non-http/https schemes | file, ftp, gopher, … |
 
 DNS rebinding is mitigated: if a hostname resolves to a mix of public and

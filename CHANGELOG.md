@@ -8,9 +8,16 @@ All notable changes to crawlberg are documented here.
 
 - The SSRF policy now checks the IPv4 address inside every IPv6 form that carries one: the
   IPv4-compatible (`::/96`), IPv4-translated (`::ffff:0:0:0/96`) and 6to4 (`2002::/16`) forms join
-  the IPv4-mapped and NAT64 forms it already checked. The local-use NAT64 prefix `64:ff9b:1::/48`
-  is not globally reachable and is now denied as a whole. The pre-connect check, the connect-time
+  the IPv4-mapped and NAT64 forms it already checked. The pre-connect check, the connect-time
   resolver and the browser crate's fallback validator all apply the same rules.
+- The SSRF policy now checks the IPv4 address inside the local-use NAT64 prefix `64:ff9b:1::/48`.
+  It reads the address at each position a network can use inside that prefix and refuses the
+  address when any reading is private. A reading of `0.0.0.0/8` or multicast is skipped, and an
+  address whose every reading is skipped is refused. On a network that uses a /48, /56 or /64 prefix, some public
+  addresses are refused as well, and an IPv4 allowlist entry admits them.
+- The SSRF policy now checks the IPv4 address inside an ISATAP address (interface identifier
+  `0000:5efe` or `0200:5efe`) under any prefix, so `2001:db8::5efe:10.0.0.5` is refused. As with
+  the other forms, an IPv6 allowlist entry does not admit the IPv4 address inside it.
 
 ## [1.8.0] - 2026-09-25
 

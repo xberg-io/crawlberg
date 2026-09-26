@@ -57,9 +57,46 @@ pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     ("2002:a00:5::", Some("private_network")),
     ("2002:a9fe:a9fe::", Some("link_local")),
     ("2002:808:808::", None),
-    // Local-use NAT64 prefix, RFC 8215: not globally reachable, so every address is denied.
+    // Local-use NAT64 prefix, RFC 8215, with the IPv4 address at each position RFC 6052
+    // section 2.2 allows inside a /48: after a /48, /56, /64 and /96 prefix.
+    ("64:ff9b:1:a00:0:500::", Some("private_network")),
+    ("64:ff9b:1:808:8:800::", None),
+    ("64:ff9b:1:a:0:5::", Some("private_network")),
+    ("64:ff9b:1:8:8:808::", None),
+    ("64:ff9b:1:0:a:0:500:0", Some("private_network")),
+    ("64:ff9b:1:0:8:808:800:0", None),
     ("64:ff9b:1::10.0.0.5", Some("private_network")),
-    ("64:ff9b:1::8.8.8.8", Some("private_network")),
+    ("64:ff9b:1::127.0.0.1", Some("loopback")),
+    ("64:ff9b:1::8.8.8.8", None),
+    // Every octet of each position decides: 169.254.0.0/16 and 172.16.0.0/12 need the second
+    // octet read from the right place. The /48 metadata address also reads as 169.254.0.0 at
+    // the /64 position, so 172.16.8.8 is the case that pins the /48 position alone.
+    ("64:ff9b:1:a9fe:a9:fe00::", Some("link_local")),
+    ("64:ff9b:1:ac10:8:800::", Some("private_network")),
+    ("64:ff9b:1:a9:fe:a9fe::", Some("link_local")),
+    ("64:ff9b:1:ac:10:808::", Some("private_network")),
+    ("64:ff9b:1:0:a9:fea9:fe00:0", Some("link_local")),
+    ("64:ff9b:1:0:ac:1008:800:0", Some("private_network")),
+    ("64:ff9b:1::169.254.169.254", Some("link_local")),
+    // A position that reads as multicast is skipped: 8.8.8.230 after a /64 prefix reads as
+    // 230.0.0.0 at the /96 position.
+    ("64:ff9b:1:0:8:808:e600:0", None),
+    // An address whose every position reads as 0.0.0.0/8 or multicast carries no real
+    // destination, and a stateful NAT64 translator can forward 0.0.0.0 to its own host.
+    ("64:ff9b:1::", Some("unspecified")),
+    ("64:ff9b:1::1", Some("unspecified")),
+    ("64:ff9b:1:0:0:1::", Some("unspecified")),
+    ("64:ff9b:1:e000::", Some("multicast")),
+    ("64:ff9b:1::e000:1", Some("unspecified")),
+    // ISATAP, RFC 5214 section 6.1: the interface identifier 0000:5efe or 0200:5efe carries
+    // the IPv4 address under any prefix.
+    ("2001:db8::5efe:10.0.0.5", Some("private_network")),
+    ("2001:db8::200:5efe:127.0.0.1", Some("loopback")),
+    ("2001:db8::5efe:8.8.8.8", None),
+    ("2001:db8::200:5efe:8.8.8.8", None),
+    // A link-local ISATAP address stays denied as link-local whatever address it carries.
+    ("fe80::5efe:8.8.8.8", Some("link_local")),
+    ("fe80::200:5efe:10.0.0.5", Some("link_local")),
     // Teredo, RFC 4380 section 4: public server and client addresses.
     ("2001:0:4136:e378:8000:63bf:3fff:fdd2", None),
     // The IPv6 loopback and unspecified addresses keep their IPv6 meaning.
@@ -796,6 +833,33 @@ mod tests {
             "policy decisions differ:\n{}",
             mismatches.join("\n")
         );
+    }
+
+    #[tokio::test]
+    async fn validate_url_checks_embedded_ipv4_under_an_allowlisted_ipv6_prefix() {
+        // ~keep An allowlist entry for the local-use NAT64 prefix must not admit the private
+        // addresses inside it; an entry for the IPv4 range still does.
+        let policy_for = |cidr: &str| SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr(cidr).expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        };
+        let url = "http://[64:ff9b:1::10.0.0.5]/".parse::<url::Url>().expect("valid URL");
+
+        let err = validate_url(&url, &policy_for("64:ff9b:1::/48"))
+            .await
+            .expect_err("the IPv6 prefix entry must not permit an embedded private address");
+        assert!(
+            matches!(
+                err,
+                SsrfError::DeniedByPolicy {
+                    reason: "private_network"
+                }
+            ),
+            "expected a private_network denial, got {err:?}"
+        );
+        validate_url(&url, &policy_for("10.0.0.0/8"))
+            .await
+            .expect("an IPv4 allowlist entry must permit the embedded address");
     }
 
     #[tokio::test]

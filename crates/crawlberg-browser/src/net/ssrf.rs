@@ -29,7 +29,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -47,9 +47,6 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
-    // ~keep RFC 8215 local-use NAT64 prefix. Not globally reachable, and it fixes no position
-    // ~keep for the embedded IPv4 address, so the whole prefix is denied.
-    "64:ff9b:1::/48",
 ];
 
 /// Decides whether the browser layer may fetch a URL.
@@ -133,37 +130,46 @@ impl SsrfValidator for DefaultSsrfValidator {
     }
 }
 
-/// The IPv4 address an IPv6 address embeds, for each form that is routed to that IPv4 host.
+/// The IPv4 addresses an IPv6 address embeds, for each form that is routed to that IPv4 host.
 ///
-/// Mirrors `crawlberg::net::ssrf::embedded_ipv4`, which cites the RFC for each form.
-/// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips
-/// past `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
-fn embedded_ipv4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
-    if v6.is_unspecified() || v6.is_loopback() {
-        return None;
-    }
-    if let Some(v4) = v6.to_ipv4() {
-        return Some(v4);
-    }
-    let [_, _, _, _, _, _, _, _, _, _, _, _, a, b, c, d] = v6.octets();
-    match v6.segments() {
-        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(Ipv4Addr::new(a, b, c, d)),
-        [0x2002, high, low, ..] => Some(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))),
-        _ => None,
-    }
+/// Mirrors `embedded_ipv4s` in `crawlberg::net::ssrf`'s `validate` submodule, which cites
+/// the RFC for each form and says which local-use NAT64 positions are skipped and why.
+/// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips past
+/// `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
+fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
+    let octets = v6.octets();
+    let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
+    let segments = v6.segments();
+
+    let fixed = if v6.is_unspecified() || v6.is_loopback() {
+        None
+    } else {
+        v6.to_ipv4().or(match segments {
+            [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+            [0x2002, ..] => Some(at(2, 3, 4, 5)),
+            _ => None,
+        })
+    };
+    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
+    let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
+        let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
+        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
+        let none_left = positions.iter().all(skipped);
+        positions.into_iter().filter(move |v4| none_left || !skipped(v4))
+    });
+
+    fixed.into_iter().chain(isatap).chain(local_nat64.into_iter().flatten())
 }
 
-/// Collapse an IPv6 address that embeds an IPv4 address into that IPv4 address.
-fn canonicalize_ip(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => embedded_ipv4(v6).map_or(ip, IpAddr::V4),
-        IpAddr::V4(_) => ip,
-    }
-}
-
+/// Whether `ip` itself, or any IPv4 address it embeds, falls in the deny-list.
 fn is_ip_denied(ip: IpAddr) -> bool {
-    let ip = canonicalize_ip(ip);
-    DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
+    let embedded = match ip {
+        IpAddr::V6(v6) => Some(embedded_ipv4s(v6).map(IpAddr::V4)),
+        IpAddr::V4(_) => None,
+    };
+    std::iter::once(ip)
+        .chain(embedded.into_iter().flatten())
+        .any(|candidate| DEFAULT_DENY_NETS.iter().any(|net| net.contains(&candidate)))
 }
 
 fn is_localhost_name(domain: &str) -> bool {
@@ -222,6 +228,16 @@ mod tests {
             "http://[::a00:5]/",
             "http://[2002:a9fe:a9fe::]/",
             "http://[64:ff9b:1::a00:5]/",
+            "http://[64:ff9b:1:a00:0:500::]/",
+            "http://[64:ff9b:1:a:0:5::]/",
+            "http://[64:ff9b:1:0:a:0:500:0]/",
+            "http://[2001:db8::5efe:a00:5]/",
+            "http://[2001:db8::200:5efe:7f00:1]/",
+            "http://[fe80::5efe:808:808]/",
+            "http://[64:ff9b:1:ac10:8:800::]/",
+            "http://[64:ff9b:1::]/",
+            "http://[64:ff9b:1:e000::]/",
+            "http://[64:ff9b:1::e000:1]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -237,6 +253,13 @@ mod tests {
             "http://[::ffff:0:808:808]/",
             "http://[::808:808]/",
             "http://[2002:808:808::]/",
+            "http://[64:ff9b:1:808:8:800::]/",
+            "http://[64:ff9b:1:8:8:808::]/",
+            "http://[64:ff9b:1:0:8:808:800:0]/",
+            "http://[64:ff9b:1::808:808]/",
+            "http://[2001:db8::5efe:808:808]/",
+            "http://[2001:db8::200:5efe:808:808]/",
+            "http://[64:ff9b:1:0:8:808:e600:0]/",
         ] {
             validate(permitted, true)
                 .await
