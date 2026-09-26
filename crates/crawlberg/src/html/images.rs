@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{attr_eq, clean_url, get_attr, get_url_attr, resolve_url};
+use super::{attr_eq, clean_url, get_attr, get_url_attr, is_data_url, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -51,7 +51,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(src) = get_url_attr(tag, "src") else {
             continue;
         };
-        if src.starts_with("data:") {
+        if is_data_url(&src) {
             continue;
         }
         images.push(ImageInfo {
@@ -82,7 +82,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         else {
             continue;
         };
-        if raw_url.starts_with("data:") {
+        if is_data_url(&raw_url) {
             continue;
         }
         images.push(ImageInfo {

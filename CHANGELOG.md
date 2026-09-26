@@ -29,6 +29,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **An inline `data:` address written in upper or mixed case was reported as a real address.**
+  The images list, the links list and asset discovery skipped `data:` addresses with a
+  case-sensitive check, so `<img src="DATA:image/png;base64,...">` or `<a href="Data:...">` came
+  back as an entry. URL schemes are case-insensitive, and these three now read the scheme the way
+  the URL parser does, as the markdown pass already did. (#200)
+
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
   `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
   canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every

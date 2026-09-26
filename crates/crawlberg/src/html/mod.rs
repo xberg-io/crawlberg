@@ -88,6 +88,17 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
+/// Whether `address`, already cleaned by [`clean_url`], is a `data:` URL, which holds its content
+/// inline. The scheme matches in any ASCII case, as the URL parser reads it.
+///
+/// ~keep A prefix test rather than `Url::parse(..).scheme()`: both give the same answer on a
+/// ~keep cleaned value, and the prefix test does not parse every kept address a second time.
+pub(crate) fn is_data_url(address: &str) -> bool {
+    address
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+}
+
 /// Whether the tag's `attr` value, without surrounding ASCII whitespace, equals `expected` in any
 /// ASCII case.
 ///
@@ -240,5 +251,35 @@ mod tests {
             }
         }
         assert_eq!(checked, (1..=5).map(|n| 8_usize.pow(n)).sum::<usize>());
+    }
+
+    #[test]
+    fn a_data_url_is_recognised_as_the_url_parser_reads_its_scheme() {
+        let addresses = [
+            "data:",
+            "data:image/png;base64,AA",
+            "DATA:image/png;base64,AA",
+            "Data:text/plain,x",
+            "dAtA:,",
+            "data:text/html,<b>\u{e9}</b>",
+            "",
+            "dat",
+            "data",
+            "data/x.png",
+            "database.png",
+            "data%3Ax",
+            "data :x",
+            "d\u{e4}ta:x",
+            "x-data:y",
+            "javascript:x",
+            "https://example.com/data:x",
+        ];
+        let mut data_urls = 0;
+        for address in addresses {
+            let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == "data");
+            assert_eq!(is_data_url(address), parsed, "for {address:?}");
+            data_urls += usize::from(parsed);
+        }
+        assert_eq!(data_urls, 6);
     }
 }

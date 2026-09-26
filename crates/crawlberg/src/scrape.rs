@@ -767,6 +767,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_inline_data_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <img src=\"DATA:image/png;base64,AA\"><img src=\"i.png\">\
+             <picture><source srcset=\"Data:image/png;base64,AA 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_inline_data_links_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\"DATA:text/html,x\">a</a><a href=\"Data:text/plain,y\">b</a>\
+             <a href=\"next.html\">c</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
     async fn scrape_treats_an_address_of_only_c0_controls_as_blank() {
         let resp = response(
             "text/html",
