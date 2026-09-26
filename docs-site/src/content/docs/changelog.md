@@ -127,7 +127,10 @@ title: "Changelog"
   `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
   icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
   and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
-  real URL is still used in its place. `fit_content` follows the same rule. (#97)
+  real URL is still used in its place. `fit_content` follows the same rule. The markdown
+  also reads `script`, `style`, `title` and `textarea` text as text, the way link extraction
+  does: a `<base href>` inside title text no longer changes where the markdown's links resolve,
+  and a `<!--` inside script text no longer leaves the links and images after it untouched. (#97)
 
 ### Added
 
