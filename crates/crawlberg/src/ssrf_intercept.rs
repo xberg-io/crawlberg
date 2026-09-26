@@ -15,7 +15,7 @@
 //! ~keep no dependency on anything `browser`-gated, so it is gated on `browser-chromiumoxide`
 //! ~keep alone in `lib.rs`, matching both callers' actual requirement.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -28,7 +28,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::FrameId;
 use chromiumoxide::cdp::browser_protocol::target::{
-    CloseTargetParams, EventTargetCreated, EventTargetDestroyed, TargetId,
+    CloseTargetParams, EventTargetCreated, EventTargetDestroyed, GetTargetsParams, TargetId,
 };
 use futures::future::BoxFuture;
 use futures::stream::{FuturesUnordered, StreamExt as _};
@@ -56,6 +56,13 @@ const ATTRIBUTION_RETRY_DELAY: Duration = Duration::from_millis(15);
 /// ~keep (over 25 ms with the test suite running in parallel).
 pub(crate) const ACTION_GRACE: Duration = Duration::from_millis(25);
 pub(crate) const INPUT_ACTION_GRACE: Duration = Duration::from_millis(150);
+
+/// How long interception stays on after the last refusal once nothing is watched.
+///
+/// ~keep Chrome reports a page destroyed while a request the page issued just before can
+/// ~keep still be on its way to the check. Turned off at once, interception would let that
+/// ~keep request through; kept on until refusals stop, it refuses it.
+const DISABLE_DRAIN: Duration = Duration::from_millis(100);
 
 /// The longest an action waits for the requests it started to be judged.
 const ACTION_SETTLE_LIMIT: Duration = Duration::from_secs(1);
@@ -99,8 +106,12 @@ pub(crate) struct StoppedResponse {
 /// that answers every paused request of every target in that browser. Pages register with
 /// [`FirewallHandle::watch`]. Each request is judged by the policy of the watched page it
 /// belongs to: the page itself, a frame in it, or a popup it opened, directly or through
-/// another popup. A request that belongs to no watched page is refused. Interception is on
-/// while at least one page is watched.
+/// another popup. Interception is on while at least one page is watched.
+///
+/// A request that belongs to another client's page of an external browser is continued
+/// untouched. Any other request that belongs to no watched page is refused: on a browser
+/// crawlberg launched every page is crawlberg's, and a frame that cannot be placed at all
+/// is refused on either kind.
 ///
 /// ~keep CDP Fetch interception is per session. Enabled on a page's session it pauses only
 /// ~keep that page's requests, and chromiumoxide attaches a popup's target without pausing it,
@@ -109,12 +120,30 @@ pub(crate) struct StoppedResponse {
 /// ~keep A browser serves several pages at once (a `BrowserPool` hands out one tab per
 /// ~keep concurrent fetch), and a second Fetch listener on the same session would answer
 /// ~keep the same paused requests and turn interception off under the others, so one
-/// ~keep listener per browser serves them all. On a browser reached through
-/// ~keep `browser.endpoint`, pages other clients opened belong to no watched page, so their
-/// ~keep requests are refused while a page of ours is watched.
+/// ~keep listener per browser serves them all.
 pub(crate) struct BrowserFirewall {
     handle: FirewallHandle,
     listener: tokio::task::JoinHandle<()>,
+}
+
+/// Whether crawlberg launched the browser or connected to one through `browser.endpoint`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BrowserOrigin {
+    /// crawlberg started the process, so every page in it is crawlberg's.
+    Launched,
+    /// Another program owns the browser, and its other pages are that program's.
+    External,
+}
+
+impl BrowserOrigin {
+    /// The origin of a browser reached through `endpoint`, if one is configured.
+    pub(crate) fn of_endpoint(endpoint: Option<&str>) -> Self {
+        if endpoint.is_some() {
+            Self::External
+        } else {
+            Self::Launched
+        }
+    }
 }
 
 /// A cheap, cloneable reference to a [`BrowserFirewall`], used to watch pages.
@@ -160,8 +189,18 @@ struct Registry {
     /// out-of-process frames, and the popups it opened. A target of an ended watch stays
     /// until Chrome destroys it, its requests refused, and interception stays on until then.
     targets: Vec<(TargetId, Arc<WatchedPage>)>,
-    /// The in-process frames of the owned pages, filled in as requests name them.
-    frames: HashMap<FrameId, Arc<WatchedPage>>,
+    /// Every live target no watched page owns: another client's page on an external browser,
+    /// or a browser's own tab.
+    others: HashSet<TargetId>,
+    /// In-process frames, filled in as requests name them: the watched page that owns the
+    /// frame, or `None` for a frame of another target.
+    frames: HashMap<FrameId, Option<Arc<WatchedPage>>>,
+}
+
+/// Who a paused request belongs to.
+enum Owner {
+    Watched(Arc<WatchedPage>),
+    Other,
 }
 
 impl Registry {
@@ -172,9 +211,18 @@ impl Registry {
             .map(|(_, page)| Arc::clone(page))
     }
 
-    fn owner_of_frame(&self, frame: &FrameId) -> Option<Arc<WatchedPage>> {
-        self.owner_of_target(frame.inner())
-            .or_else(|| self.frames.get(frame).map(Arc::clone))
+    fn owner_of_frame(&self, frame: &FrameId) -> Option<Owner> {
+        if let Some(page) = self.owner_of_target(frame.inner()) {
+            return Some(Owner::Watched(page));
+        }
+        if self.others.iter().any(|id| id.inner() == frame.inner()) {
+            return Some(Owner::Other);
+        }
+        self.frames.get(frame).map(|owner| {
+            owner
+                .as_ref()
+                .map_or(Owner::Other, |page| Owner::Watched(Arc::clone(page)))
+        })
     }
 
     /// No page is watched and no target of an ended watch is still alive.
@@ -193,6 +241,21 @@ struct Shared {
     registry: Mutex<Registry>,
     /// Notified whenever a target is destroyed.
     destroyed: Notify,
+    origin: BrowserOrigin,
+    /// When the check last refused a request.
+    last_refused: Mutex<Option<Instant>>,
+    #[cfg(test)]
+    delays: TestDelays,
+}
+
+/// Delays a unit test injects to widen a race window deterministically.
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct TestDelays {
+    /// Before interception is turned on.
+    enable: Duration,
+    /// Before a request's SSRF verdict, as a slow DNS lookup would take.
+    verdict: Duration,
 }
 
 enum Command {
@@ -215,7 +278,21 @@ enum Done {
 
 impl BrowserFirewall {
     /// Start the listener on `browser`'s session. Interception stays off until a page is watched.
-    pub(crate) async fn start(browser: Arc<Browser>) -> Result<Self, CrawlError> {
+    pub(crate) async fn start(browser: Arc<Browser>, origin: BrowserOrigin) -> Result<Self, CrawlError> {
+        Self::start_with(
+            browser,
+            origin,
+            #[cfg(test)]
+            TestDelays::default(),
+        )
+        .await
+    }
+
+    async fn start_with(
+        browser: Arc<Browser>,
+        origin: BrowserOrigin,
+        #[cfg(test)] delays: TestDelays,
+    ) -> Result<Self, CrawlError> {
         let listen_error = |e| CrawlError::browser_error(format!("failed to register intercept listener: {e}"));
         let paused = browser
             .event_listener::<EventRequestPaused>()
@@ -229,9 +306,28 @@ impl BrowserFirewall {
             .event_listener::<EventTargetDestroyed>()
             .await
             .map_err(listen_error)?;
+        // ~keep Targets that exist before the listener starts, such as another client's tabs on
+        // ~keep an external browser, are seeded here; later ones arrive as creation events.
+        let existing = browser
+            .execute(GetTargetsParams::default())
+            .await
+            .map(|response| response.result.target_infos)
+            .unwrap_or_default();
+        let shared = Shared {
+            registry: Mutex::new(Registry {
+                others: existing.into_iter().map(|info| info.target_id).collect(),
+                ..Registry::default()
+            }),
+            destroyed: Notify::new(),
+            origin,
+            last_refused: Mutex::new(None),
+            #[cfg(test)]
+            delays,
+        };
         let (commands, receiver) = mpsc::unbounded_channel();
         let listener = tokio::spawn(serve(
             browser,
+            shared,
             Events {
                 paused,
                 created,
@@ -411,22 +507,26 @@ struct Events {
 /// owns, and answers the paused requests concurrently, so a slow DNS lookup for one page
 /// does not hold up the others. Interception is turned off only once no page is watched
 /// and no paused request is left unanswered.
-async fn serve(browser: Arc<Browser>, mut events: Events, mut commands: mpsc::UnboundedReceiver<Command>) {
+async fn serve(
+    browser: Arc<Browser>,
+    shared: Shared,
+    mut events: Events,
+    mut commands: mpsc::UnboundedReceiver<Command>,
+) {
     let browser = &*browser;
-    let shared = Shared {
-        registry: Mutex::new(Registry::default()),
-        destroyed: Notify::new(),
-    };
     let shared = &shared;
     let mut running: FuturesUnordered<BoxFuture<'_, Done>> = FuturesUnordered::new();
     let mut enabled = false;
     let mut unanswered = 0usize;
     loop {
-        if enabled && unanswered == 0 && lock(&shared.registry).is_idle() {
+        let idle = enabled && unanswered == 0 && lock(&shared.registry).is_idle();
+        let drained = lock(&shared.last_refused).is_none_or(|at| at.elapsed() >= DISABLE_DRAIN);
+        if idle && drained {
             let _ = browser.execute(FetchDisableParams::default()).await;
             enabled = false;
         }
         tokio::select! {
+            () = tokio::time::sleep(DISABLE_DRAIN), if idle => {}
             command = commands.recv() => match command {
                 Some(Command::Watch(page, ack)) => {
                     {
@@ -435,6 +535,8 @@ async fn serve(browser: Arc<Browser>, mut events: Events, mut commands: mpsc::Un
                         registry.targets.push((page.root.clone(), Arc::clone(&page)));
                     }
                     if !enabled {
+                        #[cfg(test)]
+                        tokio::time::sleep(shared.delays.enable).await;
                         match browser.execute(fetch_enable_params()).await {
                             Ok(_) => enabled = true,
                             Err(e) => {
@@ -474,7 +576,10 @@ async fn serve(browser: Arc<Browser>, mut events: Events, mut commands: mpsc::Un
             }
             event = events.destroyed.next() => {
                 if let Some(event) = event {
-                    lock(&shared.registry).targets.retain(|(id, _)| *id != event.target_id);
+                    let mut registry = lock(&shared.registry);
+                    registry.targets.retain(|(id, _)| *id != event.target_id);
+                    registry.others.remove(&event.target_id);
+                    drop(registry);
                     shared.destroyed.notify_waiters();
                 }
             }
@@ -500,9 +605,16 @@ fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId>
     let mut registry = lock(&shared.registry);
     let owner = match (&info.opener_id, &info.parent_frame_id) {
         (Some(opener), _) => registry.owner_of_target(opener.inner()),
-        (None, Some(parent)) => registry.owner_of_frame(parent),
+        (None, Some(parent)) => match registry.owner_of_frame(parent) {
+            Some(Owner::Watched(page)) => Some(page),
+            _ => None,
+        },
         (None, None) => None,
-    }?;
+    };
+    let Some(owner) = owner else {
+        registry.others.insert(info.target_id.clone());
+        return None;
+    };
     let ending = owner.ending.load(Ordering::Acquire);
     registry.targets.push((info.target_id.clone(), owner));
     ending.then(|| info.target_id.clone())
@@ -513,7 +625,9 @@ fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId>
 fn release(shared: &Shared, page: &Arc<WatchedPage>, keep_root: bool) {
     let mut registry = lock(&shared.registry);
     registry.pages.retain(|watched| !Arc::ptr_eq(watched, page));
-    registry.frames.retain(|_, owner| !Arc::ptr_eq(owner, page));
+    registry
+        .frames
+        .retain(|_, owner| !owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, page)));
     if keep_root {
         registry
             .targets
@@ -526,7 +640,9 @@ fn forget(shared: &Shared, page: &Arc<WatchedPage>) {
     let mut registry = lock(&shared.registry);
     registry.pages.retain(|watched| !Arc::ptr_eq(watched, page));
     registry.targets.retain(|(_, owner)| !Arc::ptr_eq(owner, page));
-    registry.frames.retain(|_, owner| !Arc::ptr_eq(owner, page));
+    registry
+        .frames
+        .retain(|_, owner| !owner.as_ref().is_some_and(|owner| Arc::ptr_eq(owner, page)));
 }
 
 /// End the watch of `page`: close the popups it opened, children first, and the page itself
@@ -571,16 +687,25 @@ async fn end_watch(
     Done::Ended(page, keep_root, done)
 }
 
-/// The watched page a request belongs to, found through the frame that sent it. A frame not
-/// known yet is looked up in the frame trees of the owned pages, a few times, since Chrome
-/// can pause a new frame's first request before its page reports the frame.
-async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Option<Arc<WatchedPage>> {
+/// Who a request belongs to, found through the frame that sent it. A frame not known yet is
+/// looked up in the frame trees of the live pages, a few times, since Chrome can pause a new
+/// frame's first request before its page reports the frame. `None` when it cannot be placed.
+async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Option<Owner> {
     for attempt in 0..=ATTRIBUTION_RETRIES {
         if let Some(owner) = lock(&shared.registry).owner_of_frame(frame) {
             return Some(owner);
         }
-        let owned: Vec<(TargetId, Arc<WatchedPage>)> = lock(&shared.registry).targets.clone();
-        for (target, owner) in owned {
+        let live: Vec<(TargetId, Option<Arc<WatchedPage>>)> = {
+            let registry = lock(&shared.registry);
+            let owned = registry
+                .targets
+                .iter()
+                .map(|(id, page)| (id.clone(), Some(Arc::clone(page))));
+            owned
+                .chain(registry.others.iter().map(|id| (id.clone(), None)))
+                .collect()
+        };
+        for (target, owner) in live {
             let Ok(page) = browser.get_page(target).await else {
                 continue;
             };
@@ -588,8 +713,8 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
                 continue;
             };
             if frames.contains(frame) {
-                lock(&shared.registry).frames.insert(frame.clone(), Arc::clone(&owner));
-                return Some(owner);
+                lock(&shared.registry).frames.insert(frame.clone(), owner.clone());
+                return Some(owner.map_or(Owner::Other, Owner::Watched));
             }
         }
         if attempt < ATTRIBUTION_RETRIES {
@@ -600,18 +725,23 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
 }
 
 /// Answer one paused request. It is judged by the policy of the watched page it belongs to,
-/// and refused when it belongs to none or its page's watch is ending. A document response of
-/// a watched page's main frame is judged by [`main_frame_verdict`].
+/// and refused when its page's watch is ending. A request of another client's page on an
+/// external browser is continued untouched; any other request is refused. A document response
+/// of a watched page's main frame is judged by [`main_frame_verdict`].
 async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, paused_at: Instant) {
     let allow = match attribute(browser, shared, &event.frame_id).await {
         None => false,
-        Some(page) => {
+        Some(Owner::Other) => shared.origin == BrowserOrigin::External,
+        Some(Owner::Watched(page)) => {
             page.in_flight.fetch_add(1, Ordering::AcqRel);
-            let allow = judge(&page, event, paused_at).await && !page.ending.load(Ordering::Acquire);
+            let allow = judge(shared, &page, event, paused_at).await && !page.ending.load(Ordering::Acquire);
             page.in_flight.fetch_sub(1, Ordering::AcqRel);
             allow
         }
     };
+    if !allow {
+        *lock(&shared.last_refused) = Some(Instant::now());
+    }
     let request_id = event.request_id.clone();
     let _ = if allow {
         browser.execute(ContinueRequestParams::new(request_id)).await.map(drop)
@@ -623,13 +753,17 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     };
 }
 
-async fn judge(page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> bool {
+async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> bool {
     if page.ending.load(Ordering::Acquire) {
         return false;
     }
     if is_response_stage(event) {
         return event.frame_id != page.main_frame || main_frame_verdict(event, page.redirect_limit, &page.outcome);
     }
+    #[cfg(test)]
+    tokio::time::sleep(shared.delays.verdict).await;
+    #[cfg(not(test))]
+    let _ = shared;
     let Err(reason) = ssrf_verdict(&event.request.url, &page.policy).await else {
         return true;
     };
@@ -779,6 +913,169 @@ mod tests {
         assert!(
             verdict.is_ok(),
             "loopback must pass when deny_private=false: {verdict:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod race_tests {
+    //! Races the listener closes by construction, made deterministic with injected delays.
+    //! These launch a real Chrome and skip when none is found.
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    use chromiumoxide::Browser;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_stream::StreamExt;
+
+    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, TestDelays};
+    use crate::net::ssrf::SsrfPolicy;
+
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn launch(test_name: &str) -> Option<Arc<Browser>> {
+        let dir = std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id()));
+        let builder = chromiumoxide::browser::BrowserConfig::builder()
+            .no_sandbox()
+            .new_headless_mode()
+            .user_data_dir(dir);
+        let launched = match crate::browser_pool::apply_default_args(builder).build() {
+            Ok(config) => Browser::launch(config).await,
+            Err(error) => {
+                eprintln!("skipping {test_name}: no usable Chrome: {error}");
+                return None;
+            }
+        };
+        match launched {
+            Ok((browser, mut handler)) => {
+                tokio::spawn(async move { while handler.next().await.is_some() {} });
+                Some(Arc::new(browser))
+            }
+            Err(error) => {
+                eprintln!("skipping {test_name}: no usable Chrome: {error}");
+                None
+            }
+        }
+    }
+
+    /// Allow `localhost`, where the test pages are served, and refuse the loopback address.
+    fn policy() -> SsrfPolicy {
+        crate::types::CrawlConfig::builder()
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+            .build()
+            .ssrf
+    }
+
+    /// Navigate `page` to an empty page served on `localhost`, so it has a real origin.
+    async fn open_blank_site(page: &chromiumoxide::Page) {
+        let (url, _) = denied_listener().await;
+        let url = url.replace("127.0.0.1", "localhost");
+        page.goto(url).await.expect("the test page must load");
+    }
+
+    /// A loopback server, counting the connections it accepts.
+    async fn denied_listener() -> (String, Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!(
+            "http://127.0.0.1:{}/secret",
+            listener.local_addr().expect("addr").port()
+        );
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 1024];
+                    let _ = stream.read(&mut buffer).await;
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        (url, hits)
+    }
+
+    /// A page watched while interception is still being turned on for another page waits until
+    /// it is on, so its first request is checked.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_page_watched_while_interception_turns_on_waits_until_it_is_on() {
+        let test_name = "a_page_watched_while_interception_turns_on_waits_until_it_is_on";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            enable: Duration::from_millis(500),
+            verdict: Duration::ZERO,
+        };
+        let firewall = BrowserFirewall::start_with(Arc::clone(&browser), BrowserOrigin::Launched, delays)
+            .await
+            .expect("the listener must start");
+        let first = browser.new_page("about:blank").await.expect("page");
+        let second = browser.new_page("about:blank").await.expect("page");
+        let (url, hits) = denied_listener().await;
+        let handle = firewall.handle();
+        let first_watch = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.watch(&first, &policy(), 0).await.map(drop) }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let second_watch = handle
+            .watch(&second, &policy(), 0)
+            .await
+            .expect("the second watch must start");
+        open_blank_site(&second).await;
+        let _ = second
+            .evaluate(format!("fetch({url:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = first_watch.await;
+        second_watch.close().await;
+        firewall.stop().await;
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "{test_name}: the early request must be checked"
+        );
+    }
+
+    /// A request refused after a slow DNS lookup still counts for the action that sent it:
+    /// it is timed when Chrome paused it, and the action waits while it is judged.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refusal_after_a_slow_lookup_counts_for_the_action_that_sent_it() {
+        let test_name = "a_refusal_after_a_slow_lookup_counts_for_the_action_that_sent_it";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            enable: Duration::ZERO,
+            verdict: Duration::from_millis(300),
+        };
+        let firewall = BrowserFirewall::start_with(Arc::clone(&browser), BrowserOrigin::Launched, delays)
+            .await
+            .expect("the listener must start");
+        let page = browser.new_page("about:blank").await.expect("page");
+        let (url, _hits) = denied_listener().await;
+        let watch = firewall
+            .handle()
+            .watch(&page, &policy(), 0)
+            .await
+            .expect("the watch must start");
+        open_blank_site(&page).await;
+        let started = Instant::now();
+        let _ = page
+            .evaluate(format!("fetch({url:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        let refused = watch.refusal_during(started, ACTION_GRACE).await;
+        watch.close().await;
+        firewall.stop().await;
+        assert!(
+            refused.is_some_and(|(refused_url, _)| refused_url == url),
+            "{test_name}: the refusal must count for the action"
         );
     }
 }

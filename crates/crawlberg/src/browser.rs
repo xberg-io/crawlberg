@@ -15,7 +15,7 @@ use crate::browser_pool::{BrowserPool, close_browser_within};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
-use crate::ssrf_intercept::BrowserFirewall;
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
@@ -268,7 +268,11 @@ async fn one_shot_fetch(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let browser = Arc::new(browser);
-    let firewall = BrowserFirewall::start(Arc::clone(&browser)).await;
+    let firewall = BrowserFirewall::start(
+        Arc::clone(&browser),
+        BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
+    )
+    .await;
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     let fetch_outcome = tokio::time::timeout(remaining, async {
         let firewall = firewall.as_ref().map_err(Clone::clone)?;

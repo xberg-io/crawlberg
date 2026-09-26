@@ -38,9 +38,11 @@ All notable changes to crawlberg are documented here.
   crawl, a popup the page opened, and a request it sent during the extra wait or while it was
   screenshotted, did too. Each browser now has one check for every page it serves, and each
   request is judged by the policy of the page it belongs to: the page, its frames, and the
-  popups it opened. A request that belongs to no checked page is refused. When a fetch or a
-  session ends, its page and popups are closed while their requests are still refused, and the
-  check is turned off only after that. This applies to the Chromiumoxide backend. (#153, #165)
+  popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
+  is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
+  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its page and popups are closed while their requests are still refused, and the
+  check is turned off only after that. This applies to the Chromiumoxide backend. (#153, #165,
+  #168)
 - **An `interact` action whose request the SSRF check refused was reported as successful.** The
   action now fails with the SSRF policy error that names the refused URL. A request counts for the
   action that was running when Chrome sent it. This applies to the Chromiumoxide backend. (#167)

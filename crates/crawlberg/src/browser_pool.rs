@@ -18,7 +18,7 @@ use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
-use crate::ssrf_intercept::BrowserFirewall;
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin};
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -68,6 +68,9 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
         "--force-color-profile=srgb",
         "--metrics-recording-only",
         "--no-first-run",
+        // ~keep No startup tab: Chrome's new-tab page fetches remote content that belongs to no
+        // ~keep watched page, so the SSRF check refuses it. Pages are created on demand.
+        "--no-startup-window",
         "--password-store=basic",
         "--lang=en_US",
     ];
@@ -450,7 +453,12 @@ impl BrowserPool {
 
         let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
         let browser = Arc::new(browser);
-        let firewall = match BrowserFirewall::start(Arc::clone(&browser)).await {
+        let firewall = match BrowserFirewall::start(
+            Arc::clone(&browser),
+            BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+        )
+        .await
+        {
             Ok(firewall) => firewall,
             Err(error) => {
                 if let Some(mut browser) = Arc::into_inner(browser) {
@@ -700,6 +708,47 @@ mod tests {
             !still_running,
             "the Chrome process (pid {pid}) must be dead after close_browser_within returns, \
              via its Browser::kill() fallback"
+        );
+    }
+
+    /// A launched browser opens no tab of its own, so nothing loads before crawlberg asks.
+    #[tokio::test]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+    )]
+    async fn a_launched_browser_opens_no_startup_tab() {
+        let user_data_dir = std::env::temp_dir().join(format!("crawlberg-startup-tab-test-{}", std::process::id()));
+        let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+            Ok(config) => Browser::launch(config).await,
+            Err(error) => {
+                eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let (mut browser, mut handler) = match launched {
+            Ok(pair) => pair,
+            Err(error) => {
+                eprintln!("skipping a_launched_browser_opens_no_startup_tab: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let pages: Vec<String> = browser
+            .fetch_targets()
+            .await
+            .expect("the targets must be listed")
+            .into_iter()
+            .filter(|target| target.r#type == "page")
+            .map(|target| target.url)
+            .collect();
+        close_browser_within(&mut browser, HANDLER_SHUTDOWN_TIMEOUT).await;
+        handler_task.abort();
+        let _ = std::fs::remove_dir_all(&user_data_dir);
+        assert!(
+            pages.is_empty(),
+            "the browser must open no tab of its own, got {pages:?}"
         );
     }
 

@@ -11,7 +11,7 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, INPUT_ACTION_GRACE, StoppedResponse, Watch};
+use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -23,7 +23,12 @@ pub(super) async fn run(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let browser = Arc::new(browser);
-    let result = match BrowserFirewall::start(Arc::clone(&browser)).await {
+    let result = match BrowserFirewall::start(
+        Arc::clone(&browser),
+        BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
+    )
+    .await
+    {
         Ok(firewall) => {
             let result = run_with_browser(&browser, &firewall, url, actions, config).await;
             firewall.stop().await;

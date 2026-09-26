@@ -239,18 +239,29 @@ fn fetch_loop(url: &str) -> String {
 /// assert the denied address was never reached, not even while a session closed.
 ///
 /// ~keep A request leaves only if it is sent in the moment between the check stopping and the
-/// ~keep page closing, so one session reaches the address in some runs only. Five sessions
-/// ~keep make a leak show on nearly every run.
+/// ~keep page closing. At 20 requests per millisecond, every session sends thousands of them
+/// ~keep across that moment, so two sessions give the leak many chances, and a short wait
+/// ~keep keeps the test fast.
 async fn assert_nothing_leaks_at_the_end(
     test_name: &str,
     seed_body: &str,
-    actions: Vec<PageAction>,
+    mut actions: Vec<PageAction>,
     denied: &MockServer,
 ) {
+    actions.push(PageAction::Wait {
+        milliseconds: Some(300),
+        selector: None,
+    });
     let (_site, seed) = seed_site(seed_body).await;
-    for _ in 0..5 {
-        let Some(result) = run(test_name, &seed, actions.clone()).await else {
-            return;
+    let engine = create_engine(Some(config())).expect("engine must build");
+    for _ in 0..2 {
+        let result = match interact(&engine, &seed, actions.clone()).await {
+            Ok(result) => result,
+            Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+                announce_chrome_skip(test_name, &message);
+                return;
+            }
+            Err(error) => panic!("{test_name}: interact must succeed: {error:?}"),
         };
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_refused(test_name, denied, &result).await;

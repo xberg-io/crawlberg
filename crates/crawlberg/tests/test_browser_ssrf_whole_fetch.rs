@@ -448,3 +448,72 @@ async fn scrape_still_sends_allowed_requests_from_workers_frames_and_popups() {
         );
     }
 }
+
+/// On an external browser reached through `browser.endpoint`, another client's tab keeps
+/// working while crawlberg scrapes: its requests are that client's and are continued, even to
+/// an address crawlberg's policy refuses. A popup crawlberg's page opens is still refused.
+#[tokio::test]
+async fn an_external_browser_keeps_other_clients_tabs_working() {
+    use tokio_stream::StreamExt;
+
+    let test_name = "an_external_browser_keeps_other_clients_tabs_working";
+    let private = denied_server().await;
+    let d = denied_url(&private);
+    let external = match chromiumoxide::browser::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+        .build()
+    {
+        Ok(config) => chromiumoxide::Browser::launch(config).await,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error);
+            return;
+        }
+    };
+    let (other_client, mut handler) = match external {
+        Ok(pair) => pair,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error.to_string());
+            return;
+        }
+    };
+    tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let (_other_site, other_seed) = seed_site(&format!(
+        "<script>fetch({d:?} + '?other', {{ mode: 'no-cors' }}).catch(() => {{}}); setTimeout(() => location.reload(), 100);</script>"
+    ))
+    .await;
+    let _other_tab = other_client
+        .new_page(other_seed.as_str())
+        .await
+        .expect("the other client's tab must open");
+    let (_site, seed) = seed_site(&format!("<p>start</p><script>window.open({d:?} + '?popup');</script>")).await;
+    let mut config = config();
+    config.browser.endpoint = Some(other_client.websocket_address().clone());
+    config.browser.extra_wait = Some(Duration::from_millis(1500));
+
+    let count = |requests: &[wiremock::Request], query: &str| {
+        requests
+            .iter()
+            .filter(|request| request.url.query() == Some(query))
+            .count()
+    };
+    let before = count(&private.received_requests().await.expect("recording"), "other");
+    let result = run(test_name, &seed, config).await;
+    let received = private.received_requests().await.expect("recording");
+    if result.is_none() {
+        return;
+    }
+    let during = count(&received, "other") - before;
+    // ~keep The other tab reloads every 100 ms, so its requests come from documents loaded
+    // ~keep while crawlberg's check is on; a document loaded before that is never paused.
+    assert!(
+        during >= 5,
+        "{test_name}: the other client's requests must keep reaching its address, got {during}"
+    );
+    assert_eq!(
+        count(&received, "popup"),
+        0,
+        "{test_name}: crawlberg's popup must be refused"
+    );
+}
