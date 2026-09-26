@@ -11,7 +11,7 @@ use super::{HostMatcher, SsrfError, SsrfPolicy};
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -19,6 +19,8 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -158,12 +160,12 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
 /// The local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215) fixes no position for the
 /// address: a network may use the whole /48 or a /56, /64 or /96 inside it, and RFC 6052
 /// section 2.2 places the address differently for each. Every one of the four positions
-/// is returned, except one that reads as `0.0.0.0/8` or multicast: the zero bits of a
-/// valid address read as `0.0.0.0/8` at the positions its network does not use, and the
-/// shifted bytes of a public address often read as multicast. When every position is
-/// skipped, all four are returned, so the address is refused: no real destination encodes
-/// that way, and a stateful NAT64 translator such as Jool forwards `0.0.0.0` to its own
-/// host. Teredo `2001::/32` is not unwrapped: RFC 4380 section 5.2.4 requires
+/// is returned, except one that reads as `0.0.0.0/8`, multicast or `240.0.0.0/4`: the
+/// zero bits of a valid address read as `0.0.0.0/8` at the positions its network does not
+/// use, and the shifted bytes of a public address often read as multicast or `240.0.0.0/4`.
+/// When every position is skipped, all four are returned, so the address is refused: no
+/// real destination encodes that way, and a stateful NAT64 translator such as Jool forwards
+/// `0.0.0.0` to its own host. Teredo `2001::/32` is not unwrapped: RFC 4380 section 5.2.4 requires
 /// every Teredo node to drop a packet whose embedded address is not global.
 fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let octets = v6.octets();
@@ -184,7 +186,7 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
     let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
         let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
-        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
+        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.octets()[0] >= 224;
         let none_left = positions.iter().all(skipped);
         positions.into_iter().filter(move |v4| none_left || !skipped(v4))
     });

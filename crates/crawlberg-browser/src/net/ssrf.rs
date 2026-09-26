@@ -29,7 +29,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -37,6 +37,8 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
@@ -153,7 +155,7 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
     let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
         let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
-        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
+        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.octets()[0] >= 224;
         let none_left = positions.iter().all(skipped);
         positions.into_iter().filter(move |v4| none_left || !skipped(v4))
     });
@@ -238,6 +240,16 @@ mod tests {
             "http://[64:ff9b:1::]/",
             "http://[64:ff9b:1:e000::]/",
             "http://[64:ff9b:1::e000:1]/",
+            "http://240.0.0.1/",
+            "http://255.255.255.255/",
+            "http://[::ffff:255.255.255.255]/",
+            "http://[64:ff9b::f000:1]/",
+            "http://[2002:ffff:ffff::]/",
+            "http://[64:ff9b:1:f000:0:100::]/",
+            "http://[64:ff9b:1:f0:0:1::]/",
+            "http://[64:ff9b:1:0:f0::]/",
+            "http://[64:ff9b:1::f000:1]/",
+            "http://[64:ff9b:1:ffff:ffff:ffff:ffff:ffff]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -260,6 +272,7 @@ mod tests {
             "http://[2001:db8::5efe:808:808]/",
             "http://[2001:db8::200:5efe:808:808]/",
             "http://[64:ff9b:1:0:8:808:e600:0]/",
+            "http://[64:ff9b:1:808:f0:100::]/",
         ] {
             validate(permitted, true)
                 .await

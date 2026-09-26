@@ -18,6 +18,11 @@ All notable changes to crawlberg are documented here.
 - The SSRF policy now checks the IPv4 address inside an ISATAP address (interface identifier
   `0000:5efe` or `0200:5efe`) under any prefix, so `2001:db8::5efe:10.0.0.5` is refused. As with
   the other forms, an IPv6 allowlist entry does not admit the IPv4 address inside it.
+- The SSRF policy now refuses the reserved range `240.0.0.0/4`, which holds the broadcast
+  address `255.255.255.255`, so `http://255.255.255.255/` is no longer fetched. The range is refused
+  in every IPv6 form that carries an IPv4 address too. A local-use NAT64 reading in this range is
+  skipped, as a multicast reading is. The browser crate's exported deny list grows from 13 to 14
+  entries. (#173)
 
 ## [1.8.0] - 2026-09-25
 
