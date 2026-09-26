@@ -5,7 +5,6 @@ All notable changes to crawlberg are documented here.
 ## [Unreleased]
 
 ### Upgrading
-
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
   `nofollow_detected` are always serialised, and `CrawlPageResult` carries
   `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
@@ -28,7 +27,6 @@ All notable changes to crawlberg are documented here.
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
 ### Fixed
-
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately
@@ -151,6 +149,7 @@ All notable changes to crawlberg are documented here.
   fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
   requests start after the stream is closed; a later change to the binding generator fixes that.
   (#77)
+
 - **A dropped batch stream still reported every seed it had not started.** The batch went on
   starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
   and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
@@ -175,12 +174,14 @@ All notable changes to crawlberg are documented here.
   whether or not a response caused it, so a transport timeout was retried under
   `retry_codes = [408]`. An error raised for a response status now carries that status, and
   `retry_codes` matches only that. (#92)
+
 - **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
   success on these paths, while `map()` already reported it as a server error, so an empty
   `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
+
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
@@ -188,9 +189,11 @@ All notable changes to crawlberg are documented here.
   followed. Each page result now reports both directives in `noindex_detected` and
   `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
   **Upgrading** above for the wire-format consequence of the two new fields. (#135)
+
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+
 - **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
   matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
   reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
@@ -198,8 +201,20 @@ All notable changes to crawlberg are documented here.
   as ranges. These addresses were refused before and are refused now; only the reason string in the
   error and the log field changes. (#205)
 
-### Added
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. (#86)
 
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
+### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
   the response bytes rather than the declared MIME type alone. The predicate receives the
   normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
@@ -224,22 +239,12 @@ All notable changes to crawlberg are documented here.
   `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
   `fit_content` can now drop a line of relative links that it kept before, the same way it
   already treated absolute links. (#63)
+
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
-- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
-  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
-  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
-  This also covers image addresses, feed and favicon links, and text such as an image's alt
-  text. (#86)
-- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
-  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
-  were skipped the same way. Tag names now match in any case. (#87)
-- **The images list ignored `<base href>`.** Image addresses now resolve against the same
-  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
 
 ### Internal
-
 - **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
   conversion option that resolves relative addresses the same way the pre-pass above does, and the
   caret requirement admits it on a routine `cargo update` with nothing to compile against and
