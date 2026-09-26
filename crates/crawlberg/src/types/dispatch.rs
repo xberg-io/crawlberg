@@ -172,7 +172,12 @@ pub struct AttemptOutcome {
     pub attempt: u32,
     /// The URL being fetched.
     pub url: Arc<str>,
-    /// HTTP status code, if a response was received.
+    /// HTTP status code, if a response was received. Also set when that response ended the
+    /// attempt with `error`, but only for a status `status_error` maps to an error itself
+    /// (401, 404, 408, 410, 429, 500, 502, 503, 504), such as a 503 answered with
+    /// `CrawlError::ServerError`. A plain 403, or a 429 or 503 fingerprinted as a WAF block,
+    /// also ends the attempt with `error`, but this field stays `None` for those; crawlberg#133
+    /// tracks giving them a status too.
     pub status: Option<u16>,
     /// Error from this attempt, if one occurred.
     pub error: Option<CrawlError>,
