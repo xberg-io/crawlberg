@@ -67,6 +67,14 @@ fn engine_with(config: CrawlConfig) -> CrawlEngine {
 /// those names without a lookup. The fixture server matches on the path alone, so every host name
 /// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
 /// scope gate ever let it through.
+/// ~keep Setting `proxy` also suppresses the `PolicyResolver` DNS pinning that `build_client`
+/// ~keep otherwise installs (`http/client.rs`, gated on `proxy_provider.is_none() &&
+/// ~keep proxy.is_none()`), because hyper then resolves the proxy host rather than the target.
+/// ~keep So these tests no longer exercise the SSRF DNS-pinning path they used to; the
+/// ~keep allowlisted `validate_url` pre-check above is the only SSRF enforcement left in them.
+/// ~keep Coverage for the pinning itself lives in `build_client`'s own tests
+/// ~keep (`build_client_enforces_the_ssrf_policy_during_dns_resolution` and
+/// ~keep `build_client_skips_the_policy_resolver_when_a_proxy_is_configured`).
 fn through_fixture(mock: &MockServer, config: CrawlConfig) -> CrawlConfig {
     CrawlConfig {
         ssrf: crawlberg::SsrfPolicy {

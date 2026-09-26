@@ -91,6 +91,14 @@ fn permissive(config: CrawlConfig) -> CrawlConfig {
 /// those names without a lookup. The fixture server matches on the path alone, so every host name
 /// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
 /// scope gate ever let it through.
+/// ~keep Setting `proxy` also suppresses the `PolicyResolver` DNS pinning that `build_client`
+/// ~keep otherwise installs (`http/client.rs`, gated on `proxy_provider.is_none() &&
+/// ~keep proxy.is_none()`), because hyper then resolves the proxy host rather than the target.
+/// ~keep So these tests no longer exercise the SSRF DNS-pinning path they used to; the
+/// ~keep allowlisted `validate_url` pre-check above is the only SSRF enforcement left in them.
+/// ~keep Coverage for the pinning itself lives in `build_client`'s own tests
+/// ~keep (`build_client_enforces_the_ssrf_policy_during_dns_resolution` and
+/// ~keep `build_client_skips_the_policy_resolver_when_a_proxy_is_configured`).
 fn through_fixture(mock: &MockServer, config: CrawlConfig) -> CrawlConfig {
     CrawlConfig {
         ssrf: crate::net::SsrfPolicy {
@@ -393,9 +401,11 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
 
 /// The same subdomain link must NOT be followed when `allow_subdomains` is false.
 ///
-/// ~keep Uses a real, reachable `*.localhost` host with `.expect(0)` on the child path, not a
-/// fabricated `.invalid` one: an unresolvable host makes "no page fetched" ambiguous between
-/// "scope rejected it" and "DNS failed", so it cannot tell a working gate from a gutted one.
+/// ~keep Uses a reachable host with `.expect(0)` on the child path, not a fabricated `.invalid`
+/// one: an unreachable host makes "no page fetched" ambiguous between "scope rejected it" and
+/// "the fetch failed anyway", so it cannot tell a working gate from a gutted one. The name ends
+/// in `localhost` to match `through_fixture`'s suffix allowlist, not because the OS resolves it
+/// -- the proxy is what makes it reachable.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false() {
@@ -433,10 +443,11 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
 
 /// An unrelated host is never enqueued by a default-configured crawl.
 ///
-/// ~keep This pins the additive contract of the crawlberg#60 fix. Uses a real, reachable
-/// `*.localhost` sibling host with `.expect(0)` on the child path, not an unresolvable
-/// `.invalid` one: "no page fetched" is ambiguous between "scope rejected it" and "DNS
-/// failed" for an unresolvable host. `stay_on_domain` is not an input -- see
+/// ~keep This pins the additive contract of the crawlberg#60 fix. Uses a reachable sibling host
+/// with `.expect(0)` on the child path, not an unresolvable `.invalid` one: "no page fetched" is
+/// ambiguous between "scope rejected it" and "the fetch failed anyway" for a host that cannot be
+/// reached. The name ends in `localhost` to match `through_fixture`'s suffix allowlist, not
+/// because the OS resolves it. `stay_on_domain` is not an input -- see
 /// `link_scope::host_in_scope` and crawlberg#72.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
@@ -475,9 +486,10 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
 /// subdomains are the only hosts a crawl follows. ~keep `stay_on_domain` is NOT what
 /// enforces this and never has -- see `link_scope::host_in_scope` and crawlberg#72.
 ///
-/// ~keep Uses a real, reachable `*.localhost` sibling host with `.expect(0)`, not a real
-/// external domain: fetching an actual off-box host if the gate were broken would make this
-/// test flaky and network-dependent instead of failing deterministically.
+/// ~keep Uses a reachable sibling host with `.expect(0)`, not a real external domain: fetching
+/// an actual off-box host if the gate were broken would make this test flaky and
+/// network-dependent instead of failing deterministically. `through_fixture`'s proxy is what
+/// makes the sibling reachable, and its suffix allowlist is why the name ends in `localhost`.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_stays_on_the_seed_host() {
