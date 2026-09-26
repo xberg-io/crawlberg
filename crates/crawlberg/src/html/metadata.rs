@@ -1,24 +1,26 @@
 //! Metadata extraction from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 
 use crate::types::{ArticleMetadata, PageMetadata};
 
-use super::get_attr;
 #[cfg(not(target_arch = "wasm32"))]
 use super::selectors::SEL_META_REFRESH;
 use super::selectors::{
     META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_CANONICAL, SEL_HTML, SEL_META, SEL_ROBOTS_META, SEL_TITLE,
 };
+use super::{decode_attr_value, get_attr};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();
     for cap in META_RE_NAME_CONTENT.captures_iter(body) {
-        results.push((cap[1].to_lowercase(), cap[2].to_owned()));
+        results.push((cap[1].to_lowercase(), decode_attr_value(&cap[2]).into_owned()));
     }
     for cap in META_RE_CONTENT_NAME.captures_iter(body) {
-        results.push((cap[2].to_lowercase(), cap[1].to_owned()));
+        results.push((cap[2].to_lowercase(), decode_attr_value(&cap[1]).into_owned()));
     }
     results
 }
@@ -148,7 +150,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
         iter.next()
             .and_then(|h| h.get(parser))
             .and_then(|node| node.as_tag())
-            .and_then(|tag| get_attr(tag, "href").map(String::from))
+            .and_then(|tag| get_attr(tag, "href").map(Cow::into_owned))
     });
 
     let mut md = PageMetadata {
@@ -160,8 +162,8 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
     if let Some(mut iter) = dom.query_selector(SEL_HTML)
         && let Some(tag) = iter.next().and_then(|h| h.get(parser)).and_then(|n| n.as_tag())
     {
-        md.html_lang = get_attr(tag, "lang").map(String::from);
-        md.html_dir = get_attr(tag, "dir").map(String::from);
+        md.html_lang = get_attr(tag, "lang").map(Cow::into_owned);
+        md.html_dir = get_attr(tag, "dir").map(Cow::into_owned);
     }
 
     let mut accumulator = MetaAccumulator::new(md);
@@ -169,8 +171,8 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
     super::query_tags(dom, SEL_META, |tag, _parser| {
         let name = get_attr(tag, "name")
             .or_else(|| get_attr(tag, "property"))
-            .unwrap_or("");
-        let content = get_attr(tag, "content").unwrap_or("").to_owned();
+            .unwrap_or_default();
+        let content = get_attr(tag, "content").unwrap_or_default().into_owned();
         if content.is_empty() {
             return;
         }
@@ -239,7 +241,7 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
         let Some(content) = get_attr(tag, "content") else {
             continue;
         };
-        let Some(offset) = meta_refresh_target_offset(content) else {
+        let Some(offset) = meta_refresh_target_offset(&content) else {
             continue;
         };
         let target = content[offset..].trim().to_owned();
@@ -252,12 +254,10 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
     fn parse(html: &str) -> PageMetadata {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         extract_metadata(&dom, "")
     }
 
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn raw_body_fallback_fills_only_fields_the_dom_pass_left_empty() {
-        let dom = tl::parse("", ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html("").expect("valid HTML");
         let raw = concat!(
             r#"<meta name="description" content="rd">"#,
             r#"<meta content="rt" name="og:title">"#,
@@ -405,30 +405,36 @@ mod tests {
     }
 
     #[test]
+    fn meta_content_is_decoded_on_both_the_dom_and_the_raw_path() {
+        let html = r#"<meta name="description" content="Tom &amp; Jerry">"#;
+        let from_dom = extract_metadata(&crate::html::parse_html(html).expect("valid HTML"), "");
+        assert_eq!(from_dom.description.as_deref(), Some("Tom & Jerry"));
+
+        let from_raw = extract_metadata(&crate::html::parse_html("").expect("valid HTML"), html);
+        assert_eq!(from_raw.description.as_deref(), Some("Tom & Jerry"));
+    }
+
+    #[test]
     fn raw_body_fallback_does_not_override_a_value_found_in_the_dom() {
         let html = r#"<meta name="description" content="from-dom">"#;
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         let md = extract_metadata(&dom, r#"<meta name="description" content="from-raw">"#);
         assert_eq!(md.description.as_deref(), Some("from-dom"));
     }
 
     #[test]
     fn robots_directives_are_detected_case_insensitively() {
-        let dom = tl::parse(
-            r#"<meta name="robots" content="NoIndex, NoFollow">"#,
-            ParserOptions::default(),
-        )
-        .expect("valid HTML");
+        let dom = crate::html::parse_html(r#"<meta name="robots" content="NoIndex, NoFollow">"#).expect("valid HTML");
         assert!(detect_noindex(&dom));
         assert!(detect_nofollow(&dom));
 
-        let plain = tl::parse(r#"<meta name="robots" content="all">"#, ParserOptions::default()).expect("valid HTML");
+        let plain = crate::html::parse_html(r#"<meta name="robots" content="all">"#).expect("valid HTML");
         assert!(!detect_noindex(&plain));
         assert!(!detect_nofollow(&plain));
     }
 
     fn meta_refresh(html: &str) -> Option<String> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         detect_meta_refresh(&dom)
     }
 

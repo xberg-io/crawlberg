@@ -69,12 +69,11 @@ fn push_entry(val: &Value, raw: String, entries: &mut Vec<JsonLdEntry>) {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
 
     use super::*;
 
     fn extract(html: &str) -> Vec<JsonLdEntry> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         extract_json_ld(&dom)
     }
 

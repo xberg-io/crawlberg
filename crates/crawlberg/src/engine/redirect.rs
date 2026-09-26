@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use regex::Regex;
-use tl::ParserOptions;
 use url::Url;
 
 use super::CrawlEngine;
@@ -498,7 +497,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     if !is_html_content(&resp.content_type, &resp.body) {
         return None;
     }
-    let target = tl::parse(&resp.body, ParserOptions::default())
+    let target = crate::html::parse_html(&resp.body)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
     Some(resolve_redirect(current_url, &target))

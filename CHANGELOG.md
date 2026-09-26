@@ -20,6 +20,16 @@ All notable changes to crawlberg are documented here.
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. (#86)
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
 
 ## [1.8.0] - 2026-09-25
 

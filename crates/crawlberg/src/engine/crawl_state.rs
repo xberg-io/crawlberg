@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tl::ParserOptions;
 use url::Url;
 
 use crate::html::{
@@ -174,7 +173,7 @@ impl CrawlState {
 
 /// Perform HTML extraction in a blocking context.
 ///
-/// `tl::parse` borrows the input string, so this must run via `spawn_blocking`.
+/// The parsed document borrows the input string, so this must run via `spawn_blocking`.
 ///
 /// ~keep Re-decodes `body` from `body_bytes` using the detected charset (mirrors
 /// `scrape_from_crawl_response` in `scrape.rs`) *before* parsing, so extraction,
@@ -200,7 +199,7 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
-    let extraction = if let Ok(doc) = tl::parse(&body, ParserOptions::default()) {
+    let extraction = if let Ok(doc) = crate::html::parse_html(&body) {
         extract_page_data(&doc, &body, &parsed_url, is_html && !is_binary && !is_pdf, false)
     } else {
         HtmlExtraction {

@@ -31,7 +31,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(href) = get_attr(tag, "href")
-                && let Ok(url) = base_url.join(href)
+                && let Ok(url) = base_url.join(&href)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -46,7 +46,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
-                && let Ok(url) = base_url.join(src)
+                && let Ok(url) = base_url.join(&src)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -62,7 +62,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
                 && !src.starts_with("data:")
-                && let Ok(url) = base_url.join(src)
+                && let Ok(url) = base_url.join(&src)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),

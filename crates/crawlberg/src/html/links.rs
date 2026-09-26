@@ -1,12 +1,14 @@
 //! Link extraction and classification from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
-use super::selectors::SEL_A_HREF;
-use super::{decode_attr_value, elements_named, get_attr};
+use super::get_attr;
+use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -47,12 +49,15 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
 /// The URL a document's relative references resolve against: the `href` of its first `<base>`
 /// that has one, decoded and joined to the document URL, or the document URL itself.
 pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
-    elements_named(dom, "base")
-        .find_map(|tag| tag.attributes().get("href"))
-        .map(|value| value.and_then(|v| v.try_as_utf8_str()).unwrap_or(""))
+    let parser = dom.parser();
+    dom.query_selector(SEL_BASE_HREF)
+        .and_then(|mut iter| iter.next())
+        .and_then(|h| h.get(parser))
+        .and_then(|n| n.as_tag())
+        .map(|tag| get_attr(tag, "href").unwrap_or_default())
         // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
         // the document URL instead of requiring it to already be absolute.
-        .and_then(|href| document_url.join(&decode_attr_value(href)).ok())
+        .and_then(|href| document_url.join(&href).ok())
         .unwrap_or_else(|| document_url.clone())
 }
 
@@ -69,7 +74,8 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             };
 
-            let href = get_attr(tag, "href").unwrap_or("").trim();
+            let href = get_attr(tag, "href").unwrap_or_default();
+            let href = href.trim();
             if href.is_empty() {
                 continue;
             }
@@ -92,7 +98,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 href.to_owned()
             };
 
-            let rel = get_attr(tag, "rel").map(String::from);
+            let rel = get_attr(tag, "rel").map(Cow::into_owned);
             let nofollow = rel.as_ref().map(|r| r.contains("nofollow")).unwrap_or(false);
             let text = tag.inner_text(parser).trim().to_owned();
 
@@ -110,12 +116,11 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
 
     use super::*;
 
     fn extract(html: &str, base: &str) -> Vec<LinkInfo> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         let base_url = Url::parse(base).expect("valid base URL");
         extract_links(&dom, &base_url)
     }
@@ -166,6 +171,14 @@ mod tests {
             "mixed-case ReL=\"nofollow\" should be honoured, got rel={:?}",
             links[0].rel
         );
+    }
+
+    #[test]
+    fn an_encoded_script_address_is_skipped_like_a_plain_one() {
+        let html = r#"<a href="&#106;avascript&#58;alert(1)">x</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
     }
 
     #[test]
