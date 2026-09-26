@@ -13,7 +13,7 @@ use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::{RedirectStop, start_ssrf_interception};
+use crate::ssrf_intercept::{StoppedResponse, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -31,6 +31,7 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 ///
 /// Chrome follows at most `config.max_redirects` HTTP redirects. A chain longer than
 /// that ends on the redirect response at the limit, the way the HTTP fetch path ends.
+/// A response Chrome does not commit (204, 205, 304) ends the fetch the same way.
 pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -72,10 +73,10 @@ pub(super) async fn page_fetch(
 
     let intercepted = interceptor.finish().await;
     if intercepted.blocked.is_none()
-        && let Some(stop) = intercepted.redirect_stop
+        && let Some(stop) = intercepted.stopped_response
     {
         return Ok(BrowserPage {
-            response: redirect_limit_response(stop),
+            response: stopped_response(stop),
             redirects: intercepted.redirects_followed,
         });
     }
@@ -113,9 +114,9 @@ pub(super) async fn page_fetch(
     })
 }
 
-/// The redirect response a chain stopped on at the redirect limit, with no body, as the
-/// HTTP fetch path reports it.
-fn redirect_limit_response(stop: RedirectStop) -> HttpResponse {
+/// The response a navigation stopped on without a document, with no body, as the HTTP
+/// fetch path reports it.
+fn stopped_response(stop: StoppedResponse) -> HttpResponse {
     let content_type = stop
         .headers
         .get("content-type")

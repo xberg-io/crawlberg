@@ -35,6 +35,11 @@ pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
+/// Statuses that carry no document. A browser commits nothing for them, so a browser fetch
+/// reports them with an empty body, as the HTTP fetch does.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) const NO_DOCUMENT_STATUSES: [u16; 3] = [204, 205, 304];
+
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
 ///

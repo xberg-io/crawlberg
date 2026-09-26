@@ -27,7 +27,7 @@ use chromiumoxide::cdp::browser_protocol::page::FrameId;
 use tokio_stream::StreamExt;
 
 use crate::error::CrawlError;
-use crate::http::REDIRECT_STATUSES;
+use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 
 /// Active CDP Fetch-domain interception that re-validates every browser-issued
@@ -47,21 +47,22 @@ pub(crate) struct InterceptOutcome {
     pub(crate) blocked: Option<(String, String)>,
     /// HTTP redirects the main frame followed before its first document arrived.
     pub(crate) redirects_followed: usize,
-    /// The redirect response that would have taken the main frame past the redirect limit.
-    pub(crate) redirect_stop: Option<RedirectStop>,
+    /// The main-frame response the navigation ends on without a document: the redirect past
+    /// the redirect limit, or a response Chrome does not commit (204, 205, 304).
+    pub(crate) stopped_response: Option<StoppedResponse>,
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
     first_document_arrived: bool,
 }
 
-/// A main-frame redirect response that was not followed because the limit was reached.
+/// A main-frame response the navigation ends on without a document, reported as is.
 ///
 /// ~keep Read by `browser::navigation`, which needs the `browser` feature; a
 /// ~keep `browser-chromiumoxide`-only build has just `interact`, which sets no limit.
 #[derive(Debug)]
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
-pub(crate) struct RedirectStop {
-    /// The URL that answered with the redirect.
+pub(crate) struct StoppedResponse {
+    /// The URL that answered.
     pub(crate) url: String,
     pub(crate) status: u16,
     /// Response headers, keyed by lowercase name.
@@ -98,7 +99,8 @@ async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), Stri
 ///
 /// With `redirect_limit` set, main-frame document responses are also paused so
 /// the HTTP redirects Chrome follows are counted, and the redirect that would
-/// exceed the limit is failed before its target is requested.
+/// exceed the limit is failed before its target is requested. A response Chrome does
+/// not commit is recorded and failed the same way, so the navigation ends at once.
 pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
@@ -133,7 +135,7 @@ pub(crate) async fn start_ssrf_interception(
             if let Some(limit) = redirect_limit
                 && is_response_stage(&event)
             {
-                if redirect_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
+                if main_frame_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
                     // ~keep `Fetch.continueResponse` is the contract-correct call for a
                     // ~keep response-stage pause; `continueRequest` is the request-stage one, and
                     // ~keep Chrome accepts it here. Switching was tried and reverted. Measured on
@@ -224,12 +226,15 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
 
 /// Whether a paused document response may proceed. A main-frame redirect of the requested
 /// navigation is counted while it is within `limit`; the one past it is recorded and must be
-/// failed.
+/// failed. A main-frame response Chrome does not commit is also recorded and failed.
 ///
 /// ~keep The requested navigation ends at the first main-frame response that is not a
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
 /// ~keep redirect after it belongs to a navigation the page started, and it is not counted.
-fn redirect_verdict(
+/// ~keep Chrome commits no document for a 204, 205 or 304, so no load event fires and
+/// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
+/// ~keep Chrome commit its error page, which ends `goto` at once.
+fn main_frame_verdict(
     event: &EventRequestPaused,
     main_frame: Option<&FrameId>,
     limit: usize,
@@ -247,17 +252,15 @@ fn redirect_verdict(
     }
 
     let headers = event.response_headers.as_deref().unwrap_or_default();
-    let redirect_status = event
-        .response_status_code
-        .and_then(|code| u16::try_from(code).ok())
-        .filter(|code| REDIRECT_STATUSES.contains(code));
-    let Some(status) = redirect_status.filter(|_| headers.iter().any(|h| h.name.eq_ignore_ascii_case("location")))
-    else {
+    let status = event.response_status_code.and_then(|code| u16::try_from(code).ok());
+    let is_redirect = status.is_some_and(|code| REDIRECT_STATUSES.contains(&code))
+        && headers.iter().any(|h| h.name.eq_ignore_ascii_case("location"));
+    let Some(status) = status.filter(|code| is_redirect || NO_DOCUMENT_STATUSES.contains(code)) else {
         state.first_document_arrived = true;
         return true;
     };
 
-    if state.redirects_followed < limit {
+    if is_redirect && state.redirects_followed < limit {
         state.redirects_followed += 1;
         return true;
     }
@@ -268,7 +271,7 @@ fn redirect_verdict(
             .or_default()
             .push(header.value.clone());
     }
-    state.redirect_stop = Some(RedirectStop {
+    state.stopped_response = Some(StoppedResponse {
         url: event.request.url.clone(),
         status,
         headers: header_map,
