@@ -403,6 +403,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_resolves_html_links_against_the_page_base_href() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><head><base href=\"/other/\"></head>\
+             <body><a href=\"page\">page</a></body></html>"
+                .to_owned(),
+        )
+        .await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/other/page")],
+            "a relative link must resolve against the page's <base href>, not the document URL"
+        );
+    }
+
+    #[tokio::test]
     async fn map_parses_a_gzip_encoded_sitemap_fetched_directly() {
         use std::io::Write as _;
 
