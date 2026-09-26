@@ -115,6 +115,7 @@ fn response_from_cache(cached: CachedPage) -> CrawlResponse {
         body: cached.body,
         body_bytes,
         headers,
+        landed_url: None,
     }
 }
 
@@ -277,6 +278,7 @@ mod tests {
                     body: "ok".into(),
                     body_bytes: vec![],
                     headers: HashMap::new(),
+                    landed_url: None,
                 })
             })
         }
@@ -354,6 +356,7 @@ mod tests {
                     body: "fresh from origin".into(),
                     body_bytes: b"fresh from origin".to_vec(),
                     headers,
+                    landed_url: None,
                 })
             })
         }

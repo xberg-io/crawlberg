@@ -6,6 +6,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
+  and the page result kept the URL that was asked for, so relative links on the landed page
+  resolved against the wrong path and `final_url` named a page that never served the content. The
+  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
+  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
+  landed URL is refused is dropped. (#75)
+
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
