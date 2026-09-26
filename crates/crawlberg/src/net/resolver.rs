@@ -81,7 +81,7 @@ impl Resolve for PolicyResolver {
                 for address in &addresses {
                     let ip = address.ip();
                     if !is_ip_permitted(ip, &policy) {
-                        let reason = classify_private_ip(ip);
+                        let reason = classify_private_ip(ip, &policy.allowlist);
                         tracing::warn!(
                             host = %host,
                             reason,
@@ -130,6 +130,26 @@ mod tests {
             .expect_err("localhost resolves to loopback and must be refused");
 
         assert_eq!(error, "denied by SSRF policy: loopback", "expected a loopback denial");
+    }
+
+    #[tokio::test]
+    async fn checks_the_ipv4_address_embedded_in_each_resolved_ipv6_form() {
+        // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
+        // policy check exactly as an AAAA answer carrying that address would.
+        let resolver = PolicyResolver::new(deny_private_policy());
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let actual = resolve_host(&resolver, literal).await.err();
+            let expected = expected.map(|reason| format!("denied by SSRF policy: {reason}"));
+            if actual != expected {
+                mismatches.push(format!("{literal}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "resolver decisions differ:\n{}",
+            mismatches.join("\n")
+        );
     }
 
     #[tokio::test]

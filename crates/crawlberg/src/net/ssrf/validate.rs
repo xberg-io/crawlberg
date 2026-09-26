@@ -1,11 +1,11 @@
 //! URL and IP validation against an [`SsrfPolicy`].
 
 use ipnet::IpNet;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use super::policy::is_supported_scheme;
-use super::{SsrfError, SsrfPolicy};
+use super::{HostMatcher, SsrfError, SsrfPolicy};
 
 /// Private / metadata / loopback CIDRs that are denied by default, as source strings.
 ///
@@ -79,7 +79,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
             if is_ip_permitted(ip_addr, policy) {
                 return Ok(());
             } else {
-                let reason = classify_private_ip(ip_addr);
+                let reason = classify_private_ip(ip_addr, &policy.allowlist);
                 return Err(SsrfError::DeniedByPolicy { reason });
             }
         }
@@ -88,7 +88,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
             if is_ip_permitted(ip_addr, policy) {
                 return Ok(());
             } else {
-                let reason = classify_private_ip(ip_addr);
+                let reason = classify_private_ip(ip_addr, &policy.allowlist);
                 return Err(SsrfError::DeniedByPolicy { reason });
             }
         }
@@ -126,7 +126,7 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
         // ~keep DNS rebinding mitigation: every resolved IP must satisfy policy.
         for ip in &addresses {
             if !is_ip_permitted(*ip, policy) {
-                let reason = classify_private_ip(*ip);
+                let reason = classify_private_ip(*ip, &policy.allowlist);
                 return Err(SsrfError::DeniedByPolicy { reason });
             }
         }
@@ -142,53 +142,106 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
     })
 }
 
+/// The IPv4 addresses an IPv6 address embeds, for each form that is routed to that IPv4 host.
+///
+/// `ipnet`'s `contains` only matches within an address family, so `::ffff:127.0.0.1`
+/// would be tested against the IPv6 deny-nets only and sail past `127.0.0.0/8`. A host or
+/// network that carries such an address reaches the IPv4 destination, so without this the
+/// deny-list is bypassable by writing the literal in IPv6 form.
+///
+/// Covers the IPv4-mapped and IPv4-compatible forms (RFC 4291 section 2.5.5), the
+/// IPv4-translated form `::ffff:0:0:0/96` (RFC 2765 section 2.1), the NAT64 well-known
+/// prefix `64:ff9b::/96` (RFC 6052 section 2.1), 6to4 `2002::/16`, which carries the
+/// address in bits 16 to 47 (RFC 3056 section 2), and an ISATAP interface identifier
+/// `0000:5efe` or `0200:5efe` under any prefix (RFC 5214 section 6.1).
+///
+/// The local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215) fixes no position for the
+/// address: a network may use the whole /48 or a /56, /64 or /96 inside it, and RFC 6052
+/// section 2.2 places the address differently for each. Every one of the four positions
+/// is returned, except one that reads as `0.0.0.0/8` or multicast: the zero bits of a
+/// valid address read as `0.0.0.0/8` at the positions its network does not use, and the
+/// shifted bytes of a public address often read as multicast. When every position is
+/// skipped, all four are returned, so the address is refused: no real destination encodes
+/// that way, and a stateful NAT64 translator such as Jool forwards `0.0.0.0` to its own
+/// host.
+///
+/// Skipping is not free in either direction, and a skipped reading is not always a reading
+/// of unused bits. A /48, /56 or /64 network can encode a real destination inside
+/// `0.0.0.0/8` or `224.0.0.0/4`, and that address is permitted here: `64:ff9b:1:1:2:300::`
+/// reads as `0.1.2.3` after a /48 prefix and `64:ff9b:1:0:e0:0:100:0` as `224.0.0.1` after
+/// a /64 one. Only the /96 position refuses them, because its reading is skipped only when
+/// every other one is too. The hole is confined to the two ranges the filter names — no
+/// private, loopback, link-local or CGNAT destination is inside either — and closing it
+/// needs the network's real prefix length, which is issue #174's proposal. In the other
+/// direction, some public destinations are refused on those three prefix lengths, and an
+/// IPv4 allowlist entry admits them.
+///
+/// Teredo `2001::/32` is not unwrapped here, and is not yet covered at all. RFC 4380
+/// section 5.2.4 obliges a Teredo *node* to drop a packet whose embedded address is not
+/// global, which is the peer's behaviour rather than a property of the address: a Teredo
+/// literal handed to a dual-stack host never reaches a Teredo relay.
+/// `2001:0:4136:e378:0:ffff:5601:5601` XOR-decodes to `169.254.169.254`. Covering it is
+/// issue #196, left to the change that adds `2001::/32` to the deny-list, so that two
+/// concurrent changes do not both rewrite [`DEFAULT_DENY_NET_CIDRS`].
+fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
+    let octets = v6.octets();
+    let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
+    let segments = v6.segments();
+
+    // ~keep `::` and `::1` fall inside `::/96` but are the IPv6 unspecified and loopback
+    // ~keep addresses; the IPv6 deny-nets already cover and classify both.
+    let fixed = if v6.is_unspecified() || v6.is_loopback() {
+        None
+    } else {
+        v6.to_ipv4().or(match segments {
+            [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+            [0x2002, ..] => Some(at(2, 3, 4, 5)),
+            _ => None,
+        })
+    };
+    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
+    let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
+        let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
+        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
+        let none_left = positions.iter().all(skipped);
+        positions.into_iter().filter(move |v4| none_left || !skipped(v4))
+    });
+
+    fixed.into_iter().chain(isatap).chain(local_nat64.into_iter().flatten())
+}
+
+/// The first address a connection to `ip` can reach that the default deny-list covers and
+/// `allowlist` does not permit: `ip` itself, then each IPv4 address it embeds.
+fn denied_address(ip: IpAddr, allowlist: &[HostMatcher]) -> Option<IpAddr> {
+    let embedded = match ip {
+        IpAddr::V6(v6) => Some(embedded_ipv4s(v6).map(IpAddr::V4)),
+        IpAddr::V4(_) => None,
+    };
+    std::iter::once(ip)
+        .chain(embedded.into_iter().flatten())
+        .find(|candidate| {
+            !allowlist.iter().any(|m| m.matches_ip(candidate))
+                && DEFAULT_DENY_NETS.iter().any(|net| net.contains(candidate))
+        })
+}
+
 /// Test if an IP address is permitted by the SSRF policy.
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
-/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
-///
-/// `ipnet`'s `contains` only matches within an address family, so `::ffff:127.0.0.1`
-/// would be tested against the IPv6 deny-nets only and sail past `127.0.0.0/8`. On a
-/// dual-stack host the kernel routes such an address to the IPv4 destination, so
-/// without this the deny-list is bypassable by writing the literal in IPv6 form.
-///
-/// Covers the IPv4-mapped form (`::ffff:a.b.c.d`) and the NAT64 well-known prefix
-/// (`64:ff9b::/96`, RFC 6052), which embeds an IPv4 address the same way.
-fn canonicalize_ip(ip: IpAddr) -> IpAddr {
-    let IpAddr::V6(v6) = ip else { return ip };
-
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return IpAddr::V4(v4);
-    }
-
-    let segments = v6.segments();
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
-        let octets = v6.octets();
-        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
-    }
-
-    ip
-}
-
 pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
-    if !policy.deny_private {
-        return true;
-    }
-
-    let ip = canonicalize_ip(ip);
-
-    if policy.allowlist.iter().any(|m| m.matches_ip(&ip)) {
-        return true;
-    }
-
-    !DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
+    !policy.deny_private || denied_address(ip, &policy.allowlist).is_none()
 }
 
-/// Classify a private IP into a category for error messaging.
-pub(crate) fn classify_private_ip(ip: IpAddr) -> &'static str {
+/// Classify a denied IP into a category for error messaging.
+///
+/// `allowlist` must be the one the deny decision used. Classifying against an empty
+/// allowlist instead names the first deny-listed candidate, which the policy may permit:
+/// with `fe80::/10` allowlisted, `fe80::5efe:10.0.0.5` is denied for the `10.0.0.5` it
+/// carries, not for being link-local.
+pub(crate) fn classify_private_ip(ip: IpAddr, allowlist: &[HostMatcher]) -> &'static str {
     // ~keep Classify the address actually routed to, so ::ffff:127.0.0.1 reports
     // "loopback" rather than falling through to the generic IPv6 arm.
-    match canonicalize_ip(ip) {
+    match denied_address(ip, allowlist).unwrap_or(ip) {
         IpAddr::V4(ipv4) => {
             let octets = ipv4.octets();
             match octets[0] {
