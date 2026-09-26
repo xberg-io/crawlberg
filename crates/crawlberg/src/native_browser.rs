@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeCookie as NBCookie};
 use tracing::Instrument as _;
+use url::Url;
 
 use crate::error::CrawlError;
 use crate::http::{BrowserExtras, HttpResponse};
@@ -147,20 +148,26 @@ fn build_extra_headers(config: &CrawlConfig) -> std::collections::HashMap<String
 
 /// The proxy URL to render through: the browser-specific proxy if set, else the
 /// crawl-wide one, with any configured credentials inlined into the URL.
+///
+/// Credentials are embedded via `url::Url::set_username`/`set_password`, which
+/// reads the scheme through the URL parser (so an upper- or mixed-case scheme
+/// still gets its credentials inlined) and percent-encodes the userinfo
+/// component. A `format!("{scheme}://{user}:{pass}@{rest}")` splice on the raw
+/// string would let a `:`, `@`, or `/` in a credential corrupt the authority
+/// and smuggle a different host in; `crate::interact::native` fixed that same
+/// splice for the interact path and this mirrors it.
 fn resolve_proxy_url(config: &CrawlConfig) -> Option<String> {
     config.browser.proxy.as_ref().or(config.proxy.as_ref()).map(|p| {
-        if p.username.is_some() || p.password.is_some() {
-            let user = p.username.as_deref().unwrap_or("");
-            let pass = p.password.as_deref().unwrap_or("");
-            if let Some(rest) = p.url.strip_prefix("http://") {
-                format!("http://{user}:{pass}@{rest}")
-            } else if let Some(rest) = p.url.strip_prefix("https://") {
-                format!("https://{user}:{pass}@{rest}")
-            } else {
-                p.url.clone()
+        if p.username.is_none() && p.password.is_none() {
+            return p.url.clone();
+        }
+        match Url::parse(&p.url) {
+            Ok(mut parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {
+                let user = p.username.as_deref().unwrap_or("");
+                let set_ok = parsed.set_username(user).is_ok() && parsed.set_password(p.password.as_deref()).is_ok();
+                if set_ok { parsed.to_string() } else { p.url.clone() }
             }
-        } else {
-            p.url.clone()
+            _ => p.url.clone(),
         }
     })
 }
@@ -297,13 +304,53 @@ mod tests {
             proxy: Some(proxy("http://proxy:8080", Some("u"), Some("p"))),
             ..CrawlConfig::default()
         };
-        assert_eq!(resolve_proxy_url(&http).as_deref(), Some("http://u:p@proxy:8080"));
+        assert_eq!(resolve_proxy_url(&http).as_deref(), Some("http://u:p@proxy:8080/"));
 
         let https = CrawlConfig {
             proxy: Some(proxy("https://proxy:8443", Some("u"), Some("p"))),
             ..CrawlConfig::default()
         };
-        assert_eq!(resolve_proxy_url(&https).as_deref(), Some("https://u:p@proxy:8443"));
+        assert_eq!(resolve_proxy_url(&https).as_deref(), Some("https://u:p@proxy:8443/"));
+    }
+
+    #[test]
+    fn proxy_credentials_are_inlined_regardless_of_scheme_case() {
+        let upper = CrawlConfig {
+            proxy: Some(proxy("HTTP://proxy:8080", Some("u"), Some("p"))),
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            resolve_proxy_url(&upper).as_deref(),
+            Some("http://u:p@proxy:8080/"),
+            "an upper-case scheme must still get its credentials inlined"
+        );
+
+        let mixed = CrawlConfig {
+            proxy: Some(proxy("Https://proxy:8443", Some("u"), Some("p"))),
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            resolve_proxy_url(&mixed).as_deref(),
+            Some("https://u:p@proxy:8443/"),
+            "a mixed-case scheme must still get its credentials inlined"
+        );
+    }
+
+    #[test]
+    fn a_credential_containing_an_at_sign_is_percent_encoded_not_spliced_raw() {
+        // A raw format!("{scheme}://{user}:{pass}@{rest}") splice would carry an
+        // unescaped '@' straight into the authority
+        // ("http://u:p@evil.example@proxy:8080"). set_username/set_password
+        // percent-encode the value instead, so the literal '@' never appears
+        // unescaped in the resolved URL.
+        let config = CrawlConfig {
+            proxy: Some(proxy("http://proxy:8080", Some("u"), Some("p@evil.example"))),
+            ..CrawlConfig::default()
+        };
+        assert_eq!(
+            resolve_proxy_url(&config).as_deref(),
+            Some("http://u:p%40evil.example@proxy:8080/")
+        );
     }
 
     #[test]
