@@ -702,9 +702,14 @@ impl CrawlConfig {
             && !endpoint.starts_with("ws://")
             && !endpoint.starts_with("wss://")
         {
-            return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
-            )));
+            // ~keep Do not echo the value. This fires exactly when the endpoint is not
+            // ~keep `ws(s)://`, which is also when `redact_url_secrets` passes it through
+            // ~keep unchanged, so an endpoint carrying `?token=` would print in full in a
+            // ~keep `CrawlError` Display — and from there into logs and API error bodies.
+            // ~keep The field name is enough for the caller to find it.
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint must start with ws:// or wss://",
+            ));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
             return Err(CrawlError::invalid_config(

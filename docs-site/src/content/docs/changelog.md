@@ -209,6 +209,17 @@ title: "Changelog"
   `***` in place of the secret and keeps the non-secret fields. (#118)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached error text.
+  It fires precisely when the value does not parse as a URL, which is also when the URL redaction
+  helpers pass their input through unchanged — so the redaction added above did not cover it. The
+  error now names only the field. The matching `proxy.url` case is no longer handled here: #401
+  centralised proxy URL parsing and stopped that error carrying the value at all. (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
 
 ### Added
 

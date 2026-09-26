@@ -74,6 +74,11 @@ impl std::fmt::Debug for AuthConfig {
     /// header value carrying the secret) verbatim, and any `tracing::debug!(?auth, ...)`
     /// or `{:?}` capture would leak it into logs. Shows which variant is configured and
     /// whether its secret field is non-empty, never the secret's contents.
+    // ~keep `Basic.username` prints in clear on purpose, and must stay that way to match
+    // ~keep `ProxyConfig.username` right above. It is an account name, which is the field
+    // ~keep that makes an auth failure diagnosable. Do not "harmonise" it with
+    // ~keep `crawlberg_bypass::config::AuthScheme::BasicUsername`, which hides its
+    // ~keep username: there the username field *is* the vendor API key.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
     // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
