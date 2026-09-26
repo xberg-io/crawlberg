@@ -183,7 +183,7 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 // ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
 async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf).await?;
+    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf, None).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -196,7 +196,7 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     })
     .await;
 
-    let blocked = interceptor.finish().await;
+    let blocked = interceptor.finish().await.blocked;
     resolve_navigation_outcome(navigation, blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {

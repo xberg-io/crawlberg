@@ -290,7 +290,7 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
         }
     }
 
@@ -301,7 +301,7 @@ mod tests {
             body: String::from_utf8_lossy(&body_bytes).into_owned(),
             body_bytes,
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
         }
     }
 

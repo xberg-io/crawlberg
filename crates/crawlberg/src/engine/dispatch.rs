@@ -81,7 +81,7 @@ impl CrawlEngine {
                         body: bypass_resp.body,
                         body_bytes: bypass_resp.body_bytes,
                         headers: bypass_resp.headers,
-                        landed_url: None,
+                        landed: None,
                     },
                     false,
                 ))
@@ -91,7 +91,7 @@ impl CrawlEngine {
                 {
                     let pool = self.config.browser_pool.as_deref();
                     #[cfg(feature = "browser-native")]
-                    let http_resp = crate::browser::browser_fetch(
+                    let page = crate::browser::browser_fetch(
                         url,
                         &self.config,
                         None,
@@ -101,8 +101,8 @@ impl CrawlEngine {
                     )
                     .await?;
                     #[cfg(not(feature = "browser-native"))]
-                    let http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
-                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+                    let page = crate::browser::browser_fetch(url, &self.config, None, pool, false).await?;
+                    let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
                     Ok((crawl_resp, true))
                 }
                 #[cfg(not(feature = "browser"))]
@@ -111,12 +111,13 @@ impl CrawlEngine {
         }
     }
 
-    /// Convert an `HttpResponse` (from the browser path) into the `CrawlResponse`
-    /// shape expected by the extraction pipeline.
+    /// Convert a page from the browser path into the `CrawlResponse` shape expected by
+    /// the extraction pipeline.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
     pub(super) fn browser_http_to_crawl(
-        r: crate::http::HttpResponse,
+        page: crate::browser::BrowserPage,
     ) -> (crate::tower::CrawlResponse, Option<crate::http::BrowserExtras>) {
+        let r = page.response;
         // ~keep `crate::tower::CrawlResponse` has no screenshot field (it is not owned by this
         // ~keep task and feeds every non-scrape() caller, including the multi-page crawl loop),
         // ~keep so a screenshot captured upstream in `page_fetch` cannot survive this conversion.
@@ -139,7 +140,10 @@ impl CrawlEngine {
                 body: r.body,
                 body_bytes: r.body_bytes,
                 headers: std::collections::HashMap::new(),
-                landed_url: Some(r.final_url),
+                landed: Some(crate::tower::Landing {
+                    url: r.final_url,
+                    redirects: page.redirects,
+                }),
             },
             extras,
         )
@@ -157,7 +161,7 @@ impl CrawlEngine {
             body: String::new(),
             body_bytes: Vec::new(),
             headers: std::collections::HashMap::new(),
-            landed_url: None,
+            landed: None,
         }
     }
 

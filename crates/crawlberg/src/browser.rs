@@ -28,13 +28,22 @@ static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// closed, before abandoning it.
 const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// A page a browser backend fetched, and the HTTP redirects it followed to reach it.
+pub(crate) struct BrowserPage {
+    pub(crate) response: HttpResponse,
+    /// HTTP redirects the browser followed. The native backend does not report its chain,
+    /// so for it a landing on another URL counts as one.
+    pub(crate) redirects: usize,
+}
+
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
 /// When `pool` is `Some`, acquires a page from the pool, uses it, and returns
 /// it on completion. When `pool` is `None`, launches a one-shot browser
 /// instance and tears it down afterwards.
 ///
-/// Returns an `HttpResponse` compatible with the existing scrape pipeline.
+/// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
+/// the HTTP redirects the browser followed to reach it.
 pub(crate) async fn browser_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -42,7 +51,7 @@ pub(crate) async fn browser_fetch(
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
     #[cfg(feature = "browser-native")] native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     match config.browser.backend {
         BrowserBackend::Chromiumoxide => chromiumoxide_fetch(url, config, prior_cookies, pool, want_screenshot).await,
         BrowserBackend::Native => {
@@ -57,13 +66,13 @@ pub(crate) async fn browser_fetch(
                 );
             }
             #[cfg(feature = "browser-native")]
-            {
-                native_fetch(url, config, prior_cookies, native_executor).await
-            }
+            let response = native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
-            {
-                native_fetch(url, config, prior_cookies).await
-            }
+            let response = native_fetch(url, config, prior_cookies).await?;
+            Ok(BrowserPage {
+                redirects: usize::from(response.final_url != url),
+                response,
+            })
         }
     }
 }
@@ -74,7 +83,7 @@ async fn chromiumoxide_fetch(
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     let session_id = BROWSER_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -105,7 +114,7 @@ async fn chromiumoxide_fetch_inner(
     prior_cookies: Option<&[CookieInfo]>,
     pool: Option<&BrowserPool>,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     let target = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
     validate_url(&target, &config.ssrf)
         .await
@@ -138,7 +147,7 @@ async fn pooled_fetch(
     prior_cookies: Option<&[CookieInfo]>,
     pool: &BrowserPool,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     match tokio::time::timeout(
         overall_timeout,
@@ -157,7 +166,7 @@ async fn pooled_fetch_inner(
     prior_cookies: Option<&[CookieInfo]>,
     pool: &BrowserPool,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
         // ~keep profile named later cannot retroactively change that process's
@@ -226,7 +235,7 @@ async fn one_shot_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     let overall_timeout = config.browser.overall_timeout;
     let shutdown_timeout = config.browser.shutdown_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;

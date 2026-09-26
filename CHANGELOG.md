@@ -12,7 +12,20 @@ All notable changes to crawlberg are documented here.
   browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
   check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
   landed URL is refused is dropped. (#75)
+- **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
+  chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
+  refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
+  redirect response at the limit, with the same redirect count, status and final URL that HTTP
+  mode reports, and the next hop is never requested. Only the redirects of the requested page
+  count, and this applies to the Chromiumoxide backend. (#90)
 
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
