@@ -149,6 +149,8 @@ async fn retry_codes_stop_a_server_error_whose_status_is_not_listed() {
     );
 }
 
+/// ~keep A regression guard, not evidence for #76: this sent 4 requests before the allowlist
+/// existed too. It guards against the allowlist over-blocking a status `retry_codes` does list.
 #[tokio::test]
 async fn retry_codes_still_retry_a_listed_status() {
     let timestamps = scrape_against(503, Duration::ZERO, "/listed-503", allowlist_config(vec![429, 503])).await;
@@ -172,6 +174,8 @@ async fn retry_codes_stop_a_timeout() {
     );
 }
 
+/// ~keep A regression guard, not evidence for #76: this sent 4 requests before the allowlist
+/// existed too. It guards against an empty `retry_codes` being read as a list that admits nothing.
 #[tokio::test]
 async fn empty_retry_codes_still_retry_a_timeout() {
     let slow = Duration::from_millis(500);
@@ -185,6 +189,8 @@ async fn empty_retry_codes_still_retry_a_timeout() {
     );
 }
 
+/// ~keep Only the timeout half is evidence for #92. The 408-response half sent 4 requests before
+/// the allowlist existed too, and is a guard against over-blocking a listed status.
 #[tokio::test]
 async fn retry_codes_listing_408_retry_a_408_response_but_not_a_timeout() {
     let slow = Duration::from_millis(500);
