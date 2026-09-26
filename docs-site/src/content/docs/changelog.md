@@ -4,6 +4,19 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Fixed
+
+- **Link-shaped text in a page title was rewritten.** `<title>use <a href="x.html"> tags</title>`
+  got a full address in its front matter title, because the rewrite of relative links read the
+  title's text as markup. The contents of `<title>`, `<textarea>`, `<script>`, `<style>`,
+  `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>` and `<plaintext>` are text, as a
+  browser reads them, and now stay as written. (#102)
+- **The front matter showed character references in the base address.** A page with
+  `<base href="https://example.com/it&#x27;s/">` got `base: https://example.com/it&#x27;s/`. The
+  front matter now shows the decoded address, `https://example.com/it's/`. (#103)
+- **A `<graphic>` embedded in the page copied its whole encoded data into the markdown.** The
+  `data:` rule for `<img>` now covers the addresses of `<graphic>` too. (#113)
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a

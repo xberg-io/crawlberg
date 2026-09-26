@@ -11,6 +11,7 @@ mod link_targets;
 mod links;
 mod metadata;
 pub(crate) mod selectors;
+mod start_tags;
 
 use std::borrow::Cow;
 use std::cell::RefCell;

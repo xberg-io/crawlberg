@@ -7,7 +7,7 @@ use crate::types::{ContentConfig, MarkdownResult};
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
 ///
 /// ~keep html-to-markdown-rs has no base URL option and writes each address as found, so
-/// ~keep relative addresses are made absolute, and image `data:` addresses emptied, in the
+/// ~keep relative addresses are made absolute, and image `data:` addresses removed, in the
 /// ~keep HTML first; see `resolve_link_targets`.
 fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConfig) -> Option<MarkdownResult> {
     let html = crate::html::resolve_link_targets(html, document_url);
@@ -336,6 +336,81 @@ mod tests {
             md.starts_with("---\nbase: https://example.com/first/\n---\n"),
             "got: {md}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_front_matter_shows_the_base_address_decoded() {
+        for (base, shown) in [
+            ("https://example.com/it&#x27;s/", "https://example.com/it's/"),
+            ("/a&amp;b/", "https://example.com/a&b/"),
+        ] {
+            let html = format!(r#"<html><head><base href="{base}"></head><body><p>x</p></body></html>"#);
+            let md = markdown_at(&html, "https://example.com/").await;
+            let front_matter = md.split("\n---\n").next().unwrap_or_default();
+            assert!(
+                front_matter.contains(shown) && !front_matter.contains("&#") && !front_matter.contains("&amp;"),
+                "base {base} gave: {md}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn leaves_link_shaped_text_in_raw_text_elements_as_written() {
+        let md = markdown_at(
+            r#"<html><head><title>use <a href="x.html"> tags</title></head><body>
+            <textarea><a href="t.html">t</a></textarea><p><a href="leaf.html">leaf</a></p></body></html>"#,
+            "https://example.com/dir/page.html",
+        )
+        .await;
+        assert!(!md.contains("https://example.com/dir/x.html"), "got: {md}");
+        assert!(!md.contains("https://example.com/dir/t.html"), "got: {md}");
+        assert!(md.contains("[leaf](https://example.com/dir/leaf.html)"), "got: {md}");
+    }
+
+    #[tokio::test]
+    async fn a_quote_in_the_base_cannot_cut_the_front_matter_or_open_markup() {
+        for (href, shown) in [
+            (r#"https://a"b.example/"#, "base: https://a%22b.example/"),
+            (r#"javascript:alert("x")<b>"#, "base: javascript:alert(%22x%22)%3Cb%3E"),
+        ] {
+            let html = format!(r#"<html><head><base href='{href}'></head><body><p>x</p></body></html>"#);
+            let md = markdown_at(&html, "https://example.com/").await;
+            assert!(md.starts_with(&format!("---\n{shown}\n")), "base {href} gave: {md}");
+        }
+    }
+
+    /// ~keep Pins that html-to-markdown-rs copies the base href into the front matter without
+    /// ~keep decoding it (xberg-io/html-to-markdown#509 changes that). A base whose address really
+    /// ~keep holds `&amp;` shows `&` once the converter decodes, and this test fails; the base must
+    /// ~keep then be written encoded again.
+    #[tokio::test]
+    async fn the_front_matter_base_relies_on_the_converter_not_decoding_it() {
+        let md = markdown_at(
+            r#"<html><head><base href="/a&amp;amp;b/"></head><body><p>x</p></body></html>"#,
+            "https://example.com/",
+        )
+        .await;
+        assert!(md.starts_with("---\nbase: https://example.com/a&amp;b/\n"), "got: {md}");
+    }
+
+    #[tokio::test]
+    async fn a_graphic_falls_through_an_inline_data_address_to_a_real_one() {
+        let md = markdown_at(
+            r#"<p><graphic url="data:image/png;base64,AA" href="real.png" alt="g"></graphic></p>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![g](https://example.com/docs/real.png)\n");
+    }
+
+    #[tokio::test]
+    async fn an_inline_data_graphic_drops_the_payload() {
+        for attr in ["url", "href", "xlink:href", "src"] {
+            let html = format!(r#"<p><graphic {attr}="data:image/png;base64,{ICON_PAYLOAD}" alt="g"></graphic></p>"#);
+            let md = markdown_at(&html, "https://example.com/").await;
+            assert!(!md.contains("data:"), "attribute {attr} gave: {md}");
+            assert!(md.contains("![g]"), "attribute {attr} gave: {md}");
+        }
     }
 
     #[tokio::test]

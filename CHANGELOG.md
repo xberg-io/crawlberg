@@ -25,6 +25,16 @@ All notable changes to crawlberg are documented here.
   icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
   and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
   real URL is still used in its place. `fit_content` follows the same rule. (#97)
+- **Link-shaped text in a page title was rewritten.** `<title>use <a href="x.html"> tags</title>`
+  got a full address in its front matter title, because the rewrite of relative links read the
+  title's text as markup. The contents of `<title>`, `<textarea>`, `<script>`, `<style>`,
+  `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>` and `<plaintext>` are text, as a
+  browser reads them, and now stay as written. (#102)
+- **The front matter showed character references in the base address.** A page with
+  `<base href="https://example.com/it&#x27;s/">` got `base: https://example.com/it&#x27;s/`. The
+  front matter now shows the decoded address, `https://example.com/it's/`. (#103)
+- **A `<graphic>` embedded in the page copied its whole encoded data into the markdown.** The
+  `data:` rule for `<img>` now covers the addresses of `<graphic>` too. (#113)
 
 ## [1.8.0] - 2026-09-25
 
