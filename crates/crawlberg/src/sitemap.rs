@@ -365,7 +365,7 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
         return false;
     }
     tracing::warn!(
-        sitemap_url = %sitemap_url,
+        sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
         fetched = visited.len(),
         max_documents = MAX_SITEMAP_DOCUMENTS,
         "stopping sitemap walk: fetched the maximum number of sitemap documents"
@@ -444,7 +444,7 @@ async fn process_sitemap_response_inner(
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
         tracing::warn!(
-            sitemap_url = %document.url,
+            sitemap_url = %crate::net::redact_url_credentials(document.url),
             depth,
             max_depth = MAX_SITEMAP_INDEX_DEPTH,
             "skipping sitemap index tier: max nesting depth exceeded"
@@ -466,7 +466,7 @@ async fn process_sitemap_response_inner(
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
-                sitemap_url = %resolved,
+                sitemap_url = %crate::net::redact_url_credentials(&resolved),
                 "skipping sitemap index tier: cycle detected (already visited)"
             );
             continue;
@@ -594,6 +594,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_terminates_on_self_referential_cycle() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -618,6 +620,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_terminates_on_mutual_cycle() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -638,6 +642,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_stops_at_max_index_depth() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -674,6 +680,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_stops_at_max_sitemap_documents() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -811,5 +819,136 @@ mod tests {
 
         assert_eq!(urls.len(), 2);
         assert!(urls.iter().all(|entry| entry.url.contains("keep")));
+    }
+
+    /// A sitemap address whose password must never reach a log field.
+    const CREDENTIALED_SITEMAP_URL: &str = "https://user:hunter2@example.com/sitemap.xml";
+
+    /// `Visit` that keeps the value of every `sitemap_url` field.
+    struct SitemapUrlVisitor<'a>(&'a mut Vec<String>);
+
+    impl tracing::field::Visit for SitemapUrlVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "sitemap_url" {
+                self.0.push(format!("{value:?}"));
+            }
+        }
+    }
+
+    /// Minimal `tracing::Subscriber` that records the `sitemap_url` field of every event.
+    struct SitemapUrlCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::Subscriber for SitemapUrlCapture {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut values = self.0.lock().expect("sink mutex must not be poisoned");
+            event.record(&mut SitemapUrlVisitor(&mut values));
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    fn capture_sitemap_urls() -> (
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        tracing::subscriber::DefaultGuard,
+    ) {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(SitemapUrlCapture(sink.clone()));
+        (sink, guard)
+    }
+
+    fn assert_sitemap_url_redacted(sink: &std::sync::Mutex<Vec<String>>) {
+        let values = sink.lock().expect("sink mutex must not be poisoned");
+        assert!(!values.is_empty(), "expected a warning with a 'sitemap_url' field");
+        for value in values.iter() {
+            assert!(!value.contains("hunter2"), "the password reached the log: '{value}'");
+            assert!(
+                value.contains("***:***@example.com/"),
+                "expected the redacted address, got '{value}'"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    fn document_budget_warning_redacts_the_sitemap_url() {
+        let (sink, _guard) = capture_sitemap_urls();
+        let visited: std::collections::HashSet<String> = (0..MAX_SITEMAP_DOCUMENTS)
+            .map(|i| format!("https://example.com/{i}.xml"))
+            .collect();
+
+        assert!(document_budget_exhausted(CREDENTIALED_SITEMAP_URL, &visited));
+        assert_sitemap_url_redacted(&sink);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    async fn index_depth_warning_redacts_the_sitemap_url() {
+        // ~keep #[tokio::test] defaults to a current-thread runtime, so the walk stays on
+        // the thread the subscriber guard was set on.
+        let (sink, _guard) = capture_sitemap_urls();
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let body = sitemap_index_xml(&["https://example.com/child.xml"]);
+
+        let urls = process_sitemap_response_inner(
+            &xml_document(CREDENTIALED_SITEMAP_URL, &body),
+            &walk_context(&config, &client, &filter),
+            None,
+            MAX_SITEMAP_INDEX_DEPTH,
+            &mut std::collections::HashSet::new(),
+        )
+        .await;
+
+        assert!(
+            urls.is_empty(),
+            "an index past the depth cap must not be walked, got {urls:?}"
+        );
+        assert_sitemap_url_redacted(&sink);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    async fn cycle_warning_redacts_the_sitemap_url() {
+        let (sink, _guard) = capture_sitemap_urls();
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let child = "https://user:hunter2@example.com/child.xml";
+        let body = sitemap_index_xml(&[child]);
+        // ~keep The child is already visited, so the walk logs the cycle and never fetches it.
+        let base = Url::parse(CREDENTIALED_SITEMAP_URL).ok();
+        let mut visited = std::collections::HashSet::from([resolve_child_sitemap_url(
+            base.as_ref(),
+            CREDENTIALED_SITEMAP_URL,
+            child,
+        )]);
+
+        let urls = process_sitemap_response_inner(
+            &xml_document(CREDENTIALED_SITEMAP_URL, &body),
+            &walk_context(&config, &client, &filter),
+            None,
+            0,
+            &mut visited,
+        )
+        .await;
+
+        assert!(
+            urls.is_empty(),
+            "an already visited child must not be walked, got {urls:?}"
+        );
+        assert_sitemap_url_redacted(&sink);
     }
 }

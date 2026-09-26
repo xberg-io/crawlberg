@@ -182,6 +182,17 @@ title: "Changelog"
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
+  message, was logged exactly as received, credentials included. Such a value is now replaced
+  whole with `[address hidden: it may carry credentials]` when it contains an `@`, and a value
+  without an `@` comes back unchanged. A URL that parses with a host and has no whitespace is
+  redacted as before. The placeholder also replaces any other value with an `@` that is not one
+  URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
+  a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
+  index depth cap, and cycle detection) also logged their address without going through the
+  redactor at all; they now do. (#236, #243, #261)
 
 ### Added
 
