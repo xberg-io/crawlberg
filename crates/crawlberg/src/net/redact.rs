@@ -14,14 +14,20 @@ const REDACTED_PLACEHOLDER: &str = "***";
 /// replaced with a fixed placeholder before re-serializing, so the scheme/host/path
 /// remain useful for debugging while the credential bytes never reach the output.
 ///
-/// `input` is returned unchanged (not an error) when it does not parse as an absolute
-/// URL, or parses but carries no credentials — either way there is nothing to redact.
-/// This makes the function safe to call unconditionally on any string that *might* be a
-/// URL, such as an error message being assembled for display.
+/// `input` is returned unchanged when it parses to a URL with a host but carries no
+/// credentials, since there is nothing to redact. Otherwise [`strip_unparsed_userinfo`] removes
+/// a `user[:pw]@` prefix from whatever looks like the authority part of `input` directly, so
+/// a value never carries a credential through unchanged just because `url::Url` could not
+/// give it a host: that covers a genuinely malformed address (a stray space in the host) as
+/// well as one `url::Url` parses as an opaque, hostless value (a scheme-less `user:pw@host`
+/// parses as scheme `user` with no host at all, not as an error). This makes the function
+/// safe to call unconditionally on any string that *might* be a URL, such as an error
+/// message being assembled for display.
 #[must_use]
 pub fn redact_url_credentials(input: &str) -> String {
-    let Ok(mut url) = url::Url::parse(input) else {
-        return input.to_owned();
+    let mut url = match url::Url::parse(input) {
+        Ok(url) if url.host().is_some() => url,
+        _ => return strip_unparsed_userinfo(input),
     };
     if url.username().is_empty() && url.password().is_none() {
         return input.to_owned();
@@ -38,6 +44,26 @@ pub fn redact_url_credentials(input: &str) -> String {
         let _ = url.set_password(Some(REDACTED_PLACEHOLDER));
     }
     url.to_string()
+}
+
+/// Remove a `user[:password]@` prefix from a string that failed to parse as a URL.
+///
+/// The authority runs from right after the first `//` (or from the start of `input` when
+/// there is no `//`, since a scheme-less `user:pw@host` has no double slash to anchor on)
+/// up to the next `/`, or the end of `input` when there is none. When that span contains
+/// an `@`, everything up to and including it is userinfo and is removed; an `@` that only
+/// appears after the authority (in the path) is left alone.
+fn strip_unparsed_userinfo(input: &str) -> String {
+    let authority_start = input.find("//").map_or(0, |pos| pos + 2);
+    let authority = &input[authority_start..];
+    let authority_end = authority.find('/').unwrap_or(authority.len());
+    let Some(at_pos) = authority[..authority_end].find('@') else {
+        return input.to_owned();
+    };
+    let mut redacted = String::with_capacity(input.len());
+    redacted.push_str(&input[..authority_start]);
+    redacted.push_str(&authority[at_pos + 1..]);
+    redacted
 }
 
 #[cfg(test)]
@@ -94,6 +120,52 @@ mod tests {
         assert_eq!(
             redact_url_credentials("evil.example: dns error"),
             "evil.example: dns error"
+        );
+    }
+
+    #[test]
+    fn strips_userinfo_from_an_unparseable_url() {
+        // ~keep The space in the host makes this fail `url::Url::parse`; before the
+        // fallback existed this returned the input unchanged, credentials included.
+        let redacted = redact_url_credentials("https://user:pw@ex ample.com/x");
+        assert!(
+            !redacted.contains("user:pw"),
+            "credentials must not survive, got '{redacted}'"
+        );
+        assert_eq!(redacted, "https://ex ample.com/x");
+    }
+
+    #[test]
+    fn strips_userinfo_from_a_schemeless_authority() {
+        // ~keep `url::Url::parse` treats this as `Ok`, scheme `user`, opaque path
+        // `pw@host` -- not an error -- so routing only on `Err` would miss it. No `//`
+        // is present either, so the fallback must anchor the authority at the start of
+        // the string rather than after a scheme separator that is not there.
+        let redacted = redact_url_credentials("user:pw@host");
+        assert!(
+            !redacted.contains("user:pw"),
+            "credentials must not survive, got '{redacted}'"
+        );
+        assert_eq!(redacted, "host");
+    }
+
+    #[test]
+    fn leaves_an_at_sign_in_the_path_alone() {
+        // ~keep The `@` here is past the first `/` after the authority, i.e. in the
+        // path, not in userinfo position. A fallback that scanned for the first `@`
+        // anywhere in the string, instead of bounding the search at the authority,
+        // would wrongly delete part of the path.
+        let redacted = redact_url_credentials("https://ex ample.com/a@b");
+        assert_eq!(redacted, "https://ex ample.com/a@b");
+    }
+
+    #[test]
+    fn leaves_a_clean_unparseable_looking_url_unchanged() {
+        // ~keep Same malformed-host family as the other fallback tests, but with no
+        // userinfo at all: the fallback must not invent one.
+        assert_eq!(
+            redact_url_credentials("https://ex ample.com/clean"),
+            "https://ex ample.com/clean"
         );
     }
 }

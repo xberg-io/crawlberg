@@ -365,7 +365,7 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
         return false;
     }
     tracing::warn!(
-        sitemap_url = %sitemap_url,
+        sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
         fetched = visited.len(),
         max_documents = MAX_SITEMAP_DOCUMENTS,
         "stopping sitemap walk: fetched the maximum number of sitemap documents"
@@ -444,7 +444,7 @@ async fn process_sitemap_response_inner(
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
         tracing::warn!(
-            sitemap_url = %document.url,
+            sitemap_url = %crate::net::redact_url_credentials(document.url),
             depth,
             max_depth = MAX_SITEMAP_INDEX_DEPTH,
             "skipping sitemap index tier: max nesting depth exceeded"
@@ -466,7 +466,7 @@ async fn process_sitemap_response_inner(
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
-                sitemap_url = %resolved,
+                sitemap_url = %crate::net::redact_url_credentials(&resolved),
                 "skipping sitemap index tier: cycle detected (already visited)"
             );
             continue;
