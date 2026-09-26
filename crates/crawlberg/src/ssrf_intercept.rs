@@ -57,8 +57,8 @@ pub(crate) struct InterceptOutcome {
 
 /// A main-frame response the navigation ends on without a document, reported as is.
 ///
-/// ~keep Read by `browser::navigation`, which needs the `browser` feature; a
-/// ~keep `browser-chromiumoxide`-only build has just `interact`, which sets no limit.
+/// ~keep The headers are read by `browser::navigation`, which needs the `browser` feature;
+/// ~keep a `browser-chromiumoxide`-only build has just `interact`, which reads the URL and status.
 #[derive(Debug)]
 #[cfg_attr(not(feature = "browser"), allow(dead_code))]
 pub(crate) struct StoppedResponse {
@@ -97,27 +97,24 @@ async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), Stri
 /// schemes) are failed with `BlockedByClient` and the first one is recorded so
 /// the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
 ///
-/// With `redirect_limit` set, main-frame document responses are also paused so
-/// the HTTP redirects Chrome follows are counted, and the redirect that would
-/// exceed the limit is failed before its target is requested. A response Chrome does
+/// Main-frame document responses are also paused so the HTTP redirects Chrome
+/// follows are counted, and the redirect that would exceed `redirect_limit` is
+/// failed before its target is requested. A response Chrome does
 /// not commit is recorded and failed the same way, so the navigation ends at once.
 pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
-    redirect_limit: Option<usize>,
+    redirect_limit: usize,
 ) -> Result<SsrfInterceptGuard, CrawlError> {
     let mut events = page
         .event_listener::<EventRequestPaused>()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
 
-    let main_frame = match redirect_limit {
-        Some(_) => page.mainframe().await.ok().flatten(),
-        None => None,
-    };
+    let main_frame = page.mainframe().await.ok().flatten();
 
     page.execute(FetchEnableParams {
-        patterns: redirect_limit.map(|_| intercept_patterns()),
+        patterns: Some(intercept_patterns()),
         handle_auth_requests: None,
     })
     .await
@@ -132,10 +129,8 @@ pub(crate) async fn start_ssrf_interception(
         while let Some(event) = events.next().await {
             let request_id = event.request_id.clone();
 
-            if let Some(limit) = redirect_limit
-                && is_response_stage(&event)
-            {
-                if main_frame_verdict(&event, main_frame.as_ref(), limit, &listener_state) {
+            if is_response_stage(&event) {
+                if main_frame_verdict(&event, main_frame.as_ref(), redirect_limit, &listener_state) {
                     let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
                 } else {
                     let _ = listener_page

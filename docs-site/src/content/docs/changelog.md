@@ -26,6 +26,12 @@ title: "Changelog"
   mode reports, and the next hop is never requested. Only the redirects of the requested page
   count. A navigation a script starts after the page loads, and any redirect it follows, does not
   count. This applies to the Chromiumoxide backend. (#90)
+- **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
+  `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
+  returns at once. When the navigation ends on a response without a document, `interact` reports
+  the URL that answered, empty HTML, and a failed result for each action that names the status.
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
+  (#116, #140)
 
 ## [1.8.0] - 2026-09-25
 
