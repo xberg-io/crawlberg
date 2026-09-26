@@ -198,6 +198,12 @@ title: "Changelog"
   as ranges. These addresses were refused before and are refused now; only the reason string in the
   error and the log field changes. (#205)
 
+- **The bypass provider could expose a vendor API key.** It reported the vendor's API request URL
+  as the page's `final_url`, and its send and body-read errors printed the same URL. For a vendor
+  that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
+  field's contract allows when the vendor does not report the resolved URL, and the errors no
+  longer include the request URL. (#89)
+
 ### Added
 
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
