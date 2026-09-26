@@ -69,7 +69,12 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             };
 
-            let href = get_attr(tag, "href").unwrap_or("").trim();
+            // ~keep HTML strips only ASCII whitespace from a URL attribute. U+00A0, U+2000-200A,
+            // U+3000 and U+0085 belong to the value and are percent-encoded, so the Unicode-aware
+            // `str::trim` reported an address the browser and the markdown rewrite do not use.
+            let href = get_attr(tag, "href")
+                .unwrap_or("")
+                .trim_matches(|c: char| c.is_ascii_whitespace());
             if href.is_empty() {
                 continue;
             }
@@ -165,6 +170,37 @@ mod tests {
             links[0].nofollow,
             "mixed-case ReL=\"nofollow\" should be honoured, got rel={:?}",
             links[0].rel
+        );
+    }
+
+    #[test]
+    fn keeps_unicode_spaces_in_an_href_as_a_browser_does() {
+        let html = "<a href=\"/a\u{a0}\">nbsp</a><a href=\"/b\u{3000}\">ideographic</a>";
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(links.len(), 2, "expected exactly two links, got {links:?}");
+        assert_eq!(
+            links[0].url, "https://example.com/a%C2%A0",
+            "a trailing NBSP belongs to the address and must be percent-encoded, not trimmed, got {}",
+            links[0].url
+        );
+        assert_eq!(
+            links[1].url, "https://example.com/b%E3%80%80",
+            "a trailing U+3000 belongs to the address and must be percent-encoded, not trimmed, got {}",
+            links[1].url
+        );
+    }
+
+    // ~keep Guard, not coverage: this already passes before the trim was narrowed to ASCII. It
+    // pins that the narrowing still drops an all-ASCII-whitespace href, which would otherwise
+    // resolve to the page URL and report the page as a link to itself.
+    #[test]
+    fn still_skips_an_href_that_is_only_ascii_whitespace() {
+        let html = "<a href=\" \t\r\n \">blank</a>";
+        let links = extract(html, "https://example.com/page");
+        assert_eq!(
+            links.len(),
+            0,
+            "an ASCII-whitespace-only href must be skipped, not resolved to the page URL, got {links:?}"
         );
     }
 
