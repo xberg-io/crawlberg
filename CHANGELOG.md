@@ -6,6 +6,16 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **An `interact` action reported success while a request it sent was refused.** A refused request
+  counted against the action that sent it only once the check had matched it to the page it came
+  from, and that match is a frame-tree lookup over every live target of the browser, retried while
+  Chrome has not reported the frame yet. The first request of a new frame — an iframe an action
+  appends, a popup it opens — regularly takes longer to match than the 25 ms grace after the
+  action, so the wait ended with nothing in flight and the action reported success; the refusal was
+  then older than the next action's window and was charged to no action at all. The request itself
+  was always refused. A paused request now counts from the moment Chrome paused it, and an action
+  waits for one paused inside its own window that is not matched yet. (#192)
+
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
   a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
   then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
