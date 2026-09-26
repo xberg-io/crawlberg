@@ -58,6 +58,10 @@ async fn native_browser_fetch_inner(
         ));
     }
 
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "the native browser backend is selected; it runs no Chrome process",
+    );
     if config.browser_profile.is_some() {
         // ~keep The native backend runs deno_core/V8 in-process and spawns no Chrome
         // ~keep subprocess, so there is no `--user-data-dir` for a profile to configure.

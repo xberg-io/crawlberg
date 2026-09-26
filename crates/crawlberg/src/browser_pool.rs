@@ -45,8 +45,8 @@ const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// ~keep without re-stripping the `--`. Normalizing here, once, means a fourth launch path
 /// ~keep can't reintroduce the double-dash bug (see `chrome_args.rs`) by forgetting to
 /// ~keep call `chrome_arg_key` itself.
-/// ~keep Caller-supplied `chrome_args` config entries do not come through this function
-/// ~keep and still need their own `chrome_arg_key` call at the call site.
+/// ~keep Caller-supplied `chrome_args` config entries do not come through this function;
+/// ~keep [`apply_launch_overrides`] normalizes them for every launch path.
 pub(crate) fn safe_default_args() -> Vec<&'static str> {
     let mut all_args = vec![
         "--disable-background-networking",
@@ -105,7 +105,8 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
     filtered.into_iter().map(chrome_arg_key).collect()
 }
 
-/// Push every entry of [`safe_default_args`] onto `builder`.
+/// Push every entry of [`safe_default_args`] onto `builder`, except a default whose switch
+/// name one of the caller's `chrome_args` also names: the caller's flag replaces it.
 ///
 /// ~keep All three launch paths (`browser.rs`, `browser_pool.rs`,
 /// ~keep `interact/chromiumoxide.rs`) call this instead of looping over
@@ -113,11 +114,51 @@ pub(crate) fn safe_default_args() -> Vec<&'static str> {
 /// ~keep chromiumoxide exists exactly once. A fourth launch path gets the fix
 /// ~keep by calling this function; it cannot reintroduce the double-dash bug by
 /// ~keep writing its own loop and forgetting to normalize.
-pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserConfigBuilder {
+/// ~keep Replacing rather than appending is the only way to make the caller's value win:
+/// ~keep chromiumoxide keeps launch flags in a HashMap, so two values for one switch reach
+/// ~keep Chrome in no fixed order.
+pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder, chrome_args: &[String]) -> BrowserConfigBuilder {
     for arg in safe_default_args() {
-        builder = builder.arg(arg);
+        if !caller_sets_switch(chrome_args, crate::types::chrome_switch_name(arg)) {
+            builder = builder.arg(arg);
+        }
     }
     builder
+}
+
+/// Whether one of the caller's `chrome_args` names the Chrome switch `name`, byte-exact.
+///
+/// ~keep Exact comparison is sound because `check_chrome_args` refuses a name with an
+/// ~keep uppercase letter before any launch.
+pub(crate) fn caller_sets_switch(chrome_args: &[String], name: &str) -> bool {
+    chrome_args
+        .iter()
+        .any(|arg| crate::types::chrome_switch_name(arg) == name)
+}
+
+/// Point `builder` at the caller's Chrome binary, if one is named, and add the caller's
+/// extra flags. [`apply_default_args`] has already left out any default they replace.
+///
+/// A named binary that is missing or not executable is an error naming the path, never a
+/// fallback to chromiumoxide's own detection. `chrome_args` that `CrawlConfig::validate` would
+/// refuse are an error here too, for the pool, whose config never passes through `validate`.
+/// `section` names the config the options came from (`browser` or `BrowserPoolConfig`), and
+/// the error names the key in it.
+pub(crate) fn apply_launch_overrides(
+    mut builder: BrowserConfigBuilder,
+    section: &str,
+    chrome_path: Option<&std::path::Path>,
+    chrome_args: &[String],
+) -> Result<BrowserConfigBuilder, CrawlError> {
+    crate::types::check_chrome_args(section, chrome_args).map_err(CrawlError::browser_error)?;
+    if let Some(path) = chrome_path {
+        crate::types::check_chrome_executable(section, path).map_err(CrawlError::browser_error)?;
+        builder = builder.chrome_executable(path);
+    }
+    for arg in chrome_args {
+        builder = builder.arg(chrome_arg_key(arg.as_str()));
+    }
+    Ok(builder)
 }
 
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
@@ -125,7 +166,10 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
 ///
 /// ~keep Split out from `launch_browser` so a test can assert on the flags this path
 /// ~keep actually passes without spawning a real Chrome process.
-fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[String]) -> BrowserConfigBuilder {
+fn build_pool_launch_builder(
+    user_data_dir: &std::path::Path,
+    config: &BrowserPoolConfig,
+) -> Result<BrowserConfigBuilder, CrawlError> {
     let mut builder = BrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -136,11 +180,13 @@ fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[Str
     builder = builder
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
-    builder = apply_default_args(builder);
-    for arg in chrome_args {
-        builder = builder.arg(chrome_arg_key(arg.as_str()));
-    }
-    builder
+    builder = apply_default_args(builder, &config.chrome_args);
+    apply_launch_overrides(
+        builder,
+        "BrowserPoolConfig",
+        config.chrome_path.as_deref(),
+        &config.chrome_args,
+    )
 }
 
 /// Configuration for a [`BrowserPool`].
@@ -155,7 +201,12 @@ pub struct BrowserPoolConfig {
     /// If set, connect to an already-running Chrome via this CDP WebSocket URL
     /// instead of launching a new process.
     pub browser_endpoint: Option<String>,
-    /// Extra command-line arguments forwarded to the Chrome process.
+    /// Chrome executable to launch. `None` uses the `CHROME` environment variable, then
+    /// searches the machine. Ignored when `browser_endpoint` is set.
+    pub chrome_path: Option<std::path::PathBuf>,
+    /// Extra command-line arguments forwarded to the Chrome process, after the defaults.
+    /// Checked by the rules of `BrowserConfig::chrome_args` when the pool launches Chrome:
+    /// a refused entry makes `warm` and `acquire_page` return an error.
     pub chrome_args: Vec<String>,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
@@ -166,6 +217,7 @@ impl Default for BrowserPoolConfig {
         Self {
             max_pages: 8,
             browser_endpoint: None,
+            chrome_path: None,
             chrome_args: Vec::new(),
             launch_timeout: Duration::from_secs(30),
         }
@@ -542,7 +594,7 @@ impl BrowserPool {
                 std::process::id(),
                 COUNTER.fetch_add(1, Ordering::Relaxed),
             ));
-            let builder = build_pool_launch_builder(&user_data_dir, &self.config.chrome_args);
+            let builder = build_pool_launch_builder(&user_data_dir, &self.config)?;
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -683,6 +735,52 @@ pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder)
             "missing --use-mock-keychain on macOS: {debug}"
         );
     }
+}
+
+/// Assert that `build` hands `chrome_path` and `chrome_args` to chromiumoxide: the binary is
+/// the configured one, each caller flag is normalized, and a caller flag replaces the default
+/// of the same name.
+/// Shared by the builder test of each of the three launch paths.
+#[cfg(test)]
+pub(crate) fn assert_launch_overrides_reach_the_builder(
+    build: impl Fn(Option<std::path::PathBuf>, Vec<String>) -> Result<BrowserConfigBuilder, CrawlError>,
+) {
+    let binary = crate::types::executable_temp_file("builder");
+    let result = build(
+        Some(binary.clone()),
+        vec!["--user-agent=crawlberg-marker".to_owned(), "--lang=fr".to_owned()],
+    );
+    let _ = std::fs::remove_file(&binary);
+    let debug = format!("{:?}", result.expect("an executable chrome_path must be accepted"));
+
+    assert!(
+        debug.contains(&format!("executable: Some({:?})", binary)),
+        "chrome_path did not reach chromiumoxide's executable: {debug}"
+    );
+    for caller_flag in ["user-agent=crawlberg-marker", "lang=fr"] {
+        assert!(
+            debug.contains(&format!("key: {caller_flag:?}")),
+            "caller flag {caller_flag:?} missing or not normalized: {debug}"
+        );
+    }
+    assert!(
+        !debug.contains("key: \"lang=en_US\""),
+        "the caller's --lang must replace the default --lang, not sit beside it: {debug}"
+    );
+    assert!(
+        debug.contains("key: \"disable-sync\""),
+        "defaults the caller did not name must stay: {debug}"
+    );
+
+    let missing = build(
+        Some(std::path::PathBuf::from("/nonexistent/crawlberg-chrome")),
+        Vec::new(),
+    )
+    .expect_err("a missing chrome_path must be an error, not a fallback to detection");
+    assert!(
+        missing.to_string().contains("/nonexistent/crawlberg-chrome"),
+        "the error must name the path, got: {missing}"
+    );
 }
 
 #[cfg(test)]

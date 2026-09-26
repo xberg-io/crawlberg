@@ -2811,8 +2811,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BrowserConfig dco_decode_browser_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return BrowserConfig(
       mode: dco_decode_browser_mode(arr[0]),
       backend: dco_decode_browser_backend(arr[1]),
@@ -2829,6 +2829,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       robotsUserAgent: dco_decode_opt_String(arr[12]),
       captureNetworkEvents: dco_decode_bool(arr[13]),
       sessionAffinity: dco_decode_bool(arr[14]),
+      chromePath: dco_decode_opt_String(arr[15]),
+      chromeArgs: dco_decode_list_String(arr[16]),
     );
   }
 
@@ -4261,6 +4263,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_robotsUserAgent = sse_decode_opt_String(deserializer);
     var var_captureNetworkEvents = sse_decode_bool(deserializer);
     var var_sessionAffinity = sse_decode_bool(deserializer);
+    var var_chromePath = sse_decode_opt_String(deserializer);
+    var var_chromeArgs = sse_decode_list_String(deserializer);
     return BrowserConfig(
       mode: var_mode,
       backend: var_backend,
@@ -4277,6 +4281,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       robotsUserAgent: var_robotsUserAgent,
       captureNetworkEvents: var_captureNetworkEvents,
       sessionAffinity: var_sessionAffinity,
+      chromePath: var_chromePath,
+      chromeArgs: var_chromeArgs,
     );
   }
 
@@ -6228,6 +6234,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.robotsUserAgent, serializer);
     sse_encode_bool(self.captureNetworkEvents, serializer);
     sse_encode_bool(self.sessionAffinity, serializer);
+    sse_encode_opt_String(self.chromePath, serializer);
+    sse_encode_list_String(self.chromeArgs, serializer);
   }
 
   @protected

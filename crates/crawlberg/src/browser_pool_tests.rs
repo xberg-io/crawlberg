@@ -14,6 +14,7 @@ fn test_config_defaults() {
     assert_eq!(config.max_pages, 8);
     assert_eq!(config.launch_timeout, Duration::from_secs(30));
     assert!(config.browser_endpoint.is_none());
+    assert!(config.chrome_path.is_none());
     assert!(config.chrome_args.is_empty());
 }
 
@@ -63,7 +64,10 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
     }
 
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-shutdown-timeout-test-{}", std::process::id()));
-    let browser_config = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let browser_config = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
+        .expect("the default pool config names no binary to check")
+        .build()
+    {
         Ok(config) => config,
         Err(error) => {
             eprintln!(
@@ -159,7 +163,10 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
         return;
     }
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-stopped-test-{}", std::process::id()));
-    let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
+        .expect("the default pool config names no binary to check")
+        .build()
+    {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
@@ -240,7 +247,10 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
 )]
 async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
     let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-connected-test-{}", std::process::id()));
-    let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let launched = match build_pool_launch_builder(&user_data_dir, &BrowserPoolConfig::default())
+        .expect("the default pool config names no binary to check")
+        .build()
+    {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
@@ -316,7 +326,7 @@ fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
 
 #[test]
 fn test_apply_default_args_produces_normalized_flags() {
-    let builder = apply_default_args(BrowserConfig::builder());
+    let builder = apply_default_args(BrowserConfig::builder(), &[]);
     assert_launch_flags_are_normalized(&builder);
 }
 
@@ -326,8 +336,75 @@ fn the_pool_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_
     // ~keep uses to build its `BrowserConfig`, so a path that stops calling
     // ~keep `apply_default_args` (even by looping over a raw flag instead) fails here
     // ~keep because the returned flags actually change.
-    let builder = build_pool_launch_builder(std::path::Path::new("/tmp/pool-test-profile"), &[]);
+    let builder = build_pool_launch_builder(
+        std::path::Path::new("/tmp/pool-test-profile"),
+        &BrowserPoolConfig::default(),
+    )
+    .expect("the default pool config names no binary to check");
     assert_launch_flags_are_normalized(&builder);
+}
+
+#[test]
+fn the_pool_launch_builder_uses_the_configured_chrome_path_and_args() {
+    assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+        build_pool_launch_builder(
+            std::path::Path::new("/tmp/pool-test-profile"),
+            &BrowserPoolConfig {
+                chrome_path,
+                chrome_args,
+                ..BrowserPoolConfig::default()
+            },
+        )
+    });
+}
+
+#[test]
+fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_the_pool_key() {
+    for (chrome_args, expected) in [
+        (
+            vec!["disable-gpu"],
+            "browser: BrowserPoolConfig.chrome_args entry \"disable-gpu\" must start with --",
+        ),
+        (
+            vec!["--headless=new"],
+            "browser: BrowserPoolConfig.chrome_args must not set --headless; crawlberg sets it to run Chrome",
+        ),
+        (
+            vec!["--LANG=fr"],
+            "browser: BrowserPoolConfig.chrome_args entry \"--LANG=fr\" must name the flag in lowercase",
+        ),
+        (
+            vec!["--enable-features=A", "--enable-features=B"],
+            "browser: BrowserPoolConfig.chrome_args sets --enable-features more than once",
+        ),
+    ] {
+        let err = build_pool_launch_builder(
+            std::path::Path::new("/tmp/pool-test-profile"),
+            &BrowserPoolConfig {
+                chrome_args: chrome_args.iter().map(|arg| (*arg).to_owned()).collect(),
+                ..BrowserPoolConfig::default()
+            },
+        )
+        .expect_err("the pool must refuse what CrawlConfig::validate refuses")
+        .to_string();
+        assert!(err.contains(expected), "{chrome_args:?}: unexpected error: {err}");
+    }
+}
+
+#[tokio::test]
+async fn a_pool_with_a_missing_chrome_path_fails_to_launch_and_names_the_path() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-pool-chrome")),
+        ..BrowserPoolConfig::default()
+    });
+    let error = match pool.acquire_page().await {
+        Ok(_) => panic!("a pool must not launch a different Chrome when chrome_path is missing"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.contains("BrowserPoolConfig.chrome_path '/nonexistent/crawlberg-pool-chrome' cannot be used"),
+        "the error must name the pool key and the path, got: {error}"
+    );
 }
 
 #[test]
