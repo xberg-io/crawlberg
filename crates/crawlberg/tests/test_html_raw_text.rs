@@ -3,7 +3,7 @@
 //! These drive the real `scrape()` pipeline so the assertions cover the production
 //! parse path, not a unit-test-only helper.
 
-use crawlberg::{CrawlConfig, create_engine, scrape};
+use crawlberg::{BrowserMode, CrawlConfig, crawl, create_engine, scrape};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -170,5 +170,65 @@ async fn should_keep_links_when_a_script_sits_inside_an_html_comment() {
         urls,
         vec![format!("{base}/real")],
         "a `<script>` inside a comment must not start a raw-text region"
+    );
+}
+
+/// A crawl must not follow an address that only exists as raw text, because the crawl path
+/// masks raw text with its own call before it parses the page. Scrape has a separate call, so
+/// only a crawl covers this one.
+#[tokio::test]
+async fn should_not_follow_a_link_that_only_appears_inside_raw_text_when_crawling() {
+    let mock = MockServer::start().await;
+    for route in ["/real", "/from-script", "/from-title"] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(format!("<html><body>leaf {route}</body></html>"))
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&mock)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"<html><head><title>Root <a href="/from-title">t</a></title></head><body>
+                    <script>document.write('<a href="/from-script">s</a>');</script>
+                    <a href="/real">real</a>
+                    </body></html>"#
+                        .to_owned(),
+                )
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let mut config = CrawlConfig {
+        max_depth: Some(2),
+        max_pages: Some(10),
+        // ~keep One fetch in flight so `pages` is filled in a deterministic order.
+        max_concurrent: Some(1),
+        ..allow_private_config()
+    };
+    config.browser.mode = BrowserMode::Never;
+    let handle = create_engine(Some(config)).expect("engine should build");
+    let base = mock.uri();
+    let result = crawl(&handle, &base).await.expect("crawl should succeed");
+
+    let paths: Vec<String> = result
+        .pages
+        .iter()
+        .map(|page| match page.url.strip_prefix(&base).unwrap_or(&page.url) {
+            "" => "/".to_owned(),
+            rest => rest.to_owned(),
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        vec!["/".to_owned(), "/real".to_owned()],
+        "the crawl frontier must take only the links a browser sees on the root page"
     );
 }

@@ -404,6 +404,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_ignores_links_that_only_appear_inside_raw_text_on_an_html_page() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><head><title>Sitemapless <a href=\"/from-title\">t</a></title></head><body>\
+             <script>document.write('<a href=\"/from-script\">s</a>');</script>\
+             <textarea><a href=\"/from-textarea\">x</a></textarea>\
+             <a href=\"/real\">real</a>\
+             </body></html>"
+                .to_owned(),
+        )
+        .await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/real")],
+            "a mapped HTML page must contribute only the links a browser sees, not addresses \
+             written inside title, script or textarea text"
+        );
+    }
+
+    #[tokio::test]
     async fn map_parses_a_gzip_encoded_sitemap_fetched_directly() {
         use std::io::Write as _;
 
