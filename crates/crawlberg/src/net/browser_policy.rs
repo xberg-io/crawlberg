@@ -54,6 +54,31 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_fallback_validator_decides_embedded_ipv4_forms_like_the_core_policy() {
+        // ~keep The fallback validator keeps its own copy of the embedded-IPv4 check; the CIDR
+        // parity test above cannot see that copy drift. Serial because the fallback reads
+        // CRAWLBERG_ALLOW_PRIVATE_NETWORK, which other serial tests set.
+        let fallback = crawlberg_browser::adapter::DefaultSsrfValidator::from_env();
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let url = format!("http://[{literal}]/").parse::<Url>().expect("valid URL");
+            let denied = fallback.validate(&url).await.is_err();
+            if denied != expected.is_some() {
+                mismatches.push(format!(
+                    "{literal}: core denied={}, fallback denied={denied}",
+                    expected.is_some()
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "fallback validator drifted:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
         let validator = validator_for(&SsrfPolicy::default());
         let err = validator

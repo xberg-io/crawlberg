@@ -10,7 +10,7 @@
 //! it re-implements only the default deny-list, never the allowlist matching, so there
 //! is exactly one implementation of the security-relevant matching logic in the stack.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use ipnet::IpNet;
@@ -29,7 +29,7 @@ static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
 
 /// The deny-list as source strings, exported so `crawlberg` can assert the two copies
 /// have not drifted.
-pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -47,6 +47,9 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
+    // ~keep RFC 8215 local-use NAT64 prefix. Not globally reachable, and it fixes no position
+    // ~keep for the embedded IPv4 address, so the whole prefix is denied.
+    "64:ff9b:1::/48",
 ];
 
 /// Decides whether the browser layer may fetch a URL.
@@ -130,25 +133,32 @@ impl SsrfValidator for DefaultSsrfValidator {
     }
 }
 
-/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
+/// The IPv4 address an IPv6 address embeds, for each form that is routed to that IPv4 host.
 ///
-/// Mirrors `crawlberg::net::ssrf::canonicalize_ip`. Without it, `::ffff:127.0.0.1` is
-/// only tested against the IPv6 deny-nets and slips past `127.0.0.0/8`, while a
-/// dual-stack host routes it straight to loopback.
+/// Mirrors `crawlberg::net::ssrf::embedded_ipv4`, which cites the RFC for each form.
+/// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips
+/// past `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
+fn embedded_ipv4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    if v6.is_unspecified() || v6.is_loopback() {
+        return None;
+    }
+    if let Some(v4) = v6.to_ipv4() {
+        return Some(v4);
+    }
+    let [_, _, _, _, _, _, _, _, _, _, _, _, a, b, c, d] = v6.octets();
+    match v6.segments() {
+        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(Ipv4Addr::new(a, b, c, d)),
+        [0x2002, high, low, ..] => Some(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))),
+        _ => None,
+    }
+}
+
+/// Collapse an IPv6 address that embeds an IPv4 address into that IPv4 address.
 fn canonicalize_ip(ip: IpAddr) -> IpAddr {
-    let IpAddr::V6(v6) = ip else { return ip };
-
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return IpAddr::V4(v4);
+    match ip {
+        IpAddr::V6(v6) => embedded_ipv4(v6).map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
     }
-
-    let segments = v6.segments();
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
-        let octets = v6.octets();
-        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
-    }
-
-    ip
 }
 
 fn is_ip_denied(ip: IpAddr) -> bool {
@@ -208,6 +218,10 @@ mod tests {
             "http://[::ffff:127.0.0.1]/",
             "http://[::ffff:169.254.169.254]/",
             "http://[64:ff9b::7f00:1]/",
+            "http://[::ffff:0:a00:5]/",
+            "http://[::a00:5]/",
+            "http://[2002:a9fe:a9fe::]/",
+            "http://[64:ff9b:1::a00:5]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -218,9 +232,16 @@ mod tests {
 
     #[tokio::test]
     async fn default_validator_permits_public_addresses() {
-        validate("http://1.1.1.1/", true)
-            .await
-            .expect("a public address must be permitted");
+        for permitted in [
+            "http://1.1.1.1/",
+            "http://[::ffff:0:808:808]/",
+            "http://[::808:808]/",
+            "http://[2002:808:808::]/",
+        ] {
+            validate(permitted, true)
+                .await
+                .unwrap_or_else(|e| panic!("{permitted} must be permitted: {e}"));
+        }
     }
 
     #[tokio::test]

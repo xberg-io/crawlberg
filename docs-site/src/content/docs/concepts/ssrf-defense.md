@@ -17,6 +17,8 @@ asset download, and link-following enqueue.
 | Unspecified | 0.0.0.0/8 |
 | Multicast | 224.0.0.0/4, ff00::/8 |
 | IPv6 unique-local | fc00::/7 |
+| IPv6 local-use NAT64 (RFC 8215) | 64:ff9b:1::/48 |
+| IPv6 forms that embed an IPv4 address | IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96), IPv4-translated (::ffff:0:0:0/96), NAT64 (64:ff9b::/96) and 6to4 (2002::/16): the embedded IPv4 address is checked against the rows above |
 | Non-http/https schemes | file, ftp, gopher, … |
 
 DNS rebinding is mitigated: if a hostname resolves to a mix of public and

@@ -1,7 +1,7 @@
 //! URL and IP validation against an [`SsrfPolicy`].
 
 use ipnet::IpNet;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use super::policy::is_supported_scheme;
@@ -11,7 +11,7 @@ use super::{SsrfError, SsrfPolicy};
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -29,6 +29,9 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
+    // ~keep RFC 8215 local-use NAT64 prefix. Not globally reachable, and it fixes no position
+    // ~keep for the embedded IPv4 address, so the whole prefix is denied.
+    "64:ff9b:1::/48",
 ];
 
 /// Private / metadata / loopback CIDRs that are denied by default.
@@ -142,34 +145,48 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
     })
 }
 
+/// The IPv4 address an IPv6 address embeds, for each form that is routed to that IPv4 host.
+///
+/// `ipnet`'s `contains` only matches within an address family, so `::ffff:127.0.0.1`
+/// would be tested against the IPv6 deny-nets only and sail past `127.0.0.0/8`. A host or
+/// network that carries such an address reaches the IPv4 destination, so without this the
+/// deny-list is bypassable by writing the literal in IPv6 form.
+///
+/// Covers the IPv4-mapped and IPv4-compatible forms (RFC 4291 section 2.5.5), the
+/// IPv4-translated form `::ffff:0:0:0/96` (RFC 2765 section 2.1), the NAT64 well-known
+/// prefix `64:ff9b::/96` (RFC 6052 section 2.1) and 6to4 `2002::/16`, which carries the
+/// address in bits 16 to 47 (RFC 3056 section 2). The local-use NAT64 prefix
+/// `64:ff9b:1::/48` (RFC 8215) fixes no position for the address, so the deny-list covers
+/// that whole prefix instead. Teredo `2001::/32` is not unwrapped: RFC 4380 section 5.2.4
+/// requires every Teredo node to drop a packet whose embedded address is not global.
+fn embedded_ipv4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    // ~keep `::` and `::1` fall inside `::/96` but are the IPv6 unspecified and loopback
+    // ~keep addresses; the IPv6 deny-nets already cover and classify both.
+    if v6.is_unspecified() || v6.is_loopback() {
+        return None;
+    }
+    if let Some(v4) = v6.to_ipv4() {
+        return Some(v4);
+    }
+    let [_, _, _, _, _, _, _, _, _, _, _, _, a, b, c, d] = v6.octets();
+    match v6.segments() {
+        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(Ipv4Addr::new(a, b, c, d)),
+        [0x2002, high, low, ..] => Some(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))),
+        _ => None,
+    }
+}
+
+/// Collapse an IPv6 address that embeds an IPv4 address into that IPv4 address.
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => embedded_ipv4(v6).map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
+    }
+}
+
 /// Test if an IP address is permitted by the SSRF policy.
 ///
 /// Returns true if the IP is allowed, false if it should be rejected.
-/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
-///
-/// `ipnet`'s `contains` only matches within an address family, so `::ffff:127.0.0.1`
-/// would be tested against the IPv6 deny-nets only and sail past `127.0.0.0/8`. On a
-/// dual-stack host the kernel routes such an address to the IPv4 destination, so
-/// without this the deny-list is bypassable by writing the literal in IPv6 form.
-///
-/// Covers the IPv4-mapped form (`::ffff:a.b.c.d`) and the NAT64 well-known prefix
-/// (`64:ff9b::/96`, RFC 6052), which embeds an IPv4 address the same way.
-fn canonicalize_ip(ip: IpAddr) -> IpAddr {
-    let IpAddr::V6(v6) = ip else { return ip };
-
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return IpAddr::V4(v4);
-    }
-
-    let segments = v6.segments();
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
-        let octets = v6.octets();
-        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
-    }
-
-    ip
-}
-
 pub(crate) fn is_ip_permitted(ip: IpAddr, policy: &SsrfPolicy) -> bool {
     if !policy.deny_private {
         return true;

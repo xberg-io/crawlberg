@@ -25,6 +25,48 @@ pub(crate) use validate::DEFAULT_DENY_NET_CIDRS;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use validate::{classify_private_ip, is_ip_permitted};
 
+/// IPv6 literals that embed an IPv4 address, each paired with the denial reason the
+/// default policy must report, or `None` when the address must stay permitted.
+///
+/// Shared by the pre-connect check, the connect-time resolver and the browser parity
+/// test, so all three are held to one table.
+#[cfg(test)]
+pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
+    // IPv4-mapped, RFC 4291 section 2.5.5.2.
+    ("::ffff:127.0.0.1", Some("loopback")),
+    ("::ffff:10.0.0.5", Some("private_network")),
+    ("::ffff:169.254.169.254", Some("link_local")),
+    ("::ffff:8.8.8.8", None),
+    // IPv4-compatible, RFC 4291 section 2.5.5.1.
+    ("::127.0.0.1", Some("loopback")),
+    ("::10.0.0.5", Some("private_network")),
+    ("::169.254.169.254", Some("link_local")),
+    ("::8.8.8.8", None),
+    // IPv4-translated, RFC 2765 section 2.1.
+    ("::ffff:0:127.0.0.1", Some("loopback")),
+    ("::ffff:0:10.0.0.5", Some("private_network")),
+    ("::ffff:0:169.254.169.254", Some("link_local")),
+    ("::ffff:0:8.8.8.8", None),
+    // NAT64 well-known prefix, RFC 6052 section 2.1.
+    ("64:ff9b::127.0.0.1", Some("loopback")),
+    ("64:ff9b::10.0.0.5", Some("private_network")),
+    ("64:ff9b::169.254.169.254", Some("link_local")),
+    ("64:ff9b::8.8.8.8", None),
+    // 6to4, RFC 3056 section 2: the IPv4 address sits in bits 16 to 47.
+    ("2002:7f00:1::", Some("loopback")),
+    ("2002:a00:5::", Some("private_network")),
+    ("2002:a9fe:a9fe::", Some("link_local")),
+    ("2002:808:808::", None),
+    // Local-use NAT64 prefix, RFC 8215: not globally reachable, so every address is denied.
+    ("64:ff9b:1::10.0.0.5", Some("private_network")),
+    ("64:ff9b:1::8.8.8.8", Some("private_network")),
+    // Teredo, RFC 4380 section 4: public server and client addresses.
+    ("2001:0:4136:e378:8000:63bf:3fff:fdd2", None),
+    // The IPv6 loopback and unspecified addresses keep their IPv6 meaning.
+    ("::1", Some("loopback")),
+    ("::", Some("unspecified")),
+];
+
 #[cfg(test)]
 mod tests {
     use super::matcher::CIDR_PARSE_CACHE;
@@ -732,6 +774,27 @@ mod tests {
         assert!(
             matches!(err, SsrfError::DeniedByPolicy { reason: "loopback" }),
             "expected loopback denial for a NAT64-embedded loopback address, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_url_checks_the_ipv4_address_embedded_in_each_ipv6_form() {
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in EMBEDDED_IPV4_CASES {
+            let url = format!("http://[{literal}]/").parse::<url::Url>().expect("valid URL");
+            let actual = match validate_url(&url, &SsrfPolicy::default()).await {
+                Ok(()) => None,
+                Err(SsrfError::DeniedByPolicy { reason }) => Some(reason),
+                Err(other) => panic!("{literal}: expected a policy decision, got {other:?}"),
+            };
+            if actual != expected {
+                mismatches.push(format!("{literal}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "policy decisions differ:\n{}",
+            mismatches.join("\n")
         );
     }
 

@@ -4,6 +4,14 @@ All notable changes to crawlberg are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- The SSRF policy now checks the IPv4 address inside every IPv6 form that carries one: the
+  IPv4-compatible (`::/96`), IPv4-translated (`::ffff:0:0:0/96`) and 6to4 (`2002::/16`) forms join
+  the IPv4-mapped and NAT64 forms it already checked. The local-use NAT64 prefix `64:ff9b:1::/48`
+  is not globally reachable and is now denied as a whole. The pre-connect check, the connect-time
+  resolver and the browser crate's fallback validator all apply the same rules.
+
 ## [1.8.0] - 2026-09-25
 
 Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
