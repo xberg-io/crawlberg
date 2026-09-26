@@ -156,9 +156,11 @@ pub struct BrowserConfig {
 }
 
 impl std::fmt::Debug for BrowserConfig {
-    /// Redacted: a CDP `endpoint` can carry credentials in its userinfo or an access token
-    /// in its query, so both print as `***`. `proxy` redacts its own secrets. The
-    /// exhaustive destructure makes a new field a compile error here, not a silent gap.
+    /// Redacted: a CDP `endpoint` is itself the capability — the GUID in
+    /// `ws://host:9222/devtools/browser/<GUID>` drives the browser — so only its scheme, host
+    /// and port print, and an endpoint that does not parse prints as `***`. `proxy` redacts
+    /// its own secrets. The exhaustive destructure makes a new field a compile error here,
+    /// not a silent gap.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
     // lossy_sanitized_surface.
@@ -186,7 +188,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("backend", backend)
             .field(
                 "endpoint",
-                &endpoint.as_deref().map(crate::net::redact::redact_url_secrets),
+                &endpoint.as_deref().map(crate::net::redact::redact_url_to_origin),
             )
             .field("timeout", timeout)
             .field("overall_timeout", overall_timeout)

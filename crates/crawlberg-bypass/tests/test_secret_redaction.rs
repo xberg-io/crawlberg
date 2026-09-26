@@ -152,7 +152,11 @@ response:
 }
 
 #[test]
-fn debug_output_prints_only_the_scheme_and_host_of_the_endpoint() {
+fn debug_output_prints_only_the_origin_of_the_endpoint() {
+    // ~keep The port is kept on purpose: it tells a container-mapped endpoint from the
+    // ~keep default one, which is what makes a connection failure diagnosable, and it is no
+    // ~keep more secret than the host. `url::Url::port` reports `None` for a scheme default,
+    // ~keep so `https://host:443` still prints without a port.
     for (endpoint, printed) in [
         (
             format!("https://api.example.com/v1/{SECRET}/extract"),
@@ -164,6 +168,10 @@ fn debug_output_prints_only_the_scheme_and_host_of_the_endpoint() {
         ),
         (
             format!("https://{SECRET}@api.example.com:8443/v1?key={SECRET}"),
+            "https://api.example.com:8443",
+        ),
+        (
+            format!("https://api.example.com:443/v1/{SECRET}"),
             "https://api.example.com",
         ),
         (format!("api.example.com/v1?key={SECRET}"), "***"),
