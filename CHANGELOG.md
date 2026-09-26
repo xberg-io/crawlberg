@@ -29,6 +29,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The browser's JavaScript module loader logged the configured proxy address with its
+  credentials.** Loading an ES module through a proxy wrote the full proxy address, password
+  included, to a debug log line, and a proxy address that failed to parse wrote it again into
+  the error text. The debug line now says only that a proxy is configured, never the address,
+  and a proxy address that cannot be parsed is left out of the error text entirely rather than
+  shown unredacted. The JS `fetch`/`XHR` bridge had the same defect in its own proxy error text
+  and is fixed the same way. (#238)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

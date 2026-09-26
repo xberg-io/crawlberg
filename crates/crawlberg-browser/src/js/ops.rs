@@ -360,7 +360,9 @@ fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, Stri
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
-        let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
+        // ~keep A proxy address that fails to parse cannot be redacted, so it must not be
+        // logged at all, not even unredacted.
+        let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy: {}", e))?;
         builder = builder.proxy(p);
     }
     builder
@@ -903,5 +905,31 @@ pub fn build_extension() -> Extension {
             op_navigate(),
         ]),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROXY_PASSWORD: &str = "s3cr3t-proxy-pw";
+
+    #[test]
+    fn invalid_proxy_error_does_not_carry_the_password() {
+        // ~keep Same unparseable-proxy fixture as
+        // `crates/crawlberg/tests/test_proxy_bypass_is_logged.rs` and
+        // `js/module_loader.rs`'s equivalent test.
+        let proxy = format!("://operator:{PROXY_PASSWORD}@proxy.invalid:8080");
+
+        let err = build_request_client(Some(&proxy)).expect_err("an unparseable proxy must fail client construction");
+
+        assert!(
+            err.contains("Invalid op_fetch_url proxy"),
+            "expected the invalid-proxy branch, got '{err}'"
+        );
+        assert!(
+            !err.contains(PROXY_PASSWORD),
+            "the proxy password must never reach the error text, got '{err}'"
+        );
     }
 }
