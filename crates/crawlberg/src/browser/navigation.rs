@@ -9,10 +9,11 @@ use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, Se
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
+use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::start_ssrf_interception;
+use crate::ssrf_intercept::{RedirectStop, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -27,13 +28,16 @@ const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
+///
+/// Chrome follows at most `config.max_redirects` HTTP redirects. A chain longer than
+/// that ends on the redirect response at the limit, the way the HTTP fetch path ends.
 pub(super) async fn page_fetch(
     url: &str,
     config: &CrawlConfig,
     page: &chromiumoxide::Page,
     prior_cookies: Option<&[CookieInfo]>,
     want_screenshot: bool,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<BrowserPage, CrawlError> {
     let stealth = matches!(config.browser.mode, crate::types::BrowserMode::Stealth);
 
     if stealth {
@@ -51,7 +55,7 @@ pub(super) async fn page_fetch(
 
     let timeout = config.browser.timeout;
 
-    let interceptor = start_ssrf_interception(page, &config.ssrf).await?;
+    let interceptor = start_ssrf_interception(page, &config.ssrf, Some(config.max_redirects)).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -66,8 +70,16 @@ pub(super) async fn page_fetch(
     })
     .await;
 
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    let intercepted = interceptor.finish().await;
+    if intercepted.blocked.is_none()
+        && let Some(stop) = intercepted.redirect_stop
+    {
+        return Ok(BrowserPage {
+            response: redirect_limit_response(stop),
+            redirects: intercepted.redirects_followed,
+        });
+    }
+    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -86,16 +98,40 @@ pub(super) async fn page_fetch(
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
     // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
-    Ok(HttpResponse {
-        status: RENDERED_PAGE_STATUS,
-        content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
-        body: html,
-        body_bytes,
-        headers: std::collections::HashMap::new(),
-        browser_extras: None,
-        final_url,
-        screenshot,
+    Ok(BrowserPage {
+        response: HttpResponse {
+            status: RENDERED_PAGE_STATUS,
+            content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
+            body: html,
+            body_bytes,
+            headers: std::collections::HashMap::new(),
+            browser_extras: None,
+            final_url,
+            screenshot,
+        },
+        redirects: intercepted.redirects_followed,
     })
+}
+
+/// The redirect response a chain stopped on at the redirect limit, with no body, as the
+/// HTTP fetch path reports it.
+fn redirect_limit_response(stop: RedirectStop) -> HttpResponse {
+    let content_type = stop
+        .headers
+        .get("content-type")
+        .and_then(|values| values.first())
+        .cloned()
+        .unwrap_or_default();
+    HttpResponse {
+        status: stop.status,
+        content_type,
+        body: String::new(),
+        body_bytes: Vec::new(),
+        headers: stop.headers,
+        browser_extras: None,
+        final_url: stop.url,
+        screenshot: None,
+    }
 }
 
 /// Set the page's user agent, if one is configured or implied by stealth mode.

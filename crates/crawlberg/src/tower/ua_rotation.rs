@@ -91,7 +91,7 @@ mod tests {
                     body: ua,
                     body_bytes: vec![],
                     headers: std::collections::HashMap::new(),
-                    landed_url: None,
+                    landed: None,
                 })
             })
         }
