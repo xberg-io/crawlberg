@@ -653,7 +653,7 @@ mod tests {
             <script type="application/LD+JSON; charset=utf-8">{"@type":"Thing","name":"t"}</script>
             </head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -674,7 +674,7 @@ mod tests {
             "<link rel=\"canonical\" href=\" \t\n\">",
         ] {
             let resp = response("text/html", &format!("<html><head>{head}</head></html>"));
-            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
                 .await
                 .expect("scrape should succeed");
             assert_eq!(result.metadata.canonical_url, None, "for {head}");
@@ -692,7 +692,7 @@ mod tests {
             <link rel="alternate" hreflang=" en-GB " href="en.html">
             <link rel="alternate" hreflang=" " href="blank.html"></head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -715,7 +715,7 @@ mod tests {
             "<html><body><a href=\"a.html\" rel=\"nofollow\r\nexternal\">a</a>\
              <img src=\"i.png\" alt=\"one\rtwo\0three\"><img src=\"j.png\" alt=\"a\0b\"></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
