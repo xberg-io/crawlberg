@@ -1019,6 +1019,7 @@ mod race_tests {
         let second = browser.new_page("about:blank").await.expect("page");
         let (url, hits) = denied_listener().await;
         let handle = firewall.handle();
+        let enabling = Instant::now();
         let first_watch = tokio::spawn({
             let handle = handle.clone();
             async move { handle.watch(&first, &policy(), 0).await.map(drop) }
@@ -1028,6 +1029,7 @@ mod race_tests {
             .watch(&second, &policy(), 0)
             .await
             .expect("the second watch must start");
+        let waited = enabling.elapsed();
         open_blank_site(&second).await;
         let _ = second
             .evaluate(format!("fetch({url:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
@@ -1036,6 +1038,10 @@ mod race_tests {
         let _ = first_watch.await;
         second_watch.close().await;
         firewall.stop().await;
+        assert!(
+            waited >= delays.enable,
+            "{test_name}: the second watch returned after {waited:?}, before interception was on"
+        );
         assert_eq!(
             hits.load(Ordering::SeqCst),
             0,
