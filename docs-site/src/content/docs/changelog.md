@@ -19,6 +19,13 @@ title: "Changelog"
   mode reports, and the next hop is never requested. Only the redirects of the requested page
   count. A navigation a script starts after the page loads, and any redirect it follows, does not
   count. This applies to the Chromiumoxide backend. (#90)
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
 
 ## [1.8.0] - 2026-09-25
 
