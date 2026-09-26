@@ -386,11 +386,9 @@ async fn dropping_the_stream_stops_new_requests() {
     );
 }
 
-/// The batch stream must also stop starting seeds once its receiver is gone: a seed crawl
-/// that begins after the drop abandons its seed before fetching it. Each seed links to a
-/// slow child so the first crawl is still running when the stream is dropped.
-#[tokio::test]
-async fn dropping_the_batch_stream_stops_new_seeds() {
+/// A server whose `/seedN` pages each link to a `/slow` child that answers after 300ms, so the
+/// first seed crawl is still running when a test drops the batch stream.
+async fn seeds_with_a_slow_child() -> MockServer {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(r"^/seed\d+$"))
@@ -411,6 +409,14 @@ async fn dropping_the_batch_stream_stops_new_seeds() {
         )
         .mount(&mock)
         .await;
+    mock
+}
+
+/// The batch stream must also stop starting seeds once its receiver is gone: a seed crawl
+/// that begins after the drop abandons its seed before fetching it.
+#[tokio::test]
+async fn dropping_the_batch_stream_stops_new_seeds() {
+    let mock = seeds_with_a_slow_child().await;
 
     let counter = CompletionCounter::new();
     let engine = engine_with_counter(1, 0, &counter);
@@ -430,6 +436,108 @@ async fn dropping_the_batch_stream_stops_new_seeds() {
     counter.wait_for(2, std::time::Duration::from_secs(1)).await;
     let seeds_after_drop = request_count(&mock, "/seed").await - at_drop;
     assert_eq!(seeds_after_drop, 0, "no seed may start after the drop");
+}
+
+/// Counts the `Complete` events a crawl delivers to its event sink.
+#[derive(Clone, Default)]
+struct CompleteSinkCounter {
+    completes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CompleteSinkCounter {
+    fn count(&self) -> usize {
+        self.completes.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl crawlberg::EventSink for CompleteSinkCounter {
+    async fn emit(&self, event: CrawlEvent) {
+        if matches!(event, CrawlEvent::Complete { .. }) {
+            self.completes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Once the batch stream is dropped, seeds the batch had not started report nothing: the emitter
+/// and the sink each see one `Complete`, for the seed that was running at the drop, and no
+/// zero-page `Complete` for the seeds behind it.
+#[tokio::test]
+async fn dropping_the_batch_stream_reports_nothing_for_seeds_it_never_started() {
+    let mock = seeds_with_a_slow_child().await;
+
+    let counter = CompletionCounter::new();
+    let sink = CompleteSinkCounter::default();
+    let engine = crawlberg::CrawlEngine::builder()
+        .config(
+            CrawlConfig::builder()
+                .allow_private_networks(true)
+                .max_depth(1)
+                .max_concurrent(1)
+                .build(),
+        )
+        .event_emitter(counter.clone())
+        .event_sink(sink.clone())
+        .build()
+        .expect("engine build must not fail");
+    let seeds: Vec<String> = (0..6).map(|n| format!("{}/seed{n}", mock.uri())).collect();
+    let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    let mut stream = engine.batch_crawl_stream(&seed_refs);
+    expect_first_page(&mut stream, std::time::Duration::from_secs(10)).await;
+    drop(stream);
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the running crawl must finish once the stream is dropped"
+    );
+    // ~keep A zero-page completion for the next seed would arrive within milliseconds of the
+    // ~keep first one, so a bounded wait for a second one is enough to see it.
+    counter.wait_for(2, std::time::Duration::from_secs(1)).await;
+    assert_eq!(
+        *counter.completed.borrow(),
+        1,
+        "the emitter must see one completion, for the seed running at the drop"
+    );
+    assert_eq!(
+        sink.count(),
+        1,
+        "the sink must see one Complete, for the seed running at the drop"
+    );
+}
+
+/// A batch stream dropped before its task first runs starts no seed. At that first poll a free
+/// slot and the drop are both ready at once, so this checks that the batch prefers the drop.
+/// Each round drops at once and gives any wrongly started seed 300ms to report its `Complete`.
+#[tokio::test]
+async fn a_batch_stream_dropped_before_its_task_runs_starts_no_seed() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>x</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+
+    let mut completes = 0;
+    for round in 0..40 {
+        let sink = CompleteSinkCounter::default();
+        let engine = crawlberg::CrawlEngine::builder()
+            .config(
+                CrawlConfig::builder()
+                    .allow_private_networks(true)
+                    .max_depth(0)
+                    .max_concurrent(20)
+                    .build(),
+            )
+            .event_sink(sink.clone())
+            .build()
+            .expect("engine build must not fail");
+        let seeds: Vec<String> = (0..20).map(|n| format!("{}/s{round}-{n}", mock.uri())).collect();
+        let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+        drop(engine.batch_crawl_stream(&seed_refs));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        completes += sink.count();
+    }
+
+    assert_eq!(completes, 0, "no seed may start once the stream is dropped");
 }
 
 /// A seed still being fetched when the stream is dropped must not go on to retry.

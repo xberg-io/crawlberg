@@ -9,6 +9,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
+use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -17,15 +18,18 @@ pub(super) async fn run(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let (mut browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    let (browser, mut handler, data_dir) = launch_or_connect(config).await?;
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let result = run_with_browser(&browser, url, actions, config).await;
 
-    let _ = browser.close().await;
-    let _ = browser.wait().await;
-    drop(browser);
-    let _ = tokio::time::timeout(Duration::from_secs(5), handler_handle).await;
+    release_browser(
+        browser,
+        handler_handle,
+        ExternalTabCleanup::default(),
+        config.browser.shutdown_timeout,
+    )
+    .await;
     if let Some(dir) = data_dir {
         let _ = std::fs::remove_dir_all(dir);
     }

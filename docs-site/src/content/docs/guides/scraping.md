@@ -87,7 +87,7 @@ The `ScrapeResult` struct contains everything extracted from a single page:
 | `crawl_delay`       | `Option<u64>`    | The Crawl-delay value from robots.txt, in seconds.                                               |
 | `noindex_detected`  | `bool`           | Whether a `noindex` directive was found in meta robots or X-Robots-Tag.                          |
 | `nofollow_detected` | `bool`           | Whether a `nofollow` directive was found in meta robots or X-Robots-Tag.                         |
-| `x_robots_tag`      | `Option<String>` | The raw X-Robots-Tag header value, if present.                                                   |
+| `x_robots_tag`      | `Option<String>` | The raw X-Robots-Tag header values, joined with `, `, if present.                                |
 
 ### Extracted content
 

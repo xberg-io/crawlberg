@@ -61,6 +61,8 @@ impl CrawlEngine {
             // ~keep redirect behaviour has no executing test.
             final_url: scrape.final_url,
             redirect_count: 0,
+            noindex_detected: scrape.noindex_detected,
+            nofollow_detected: scrape.nofollow_detected,
         }
     }
 
@@ -274,7 +276,8 @@ impl CrawlEngine {
         }
     }
 
-    /// Whether this page's links are followed at all.
+    /// Whether this page's links are followed at all. A `nofollow` page's links are not,
+    /// when the crawl respects robots.
     fn should_discover_sequentially(
         &self,
         entry: &FrontierEntry,
@@ -283,7 +286,10 @@ impl CrawlEngine {
     ) -> bool {
         let in_doc_context = entry.doc_depth > 0;
         let page_is_skipped = scrape.was_skipped || scrape.is_pdf;
-        entry.depth < plan.max_depth && !page_is_skipped && (!in_doc_context || self.config.follow_document_urls)
+        entry.depth < plan.max_depth
+            && !page_is_skipped
+            && (!in_doc_context || self.config.follow_document_urls)
+            && !(self.config.respect_robots_txt && scrape.nofollow_detected)
     }
 
     /// Enqueue the eligible links of one page, up to the per-page cap.
