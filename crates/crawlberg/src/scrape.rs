@@ -797,6 +797,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_script_mail_and_phone_links_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\"JAVASCRIPT:alert(1)\">a</a><a href=\"Mailto:x@example.com\">b</a>\
+             <a href=\"TEL:+15551234\">c</a><a href=\"next.html\">d</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_inline_data_meta_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"DATA:image/png;base64,AA\">\
+             <meta name=\"twitter:image\" content=\"data:image/png;base64,AA\">\
+             <meta property=\"og:image\" content=\"og.png\"></head><body></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/og.png"]);
+    }
+
+    #[tokio::test]
     async fn scrape_treats_an_address_of_only_c0_controls_as_blank() {
         let resp = response(
             "text/html",

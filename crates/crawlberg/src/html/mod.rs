@@ -88,15 +88,16 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
-/// Whether `address`, already cleaned by [`clean_url`], is a `data:` URL, which holds its content
-/// inline. The scheme matches in any ASCII case, as the URL parser reads it.
+/// Whether `address`, already cleaned by [`clean_url`], has the URL scheme `scheme` (given in lower
+/// case, without the colon). The scheme matches in any ASCII case, as the URL parser reads it.
 ///
 /// ~keep A prefix test rather than `Url::parse(..).scheme()`: both give the same answer on a
 /// ~keep cleaned value, and the prefix test does not parse every kept address a second time.
-pub(crate) fn is_data_url(address: &str) -> bool {
-    address
-        .get(..5)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
+    address.as_bytes().get(scheme.len()) == Some(&b':')
+        && address
+            .get(..scheme.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
 }
 
 /// Whether the tag's `attr` value, without surrounding ASCII whitespace, equals `expected` in any
@@ -254,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn a_data_url_is_recognised_as_the_url_parser_reads_its_scheme() {
+    fn a_scheme_is_recognised_as_the_url_parser_reads_it() {
         let addresses = [
             "data:",
             "data:image/png;base64,AA",
@@ -272,14 +273,23 @@ mod tests {
             "d\u{e4}ta:x",
             "x-data:y",
             "javascript:x",
+            "JAVASCRIPT:alert(1)",
+            "Mailto:x@example.com",
+            "mailto:",
+            "TEL:+1",
+            "tel",
+            "telx:1",
             "https://example.com/data:x",
+            "https://example.com/tel:1",
         ];
-        let mut data_urls = 0;
-        for address in addresses {
-            let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == "data");
-            assert_eq!(is_data_url(address), parsed, "for {address:?}");
-            data_urls += usize::from(parsed);
+        let mut matches = 0;
+        for scheme in ["data", "javascript", "mailto", "tel"] {
+            for address in addresses {
+                let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == scheme);
+                assert_eq!(has_scheme(address, scheme), parsed, "for {scheme:?} in {address:?}");
+                matches += usize::from(parsed);
+            }
         }
-        assert_eq!(data_urls, 6);
+        assert_eq!(matches, 11);
     }
 }

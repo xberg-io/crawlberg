@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{attr_eq, clean_url, get_attr, get_url_attr, is_data_url, resolve_url};
+use super::{attr_eq, clean_url, get_attr, get_url_attr, has_scheme, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -51,7 +51,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(src) = get_url_attr(tag, "src") else {
             continue;
         };
-        if is_data_url(&src) {
+        if has_scheme(&src, "data") {
             continue;
         }
         images.push(ImageInfo {
@@ -82,7 +82,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         else {
             continue;
         };
-        if is_data_url(&raw_url) {
+        if has_scheme(&raw_url, "data") {
             continue;
         }
         images.push(ImageInfo {
@@ -95,7 +95,8 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
     }
 }
 
-/// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case.
+/// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
+/// skipping inline `data:` contents.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
@@ -118,6 +119,9 @@ fn collect_meta_images(
         let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
+        if has_scheme(&content, "data") {
+            continue;
+        }
         images.push(ImageInfo {
             url: resolve_url(&content, base_url),
             alt: None,
