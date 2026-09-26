@@ -29,6 +29,15 @@ title: "Changelog"
 
 ### Fixed
 
+- **The vendored C header gate failed for lag rather than for a defect.** It required each
+  prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
+  header, but a vendored copy ships beside a dylib from the last release, so it legitimately
+  lacks whatever the canonical header has gained since — adding two `CrawlPageResult` getters
+  for #135 turned `main` red for that reason alone. The comparison is now one-directional: a
+  declaration the vendored copy has and the canonical header does not still fails, because that
+  means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
+  copy is merely missing are reported as lag. (#162)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
