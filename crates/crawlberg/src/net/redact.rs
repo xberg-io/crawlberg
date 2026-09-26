@@ -40,22 +40,36 @@ pub fn redact_url_credentials(input: &str) -> String {
     url.to_string()
 }
 
-/// Redact userinfo and the whole query string from a URL-like string.
+/// Redact a URL down to its origin: scheme, host and non-default port.
 ///
-/// For an endpoint that authenticates through its query, such as a CDP WebSocket URL with
-/// a `?token=` parameter or a bypass vendor endpoint. Returns `input` unchanged when it does
-/// not parse as an absolute URL or carries neither.
+/// For an endpoint whose *capability is the URL itself*. The canonical CDP endpoint is
+/// `ws://host:9222/devtools/browser/<GUID>`: the GUID in the **path** is the bearer token —
+/// anyone holding it drives the browser — and a proxied endpoint may instead carry a
+/// `?token=`. Neither the path, the query, the fragment nor the userinfo may be printed, so
+/// this keeps only the origin, which is the part an operator needs to tell one endpoint from
+/// another.
+///
+/// The port is kept deliberately. It is the field that distinguishes a container-mapped CDP
+/// port from the default 9222, which is what makes a connection failure diagnosable, and it
+/// is no more secret than the host it belongs to. `url::Url::port` reports `None` for a
+/// scheme's default port, so `wss://host:443` prints as `wss://host`.
+///
+/// Fails **closed**: returns the placeholder when `input` does not parse as an absolute URL
+/// or carries no host, so an endpoint the parser rejects is never echoed.
 #[must_use]
-pub fn redact_url_secrets(input: &str) -> String {
-    let redacted = redact_url_credentials(input);
-    let Ok(mut url) = url::Url::parse(&redacted) else {
-        return redacted;
+pub fn redact_url_to_origin(input: &str) -> String {
+    let Ok(url) = url::Url::parse(input) else {
+        return REDACTED_PLACEHOLDER.to_owned();
     };
-    if url.query().is_none() {
-        return redacted;
+    let Some(host) = url.host() else {
+        return REDACTED_PLACEHOLDER.to_owned();
+    };
+    // ~keep `host` is formatted through `url::Host`, not `host_str`, so an IPv6 literal keeps
+    // ~keep its brackets and the `:port` suffix below stays unambiguous.
+    match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
     }
-    url.set_query(Some(REDACTED_PLACEHOLDER));
-    url.to_string()
 }
 
 /// Redact `user[:password]@` userinfo from a URL-like string **without parsing it**.
@@ -139,15 +153,46 @@ mod tests {
     }
 
     #[test]
-    fn redact_url_secrets_hides_userinfo_and_query() {
+    fn redact_url_to_origin_hides_the_path_query_fragment_and_userinfo() {
+        // ~keep This is the canonical CDP endpoint shape. The GUID in the path IS the
+        // ~keep capability, so it must not survive; an earlier version of this test pinned
+        // ~keep the opposite, asserting the whole path printed unchanged.
         assert_eq!(
-            redact_url_secrets("wss://user:pw@chrome.example:3000/devtools?token=abc123&x=1"),
-            "wss://***:***@chrome.example:3000/devtools?***"
+            redact_url_to_origin("ws://127.0.0.1:9222/devtools/browser/b1946ac9-2d2e-4f1f"),
+            "ws://127.0.0.1:9222"
         );
         assert_eq!(
-            redact_url_secrets("ws://127.0.0.1:9222/devtools/browser/42"),
-            "ws://127.0.0.1:9222/devtools/browser/42"
+            redact_url_to_origin("wss://user:pw@chrome.example:3000/devtools?token=abc123#frag"),
+            "wss://chrome.example:3000"
         );
+    }
+
+    #[test]
+    fn redact_url_to_origin_omits_a_default_port_and_brackets_ipv6() {
+        assert_eq!(
+            redact_url_to_origin("wss://chrome.example:443/devtools"),
+            "wss://chrome.example"
+        );
+        assert_eq!(
+            redact_url_to_origin("ws://[::1]:9222/devtools/browser/42"),
+            "ws://[::1]:9222"
+        );
+    }
+
+    #[test]
+    fn redact_url_to_origin_fails_closed() {
+        for hostless in [
+            "not a url at all",
+            "/devtools/browser/b1946ac9-2d2e-4f1f",
+            "ws://:9222/devtools/browser/42",
+            "data:text/plain,secret",
+        ] {
+            assert_eq!(
+                redact_url_to_origin(hostless),
+                "***",
+                "an endpoint with no parseable host must never be echoed, got input '{hostless}'"
+            );
+        }
     }
 
     #[test]
