@@ -254,3 +254,413 @@ async fn streaming_crawl_seed_error_still_emits_complete() {
     assert!(error_count >= 1, "should emit an Error for the unreachable seed");
     assert_eq!(complete_count, 1, "should emit exactly one Complete even on seed error");
 }
+
+/// Counts `on_complete` calls so a test can wait for a crawl to finish after its stream is gone.
+#[derive(Clone)]
+struct CompletionCounter {
+    completed: std::sync::Arc<tokio::sync::watch::Sender<usize>>,
+}
+
+impl CompletionCounter {
+    fn new() -> Self {
+        Self {
+            completed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),
+        }
+    }
+
+    /// Wait until at least `count` crawls have completed, or until `limit` passes.
+    async fn wait_for(&self, count: usize, limit: std::time::Duration) -> bool {
+        let mut completed = self.completed.subscribe();
+        tokio::time::timeout(limit, completed.wait_for(|done| *done >= count))
+            .await
+            .is_ok()
+    }
+}
+
+#[async_trait::async_trait]
+impl crawlberg::traits::EventEmitter for CompletionCounter {
+    async fn on_page(&self, _event: &crawlberg::traits::PageEvent) {}
+    async fn on_error(&self, _event: &crawlberg::traits::ErrorEvent) {}
+    async fn on_complete(&self, _event: &crawlberg::traits::CompleteEvent) {
+        self.completed.send_modify(|done| *done += 1);
+    }
+    async fn on_discovered(&self, _url: &str, _depth: usize) {}
+}
+
+fn engine_with_counter(
+    max_concurrent: usize,
+    retry_count: usize,
+    counter: &CompletionCounter,
+) -> crawlberg::CrawlEngine {
+    crawlberg::CrawlEngine::builder()
+        .config(
+            CrawlConfig::builder()
+                .allow_private_networks(true)
+                .max_depth(1)
+                .max_concurrent(max_concurrent)
+                .retry_count(retry_count)
+                .retry_initial_delay_ms(100)
+                .build(),
+        )
+        .event_emitter(counter.clone())
+        .build()
+        .expect("engine build must not fail")
+}
+
+async fn request_count(mock: &MockServer, path_prefix: &str) -> usize {
+    mock.received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .filter(|request| request.url.path().starts_with(path_prefix))
+        .count()
+}
+
+/// Wait for the stream's first event and require it to be a page. A crawl that never yields one
+/// fails here after `limit` instead of hanging the test.
+async fn expect_first_page(
+    stream: &mut tokio_stream::wrappers::ReceiverStream<CrawlEvent>,
+    limit: std::time::Duration,
+) {
+    let event = tokio::time::timeout(limit, stream.next())
+        .await
+        .expect("the stream must yield its first event in time")
+        .expect("the stream must yield a first event");
+    match event {
+        CrawlEvent::Page { .. } => {}
+        CrawlEvent::Error { error, .. } => panic!("unexpected error event: {error}"),
+        CrawlEvent::Complete { .. } => panic!("the crawl ended before its first page"),
+    }
+}
+
+/// Wait until the server has received a request under `path_prefix`, or until `limit` passes.
+async fn wait_for_request(mock: &MockServer, path_prefix: &str, limit: std::time::Duration) -> bool {
+    tokio::time::timeout(limit, async {
+        while request_count(mock, path_prefix).await == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+/// Dropping the stream must stop the crawl from starting new requests. The loop used to
+/// notice a dropped receiver only when it next sent a page, so pages that fail (a 5xx,
+/// whose error event send failed silently) kept the crawl fetching the rest of the site,
+/// and a fetch in flight at the drop went on to make its retries.
+#[tokio::test]
+async fn dropping_the_stream_stops_new_requests() {
+    const MAX_CONCURRENT: usize = 2;
+    let mock = MockServer::start().await;
+    let links: String = (0..20).map(|n| format!("<a href=\"/many/p{n}\">p{n}</a>")).collect();
+    Mock::given(method("GET"))
+        .and(path("/many/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!("<html><body>{links}</body></html>"))
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/many/p\d+$"))
+        .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_millis(50)))
+        .mount(&mock)
+        .await;
+
+    let counter = CompletionCounter::new();
+    let engine = engine_with_counter(MAX_CONCURRENT, 2, &counter);
+    let mut stream = engine.crawl_stream(&format!("{}/many/", mock.uri()));
+    expect_first_page(&mut stream, std::time::Duration::from_secs(10)).await;
+    drop(stream);
+    let at_drop = request_count(&mock, "/").await;
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the crawl must finish once its stream is dropped"
+    );
+    let started_after_drop = request_count(&mock, "/").await - at_drop;
+    assert!(
+        started_after_drop <= MAX_CONCURRENT,
+        "only fetches already in flight at the drop may reach the server, got {started_after_drop} more requests"
+    );
+}
+
+/// A server whose `/seedN` pages each link to a `/slow` child that answers after 300ms, so the
+/// first seed crawl is still running when a test drops the batch stream.
+async fn seeds_with_a_slow_child() -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/seed\d+$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body><a href=\"/slow\">slow</a></body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/slow"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>slow</body></html>")
+                .append_header("content-type", "text/html")
+                .set_delay(std::time::Duration::from_millis(300)),
+        )
+        .mount(&mock)
+        .await;
+    mock
+}
+
+/// The batch stream must also stop starting seeds once its receiver is gone: a seed crawl
+/// that begins after the drop abandons its seed before fetching it.
+#[tokio::test]
+async fn dropping_the_batch_stream_stops_new_seeds() {
+    let mock = seeds_with_a_slow_child().await;
+
+    let counter = CompletionCounter::new();
+    let engine = engine_with_counter(1, 0, &counter);
+    let seeds: Vec<String> = (0..6).map(|n| format!("{}/seed{n}", mock.uri())).collect();
+    let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    let mut stream = engine.batch_crawl_stream(&seed_refs);
+    expect_first_page(&mut stream, std::time::Duration::from_secs(10)).await;
+    drop(stream);
+    let at_drop = request_count(&mock, "/seed").await;
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the running crawl must finish once the stream is dropped"
+    );
+    // ~keep Proving that no further seed starts needs a bounded wait: a second completion
+    // ~keep would arrive within milliseconds if the next seed were started.
+    counter.wait_for(2, std::time::Duration::from_secs(1)).await;
+    let seeds_after_drop = request_count(&mock, "/seed").await - at_drop;
+    assert_eq!(seeds_after_drop, 0, "no seed may start after the drop");
+}
+
+/// Counts the `Complete` events a crawl delivers to its event sink.
+#[derive(Clone, Default)]
+struct CompleteSinkCounter {
+    completes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CompleteSinkCounter {
+    fn count(&self) -> usize {
+        self.completes.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl crawlberg::EventSink for CompleteSinkCounter {
+    async fn emit(&self, event: CrawlEvent) {
+        if matches!(event, CrawlEvent::Complete { .. }) {
+            self.completes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// Once the batch stream is dropped, seeds the batch had not started report nothing: the emitter
+/// and the sink each see one `Complete`, for the seed that was running at the drop, and no
+/// zero-page `Complete` for the seeds behind it.
+#[tokio::test]
+async fn dropping_the_batch_stream_reports_nothing_for_seeds_it_never_started() {
+    let mock = seeds_with_a_slow_child().await;
+
+    let counter = CompletionCounter::new();
+    let sink = CompleteSinkCounter::default();
+    let engine = crawlberg::CrawlEngine::builder()
+        .config(
+            CrawlConfig::builder()
+                .allow_private_networks(true)
+                .max_depth(1)
+                .max_concurrent(1)
+                .build(),
+        )
+        .event_emitter(counter.clone())
+        .event_sink(sink.clone())
+        .build()
+        .expect("engine build must not fail");
+    let seeds: Vec<String> = (0..6).map(|n| format!("{}/seed{n}", mock.uri())).collect();
+    let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    let mut stream = engine.batch_crawl_stream(&seed_refs);
+    expect_first_page(&mut stream, std::time::Duration::from_secs(10)).await;
+    drop(stream);
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the running crawl must finish once the stream is dropped"
+    );
+    // ~keep A zero-page completion for the next seed would arrive within milliseconds of the
+    // ~keep first one, so a bounded wait for a second one is enough to see it.
+    counter.wait_for(2, std::time::Duration::from_secs(1)).await;
+    assert_eq!(
+        *counter.completed.borrow(),
+        1,
+        "the emitter must see one completion, for the seed running at the drop"
+    );
+    assert_eq!(
+        sink.count(),
+        1,
+        "the sink must see one Complete, for the seed running at the drop"
+    );
+}
+
+/// A batch stream dropped before its task first runs starts no seed. At that first poll a free
+/// slot and the drop are both ready at once, so this checks that the batch prefers the drop.
+/// Each round drops at once and gives any wrongly started seed 300ms to report its `Complete`.
+#[tokio::test]
+async fn a_batch_stream_dropped_before_its_task_runs_starts_no_seed() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>x</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+
+    let mut completes = 0;
+    for round in 0..40 {
+        let sink = CompleteSinkCounter::default();
+        let engine = crawlberg::CrawlEngine::builder()
+            .config(
+                CrawlConfig::builder()
+                    .allow_private_networks(true)
+                    .max_depth(0)
+                    .max_concurrent(20)
+                    .build(),
+            )
+            .event_sink(sink.clone())
+            .build()
+            .expect("engine build must not fail");
+        let seeds: Vec<String> = (0..20).map(|n| format!("{}/s{round}-{n}", mock.uri())).collect();
+        let seed_refs: Vec<&str> = seeds.iter().map(String::as_str).collect();
+        drop(engine.batch_crawl_stream(&seed_refs));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        completes += sink.count();
+    }
+
+    assert_eq!(completes, 0, "no seed may start once the stream is dropped");
+}
+
+/// A seed still being fetched when the stream is dropped must not go on to retry.
+#[tokio::test]
+async fn dropping_the_stream_during_the_seed_fetch_stops_its_retries() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/seed"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&mock)
+        .await;
+
+    let counter = CompletionCounter::new();
+    let engine = engine_with_counter(1, 3, &counter);
+    let stream = engine.crawl_stream(&format!("{}/seed", mock.uri()));
+    // ~keep The first attempt reaching the server is the drop point; its retries wait
+    // ~keep 100ms, 200ms and 400ms, so a retry cannot land before the drop does.
+    assert!(
+        wait_for_request(&mock, "/seed", std::time::Duration::from_secs(10)).await,
+        "the seed's first attempt must reach the server"
+    );
+    drop(stream);
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the crawl must finish once its stream is dropped"
+    );
+    assert_eq!(
+        request_count(&mock, "/seed").await,
+        1,
+        "the seed must not be retried after the drop"
+    );
+}
+
+/// Holds the seed page's sink emit until the stream is dropped, so the drop lands while the
+/// loop is still processing that page, before it starts the next fetches.
+struct HoldSeedPage {
+    dropped: std::sync::Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+#[async_trait::async_trait]
+impl crawlberg::EventSink for HoldSeedPage {
+    async fn emit(&self, event: CrawlEvent) {
+        if matches!(event, CrawlEvent::Page { .. }) {
+            let _ = self.dropped.subscribe().wait_for(|dropped| *dropped).await;
+        }
+    }
+}
+
+/// Slows every budget check made after the drop, so a fetch started before the next check
+/// has time to reach the server before the loop could abort it.
+struct SlowAfterDrop {
+    dropped: std::sync::Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+#[async_trait::async_trait]
+impl crawlberg::PageBudget for SlowAfterDrop {
+    async fn check(&self) -> Result<(), crawlberg::BudgetError> {
+        if *self.dropped.borrow() {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+        Ok(())
+    }
+}
+
+/// A drop that lands while a page is being processed must stop the crawl before it starts
+/// another fetch. On a multi-thread runtime a fetch spawned after the drop runs at once, so
+/// aborting it afterwards is too late for the request it already sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_drop_during_page_processing_starts_no_further_fetch() {
+    let mock = MockServer::start().await;
+    let links: String = (0..4).map(|n| format!("<a href=\"/p{n}\">p{n}</a>")).collect();
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!("<html><body>{links}</body></html>"))
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(r"^/p\d+$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>child</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let dropped = std::sync::Arc::new(tokio::sync::watch::channel(false).0);
+    let counter = CompletionCounter::new();
+    let engine = crawlberg::CrawlEngine::builder()
+        .config(
+            CrawlConfig::builder()
+                .allow_private_networks(true)
+                .max_depth(1)
+                .max_concurrent(2)
+                .build(),
+        )
+        .event_emitter(counter.clone())
+        .event_sink(HoldSeedPage {
+            dropped: std::sync::Arc::clone(&dropped),
+        })
+        .page_budget(SlowAfterDrop {
+            dropped: std::sync::Arc::clone(&dropped),
+        })
+        .build()
+        .expect("engine build must not fail");
+
+    let mut stream = engine.crawl_stream(&format!("{}/", mock.uri()));
+    expect_first_page(&mut stream, std::time::Duration::from_secs(10)).await;
+    drop(stream);
+    dropped.send_replace(true);
+
+    assert!(
+        counter.wait_for(1, std::time::Duration::from_secs(10)).await,
+        "the crawl must finish once its stream is dropped"
+    );
+    assert_eq!(
+        request_count(&mock, "/p").await,
+        0,
+        "no child page may be requested once the stream is dropped"
+    );
+}
