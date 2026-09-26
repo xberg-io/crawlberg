@@ -7,6 +7,8 @@ pub(crate) mod browser_policy;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cookie;
 pub(crate) mod origin;
+#[cfg(feature = "browser-native")]
+pub(crate) mod proxy_credentials;
 pub mod redact;
 // ~keep `reqwest::dns::Resolve` only exists under reqwest's hyper backend; wasm32 has no
 // DNS surface at all (see the wasm32 note on `ssrf::validate_url`).

@@ -7,7 +7,7 @@ use crawlberg_browser::adapter::{
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult, ProxyConfig};
+use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -97,48 +97,19 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
     })
 }
 
-/// Resolve the proxy URL string handed to the native browser worker.
-///
-/// Credentials are embedded via `url::Url::set_username`/`set_password`,
-/// which percent-encodes the userinfo component — the previous
-/// `format!("{scheme}://{user}:{pass}@{rest}")` splice let a `:`, `@`, or
-/// `/` in a credential corrupt the authority (e.g. terminate it early and
-/// smuggle a different host in, or misdirect the connection to an
-/// unintended proxy). `Url::set_username`/`set_password` work for any
-/// scheme with an authority component (http, https, socks5, socks5h), so
-/// this also fixes SOCKS5 credentials being silently dropped by the old
-/// code's `http://`/`https://`-only prefix check.
+/// Resolve the proxy URL string handed to the native browser worker: the
+/// browser-specific proxy if set, else the crawl-wide one, with any
+/// configured credentials embedded by
+/// `net::proxy_credentials::embed_proxy_credentials` (shared with the
+/// crawl/scrape path in `crate::native_browser`).
 fn resolved_proxy(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
-    let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
-        return Ok(None);
-    };
-    apply_proxy_credentials(proxy).map(Some)
-}
-
-fn apply_proxy_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
-    if proxy.username.is_none() && proxy.password.is_none() {
-        return Ok(proxy.url.clone());
-    }
-
-    let mut parsed =
-        url::Url::parse(&proxy.url).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
-
-    parsed
-        .set_username(proxy.username.as_deref().unwrap_or(""))
-        .map_err(|()| {
-            CrawlError::invalid_config(format!(
-                "proxy scheme {:?} does not support embedded credentials",
-                parsed.scheme()
-            ))
-        })?;
-    parsed.set_password(proxy.password.as_deref()).map_err(|()| {
-        CrawlError::invalid_config(format!(
-            "proxy scheme {:?} does not support embedded credentials",
-            parsed.scheme()
-        ))
-    })?;
-
-    Ok(parsed.to_string())
+    config
+        .browser
+        .proxy
+        .as_ref()
+        .or(config.proxy.as_ref())
+        .map(crate::net::proxy_credentials::embed_proxy_credentials)
+        .transpose()
 }
 
 fn post_navigation_wait(config: &CrawlConfig) -> Option<Duration> {
@@ -211,115 +182,9 @@ fn map_action_result(result: NativeActionResult) -> ActionResult {
     }
 }
 
-#[cfg(test)]
-mod proxy_credential_tests {
-    use super::apply_proxy_credentials;
-    use crate::types::ProxyConfig;
-
-    fn proxy(url: &str, username: Option<&str>, password: Option<&str>) -> ProxyConfig {
-        ProxyConfig {
-            url: url.to_owned(),
-            username: username.map(str::to_owned),
-            password: password.map(str::to_owned),
-        }
-    }
-
-    #[test]
-    fn http_credentials_are_embedded_and_percent_encoded() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", Some("alice"), Some("s3cr3t")))
-            .expect("http proxy with plain credentials must resolve");
-        assert_eq!(
-            resolved, "http://alice:s3cr3t@proxy.test:8080/",
-            "plain alphanumeric credentials must round-trip unchanged"
-        );
-    }
-
-    #[test]
-    fn socks5_credentials_are_no_longer_silently_dropped() {
-        let resolved = apply_proxy_credentials(&proxy("socks5://proxy.test:1080", Some("alice"), Some("s3cr3t")))
-            .expect("socks5 proxy with credentials must resolve");
-        assert_eq!(
-            resolved, "socks5://alice:s3cr3t@proxy.test:1080",
-            "SOCKS5 credentials must be embedded, not dropped"
-        );
-    }
-
-    #[test]
-    fn socks5h_credentials_are_embedded() {
-        let resolved = apply_proxy_credentials(&proxy("socks5h://proxy.test:1080", Some("bob"), Some("hunter2")))
-            .expect("socks5h proxy with credentials must resolve");
-        assert_eq!(resolved, "socks5h://bob:hunter2@proxy.test:1080");
-    }
-
-    #[test]
-    fn special_characters_in_credentials_are_percent_encoded_not_spliced() {
-        // A `:`/`@`/`/` in a credential must not be able to terminate the userinfo early and
-        // smuggle in a different host, or split a single credential into `user:pass` pairs.
-        let resolved = apply_proxy_credentials(&proxy(
-            "http://proxy.test:8080",
-            Some("weird:user@name"),
-            Some("p/a:s@s"),
-        ))
-        .expect("proxy with special-character credentials must still resolve");
-
-        // The credentials must decode back to the exact original values, and the host must
-        // still be `proxy.test:8080` — not hijacked by a `@` or `:` inside a credential.
-        let parsed = url::Url::parse(&resolved).expect("resolved proxy URL must itself be valid");
-        assert_eq!(parsed.host_str(), Some("proxy.test"));
-        assert_eq!(parsed.port(), Some(8080));
-        assert_eq!(parsed.username(), "weird%3Auser%40name");
-        assert_eq!(
-            urlencoding_decode(parsed.username()),
-            "weird:user@name",
-            "username must decode back to the exact original value"
-        );
-        assert_eq!(
-            urlencoding_decode(parsed.password().expect("password must be present")),
-            "p/a:s@s",
-            "password must decode back to the exact original value"
-        );
-    }
-
-    #[test]
-    fn credential_free_proxy_url_is_passed_through_unchanged() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", None, None))
-            .expect("credential-free proxy must resolve");
-        assert_eq!(
-            resolved, "http://proxy.test:8080",
-            "URL must be passed through verbatim when there are no credentials to embed"
-        );
-    }
-
-    #[test]
-    fn invalid_proxy_url_returns_invalid_config_error() {
-        let result = apply_proxy_credentials(&proxy("not a url", Some("alice"), Some("s3cr3t")));
-        assert!(
-            matches!(result, Err(crate::error::CrawlError::InvalidConfig { .. })),
-            "malformed proxy URL with credentials must return InvalidConfig, got {result:?}"
-        );
-    }
-
-    /// Minimal percent-decoder sufficient for the ASCII userinfo characters this module encodes.
-    fn urlencoding_decode(input: &str) -> String {
-        let bytes = input.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%'
-                && i + 2 < bytes.len()
-                && let Ok(text) = std::str::from_utf8(&bytes[i + 1..i + 3])
-                && let Ok(value) = u8::from_str_radix(text, 16)
-            {
-                out.push(value);
-                i += 3;
-                continue;
-            }
-            out.push(bytes[i]);
-            i += 1;
-        }
-        String::from_utf8(out).expect("decoded bytes must be valid UTF-8")
-    }
-}
+// Credential embedding itself (scheme case, every scheme with an authority component,
+// percent-encoding including a literal '%', and the unparseable-URL error) is exercised
+// once by `net::proxy_credentials`'s own tests, which this module now delegates to.
 
 #[cfg(test)]
 mod native_worker_hang_tests {
