@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, parse_html};
 use crate::js::runtime::BrowserJsRuntime;
 use crate::net::{HttpClient, NetError, Response};
+use crate::redact::RedactedHeaders;
 use url::Url;
 
 use crate::context::BrowserContext;
@@ -25,7 +26,7 @@ use security::cross_scheme_to_file;
 /// operator/config-supplied scripts, independent of any caller-configured, potentially
 /// unbounded timeout.
 const PRELOAD_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkEvent {
     pub request_id: String,
     pub url: String,
@@ -36,6 +37,35 @@ pub struct NetworkEvent {
     pub response_headers: Arc<std::collections::HashMap<String, String>>,
     pub body_size: usize,
     pub timestamp: f64,
+}
+
+impl std::fmt::Debug for NetworkEvent {
+    /// Redacted: the headers carry `Authorization`, `Cookie` and `Set-Cookie`. Header names
+    /// stay visible; sensitive values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            request_id,
+            url,
+            method,
+            resource_type,
+            status,
+            headers,
+            response_headers,
+            body_size,
+            timestamp,
+        } = self;
+        f.debug_struct("NetworkEvent")
+            .field("request_id", request_id)
+            .field("url", url)
+            .field("method", method)
+            .field("resource_type", resource_type)
+            .field("status", status)
+            .field("headers", &RedactedHeaders(headers))
+            .field("response_headers", &RedactedHeaders(response_headers))
+            .field("body_size", body_size)
+            .field("timestamp", timestamp)
+            .finish()
+    }
 }
 
 pub struct Page {

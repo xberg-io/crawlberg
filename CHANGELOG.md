@@ -17,6 +17,10 @@ All notable changes to crawlberg are documented here.
   `***` in place of the secret and keeps the non-secret fields. (#118)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **Debug output printed header credentials.** The network events, the native browser's rendered
+  page and the fetch and bypass responses printed every header value with `{:?}`, including
+  `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie`. These four values now print as
+  `***`. Other headers and all header names stay visible. (#141)
 
 ## [1.8.0] - 2026-09-25
 

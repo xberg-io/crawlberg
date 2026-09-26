@@ -9,7 +9,7 @@ use url::Url;
 ///
 /// Not available on `wasm32` targets — the Tower stack is native-only.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CrawlRequest {
     pub url: String,
     pub headers: HashMap<String, String>,
@@ -25,6 +25,26 @@ pub struct CrawlRequest {
     /// ~keep applies its own cross-host credential stripping. This field is what lets
     /// ~keep `apply_headers` withhold configured credentials once a chain leaves its origin.
     pub origin_host: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::fmt::Debug for CrawlRequest {
+    /// Redacted: `headers` can hold an `Authorization` or cookie header set on this request.
+    /// Header names stay visible; sensitive values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            headers,
+            tier,
+            origin_host,
+        } = self;
+        f.debug_struct("CrawlRequest")
+            .field("url", url)
+            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .field("tier", tier)
+            .field("origin_host", origin_host)
+            .finish()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -73,6 +93,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn request_and_response_debug_hide_sensitive_header_values() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let mut request = CrawlRequest::new("https://example.com/");
+        request.headers = HashMap::from([
+            ("authorization".to_owned(), format!("Bearer {SECRET}")),
+            ("Cookie".to_owned(), format!("sid={SECRET}")),
+            ("accept".to_owned(), "text/html".to_owned()),
+        ]);
+        let response = CrawlResponse {
+            status: 200,
+            content_type: "text/html".into(),
+            body: String::new(),
+            body_bytes: Vec::new(),
+            headers: HashMap::from([
+                ("set-cookie".to_owned(), vec![format!("sid={SECRET}")]),
+                ("proxy-authorization".to_owned(), vec![format!("Basic {SECRET}")]),
+                ("server".to_owned(), vec!["nginx".to_owned()]),
+            ]),
+        };
+        for text in [format!("{request:?}"), format!("{response:#?}")] {
+            assert!(!text.contains(SECRET), "secret printed: {text}");
+            assert!(text.contains("***"), "placeholder missing: {text}");
+        }
+        assert!(format!("{request:?}").contains("text/html"));
+        assert!(format!("{response:?}").contains("nginx"));
+    }
+
+    #[test]
     fn a_request_with_no_recorded_origin_is_treated_as_the_origin() {
         assert!(CrawlRequest::new("https://example.com/a").is_on_origin_host());
     }
@@ -117,11 +165,32 @@ mod tests {
 }
 
 /// HTTP response from the Tower service stack.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CrawlResponse {
     pub status: u16,
     pub content_type: String,
     pub body: String,
     pub body_bytes: Vec<u8>,
     pub headers: HashMap<String, Vec<String>>,
+}
+
+impl std::fmt::Debug for CrawlResponse {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            status,
+            content_type,
+            body,
+            body_bytes,
+            headers,
+        } = self;
+        f.debug_struct("CrawlResponse")
+            .field("status", status)
+            .field("content_type", content_type)
+            .field("body", body)
+            .field("body_bytes", body_bytes)
+            .field("headers", &crate::net::redact::RedactedHeaders(headers))
+            .finish()
+    }
 }
