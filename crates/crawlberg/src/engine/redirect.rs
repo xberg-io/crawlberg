@@ -413,26 +413,27 @@ impl RedirectChain {
 
     /// Move the chain to `target`, recording `headers` as the hop it is leaving.
     ///
+    /// ~keep `target` is a parsed URL, so every target reaches the SSRF check: a string that
+    /// ~keep fails to parse cannot be passed here at all.
+    ///
     /// # Errors
     ///
-    /// Returns [`CrawlError::SsrfViolation`] when `target` fails the SSRF policy, so a
+    /// Returns [`CrawlError::SsrfPolicyViolation`] when `target` fails the SSRF policy, so a
     /// redirect can never reach a URL the configuration forbids.
     async fn advance_to(
         &mut self,
-        target: String,
+        target: Url,
         target_key: String,
         headers: HashMap<String, Vec<String>>,
         ssrf: &SsrfPolicy,
     ) -> Result<(), CrawlError> {
-        if let Ok(parsed_target) = url::Url::parse(&target)
-            && let Err(e) = validate_url(&parsed_target, ssrf).await
-        {
+        if let Err(e) = validate_url(&target, ssrf).await {
             return Err(CrawlError::ssrf_violation(target, e.to_string()));
         }
         self.intermediate_headers.push((url_host(&self.current_url), headers));
         self.seen.insert(target_key);
         self.redirect_count += 1;
-        self.current_url = target;
+        self.current_url = target.into();
         Ok(())
     }
 
@@ -461,13 +462,13 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
 /// the one requested, paired with the cycle key it will occupy.
-fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(String, String)> {
+fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(Url, String)> {
     let landed = resp.landed_url.as_deref()?;
     let parsed = Url::parse(landed).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return None;
     }
-    chain.unseen_key(landed).map(|key| (landed.to_owned(), key))
+    chain.unseen_key(landed).map(|key| (parsed, key))
 }
 
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
@@ -481,17 +482,17 @@ fn next_redirect_target(
     resp: &crate::tower::CrawlResponse,
     chain: &RedirectChain,
     max_redirects: usize,
-) -> Option<(String, String)> {
+) -> Option<(Url, String)> {
     if chain.redirect_count >= max_redirects {
         return None;
     }
 
-    let sources: [fn(&crate::tower::CrawlResponse, &str) -> Option<String>; 3] =
+    let sources: [fn(&crate::tower::CrawlResponse, &str) -> Option<Url>; 3] =
         [http_redirect_target, refresh_header_target, meta_refresh_target];
 
     for source in sources {
         if let Some(target) = source(resp, &chain.current_url)
-            && let Some(target_key) = chain.unseen_key(&target)
+            && let Some(target_key) = chain.unseen_key(target.as_str())
         {
             return Some((target, target_key));
         }
@@ -507,7 +508,7 @@ const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const REFRESH_URL_MARKER: &str = "url=";
 
 /// The `Location` target of an HTTP 3xx, resolved against `current_url`.
-fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
+fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
     if !REDIRECT_STATUSES.contains(&resp.status) {
         return None;
     }
@@ -524,7 +525,7 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
-fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
+fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
@@ -540,7 +541,7 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
-fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
+fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
     if !is_html_content(&resp.content_type, &resp.body) {
         return None;
     }
@@ -605,7 +606,7 @@ mod tests {
         let chain = chain_at("https://example.com/start", &[]);
 
         let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("a 3xx must redirect");
-        assert_eq!(target, "https://example.com/from-location");
+        assert_eq!(target.as_str(), "https://example.com/from-location");
     }
 
     /// Characterization: a `Location` pointing back at a URL the chain already visited does
@@ -619,7 +620,7 @@ mod tests {
 
         let (target, _) =
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
-        assert_eq!(target, "https://example.com/from-refresh");
+        assert_eq!(target.as_str(), "https://example.com/from-refresh");
     }
 
     /// The same fall-through, one source further: both header sources loop, so the meta
@@ -635,7 +636,7 @@ mod tests {
 
         let (target, _) =
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the meta refresh must still be consulted");
-        assert_eq!(target, "https://example.com/from-meta");
+        assert_eq!(target.as_str(), "https://example.com/from-meta");
     }
 
     /// A `<meta http-equiv="refresh">` written inside script text is script source, not a
@@ -664,7 +665,7 @@ mod tests {
         );
 
         assert_eq!(
-            meta_refresh_target(&resp, "https://example.com/start"),
+            meta_refresh_target(&resp, "https://example.com/start").map(String::from),
             Some("https://example.com/real".to_owned()),
             "a real meta refresh after a script must still be found"
         );
@@ -709,7 +710,8 @@ mod tests {
         let (target, _) =
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
         assert_eq!(
-            target, "https://example.com/from-refresh",
+            target.as_str(),
+            "https://example.com/from-refresh",
             "an unparseable Location must not be followed as raw text; the chain falls \
              through to the next redirect source instead"
         );
@@ -751,6 +753,62 @@ mod tests {
             meta_refresh_target(&resp, "https://example.com/start").is_none(),
             "a meta refresh target that fails to parse must not be followed as raw text"
         );
+    }
+
+    /// Every redirect source hands the chain a parsed URL, and the chain checks that URL
+    /// against the SSRF policy before it moves. The public twin shows the same source does
+    /// advance the chain when the policy permits the target. ~keep
+    #[tokio::test]
+    async fn every_redirect_source_reaches_the_ssrf_check() {
+        const REFUSED: &str = "http://169.254.169.254/latest/meta-data/";
+        const PERMITTED: &str = "http://93.184.215.14/next";
+
+        for (target_url, permitted) in [(REFUSED, false), (PERMITTED, true)] {
+            let refresh = format!("0; url={target_url}");
+            let meta =
+                format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target_url}"></head></html>"#);
+            let mut landed = response(200, &[], "");
+            landed.landed_url = Some(target_url.to_owned());
+            let sources = [
+                ("Location", response(302, &[("location", target_url)], "")),
+                ("Refresh header", response(200, &[("refresh", refresh.as_str())], "")),
+                ("meta refresh", response(200, &[], &meta)),
+                ("landed URL", landed),
+            ];
+
+            for (source, resp) in sources {
+                let mut chain = chain_at(PAGE_URL, &[]);
+                let found = if resp.landed_url.is_some() {
+                    landed_redirect(&resp, &chain)
+                } else {
+                    next_redirect_target(&resp, &chain, MAX_REDIRECTS)
+                };
+                let (target, target_key) = found.unwrap_or_else(|| panic!("the {source} must yield a target"));
+
+                let result = chain
+                    .advance_to(target, target_key, HashMap::new(), &SsrfPolicy::default())
+                    .await;
+
+                if permitted {
+                    assert!(
+                        result.is_ok(),
+                        "the {source} to a public address must advance: {result:?}"
+                    );
+                    assert_eq!(chain.current_url, target_url, "the {source} must move the chain");
+                    assert_eq!(chain.redirect_count, 1, "the {source} must count one hop");
+                } else {
+                    assert!(
+                        matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
+                        "the {source} to the metadata address must fail the SSRF check, got {result:?}"
+                    );
+                    assert_eq!(
+                        chain.current_url, PAGE_URL,
+                        "a refused {source} must not move the chain"
+                    );
+                    assert_eq!(chain.redirect_count, 0, "a refused {source} must not count a hop");
+                }
+            }
+        }
     }
 
     /// `redact_url_credentials` returns an unparseable string unchanged, and each debug

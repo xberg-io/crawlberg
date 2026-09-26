@@ -159,19 +159,20 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
 }
 
 /// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
-/// `Url::join` parses either form on its own and returns the parser's normalized string.
+/// `Url::join` parses either form on its own and returns the parsed URL.
 /// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
 /// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
 /// caller must refuse the target rather than follow or report it as raw text.
 ///
-/// ~keep The return is always the parser's normalized form, never raw input, so a caller that
-/// ~keep re-checks it (SSRF, policy) is checking what will actually be fetched.
-pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<String> {
+/// ~keep The return is always a parsed URL, never raw input, so a caller that re-checks it
+/// ~keep (SSRF, policy) is checking what will actually be fetched, and cannot skip the check
+/// ~keep for a target that fails to parse.
+pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
     if let Ok(base) = Url::parse(base_url) {
-        return base.join(target).ok().map(|resolved| resolved.to_string());
+        return base.join(target).ok();
     }
     // base_url itself fails to parse; a target that stands on its own can still resolve.
-    Url::parse(target).ok().map(|resolved| resolved.to_string())
+    Url::parse(target).ok()
 }
 
 #[cfg(test)]
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn absolute_target_with_embedded_tab_and_newline_is_parser_normalized() {
-        let resolved = resolve_redirect("https://example.com/start", "https://example.com/\ta\nb");
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/\ta\nb").map(String::from);
         assert_eq!(
             resolved,
             Some("https://example.com/ab".to_owned()),
@@ -341,7 +342,7 @@ mod tests {
     /// a `base_url` that fails to parse instead exercises the case the old dispatch got wrong.
     #[test]
     fn absolute_target_with_leading_space_is_trimmed_even_when_base_fails_to_parse() {
-        let resolved = resolve_redirect("not a url", "   https://example.com/next");
+        let resolved = resolve_redirect("not a url", "   https://example.com/next").map(String::from);
         assert_eq!(
             resolved,
             Some("https://example.com/next".to_owned()),
@@ -352,7 +353,7 @@ mod tests {
 
     #[test]
     fn absolute_target_with_trailing_space_is_trimmed() {
-        let resolved = resolve_redirect("https://example.com/start", "https://example.com/next   ");
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/next   ").map(String::from);
         assert_eq!(
             resolved,
             Some("https://example.com/next".to_owned()),
@@ -366,7 +367,7 @@ mod tests {
     /// branch already resolves an absolute target on its own, uppercase scheme included.
     #[test]
     fn uppercase_scheme_target_still_resolves_when_base_fails_to_parse() {
-        let resolved = resolve_redirect("not a url", "HTTPS://example.com/x");
+        let resolved = resolve_redirect("not a url", "HTTPS://example.com/x").map(String::from);
         assert_eq!(
             resolved,
             Some("https://example.com/x".to_owned()),
@@ -377,7 +378,7 @@ mod tests {
 
     #[test]
     fn unparseable_absolute_target_is_refused() {
-        let resolved = resolve_redirect("https://example.com/start", "https://ex ample.com/x");
+        let resolved = resolve_redirect("https://example.com/start", "https://ex ample.com/x").map(String::from);
         assert_eq!(
             resolved, None,
             "a target the URL parser refuses must come back as None, so a caller refuses it \
@@ -393,7 +394,7 @@ mod tests {
     #[test]
     fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
         let clean = "https://example.com/page?a=1&b=2";
-        let resolved = resolve_redirect("https://example.com/start", clean);
+        let resolved = resolve_redirect("https://example.com/start", clean).map(String::from);
         assert_eq!(
             resolved,
             Some(clean.to_owned()),
