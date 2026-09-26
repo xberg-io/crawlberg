@@ -124,4 +124,10 @@ pub struct CrawlResponse {
     pub body: String,
     pub body_bytes: Vec<u8>,
     pub headers: HashMap<String, Vec<String>>,
+    /// The URL the content came from, when the fetcher followed redirects itself (the
+    /// browser tier). `None` when the response belongs to the requested URL.
+    ///
+    /// ~keep Read only by the native redirect chain; wasm has no browser tier to set it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub landed_url: Option<String>,
 }
