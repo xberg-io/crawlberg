@@ -13,6 +13,11 @@ All notable changes to crawlberg are documented here.
   backend already returned at once, but it reported an empty HTML skeleton as the body; it now
   reports an empty body too. (#121)
 
+  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
+  304 against its cache entry before the response reaches this check, so what the check sees is
+  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
+  what it carries.
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The
