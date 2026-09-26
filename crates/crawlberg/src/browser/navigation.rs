@@ -56,7 +56,7 @@ pub(super) async fn page_fetch(
 
     let timeout = config.browser.timeout;
 
-    let interceptor = start_ssrf_interception(page, &config.ssrf, Some(config.max_redirects)).await?;
+    let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)

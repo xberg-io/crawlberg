@@ -10,6 +10,7 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
+use crate::ssrf_intercept::{StoppedResponse, start_ssrf_interception};
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -102,7 +103,9 @@ async fn run_with_browser(
 
     let result = async {
         prepare_page(&page, config).await?;
-        navigate_and_wait(&page, url, config).await?;
+        if let Some(stop) = navigate_and_wait(&page, url, config).await? {
+            return Ok(no_document_result(&stop, actions));
+        }
         if let Some(ref script) = config.browser.eval_script {
             evaluate_json(&page, script).await.map_err(|e| {
                 CrawlError::browser_error(format!(
@@ -137,6 +140,35 @@ async fn run_with_browser(
 
     let _ = page.close().await;
     result
+}
+
+/// The result of a navigation that ended on a response without a document: the URL that
+/// answered, no HTML, and a failed result per action, since there is no page to act on.
+///
+/// ~keep `scrape` reports the same response as a page with its status and an empty body.
+/// ~keep `InteractionResult` has no status, so the action errors carry it.
+fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> InteractionResult {
+    let error = format!(
+        "no page to act on: {} answered {} with no document",
+        stop.url, stop.status
+    );
+    InteractionResult {
+        action_results: actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| ActionResult {
+                action_index: index,
+                action_type: action_type(action).into(),
+                success: false,
+                data: None,
+                error: Some(error.clone()),
+            })
+            .collect(),
+        final_html: String::new(),
+        final_url: stop.url.clone(),
+        screenshot: None,
+        screenshot_base64: None,
+    }
 }
 
 async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
@@ -177,13 +209,19 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
     Ok(())
 }
 
+/// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
+/// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
 // ~keep Mirrors `browser::navigation::page_fetch`'s interception shape (xberg-io/crawlberg#74):
 // ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
 // ~keep redirects/client-side navigations internally, so per-request CDP interception is still
 // ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
-async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
+async fn navigate_and_wait(
+    page: &chromiumoxide::Page,
+    url: &str,
+    config: &CrawlConfig,
+) -> Result<Option<StoppedResponse>, CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf, None).await?;
+    let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -196,14 +234,19 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     })
     .await;
 
-    let blocked = interceptor.finish().await.blocked;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    let intercepted = interceptor.finish().await;
+    if intercepted.blocked.is_none()
+        && let Some(stop) = intercepted.stopped_response
+    {
+        return Ok(Some(stop));
+    }
+    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
 
-    Ok(())
+    Ok(None)
 }
 
 /// Resolve navigation's timeout/error/SSRF-block outcome into a single result.
