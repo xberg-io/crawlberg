@@ -29,6 +29,21 @@ title: "Changelog"
 
 ### Fixed
 
+- **A proxy address with an upper-case scheme lost its configured credentials, and one that
+  failed to parse dropped the proxy entirely.** The native browser backend matched the proxy's
+  scheme with a case-sensitive `http://`/`https://` prefix check, so `HTTP://user:pass@proxy:8080`
+  matched neither arm and the proxy was used with no credentials, so requests then failed with a
+  407 or went out unauthenticated on an open proxy. A proxy URL that failed to parse was worse:
+  the browser fetch went out directly, with no proxy at all, not merely without credentials. The
+  scheme now comes from the URL parser, so its case no longer matters, and credentials are
+  embedded with `Url::set_username`/`set_password` instead of a raw string splice, so a `:`, `@`,
+  or `/` in a credential can no longer corrupt the proxy's authority. One shared helper now covers
+  the crawl, scrape, interact, and plain HTTP proxy paths: a literal `%` in a credential now
+  survives byte-for-byte everywhere, and a proxy address that fails to parse, or a scheme that
+  cannot hold credentials, is reported as a configuration error instead of silently going direct.
+  A SOCKS proxy's credentials no longer get corrupted either, but reqwest here has no SOCKS
+  support built in, so a SOCKS proxy still never connects; #237 tracks that separately. (#222)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,

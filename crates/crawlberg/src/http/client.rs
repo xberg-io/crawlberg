@@ -200,11 +200,16 @@ fn apply_proxy(builder: reqwest::ClientBuilder, config: &CrawlConfig) -> Result<
         return Ok(builder);
     };
 
-    let mut proxy = reqwest::Proxy::all(&proxy_config.url)
-        .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
-    if let (Some(user), Some(pass)) = (&proxy_config.username, &proxy_config.password) {
-        proxy = proxy.basic_auth(user, pass);
-    }
+    // ~keep Credentials are embedded into the proxy URL itself through the shared helper,
+    // not attached with `Proxy::basic_auth`: that method also calls
+    // `url::Url::set_username`/`set_password` internally, which leaves a literal `%` in a
+    // credential unescaped, and the proxy consumer decodes it once when building the
+    // Basic-Auth header. Going through `crate::net::proxy_credentials` first pre-escapes
+    // that `%`, so it survives byte-for-byte here the same way it already does for the
+    // native browser and interact paths.
+    let proxy_url = crate::net::proxy_credentials::embed_proxy_credentials(proxy_config)?;
+    let proxy =
+        reqwest::Proxy::all(&proxy_url).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
     Ok(builder.proxy(proxy))
 }
 
@@ -234,12 +239,20 @@ fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest
             return None;
         };
 
-        if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
-            // ~keep Deliberately still proxied when the credentials cannot be
-            // attached: the proxy answers 407 and the request fails visibly, whereas
-            // returning `None` would send the traffic direct and defeat egress
-            // control outright. The louder failure is the safer one.
-            if parsed.set_username(user).is_err() || parsed.set_password(Some(pass)).is_err() {
+        // ~keep Routed through the shared helper (not a hand-rolled `set_username`/
+        // `set_password` call here) so a literal `%` in a credential survives the same
+        // escape-then-decode round trip as the other proxy paths in this crate.
+        match crate::net::proxy_credentials::embed_proxy_credentials(&cfg) {
+            Ok(embedded) => {
+                if let Ok(with_credentials) = reqwest::Url::parse(&embedded) {
+                    parsed = with_credentials;
+                }
+            }
+            Err(_) => {
+                // ~keep Deliberately still proxied when the credentials cannot be
+                // attached: the proxy answers 407 and the request fails visibly, whereas
+                // returning `None` would send the traffic direct and defeat egress
+                // control outright. The louder failure is the safer one.
                 tracing::error!(
                     target_host = %host,
                     proxy_url = %crate::net::redact_url_credentials(&cfg.url),
@@ -269,10 +282,186 @@ fn cache_client(key: ClientCacheKey, client: &reqwest::Client) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    use base64::Engine as _;
+
     use super::*;
     use crate::net::ssrf::SsrfPolicy;
     use crate::types::ProxyConfig;
     use std::time::Duration;
+
+    /// Stands in for a plain forward proxy: reads one request off a bare TCP socket, pulls
+    /// out `Proxy-Authorization` if present, answers 200, and reports the header's raw value.
+    ///
+    /// ~keep wiremock is a normal HTTP server that routes on a relative path; a forward-proxy
+    /// request for a plain `http://` target instead arrives with an absolute-URI request
+    /// line, which wiremock's router does not match. This reads the raw bytes instead.
+    ///
+    /// Shared by [`proxy_authorization_header_for`] (the static `config.proxy` path) and
+    /// [`rotating_proxy_authorization_header_for`] (the `config.proxy_provider` path): both
+    /// need the same stub, differing only in which `CrawlConfig` field points at it.
+    async fn spawn_authorization_capturing_proxy_stub()
+    -> (std::net::SocketAddr, tokio::sync::oneshot::Receiver<Option<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener must bind");
+        let proxy_addr = listener.local_addr().expect("listener must have a local address");
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            while let Ok(n) = socket.read(&mut chunk).await {
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = String::from_utf8_lossy(&buf);
+            let auth = head
+                .lines()
+                .find(|line| line.to_ascii_lowercase().starts_with("proxy-authorization:"))
+                .map(|line| {
+                    line.split_once(':')
+                        .map(|(_, value)| value.trim().to_owned())
+                        .unwrap_or_default()
+                });
+            let response = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+            let _ = socket.write_all(response).await;
+            let _ = tx.send(auth);
+        });
+
+        (proxy_addr, rx)
+    }
+
+    async fn proxy_authorization_header_for(username: Option<&str>, password: Option<&str>) -> Option<String> {
+        let (proxy_addr, rx) = spawn_authorization_capturing_proxy_stub().await;
+
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_281),
+            proxy: Some(ProxyConfig {
+                url: format!("http://{proxy_addr}"),
+                username: username.map(str::to_owned),
+                password: password.map(str::to_owned),
+            }),
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+        let _ = client.get("http://example.invalid/page").send().await;
+
+        rx.await.expect("the proxy stub must report what it saw")
+    }
+
+    fn decode_basic_auth(header_value: &str) -> String {
+        let encoded = header_value.strip_prefix("Basic ").expect("proxy must send Basic auth");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("Basic auth value must be valid base64");
+        String::from_utf8(bytes).expect("decoded credential must be UTF-8")
+    }
+
+    #[tokio::test]
+    async fn a_percent_sign_in_a_plain_proxy_credential_survives_byte_for_byte() {
+        let header = proxy_authorization_header_for(Some("alice"), Some("p%41ss"))
+            .await
+            .expect("the plain proxy path must send Proxy-Authorization when credentials are configured");
+        assert_eq!(
+            decode_basic_auth(&header),
+            "alice:p%41ss",
+            "a literal '%' in a plain-path proxy credential must survive byte-for-byte, not decode as 'pAss'"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_username_only_plain_proxy_config_still_sends_basic_auth() {
+        let header = proxy_authorization_header_for(Some("alice"), None)
+            .await
+            .expect("a username-only proxy config must still authenticate on the plain path");
+        assert_eq!(
+            decode_basic_auth(&header),
+            "alice:",
+            "must agree with the shared helper: a username alone still embeds Basic auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_password_only_plain_proxy_config_still_sends_basic_auth() {
+        let header = proxy_authorization_header_for(None, Some("s3cr3t"))
+            .await
+            .expect("a password-only proxy config must still authenticate on the plain path");
+        assert_eq!(
+            decode_basic_auth(&header),
+            ":s3cr3t",
+            "must agree with the shared helper: a password alone still embeds Basic auth"
+        );
+    }
+
+    /// Same stub as [`proxy_authorization_header_for`], but drives the request through
+    /// `config.proxy_provider` (`rotating_proxy`'s `reqwest::Proxy::custom` closure)
+    /// instead of `config.proxy` (`apply_proxy`'s static path), so a regression in the
+    /// provider path's own call into the shared helper cannot hide behind the plain
+    /// path's coverage.
+    async fn rotating_proxy_authorization_header_for(username: Option<&str>, password: Option<&str>) -> Option<String> {
+        let (proxy_addr, rx) = spawn_authorization_capturing_proxy_stub().await;
+
+        let provider = crate::StaticProxyProvider::new(vec![ProxyConfig {
+            url: format!("http://{proxy_addr}"),
+            username: username.map(str::to_owned),
+            password: password.map(str::to_owned),
+        }]);
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_283),
+            proxy_provider: Some(std::sync::Arc::new(provider)),
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+        let _ = client.get("http://example.invalid/page").send().await;
+
+        rx.await.expect("the proxy stub must report what it saw")
+    }
+
+    #[tokio::test]
+    async fn a_percent_sign_in_a_rotating_proxy_credential_survives_byte_for_byte() {
+        let header = rotating_proxy_authorization_header_for(Some("alice"), Some("p%41ss"))
+            .await
+            .expect("the rotating proxy path must send Proxy-Authorization when credentials are configured");
+        assert_eq!(
+            decode_basic_auth(&header),
+            "alice:p%41ss",
+            "a literal '%' in a rotating-proxy credential must survive byte-for-byte, not decode as 'pAss'"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_username_only_rotating_proxy_config_still_sends_basic_auth() {
+        let header = rotating_proxy_authorization_header_for(Some("alice"), None)
+            .await
+            .expect("a username-only proxy config must still authenticate on the rotating path");
+        assert_eq!(
+            decode_basic_auth(&header),
+            "alice:",
+            "must agree with the shared helper: a username alone still embeds Basic auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_password_only_rotating_proxy_config_still_sends_basic_auth() {
+        let header = rotating_proxy_authorization_header_for(None, Some("s3cr3t"))
+            .await
+            .expect("a password-only proxy config must still authenticate on the rotating path");
+        assert_eq!(
+            decode_basic_auth(&header),
+            ":s3cr3t",
+            "must agree with the shared helper: a password alone still embeds Basic auth"
+        );
+    }
 
     #[test]
     fn build_client_reuses_cached_client_for_matching_config() {
