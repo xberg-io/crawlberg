@@ -157,24 +157,6 @@ async fn read_redirect_response(
     }
 }
 
-/// Classify a 403 as a WAF block when the body or headers carry a vendor fingerprint.
-async fn forbidden_error(
-    resp: reqwest::Response,
-    headers: &HashMap<String, Vec<String>>,
-    config: &CrawlConfig,
-) -> CrawlError {
-    let server = server_header(headers);
-    let body = crate::http::read_text_bounded(resp, crate::http::effective_max_body_size(config)).await;
-    if crate::http::is_waf_blocked(&server, &body, headers) {
-        let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-        return CrawlError::WafBlocked {
-            message: format!("waf/blocked detected: {vendor}"),
-            vendor,
-        };
-    }
-    CrawlError::forbidden("forbidden")
-}
-
 /// Whether an error chain names a truncated or failed body transfer rather than a transport fault.
 fn is_body_error_chain(chain: &str) -> bool {
     chain.contains("content-length")
@@ -280,8 +262,20 @@ async fn do_fetch(
         return Ok(read_redirect_response(resp, config, status, content_type, headers).await);
     }
 
-    if status == 403 {
-        return Err(forbidden_error(resp, &headers, config).await);
+    // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
+    // a second copy: the two copies had already drifted. The one that stood here classified
+    // every response as if it were a 403 (`is_waf_blocked`/`detect_waf_vendor` hardcode that
+    // status) and showed the classifier only the `server` header, so a 403 identified by any
+    // other header came back as vendor "unknown".
+    if crate::http::is_challenge_status(status) {
+        return Err(crate::http::challenge_status_error(
+            status,
+            &req.url,
+            &headers,
+            resp,
+            crate::http::effective_max_body_size(config),
+        )
+        .await);
     }
     if let Some(error) = crate::http::status_error(status, &req.url) {
         return Err(error);

@@ -19,6 +19,19 @@ title: "Changelog"
   hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
   it is resynced and gated. (#162, #127)
 
+- **A WAF challenge served with 503 or 429 was retried instead of escalated.** WAF detection ran
+  only for a 403 and for a 2xx, so a Cloudflare or Akamai interstitial served with 503 became a
+  plain server error — and a challenge served with 429 a plain rate limit — before anything looked
+  at the response. It was then retried by the same JavaScript-less client that provoked it and
+  never reached the browser or bypass tier. A 403, 429 or 503 is now fingerprinted before it is
+  turned into an error: a detected challenge is a WAF block and escalates, while a 429 or 503 with
+  no WAF signal is unchanged — same error, same message, its status still attached, and still
+  retried exactly as `retry_codes` says. Escalation is chosen over retry for a detected challenge
+  because re-issuing the identical request only reproduces it. Response headers are checked first,
+  so a challenge named by a header costs no body read; only a 429 or 503 whose headers say nothing
+  now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
+  was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The
