@@ -17,8 +17,15 @@ title: "Changelog"
   refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
   redirect response at the limit, with the same redirect count, status and final URL that HTTP
   mode reports, and the next hop is never requested. Only the redirects of the requested page
-  count. A navigation a script starts after the page loads, and any redirect it follows, does not
-  count. This applies to the Chromiumoxide backend. (#90)
+  count, and this applies to the Chromiumoxide backend. (#90)
+
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
