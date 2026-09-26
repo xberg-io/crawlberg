@@ -122,8 +122,10 @@ pub(crate) struct StoppedResponse {
 /// ~keep the same paused requests and turn interception off under the others, so one
 /// ~keep listener per browser serves them all.
 pub(crate) struct BrowserFirewall {
+    browser: Arc<Browser>,
     handle: FirewallHandle,
     listener: tokio::task::JoinHandle<()>,
+    stopped: bool,
 }
 
 /// Whether crawlberg launched the browser or connected to one through `browser.endpoint`.
@@ -326,7 +328,7 @@ impl BrowserFirewall {
         };
         let (commands, receiver) = mpsc::unbounded_channel();
         let listener = tokio::spawn(serve(
-            browser,
+            Arc::clone(&browser),
             shared,
             Events {
                 paused,
@@ -336,8 +338,10 @@ impl BrowserFirewall {
             receiver,
         ));
         Ok(Self {
+            browser,
             handle: FirewallHandle { commands },
             listener,
+            stopped: false,
         })
     }
 
@@ -345,9 +349,19 @@ impl BrowserFirewall {
         self.handle.clone()
     }
 
-    /// Stop the listener and release its reference to the browser, so the owner can close it.
-    /// Call it once no page of the browser needs the check any more.
+    /// Turn interception off, stop the listener, and release its reference to the browser, so the
+    /// owner can close it. Call it once no page of the browser needs the check any more.
+    ///
+    /// ~keep The disable is sent from here rather than left to the listener's own idle disable.
+    /// ~keep `End` acks from `serve`'s `Done::Ended` arm, before the loop head next evaluates
+    /// ~keep `idle`, and a refusal within `DISABLE_DRAIN` holds that disable back further still,
+    /// ~keep so `watch.close().await; firewall.stop().await` aborted the listener with
+    /// ~keep interception on and nothing left answering. Every request of every target in the
+    /// ~keep browser then stays paused for good -- on a `browser.endpoint` Chrome, that is the
+    /// ~keep user's own tabs, permanently.
     pub(crate) async fn stop(mut self) {
+        disable_fetch(&self.browser).await;
+        self.stopped = true;
         self.listener.abort();
         let _ = (&mut self.listener).await;
     }
@@ -355,8 +369,36 @@ impl BrowserFirewall {
 
 impl Drop for BrowserFirewall {
     // ~keep A detached listener would keep the browser alive through its reference.
+    //
+    // ~keep The disable repeats `stop`'s for the path that never reaches it: a cancelled fetch
+    // ~keep future drops the firewall without stopping it, and interception left on with no
+    // ~keep listener pauses the whole browser. The listener is aborted only after the disable
+    // ~keep lands, so it keeps answering until interception is actually off. Spawned because
+    // ~keep `Drop` cannot await, and only with a runtime handle in hand because `tokio::spawn`
+    // ~keep panics without one.
     fn drop(&mut self) {
-        self.listener.abort();
+        if self.stopped {
+            self.listener.abort();
+            return;
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                let browser = Arc::clone(&self.browser);
+                let abort = self.listener.abort_handle();
+                runtime.spawn(async move {
+                    disable_fetch(&browser).await;
+                    abort.abort();
+                });
+            }
+            Err(_) => self.listener.abort(),
+        }
+    }
+}
+
+/// Turn CDP Fetch interception off for the whole browser.
+async fn disable_fetch(browser: &Browser) {
+    if let Err(error) = browser.execute(FetchDisableParams::default()).await {
+        tracing::warn!(%error, "failed to turn browser request interception off");
     }
 }
 
@@ -522,7 +564,7 @@ async fn serve(
         let idle = enabled && unanswered == 0 && lock(&shared.registry).is_idle();
         let drained = lock(&shared.last_refused).is_none_or(|at| at.elapsed() >= DISABLE_DRAIN);
         if idle && drained {
-            let _ = browser.execute(FetchDisableParams::default()).await;
+            disable_fetch(browser).await;
             enabled = false;
         }
         tokio::select! {
@@ -998,6 +1040,94 @@ mod race_tests {
             }
         });
         (url, hits)
+    }
+
+    /// Whether `hits` records a connection within five seconds.
+    async fn served(hits: &Arc<AtomicUsize>) -> bool {
+        for _ in 0..50 {
+            if hits.load(Ordering::SeqCst) > 0 {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    }
+
+    /// Stopping the check must turn interception off. The listener is the only thing answering
+    /// paused requests, so a stop that only aborts it leaves interception on with nothing behind
+    /// it: every request it covers stays paused for good, and on a browser that outlives the stop
+    /// -- one reached through `browser.endpoint`, or one a surviving reference kept from being
+    /// closed -- that is permanent.
+    ///
+    /// ~keep The page is parked rather than closed, so it is still open to be measured, and it is
+    /// ~keep the page the check demonstrably covers: Chrome does not pause a target created after
+    /// ~keep interception was turned on, and another target's requests are only partly paused, so
+    /// ~keep neither can tell a frozen browser from a working one.
+    ///
+    /// ~keep The probe is a `fetch`, not a navigation. Chrome pre-connects for a navigation, so
+    /// ~keep the listener accepts a connection even while the request itself is paused -- measured:
+    /// ~keep 2 connections while `goto` hung for its full 3 s timeout. Counting connections would
+    /// ~keep have reported a frozen browser as a working one.
+    ///
+    /// ~keep The freeze also needs a refusal newer than `DISABLE_DRAIN` at the moment the watch
+    /// ~keep ends: only then is the listener's own idle disable still pending for the abort to
+    /// ~keep beat. The injected verdict delay puts one there deterministically -- the watch waits
+    /// ~keep for the requests in flight, so the last slow refusal lands just before it ends. That
+    /// ~keep is a slow DNS lookup on a page being released, which is when this happens for real.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_parked_page_still_reaches_the_network_after_the_check_is_stopped() {
+        let test_name = "a_parked_page_still_reaches_the_network_after_the_check_is_stopped";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            enable: Duration::ZERO,
+            verdict: Duration::from_millis(300),
+        };
+        let firewall = BrowserFirewall::start_with(Arc::clone(&browser), BrowserOrigin::Launched, delays)
+            .await
+            .expect("the listener must start");
+        let page = browser.new_page("about:blank").await.expect("page");
+        let watch = firewall
+            .handle()
+            .watch(&page, &policy(), 0)
+            .await
+            .expect("the watch must start");
+        open_blank_site(&page).await;
+        let (denied, denied_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "window.__probe = setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 10); 1"
+            ))
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let refused_while_watched = denied_hits.load(Ordering::SeqCst);
+        let _ = page.evaluate("clearInterval(window.__probe); 1").await;
+        watch.park().await;
+        firewall.stop().await;
+
+        let (probe, probe_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "setInterval(() => fetch({probe:?}, {{ mode: 'no-cors' }}).catch(() => 0), 50); 1"
+            ))
+            .await;
+        let reached = served(&probe_hits).await;
+        if let Some(mut browser) = Arc::into_inner(browser) {
+            let _ = browser.close().await;
+            let _ = browser.wait().await;
+        }
+
+        assert_eq!(
+            refused_while_watched, 0,
+            "{test_name}: the watched page's requests must have been refused while it was watched, \
+             or the drain window this test needs was never opened"
+        );
+        assert!(
+            reached,
+            "{test_name}: the parked page must still reach the network after the check is stopped; \
+             interception was left on with no listener answering, so its requests are paused for good"
+        );
     }
 
     /// A page watched while interception is still being turned on for another page waits until
