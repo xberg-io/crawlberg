@@ -283,3 +283,46 @@ async fn interact_still_refuses_a_redirect_to_a_blocked_address() {
         other => panic!("{test_name}: the redirect target must be refused, got {other:?}"),
     }
 }
+
+/// The redirect limit bounds the seed's navigation only. A click that lands on a redirect
+/// after the page loaded is followed, even with `max_redirects` at 0.
+#[tokio::test]
+async fn interact_follows_a_redirect_a_click_starts_after_the_page_loaded() {
+    let test_name = "interact_follows_a_redirect_a_click_starts_after_the_page_loaded";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(r#"<html><body><a id="go" href="/go">go</a></body></html>"#, "text/html"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/go"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/landed"))
+        .mount(&site)
+        .await;
+    mount_page(&site, "/landed").await;
+
+    let engine = create_engine(Some(config(BrowserMode::Always, 0))).expect("engine must build");
+    let actions = vec![
+        PageAction::Click {
+            selector: "#go".to_owned(),
+        },
+        PageAction::Wait {
+            milliseconds: Some(1500),
+            selector: None,
+        },
+    ];
+    let result = match interact(&engine, &format!("{}/", site.uri()), actions).await {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: interact must succeed: {error:?}"),
+    };
+    assert_eq!(result.final_url.trim_start_matches(&site.uri()), "/landed");
+    assert!(result.final_html.contains("landed"), "{}", result.final_html);
+}
