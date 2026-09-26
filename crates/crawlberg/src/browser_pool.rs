@@ -161,7 +161,8 @@ pub struct BrowserPoolConfig {
 }
 
 impl std::fmt::Debug for BrowserPoolConfig {
-    /// Redacted: a CDP `browser_endpoint` can carry credentials or an access token.
+    /// Redacted: a CDP `browser_endpoint` is itself the capability, so only its scheme, host
+    /// and port print. See `crate::net::redact::redact_url_to_origin`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             max_pages,
@@ -173,7 +174,9 @@ impl std::fmt::Debug for BrowserPoolConfig {
             .field("max_pages", max_pages)
             .field(
                 "browser_endpoint",
-                &browser_endpoint.as_deref().map(crate::net::redact::redact_url_secrets),
+                &browser_endpoint
+                    .as_deref()
+                    .map(crate::net::redact::redact_url_to_origin),
             )
             .field("chrome_args", chrome_args)
             .field("launch_timeout", launch_timeout)

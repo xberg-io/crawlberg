@@ -712,11 +712,11 @@ impl CrawlConfig {
             && !endpoint.starts_with("ws://")
             && !endpoint.starts_with("wss://")
         {
-            // ~keep Do not echo the value. This fires exactly when the endpoint is not
-            // ~keep `ws(s)://`, which is also when `redact_url_secrets` passes it through
-            // ~keep unchanged, so an endpoint carrying `?token=` would print in full in a
-            // ~keep `CrawlError` Display — and from there into logs and API error bodies.
-            // ~keep The field name is enough for the caller to find it.
+            // ~keep Do not echo the value, not even redacted: this fires exactly when the
+            // ~keep endpoint is not `ws(s)://`, so `redact_url_to_origin` would print `***`
+            // ~keep for it anyway, and echoing it raw would put a `?token=` or a
+            // ~keep `/devtools/browser/<GUID>` into a `CrawlError` Display, and from there
+            // ~keep into logs and API error bodies. The field name is enough to find it.
             return Err(CrawlError::invalid_config(
                 "browser.endpoint must start with ws:// or wss://",
             ));

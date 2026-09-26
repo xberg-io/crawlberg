@@ -30,8 +30,18 @@ title: "Changelog"
   serialised config as secret-bearing.
 - **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
   the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
-  now prints as its scheme and host only, and as `***` when it does not parse as an absolute URL.
-  Each query value prints as `***`, and so does the body template. (#144, #152)
+  now prints as its origin only — scheme, host and non-default port — and as `***` when it does not
+  parse as an absolute URL or has no host. Each query value prints as `***`, and so does the body
+  template. (#144, #152)
+- **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
+  `ws://host:9222/devtools/browser/<GUID>`, where the GUID in the *path* is the capability that
+  drives the browser; redaction covered only the userinfo and the query, so `browser.endpoint` and
+  `BrowserPoolConfig.browser_endpoint` printed it verbatim, and an endpoint that did not parse
+  printed verbatim too. Both now print through the same origin-only helper the bypass provider
+  config uses, `crawlberg::net::redact::redact_url_to_origin`, which fails closed to `***`. The
+  port is kept deliberately: it distinguishes a container-mapped endpoint from the default 9222,
+  which is what makes a connection failure diagnosable, and it is no more secret than the host.
+  (#152)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
