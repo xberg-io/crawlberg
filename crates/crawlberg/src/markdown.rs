@@ -39,9 +39,9 @@ fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConf
         // ~keep Every option crawlberg has no opinion on stays at the library's default on
         // ~keep purpose, with one option that must never be picked up by accident: from 3.15 on,
         // ~keep html-to-markdown-rs has a `base_url` that resolves relative addresses the way
-        // ~keep `resolve_link_targets` above already does. Setting it is only safe after #123 --
-        // ~keep it resolves the empty `src=""` left by a dropped inline-data payload to the page
-        // ~keep itself, and rewrites the fragment-only hrefs this crate leaves as written. See
+        // ~keep `resolve_link_targets` above already does. It rewrites the fragment-only hrefs
+        // ~keep this crate leaves as written, and it resolves an empty address to the page
+        // ~keep itself, which is why a dropped inline-data address is removed, never emptied. See
         // ~keep #190; `html_to_markdown_has_no_base_url_option` below fails when 3.15 arrives.
         ..Default::default()
     };
@@ -408,6 +408,18 @@ mod tests {
         )
         .await;
         assert_eq!(md, "![g](https://example.com/docs/real.png)\n");
+    }
+
+    #[tokio::test]
+    async fn a_repeated_inline_data_address_drops_every_payload() {
+        let md = markdown_at(
+            &format!(
+                r#"<img src="data:image/png;base64,{ICON_PAYLOAD}" src="data:image/png;base64,{ICON_PAYLOAD}" alt="a">"#
+            ),
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(md, "![a](<>)\n");
     }
 
     #[tokio::test]

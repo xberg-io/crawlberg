@@ -7,6 +7,7 @@ use std::ops::Range;
 
 use html5ever::Attribute;
 use tl::{ParserOptions, VDom};
+use tracing::debug;
 use url::Url;
 
 use super::links::effective_base_url;
@@ -130,7 +131,14 @@ fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(R
         let Some(tag_start) = tag.raw().as_bytes_borrowed().and_then(|raw| span_within(masked, raw)) else {
             continue;
         };
-        let Some(parsed) = real_tags.find(start_tag_end(html, tag_start.start), name) else {
+        let tag_end = start_tag_end(html, tag_start.start);
+        let Some(parsed) = real_tags.find(tag_end, name) else {
+            if attributes.iter().any(|&(attr, _)| borrowed_attr(tag, attr).is_some()) {
+                debug!(
+                    offset = tag_start.start,
+                    "tl and the HTML parser end this tag at different places"
+                );
+            }
             continue;
         };
         if name.eq_ignore_ascii_case(b"base") {
@@ -146,9 +154,10 @@ fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(R
         // ~keep A `data:` address carries the whole encoded image or media, and the converter
         // ~keep would write all of it into the markdown (#97). Removing the attribute keeps an
         // ~keep image's alt text, and the converter falls through to the element's other address
-        // ~keep attributes, or for media to a nested `<source>`. Links keep theirs. An emptied one
-        // ~keep would not do for `<graphic>`: the converter takes the first of its address
-        // ~keep attributes that is present, even when it is empty.
+        // ~keep attributes, or for media to a nested `<source>`. Links keep theirs. A candidate
+        // ~keep list left with no candidates goes the same way. An emptied one would not do for
+        // ~keep `<graphic>`: the converter takes the first of its address attributes that is
+        // ~keep present, even when it is empty.
         let drop_inline_data = INLINE_DATA_ELEMENTS
             .iter()
             .any(|element| name.eq_ignore_ascii_case(element.as_bytes()));
@@ -156,10 +165,17 @@ fn collect_edits(dom: &VDom<'_>, masked: &str, html: &str, base: &Url) -> Vec<(R
             let Some((span, value)) = parsed_value(tag, parsed, masked, attr) else {
                 continue;
             };
-            if drop_inline_data && matches!(shape, Shape::Single) && is_inline_data(value) {
-                edits.push(attribute_removal(html, span.clone(), attr).unwrap_or_else(|| value_edit(html, span, "")));
-            } else if let Some(rewritten) = rewrite_value(value, shape, base, drop_inline_data) {
-                edits.push(value_edit(html, span, &rewritten));
+            let rewritten = if drop_inline_data && matches!(shape, Shape::Single) && is_inline_data(value) {
+                Some(String::new())
+            } else {
+                rewrite_value(value, shape, base, drop_inline_data)
+            };
+            match rewritten {
+                Some(rewritten) if drop_inline_data && rewritten.is_empty() => {
+                    edits.extend(attribute_removals(masked, span, attr, tag_end));
+                }
+                Some(rewritten) => edits.push(value_edit(html, span, &rewritten)),
+                None => {}
             }
         }
     }
@@ -173,13 +189,76 @@ fn value_edit(html: &str, span: Range<usize>, rewritten: &str) -> (Range<usize>,
     (span, encode_attribute_value(rewritten, quoted))
 }
 
-/// The edit that removes the attribute `attr` whose value is at `span` in `html`, name and
-/// quotes included.
+/// The edits that remove the attribute `attr`, whose first value is at `span`, and every later
+/// copy of it from the start tag that ends at `tag_end`.
+///
+/// ~keep The converter reads the first copy of a repeated attribute, so a copy left after the
+/// ~keep first is removed would take its place, payload and all. The spans are found in
+/// ~keep `masked`, the bytes tl parsed: where the masking scan misreads a tag, the source can
+/// ~keep hold a `<` there that tl read as a space, and a name looked up in the source is missed.
+fn attribute_removals(masked: &str, span: Range<usize>, attr: &str, tag_end: usize) -> Vec<(Range<usize>, String)> {
+    let Some(first) = attribute_removal(masked, span.clone(), attr) else {
+        debug!(offset = span.start, attr, "no attribute name before a value to remove");
+        return Vec::new();
+    };
+    let later = later_copies(masked, first.end..tag_end, attr);
+    std::iter::once(first)
+        .chain(later)
+        .map(|span| (span, String::new()))
+        .collect()
+}
+
+/// The span, name to value, of each attribute named `attr` in `masked[within]`, read as tl reads
+/// the attributes of a start tag (astral-tl 0.8, `Parser::parse_attributes`).
+///
+/// ~keep tl keeps only the first copy of an attribute, so it cannot list the later ones. One
+/// ~keep pass, because a hostile tag can repeat an attribute any number of times.
+fn later_copies(masked: &str, within: Range<usize>, attr: &str) -> Vec<Range<usize>> {
+    let bytes = &masked.as_bytes()[..within.end];
+    let spaces = |i: usize| i + bytes[i..].iter().take_while(|&&b| matches!(b, b' ' | b'\n')).count();
+    let up_to = |i: usize, stop: &[u8]| i + bytes[i..].iter().take_while(|b| !stop.contains(b)).count();
+    let mut copies = Vec::new();
+    let mut i = within.start;
+    loop {
+        i = spaces(i);
+        match bytes.get(i) {
+            None | Some(b'/' | b'>') => break,
+            Some(_) => {}
+        }
+        let name_start = i;
+        i += bytes[i..]
+            .iter()
+            .take_while(|&&b| b.is_ascii_alphanumeric() || b"-_:+/".contains(&b))
+            .count();
+        if i == name_start {
+            i += 1;
+            continue;
+        }
+        let name = &bytes[name_start..i];
+        i = spaces(i);
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i = spaces(i + 1);
+        let value_end = match bytes.get(i) {
+            Some(&quote @ (b'"' | b'\'')) => (up_to(i + 1, &[quote]) + 1).min(bytes.len()),
+            _ => up_to(i, b" \n>"),
+        };
+        if name.eq_ignore_ascii_case(attr.as_bytes()) {
+            copies.push(name_start..value_end);
+        }
+        i = value_end;
+    }
+    copies
+}
+
+/// The byte span of the attribute `attr` whose value is at `span` in `source`, name and quotes
+/// included.
 ///
 /// `None` when the bytes before the value are not `attr`, optional whitespace and `=`.
-fn attribute_removal(html: &str, span: Range<usize>, attr: &str) -> Option<(Range<usize>, String)> {
-    let value = with_quotes(html, span);
-    let before = html[..value.start].trim_end_matches(|c: char| c.is_ascii_whitespace());
+fn attribute_removal(source: &str, span: Range<usize>, attr: &str) -> Option<Range<usize>> {
+    let value = with_quotes(source, span);
+    let before = source[..value.start].trim_end_matches(|c: char| c.is_ascii_whitespace());
     let before = before
         .strip_suffix('=')?
         .trim_end_matches(|c: char| c.is_ascii_whitespace());
@@ -187,7 +266,7 @@ fn attribute_removal(html: &str, span: Range<usize>, attr: &str) -> Option<(Rang
     before
         .get(name_start..)
         .is_some_and(|name| name.eq_ignore_ascii_case(attr))
-        .then(|| (name_start..value.end, String::new()))
+        .then_some(name_start..value.end)
 }
 
 /// The attributes [`collect_edits`] may rewrite on an element named `element`, in any case: the
@@ -297,22 +376,27 @@ fn resolve_candidates(list: &str, base: &Url, drop_inline_data: bool) -> Option<
 }
 
 /// The offset just past the `>` that ends the start tag at `start`, skipping any `>` inside a
-/// quoted attribute value.
+/// quoted attribute value. A quote or `=` inside an unquoted value is part of the value.
 fn start_tag_end(html: &str, start: usize) -> usize {
     let bytes = html.as_bytes();
     let mut after_equals = false;
+    let mut unquoted_value = false;
     let mut i = start + 1;
     while let Some(&byte) = bytes.get(i) {
         match byte {
             b'>' => return i + 1,
+            b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' => unquoted_value = false,
+            _ if unquoted_value => {}
             b'=' => after_equals = true,
             b'"' | b'\'' if after_equals => {
                 let close = bytes[i + 1..].iter().position(|&b| b == byte);
                 i = close.map_or(bytes.len(), |offset| i + 1 + offset);
                 after_equals = false;
             }
-            b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' => {}
-            _ => after_equals = false,
+            _ => {
+                unquoted_value = after_equals;
+                after_equals = false;
+            }
         }
         i += 1;
     }
@@ -555,6 +639,7 @@ mod tests {
             (r#"https://a"b.example/"#, "https://a%22b.example/"),
             (r#"x-foo://a"b/"#, "x-foo://a%22b/"),
             (r#"javascript:alert("x")<b>"#, "javascript:alert(%22x%22)%3Cb%3E"),
+            ("/a&amp;amp;b/", "https://example.com/a&amp;b/"),
         ] {
             assert_eq!(
                 resolve(&format!("<base href='{href}'>"), "https://example.com/"),
@@ -608,6 +693,60 @@ mod tests {
                 "https://example.com/"
             ),
             r#"<graphic  alt="g"></graphic><graphic  href="https://example.com/r.png">"#
+        );
+    }
+
+    #[test]
+    fn removes_a_candidate_list_left_empty_by_inline_data() {
+        assert_eq!(
+            resolve(
+                r#"<img srcset="data:image/png,x 1x, data:image/png,y 2x" alt="a"><img data-srcset="data:image/png,x" src="a.png">"#,
+                "https://example.com/"
+            ),
+            r#"<img  alt="a"><img  src="https://example.com/a.png">"#
+        );
+    }
+
+    #[test]
+    fn removes_every_copy_of_a_removed_attribute() {
+        assert_eq!(
+            resolve(
+                r#"<img src="data:image/png,A" src="data:image/png,B" alt="a"><img SRC="data:image/png,A" src=b.png>"#,
+                "https://example.com/"
+            ),
+            r#"<img   alt="a"><img  >"#
+        );
+    }
+
+    #[test]
+    fn removes_an_attribute_where_the_masking_scan_misreads_the_tag() {
+        // ~keep The masking scan opens a quote at the `'` of `x'y`, reads `<title>` as a tag and
+        // ~keep masks the `<` of `src<=`, so the bytes `tl` parsed there differ from the source.
+        assert_eq!(
+            resolve(
+                r#"<img b=x'y alt="'><title>" src<="data:image/png,A" x="</title>" src="data:image/png,B">"#,
+                "https://example.com/"
+            ),
+            r#"<img b=x'y alt="'><title>"  x="</title>" >"#
+        );
+    }
+
+    #[test]
+    fn an_equals_sign_inside_an_unquoted_value_does_not_open_a_quote() {
+        assert_eq!(
+            resolve(r#"<a href=x="y>z</a><a href=a=b"c>z</a>"#, "https://example.com/"),
+            r#"<a href="https://example.com/x=%22y">z</a><a href="https://example.com/a=b%22c">z</a>"#
+        );
+    }
+
+    #[test]
+    fn reads_the_xlink_href_of_a_graphic_inside_svg() {
+        assert_eq!(
+            resolve(
+                r#"<svg><graphic xlink:href="data:image/png,x" alt="g"></graphic><graphic xlink:href="g.png"></graphic></svg>"#,
+                "https://example.com/"
+            ),
+            r#"<svg><graphic  alt="g"></graphic><graphic xlink:href="https://example.com/g.png"></graphic></svg>"#
         );
     }
 

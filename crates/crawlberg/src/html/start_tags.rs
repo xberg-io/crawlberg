@@ -33,6 +33,9 @@ struct RealTag {
 
 impl RealTags {
     /// The kept attributes of the start tag named `name`, in any case, that ends at `end`.
+    ///
+    /// ~keep A binary search is sound because tags are pushed as they are fed, so their ends
+    /// ~keep only grow, and one `>` ends at most one start tag.
     pub(super) fn find(&self, end: usize, name: &[u8]) -> Option<&[Attribute]> {
         let tag = &self.tags[self.tags.binary_search_by_key(&end, |tag| tag.end).ok()?];
         tag.name
