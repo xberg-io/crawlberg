@@ -137,7 +137,7 @@ impl CrawlEngine {
             body: http_resp.body,
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
-            landed_url: None,
+            landed: None,
         };
         let mut result =
             crate::scrape::scrape_from_crawl_response(&http_resp.final_url, &crawl_resp, &self.config).await?;
@@ -157,7 +157,7 @@ impl CrawlEngine {
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         let pool = self.config.browser_pool.as_deref();
         #[cfg(feature = "browser-native")]
-        let mut http_resp = crate::browser::browser_fetch(
+        let mut page = crate::browser::browser_fetch(
             url,
             &self.config,
             None,
@@ -167,11 +167,11 @@ impl CrawlEngine {
         )
         .await?;
         #[cfg(not(feature = "browser-native"))]
-        let mut http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
 
-        let screenshot = http_resp.screenshot.take();
-        let final_url = http_resp.final_url.clone();
-        let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+        let screenshot = page.response.screenshot.take();
+        let final_url = page.response.final_url.clone();
+        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
         let mut result = crate::scrape::scrape_from_crawl_response(&final_url, &crawl_resp, &self.config).await?;
         result.browser_used = true;
         if let Some(bytes) = screenshot {
@@ -237,7 +237,7 @@ impl CrawlEngine {
             body: resp.body,
             body_bytes: resp.body_bytes,
             headers: resp.headers,
-            landed_url: None,
+            landed: None,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

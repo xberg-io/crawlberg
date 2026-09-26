@@ -30,6 +30,10 @@ pub(crate) use retry::fetch_with_retry;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
 
+/// Statuses whose `Location` header this crawl follows.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
 ///

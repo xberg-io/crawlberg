@@ -153,7 +153,7 @@ async fn read_redirect_response(
         body,
         body_bytes,
         headers,
-        landed_url: None,
+        landed: None,
     }
 }
 
@@ -323,7 +323,7 @@ async fn do_fetch(
         body,
         body_bytes: body_vec,
         headers,
-        landed_url: None,
+        landed: None,
     })
 }
 

@@ -29,5 +29,7 @@ pub use tracing_layer::CrawlTracingLayer;
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::CrawlRequest;
 pub use types::CrawlResponse;
+#[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
+pub use types::Landing;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ua_rotation::UaRotationLayer;
