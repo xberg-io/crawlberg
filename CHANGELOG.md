@@ -30,6 +30,19 @@ All notable changes to crawlberg are documented here.
   were skipped the same way. Tag names now match in any case. (#87)
 - **The images list ignored `<base href>`.** Image addresses now resolve against the same
   base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. An absolute canonical
+  URL is now reported in the same normalized form as the links list, so `https://Example.com`
+  becomes `https://example.com/`. (#101)
 
 ## [1.8.0] - 2026-09-25
 

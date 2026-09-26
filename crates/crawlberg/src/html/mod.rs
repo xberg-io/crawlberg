@@ -20,7 +20,12 @@ use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Token
 use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
+/// Resolve `src` against `base_url`, keeping it as written when it does not parse. An empty
+/// `src` stays empty.
 pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
+    if src.is_empty() {
+        return String::new();
+    }
     base_url
         .join(src)
         .map(|u| u.to_string())
@@ -55,6 +60,20 @@ pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a
         .flatten()
         .and_then(|b| b.try_as_utf8_str())
         .map(decode_attr_value)
+}
+
+/// Whether the tag's `attr` value equals `expected` in any ASCII case.
+///
+/// ~keep HTML compares values such as `name`, `http-equiv` and `type` without case, but tl's
+/// ~keep attribute selectors compare them byte for byte and cannot parse the CSS `i` flag. Select
+/// ~keep the tag and compare the value here instead.
+pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
+    get_attr(tag, attr).is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+/// Whether the tag's `rel` value, a space-separated list of tokens, holds `token` in any ASCII case.
+pub(crate) fn has_rel(tag: &HTMLTag<'_>, token: &str) -> bool {
+    get_attr(tag, "rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case(token)))
 }
 
 /// Decode the character references in a raw attribute value (`&amp;`, `&#x2F;`), as an HTML
@@ -121,7 +140,7 @@ pub(crate) use detection::{is_binary_content_type, is_binary_url, is_html_conten
 pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
 pub(crate) use link_targets::resolve_link_targets;
-pub(crate) use links::extract_links;
+pub(crate) use links::{effective_base_url, extract_links};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::detect_meta_refresh;
 pub(crate) use metadata::{detect_nofollow, detect_noindex};

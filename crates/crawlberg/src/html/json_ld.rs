@@ -5,7 +5,8 @@ use tl::VDom;
 
 use crate::types::JsonLdEntry;
 
-use super::selectors::SEL_JSON_LD;
+use super::attr_eq;
+use super::selectors::SEL_SCRIPT_TYPE;
 
 /// Extract JSON-LD structured data entries from a parsed HTML document.
 ///
@@ -17,7 +18,7 @@ pub(crate) fn extract_json_ld(dom: &VDom<'_>) -> Vec<JsonLdEntry> {
     let parser = dom.parser();
     let mut entries = Vec::new();
 
-    let Some(iter) = dom.query_selector(SEL_JSON_LD) else {
+    let Some(iter) = dom.query_selector(SEL_SCRIPT_TYPE) else {
         return entries;
     };
 
@@ -25,6 +26,12 @@ pub(crate) fn extract_json_ld(dom: &VDom<'_>) -> Vec<JsonLdEntry> {
         let Some(node) = handle.get(parser) else {
             continue;
         };
+        if !node
+            .as_tag()
+            .is_some_and(|tag| attr_eq(tag, "type", "application/ld+json"))
+        {
+            continue;
+        }
         let raw = node.inner_text(parser).to_string();
         let Ok(val) = serde_json::from_str::<Value>(&raw) else {
             continue;

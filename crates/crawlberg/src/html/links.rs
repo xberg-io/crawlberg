@@ -7,8 +7,8 @@ use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
-use super::get_attr;
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
+use super::{get_attr, has_rel};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -48,7 +48,7 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
 
 /// The URL a document's relative references resolve against: the `href` of its first `<base>`
 /// that has one, decoded and joined to the document URL, or the document URL itself.
-pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
+pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
     let parser = dom.parser();
     dom.query_selector(SEL_BASE_HREF)
         .and_then(|mut iter| iter.next())
@@ -61,11 +61,10 @@ pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
         .unwrap_or_else(|| document_url.clone())
 }
 
-/// Extract all links from a parsed HTML document.
+/// Extract all links from a parsed HTML document, resolved against `base_url`, the document's base
+/// URL from [`effective_base_url`].
 pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
     let parser = dom.parser();
-    let effective_base = effective_base_url(dom, base_url);
-
     let mut links = Vec::new();
 
     if let Some(iter) = dom.query_selector(SEL_A_HREF) {
@@ -90,16 +89,16 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
 
             // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
             // per the WHATWG URL spec, so no special-casing is needed here.
-            let link_type = classify_link(href, &effective_base);
+            let link_type = classify_link(href, base_url);
 
-            let resolved_url = if let Ok(u) = effective_base.join(href) {
+            let resolved_url = if let Ok(u) = base_url.join(href) {
                 u.to_string()
             } else {
                 href.to_owned()
             };
 
             let rel = get_attr(tag, "rel").map(Cow::into_owned);
-            let nofollow = rel.as_ref().map(|r| r.contains("nofollow")).unwrap_or(false);
+            let nofollow = has_rel(tag, "nofollow");
             let text = tag.inner_text(parser).trim().to_owned();
 
             links.push(LinkInfo {
@@ -119,10 +118,10 @@ mod tests {
 
     use super::*;
 
-    fn extract(html: &str, base: &str) -> Vec<LinkInfo> {
+    fn extract(html: &str, document_url: &str) -> Vec<LinkInfo> {
         let dom = crate::html::parse_html(html).expect("valid HTML");
-        let base_url = Url::parse(base).expect("valid base URL");
-        extract_links(&dom, &base_url)
+        let document_url = Url::parse(document_url).expect("valid document URL");
+        extract_links(&dom, &effective_base_url(&dom, &document_url))
     }
 
     #[test]
