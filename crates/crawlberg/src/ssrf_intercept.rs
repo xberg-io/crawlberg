@@ -50,6 +50,9 @@ pub(crate) struct InterceptOutcome {
     /// The main-frame response the navigation ends on without a document: the redirect past
     /// the redirect limit, or a response Chrome does not commit (204, 205, 304).
     pub(crate) stopped_response: Option<StoppedResponse>,
+    /// The status of the last main-frame response that was not a redirect: the document the
+    /// page shows.
+    pub(crate) document_status: Option<u16>,
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
     first_document_arrived: bool,
@@ -70,6 +73,31 @@ pub(crate) struct StoppedResponse {
 }
 
 impl SsrfInterceptGuard {
+    /// Return how the navigation ended, and keep intercepting: the blocked request, the
+    /// redirects followed and the response the navigation stopped on.
+    #[cfg(feature = "browser")]
+    pub(crate) fn navigation_outcome(&self) -> InterceptOutcome {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        InterceptOutcome {
+            blocked: state.blocked.take(),
+            redirects_followed: state.redirects_followed,
+            stopped_response: state.stopped_response.take(),
+            ..InterceptOutcome::default()
+        }
+    }
+
+    /// The status of the main-frame document the page shows now.
+    #[cfg(feature = "browser")]
+    pub(crate) fn document_status(&self) -> Option<u16> {
+        match self.state.lock() {
+            Ok(state) => state.document_status,
+            Err(poisoned) => poisoned.into_inner().document_status,
+        }
+    }
+
     /// Disable interception, stop the listener, and return what it observed.
     pub(crate) async fn finish(self) -> InterceptOutcome {
         let _ = self.page.execute(FetchDisableParams::default()).await;
@@ -187,9 +215,10 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
     event.response_status_code.is_some() || event.response_error_reason.is_some()
 }
 
-/// Whether a paused document response may proceed. A main-frame redirect of the requested
-/// navigation is counted while it is within `limit`; the one past it is recorded and must be
-/// failed. A main-frame response Chrome does not commit is also recorded and failed.
+/// Whether a paused document response may proceed, recording the status of each main-frame
+/// document. A main-frame redirect of the requested navigation is counted while it is within
+/// `limit`; the one past it is recorded and must be failed. A main-frame response Chrome does
+/// not commit is also recorded and failed.
 ///
 /// ~keep The requested navigation ends at the first main-frame response that is not a
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
@@ -210,14 +239,17 @@ fn main_frame_verdict(
         Ok(state) => state,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if state.first_document_arrived {
-        return true;
-    }
-
     let headers = event.response_headers.as_deref().unwrap_or_default();
     let status = event.response_status_code.and_then(|code| u16::try_from(code).ok());
     let is_redirect = status.is_some_and(|code| REDIRECT_STATUSES.contains(&code))
         && headers.iter().any(|h| h.name.eq_ignore_ascii_case("location"));
+    if !is_redirect && status.is_some() {
+        state.document_status = status;
+    }
+    if state.first_document_arrived {
+        return true;
+    }
+
     let Some(status) = status.filter(|code| is_redirect || NO_DOCUMENT_STATUSES.contains(code)) else {
         state.first_document_arrived = true;
         return true;

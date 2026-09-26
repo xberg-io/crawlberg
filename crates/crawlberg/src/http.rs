@@ -383,7 +383,12 @@ async fn forbidden_error(
 ) -> CrawlError {
     let body = read_text_bounded(resp, effective_max_body_size(config)).await;
     let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    match waf::waf_vendor_from_body(head.status, &body, headers_map) {
+    forbidden_body_error(head.status, &body, headers_map)
+}
+
+/// The error for a 403 body: a WAF block when the body fingerprints, a plain forbidden otherwise.
+fn forbidden_body_error(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> CrawlError {
+    match waf::waf_vendor_from_body(status, body, headers_map) {
         Some(vendor) => CrawlError::WafBlocked {
             message: format!("waf/blocked detected: {vendor}"),
             vendor,
@@ -407,6 +412,39 @@ fn terminal_status_error(status: u16, url: &str) -> Option<CrawlError> {
         504 => CrawlError::server_error(format!("server_error: {GATEWAY_TIMEOUT_SUFFIX}")),
         _ => return None,
     })
+}
+
+/// Apply HTTP mode's status handling to a page a browser rendered. A status the HTTP fetch
+/// raises as an error raises the same error here. Where HTTP mode reports the status as a
+/// page instead (a 404 or 403 under `soft_http_errors`, or a 404 at the end of a redirect),
+/// the page keeps its status and loses its body, as the HTTP fetch reports it.
+#[cfg(any(feature = "browser", feature = "browser-native"))]
+pub(crate) fn rendered_status_outcome(
+    mut response: HttpResponse,
+    redirected: bool,
+    config: &CrawlConfig,
+) -> Result<HttpResponse, CrawlError> {
+    let status = response.status;
+    let error = if status == 403 {
+        Some(forbidden_body_error(status, &response.body, &response.headers))
+    } else {
+        terminal_status_error(status, &response.final_url)
+    };
+    let Some(error) = error else {
+        return Ok(response);
+    };
+    let reported_as_page = match status {
+        404 => config.soft_http_errors || redirected,
+        403 => config.soft_http_errors,
+        _ => false,
+    };
+    if !reported_as_page {
+        return Err(error);
+    }
+    response.content_type.clear();
+    response.body.clear();
+    response.body_bytes.clear();
+    Ok(response)
 }
 
 /// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.

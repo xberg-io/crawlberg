@@ -32,6 +32,13 @@ title: "Changelog"
   the URL that answered, empty HTML, and a failed result for each action that names the status.
   The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
   (#116, #140)
+- **A page rendered in browser mode always reported status 200.** The Chromiumoxide backend now
+  reports the status the server answered for the page whose HTML it returns, and both browser
+  backends handle it the way HTTP mode does. A status that HTTP mode reports as an error is the same
+  error: a 404 page is a not-found error, a 403 page is a forbidden or WAF error, and a 500 page is
+  a server error. A crawl in browser mode keeps the same pages as one in HTTP mode. Under
+  `soft_http_errors`, and for a 404 at the end of a redirect, the page keeps its status and has an
+  empty body, as in HTTP mode. (#143)
 
 ## [1.8.0] - 2026-09-25
 
