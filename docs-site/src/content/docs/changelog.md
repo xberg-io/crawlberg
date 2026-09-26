@@ -106,6 +106,42 @@ title: "Changelog"
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
 
+- **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
+  within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
+  before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
+  all reached the private host 10.0.0.5 with `deny_private` on. The IPv4-compatible (`::/96`),
+  IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
+  `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
+  address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
+  connect-time resolver and the browser crate's fallback validator apply the same rules. (#109)
+
+- **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
+  RFC 8215 fixes no position for the embedded address, so the check reads it at each of the four
+  positions RFC 6052 section 2.2 allows — after a /48, /56, /64 or /96 network prefix — and refuses
+  the address when any reading is private. A reading that falls in `0.0.0.0/8` or `224.0.0.0/4` is
+  skipped, because the unused positions of a real address read that way. Two consequences follow
+  from that heuristic, neither of which affects a /96 network: some public addresses are refused on
+  a /48, /56 or /64 network, and an address that genuinely encodes a destination in `0.0.0.0/8` or
+  `224.0.0.0/4` at one of those positions is still permitted. An IPv4 allowlist entry admits a
+  public address caught by the first. An address whose every reading is skipped is refused, because
+  no real destination encodes that way and a stateful NAT64 translator forwards `0.0.0.0` to its
+  own host. (#108)
+
+- **A denial reason could name an address the allowlist permits.** The reason was classified from
+  the first deny-listed candidate rather than the first one the allowlist did not admit, so an
+  allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
+  `private_network`. The allow or deny decision itself was always correct.
+
+### Changed
+
+- **An IPv6 allowlist range inside `2002::/16` or `::/96` no longer matches.** Those addresses are
+  now checked as the IPv4 address they carry, so an allowlist entry has to name that IPv4 range
+  instead of the IPv6 one. IPv4-mapped addresses already behaved this way.
+
+- **The browser crate's fallback validator names the denial reason.** `DefaultSsrfValidator`
+  messages now carry the same stable reason substring the core policy reports (`loopback`,
+  `private_network`, `link_local`, `unspecified`, `multicast`, `unique_local`).
+
 ### Internal
 
 - **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
