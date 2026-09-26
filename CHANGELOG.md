@@ -17,6 +17,17 @@ All notable changes to crawlberg are documented here.
   `***` in place of the secret and keeps the non-secret fields. (#118)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **Two config validation errors echoed the rejected value.** `browser.endpoint` that is not
+  `ws://` or `wss://` printed the endpoint, and an unparseable `proxy.url` printed the URL. Both
+  fire precisely when the value does not parse as a URL, which is also when the URL redaction
+  helpers pass their input through unchanged — so the redaction added above did not cover them. The
+  endpoint error now names only the field, and the proxy error strips `user:password@` textually.
+  (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
 - **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
   the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
   now prints as its scheme and host only, and as `***` when it does not parse as an absolute URL.

@@ -60,8 +60,14 @@ async fn success_response_carries_no_api_key() {
     assert_eq!(response.final_url, "");
 }
 
+/// A guard, not a regression test: the status-error message never held the request URL, so
+/// this passes with the `final_url`/`without_url` fix reverted. It pins the message to its
+/// exact text instead, so a future change that appends the request URL — which carries a
+/// query-parameter key — fails here rather than shipping.
+// ~keep Keep the assertion exact. Weakening it to `!contains(API_KEY)` makes this test
+// ~keep vacuous again: the message it guards has never contained a URL to redact.
 #[tokio::test]
-async fn status_error_carries_no_api_key() {
+async fn status_error_names_only_the_vendor_and_status() {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(500))
@@ -71,10 +77,7 @@ async fn status_error_carries_no_api_key() {
     let provider = SimpleHttpProvider::new(query_key_config(&format!("{}/v1/", mock.uri()))).unwrap();
     let err = provider.fetch(TARGET).await.unwrap_err();
 
-    assert!(
-        !err.to_string().contains(API_KEY),
-        "API key leaked into the error: {err}"
-    );
+    assert_eq!(err.to_string(), "server_error: querykey upstream 500");
 }
 
 #[tokio::test]
@@ -100,18 +103,21 @@ async fn body_read_error_carries_no_api_key() {
     // A server that promises a longer body than it sends, then closes the connection.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
+    // ~keep Every step is best-effort: the client may tear the connection down before or
+    // ~keep during the write, and an `unwrap` here would panic the thread and resurface at
+    // ~keep `join` as a failure of whichever assertion followed it.
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf).unwrap();
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort")
-            .unwrap();
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort");
+        }
     });
 
     let provider = SimpleHttpProvider::new(query_key_config(&format!("http://127.0.0.1:{port}/v1/"))).unwrap();
     let err = provider.fetch(TARGET).await.unwrap_err();
-    server.join().unwrap();
+    // ~keep The server thread's outcome is not what this test asserts; do not let it fail here.
+    let _ = server.join();
 
     assert!(
         err.to_string().contains("response body read failed"),

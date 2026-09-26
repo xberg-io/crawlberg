@@ -29,6 +29,10 @@ pub enum AuthScheme {
 impl std::fmt::Debug for AuthScheme {
     /// Redacted: shows which scheme is configured and whether its secret is non-empty,
     /// never the secret itself. `ProviderConfig`'s `Debug` prints through this.
+    // ~keep `BasicUsername.username` is hidden although `crawlberg`'s `AuthConfig::Basic`
+    // ~keep prints its username in clear. That is deliberate, not an inconsistency: this
+    // ~keep field carries the vendor API key (Zyte sends the key as the Basic username),
+    // ~keep whereas `AuthConfig::Basic.username` is an account name.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let redacted = |secret: &String| (!secret.is_empty()).then_some("***");
         match self {
