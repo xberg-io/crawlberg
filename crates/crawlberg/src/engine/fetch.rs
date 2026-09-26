@@ -243,6 +243,7 @@ impl CrawlEngine {
                     body: bypass_resp.body,
                     body_bytes: bypass_resp.body_bytes,
                     headers: bypass_resp.headers,
+                    landed_url: None,
                 },
                 false,
             ));
