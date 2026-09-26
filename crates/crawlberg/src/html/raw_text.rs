@@ -155,6 +155,20 @@ mod tests {
     }
 
     #[test]
+    fn should_end_title_and_style_only_at_their_own_end_tag() {
+        assert_eq!(
+            mask_raw_text_markup(r#"<title></titles><a href="/in"></title><a href="/real">"#).text,
+            r#"<title> /titles> a href="/in"></title><a href="/real">"#,
+            "`</titles>` should not close a `<title>`"
+        );
+        assert_eq!(
+            mask_raw_text_markup(r#"<style></styles><a href="/in"></style><a href="/real">"#).text,
+            r#"<style> /styles> a href="/in"></style><a href="/real">"#,
+            "`</styles>` should not close a `<style>`"
+        );
+    }
+
+    #[test]
     fn should_treat_the_rest_of_the_document_as_content_when_the_end_tag_is_missing() {
         let html = r#"<p>before</p><script>var a = 1;<a href="/x">"#;
         assert_eq!(

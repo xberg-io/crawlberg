@@ -124,12 +124,14 @@ All notable changes to crawlberg are documented here.
   mis-resolved. The `<` characters inside raw-text content are now masked before the page is
   parsed, at the places an HTML parser finds that content, so link, image, feed, favicon,
   heading, meta-tag and `<meta http-equiv="refresh">` extraction all see the document a browser
-  sees. Inside `svg` and `math` these elements are markup, as in a browser, except under
-  `foreignObject` and an HTML annotation. Link extraction reads `<noscript>` as markup, as a
-  browser without scripting does; the markdown reads it as text, as the converter does. The base
-  address is the first `<base href>` an HTML parser puts in the document, so one in raw text or in
-  `<template>` contents does not count. Title text and JSON-LD payloads are unchanged unless they
-  contain a literal `<`, which valid HTML writes as `&lt;`. (#124, #125, #201)
+  sees. Inside `svg` and `math` these elements are markup, as in a browser, except under svg's
+  `foreignObject`, `desc` and `title`; MathML's text integration points `mi`, `mo`, `mn`, `ms` and
+  `mtext`; and its `annotation-xml` HTML integration point. Link extraction reads `<noscript>` as
+  markup, as a browser without scripting does; the markdown reads it as text, as the converter
+  does. The base address is the first `<base href>` an HTML parser puts in the document, so one in
+  raw text or in `<template>` contents does not count. Title text and JSON-LD payloads are
+  unchanged unless they contain a literal `<`, which valid HTML writes as `&lt;`. (#124, #125,
+  #201)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
