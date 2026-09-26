@@ -69,8 +69,9 @@ pub struct NativeNetworkEvent {
 }
 
 impl std::fmt::Debug for NativeNetworkEvent {
-    /// Redacted: the headers carry `Authorization`, `Cookie` and `Set-Cookie`. Header names
-    /// stay visible; sensitive values print as `***`.
+    /// Redacted: names stay visible throughout. Every *request* header value is hidden,
+    /// because the map is populated from caller configuration and a credential can sit under
+    /// any name. *Response* header values print except the four well-known credential names.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             url,
@@ -87,7 +88,7 @@ impl std::fmt::Debug for NativeNetworkEvent {
             .field("method", method)
             .field("resource_type", resource_type)
             .field("status", status)
-            .field("request_headers", &RedactedHeaders(request_headers))
+            .field("request_headers", &RedactedValues(request_headers))
             .field("response_headers", &RedactedHeaders(response_headers))
             .field("body_size", body_size)
             .field("timestamp_ms", timestamp_ms)

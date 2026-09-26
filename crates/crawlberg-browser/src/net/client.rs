@@ -11,7 +11,7 @@ use url::Url;
 use crate::net::cookies::CookieJar;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
-use crate::redact::RedactedHeaders;
+use crate::redact::{RedactedHeaders, RedactedValues};
 
 #[derive(Clone)]
 pub struct Response {
@@ -70,8 +70,8 @@ pub struct RequestInfo {
 }
 
 impl std::fmt::Debug for RequestInfo {
-    /// Redacted: `headers` carries `Authorization` and `Cookie`. Header names stay visible;
-    /// sensitive values print as `***`.
+    /// Redacted: `headers` is a *request* map populated from caller configuration, so every
+    /// value is hidden and only the names print.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             url,
@@ -82,7 +82,7 @@ impl std::fmt::Debug for RequestInfo {
         f.debug_struct("RequestInfo")
             .field("url", url)
             .field("method", method)
-            .field("headers", &RedactedHeaders(headers))
+            .field("headers", &RedactedValues(headers))
             .field("resource_type", resource_type)
             .finish()
     }

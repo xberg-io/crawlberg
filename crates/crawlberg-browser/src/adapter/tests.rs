@@ -448,21 +448,33 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
     }
 }
 
-/// The network events, the rendered page and the internal request/response types keep
-/// header names in `Debug` but never print a credential value.
-#[test]
-fn header_maps_debug_hides_sensitive_values_and_keeps_names() {
-    const SECRET: &str = "sk-live-9f8e7d6c5b4a";
-    let request_headers = HashMap::from([
-        ("Authorization".to_owned(), format!("Bearer {SECRET}")),
-        ("cookie".to_owned(), format!("sid={SECRET}")),
-        ("Proxy-Authorization".to_owned(), format!("Basic {SECRET}")),
+/// A secret every `Debug` below must hide.
+const HEADER_TEST_SECRET: &str = "sk-live-9f8e7d6c5b4a";
+
+/// Request headers as a caller's configuration supplies them. `X-Api-Key` is the case a
+/// name denylist misses: a credential under a name nobody can enumerate in advance.
+fn request_headers_with_secrets() -> HashMap<String, String> {
+    HashMap::from([
+        ("Authorization".to_owned(), format!("Bearer {HEADER_TEST_SECRET}")),
+        ("cookie".to_owned(), format!("sid={HEADER_TEST_SECRET}")),
+        ("Proxy-Authorization".to_owned(), format!("Basic {HEADER_TEST_SECRET}")),
+        ("X-Api-Key".to_owned(), HEADER_TEST_SECRET.to_owned()),
         ("accept".to_owned(), "text/html".to_owned()),
-    ]);
-    let response_headers = HashMap::from([
-        ("set-cookie".to_owned(), format!("sid={SECRET}; HttpOnly")),
+    ])
+}
+
+/// Response headers as a server returns them: one credential, one plain diagnostic value.
+fn response_headers_with_secrets() -> HashMap<String, String> {
+    HashMap::from([
+        ("set-cookie".to_owned(), format!("sid={HEADER_TEST_SECRET}; HttpOnly")),
         ("content-type".to_owned(), "text/html".to_owned()),
-    ]);
+    ])
+}
+
+/// Every type that renders a header map, as `(what, rendered, carries_a_response_map)`.
+fn header_bearing_debug_renderings() -> Vec<(&'static str, String, bool)> {
+    let request_headers = request_headers_with_secrets();
+    let response_headers = response_headers_with_secrets();
     let url = Url::parse("https://example.com/").expect("url");
     let native_event = NativeNetworkEvent {
         url: url.to_string(),
@@ -507,34 +519,59 @@ fn header_maps_debug_hides_sensitive_values_and_keeps_names() {
         headers: request_headers.clone(),
         resource_type: crate::net::client::ResourceType::Document,
     };
-    let resolutions = [
-        crate::js::ops::InterceptResolution::Continue {
-            url: None,
-            method: None,
-            headers: Some(request_headers.clone()),
-            body: None,
-        },
-        crate::js::ops::InterceptResolution::Fulfill {
-            status: 200,
-            headers: response_headers.clone(),
-            body: String::new(),
-        },
-    ];
+    let continue_resolution = crate::js::ops::InterceptResolution::Continue {
+        url: None,
+        method: None,
+        headers: Some(request_headers),
+        body: None,
+    };
+    let fulfill_resolution = crate::js::ops::InterceptResolution::Fulfill {
+        status: 200,
+        headers: response_headers,
+        body: String::new(),
+    };
+    vec![
+        ("NativeNetworkEvent", format!("{native_event:?}"), true),
+        ("NetworkEvent", format!("{page_event:#?}"), true),
+        ("RenderedPage", format!("{rendered_page:?}"), true),
+        ("Response", format!("{response:?}"), true),
+        ("RequestInfo", format!("{request_info:?}"), false),
+        (
+            "InterceptResolution::Continue",
+            format!("{continue_resolution:?}"),
+            false,
+        ),
+        ("InterceptResolution::Fulfill", format!("{fulfill_resolution:?}"), true),
+    ]
+}
 
-    let mut rendered = vec![
-        format!("{native_event:?}"),
-        format!("{page_event:#?}"),
-        format!("{rendered_page:?}"),
-        format!("{response:?}"),
-        format!("{request_info:?}"),
-    ];
-    rendered.extend(resolutions.iter().map(|resolution| format!("{resolution:?}")));
-    for text in rendered {
-        assert!(!text.contains(SECRET), "secret printed: {text}");
-        assert!(text.contains("***"), "placeholder missing: {text}");
+/// No type that renders a header map may print a credential, and all of them keep the names.
+#[test]
+fn header_maps_debug_hides_every_credential_and_keeps_names() {
+    let renderings = header_bearing_debug_renderings();
+    assert_eq!(renderings.len(), 7, "every header-bearing type must be covered");
+    for (what, rendered, _) in &renderings {
         assert!(
-            text.contains("text/html"),
-            "a non-sensitive value must stay visible: {text}"
+            !rendered.contains(HEADER_TEST_SECRET),
+            "{what} printed a secret: {rendered}"
+        );
+        assert!(rendered.contains("***"), "{what} printed no placeholder: {rendered}");
+        assert!(
+            rendered.contains("accept") || rendered.contains("content-type"),
+            "{what} dropped the header names: {rendered}"
+        );
+    }
+}
+
+/// A request header map prints no value at all, because a credential can sit under any name;
+/// a response header map keeps its non-credential values, which are the debugging value.
+#[test]
+fn only_a_response_header_map_keeps_a_value() {
+    for (what, rendered, carries_a_response_map) in header_bearing_debug_renderings() {
+        assert_eq!(
+            rendered.contains("text/html"),
+            carries_a_response_map,
+            "{what}: a response header value must print and a request one must not: {rendered}"
         );
     }
 }
