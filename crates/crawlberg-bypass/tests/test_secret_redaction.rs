@@ -113,3 +113,40 @@ response:
         )
     );
 }
+
+#[test]
+fn debug_output_hides_env_values_in_the_endpoint_query_and_body() {
+    let yaml = r#"
+vendor_name: test
+endpoint: "https://${VENDOR_KEY}@api.example.com/v1/extract?key=${VENDOR_KEY}"
+method: POST
+auth:
+  kind: none
+request:
+  body:
+    kind: json
+    template: '{"url": "{{url}}", "api_key": "${VENDOR_KEY}"}'
+  query:
+    - name: api_key
+      value: "${VENDOR_KEY}"
+  url_param:
+    kind: body_field
+response:
+  kind:
+    kind: raw_body
+  cost_extraction:
+    kind: static
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("provider.yaml");
+    std::fs::write(&path, yaml).unwrap();
+    let env = HashMap::from([("VENDOR_KEY".to_owned(), SECRET.to_owned())]);
+
+    let config = load_with_env(&path, &env).unwrap();
+    for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+        assert!(!rendered.contains(SECRET), "secret printed: {rendered}");
+        for kept in ["api.example.com/v1/extract", "\"api_key\"", "vendor_name: \"test\""] {
+            assert!(rendered.contains(kept), "{kept} missing from: {rendered}");
+        }
+    }
+}

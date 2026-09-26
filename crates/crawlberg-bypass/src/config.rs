@@ -28,7 +28,7 @@ pub enum AuthScheme {
 
 impl std::fmt::Debug for AuthScheme {
     /// Redacted: shows which scheme is configured and whether its secret is non-empty,
-    /// never the secret itself. `ProviderConfig`'s derived `Debug` prints through this.
+    /// never the secret itself. `ProviderConfig`'s `Debug` prints through this.
     // ~keep `BasicUsername.username` is hidden although `crawlberg`'s `AuthConfig::Basic`
     // ~keep prints its username in clear. That is deliberate, not an inconsistency: this
     // ~keep field carries the vendor API key (Zyte sends the key as the Basic username),
@@ -66,15 +66,24 @@ pub enum UrlParamLocation {
 }
 
 /// Body shape for POST requests.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum RequestBody {
     /// JSON body; the literal `{{url}}` placeholder is replaced with the
     /// URL-encoded target before sending.
     Json { template: String },
 }
 
+impl std::fmt::Debug for RequestBody {
+    /// Redacted: a `${ENV}` value substituted into the template can be a vendor key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Json { template: _ } => f.debug_struct("Json").field("template", &"***").finish(),
+        }
+    }
+}
+
 /// Request construction parameters.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestShape {
     /// POST body; `None` for GET requests.
     pub body: Option<RequestBody>,
@@ -82,6 +91,21 @@ pub struct RequestShape {
     pub query: Vec<(String, String)>,
     /// How and where the target URL is placed in the request.
     pub url_param: UrlParamLocation,
+}
+
+impl std::fmt::Debug for RequestShape {
+    /// Redacted: shows each query parameter's name, never its value, which can be a vendor key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { body, query, url_param } = self;
+        f.debug_struct("RequestShape")
+            .field("body", body)
+            .field(
+                "query",
+                &query.iter().map(|(name, _)| (name, "***")).collect::<Vec<_>>(),
+            )
+            .field("url_param", url_param)
+            .finish()
+    }
 }
 
 /// How to interpret the vendor's HTTP response body.
@@ -147,7 +171,7 @@ pub struct ResponseShape {
 }
 
 /// Top-level configuration for a single bypass provider vendor.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderConfig {
     /// Stable, lowercase vendor identifier (matches `BypassProvider::vendor_name`).
     pub vendor_name: String,
@@ -163,4 +187,29 @@ pub struct ProviderConfig {
     pub response: ResponseShape,
     /// Ordered list of HTTP status overrides; matched before the default mapping.
     pub status_mapping: Vec<StatusOverride>,
+}
+
+impl std::fmt::Debug for ProviderConfig {
+    /// Redacted: the endpoint prints without its userinfo and query, which can carry a vendor key.
+    /// The auth scheme and request shape redact their own secrets.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            vendor_name,
+            endpoint,
+            method,
+            auth,
+            request,
+            response,
+            status_mapping,
+        } = self;
+        f.debug_struct("ProviderConfig")
+            .field("vendor_name", vendor_name)
+            .field("endpoint", &crawlberg::net::redact::redact_url_secrets(endpoint))
+            .field("method", method)
+            .field("auth", auth)
+            .field("request", request)
+            .field("response", response)
+            .field("status_mapping", status_mapping)
+            .finish()
+    }
 }
