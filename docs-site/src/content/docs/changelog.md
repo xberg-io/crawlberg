@@ -17,6 +17,10 @@ title: "Changelog"
   `***` in place of the secret and keeps the non-secret fields. (#118)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
+  the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
+  now prints without its userinfo and query, each query value prints as `***`, and so does the body
+  template. (#144)
 
 ## [1.8.0] - 2026-09-25
 
