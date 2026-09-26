@@ -15,14 +15,11 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeBuilder, TreeBuilderOpts, TreeSink};
 use html5ever::{Attribute, LocalName, QualName, TokenizerResult, local_name, ns};
-use memchr::{memchr, memchr_iter};
-
-/// The attributes a caller keeps for an element: each attribute name, with data of its own.
-pub(super) type Kept<T> = &'static [(&'static str, T)];
+use memchr::{memchr, memchr_iter, memchr2_iter};
 
 /// What an HTML parser reads in a document.
 pub(super) struct Scan {
-    /// The start tags it reads as tags, each with the attributes the caller keeps.
+    /// The start tags it reads as tags, of the elements the caller keeps.
     pub(super) tags: RealTags,
     /// The byte ranges of raw-text content, in document order.
     pub(super) raw_text: Vec<Range<usize>>,
@@ -30,45 +27,57 @@ pub(super) struct Scan {
     pub(super) base_href: Option<String>,
 }
 
-/// The start tags an HTML parser reads as tags, each with the attributes a caller keeps.
+/// The start tags an HTML parser reads as tags, in document order, each with every attribute it
+/// reads on the tag.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(super) struct RealTags {
     tags: Vec<RealTag>,
     attrs: Vec<Attribute>,
 }
 
-/// A start tag: the offset just past its `>`, its name, and its kept attributes in
-/// [`RealTags::attrs`].
+/// A start tag: its span in the source, its name, whether it is self-closing, and its
+/// attributes in [`RealTags::attrs`].
 #[cfg_attr(test, derive(Debug, PartialEq))]
 struct RealTag {
-    end: usize,
+    span: Range<usize>,
     name: LocalName,
+    self_closing: bool,
     attrs: Range<usize>,
 }
 
+/// A start tag as an HTML parser reads it.
+pub(super) struct StartTag<'t> {
+    /// The tag's bytes in the source, from its `<` to just past its `>`.
+    pub(super) span: Range<usize>,
+    /// The element name, lower-cased.
+    pub(super) name: &'t str,
+    /// Whether the tag ends in `/>`.
+    pub(super) self_closing: bool,
+    /// The attributes in source order: the first copy of each name, value decoded.
+    pub(super) attrs: &'t [Attribute],
+}
+
 impl RealTags {
-    /// The kept attributes of the start tag named `name`, in any case, that ends at `end`.
-    ///
-    /// ~keep A binary search is sound because tags are pushed as they are fed, so their ends
-    /// ~keep only grow, and one `>` ends at most one start tag.
-    pub(super) fn find(&self, end: usize, name: &[u8]) -> Option<&[Attribute]> {
-        let tag = &self.tags[self.tags.binary_search_by_key(&end, |tag| tag.end).ok()?];
-        tag.name
-            .as_bytes()
-            .eq_ignore_ascii_case(name)
-            .then(|| &self.attrs[tag.attrs.clone()])
+    /// Every start tag, in document order. The spans do not overlap.
+    pub(super) fn iter(&self) -> impl Iterator<Item = StartTag<'_>> {
+        self.tags.iter().map(|tag| StartTag {
+            span: tag.span.clone(),
+            name: &tag.name,
+            self_closing: tag.self_closing,
+            attrs: &self.attrs[tag.attrs.clone()],
+        })
     }
 }
 
 /// Read `html` as an HTML parser does, with scripting on or off. Each start tag it reads as a tag
-/// is kept with the attributes that `keep(element)` lists first in each of its pairs; a tag with
-/// none of them is left out.
+/// is kept, with its span and attributes, when `keep(element)` holds.
 ///
-/// ~keep The tokenizer reports no source offsets, so the input is fed in pieces that each end
-/// ~keep at a `>`. A start tag is emitted while the piece holding its closing `>` is fed, so the
-/// ~keep offset fed so far is the end of that tag, and the start of any raw text it opens. The
-/// ~keep tag's start is not observable, so a caller matches on the end and the name together.
-pub(super) fn scan<T: 'static>(html: &str, scripting: bool, keep: fn(&str) -> Option<Kept<T>>) -> Scan {
+/// ~keep The tokenizer reports no source offsets, so the input is fed in pieces: each `<` alone,
+/// ~keep and the bytes between, cut after every `>`. A start tag is emitted while the piece
+/// ~keep holding its closing `>` is fed, so the offset fed so far is the end of that tag, and the
+/// ~keep start of any raw text it opens. Its start is found from the tokens before it: see
+/// ~keep [`Recorder::next_start`].
+pub(super) fn scan(html: &str, scripting: bool, keep: fn(&str) -> bool) -> Scan {
     let options = TreeBuilderOpts {
         scripting_enabled: scripting,
         ..TreeBuilderOpts::default()
@@ -76,7 +85,8 @@ pub(super) fn scan<T: 'static>(html: &str, scripting: bool, keep: fn(&str) -> Op
     let sink = Recorder {
         tree: TreeBuilder::new(Names::default(), options),
         html,
-        fed: Cell::new(0),
+        piece: Cell::new(0..0),
+        next_start: Cell::new(0),
         keep,
         found: RefCell::new(RealTags {
             tags: Vec::new(),
@@ -87,11 +97,25 @@ pub(super) fn scan<T: 'static>(html: &str, scripting: bool, keep: fn(&str) -> Op
     };
     let tokenizer = Tokenizer::new(sink, TokenizerOpts::default());
     let input = BufferQueue::default();
-    for piece in html.split_inclusive('>') {
-        tokenizer.sink.fed.set(tokenizer.sink.fed.get() + piece.len());
-        input.push_back(StrTendril::from(piece));
+    let feed = |piece: Range<usize>| {
+        if piece.is_empty() {
+            return;
+        }
+        input.push_back(StrTendril::from(&html[piece.clone()]));
+        tokenizer.sink.piece.set(piece);
         while let TokenizerResult::Script(_) = tokenizer.feed(&input) {}
+    };
+    let mut from = 0;
+    for at in memchr2_iter(b'<', b'>', html.as_bytes()) {
+        if html.as_bytes()[at] == b'<' {
+            feed(from..at);
+            feed(at..at + 1);
+        } else {
+            feed(from..at + 1);
+        }
+        from = at + 1;
     }
+    feed(from..html.len());
     tokenizer.end();
     let sink = tokenizer.sink;
     Scan {
@@ -126,36 +150,63 @@ enum RawTextEnd {
 
 /// Forwards every token to the tree builder, which steers the tokenizer, and records each start
 /// tag with a kept attribute and each run of raw-text content.
-struct Recorder<'h, T: 'static> {
+struct Recorder<'h> {
     tree: TreeBuilder<Rc<Node>, Names>,
     html: &'h str,
-    fed: Cell<usize>,
-    keep: fn(&str) -> Option<Kept<T>>,
+    /// The piece of the source being fed.
+    piece: Cell<Range<usize>>,
+    /// No start tag begins before this offset.
+    ///
+    /// ~keep After any token but a parse error, the next start tag begins at or after the end of
+    /// ~keep the piece being fed, or at the piece itself when it is a lone `<`: a token emitted
+    /// ~keep while a lone `<` is fed was held back by what came before it, such as a character
+    /// ~keep reference. Between that token and a start tag the tokenizer emits nothing, and every
+    /// ~keep `<` it reads there in the data state would emit a token unless it opens that tag, so
+    /// ~keep the tag starts at the first `<` from here.
+    next_start: Cell<usize>,
+    keep: fn(&str) -> bool,
     found: RefCell<RealTags>,
     open: Cell<Option<OpenRawText>>,
     raw_text: RefCell<Vec<Range<usize>>>,
 }
 
-impl<T: 'static> Recorder<'_, T> {
-    /// Record the start tag `tag` when it carries a kept attribute.
+impl Recorder<'_> {
+    /// The offset fed so far: the end of the piece being fed.
+    fn fed(&self) -> usize {
+        let piece = self.piece.take();
+        let fed = piece.end;
+        self.piece.set(piece);
+        fed
+    }
+
+    /// Record the start tag `tag`, which ends at the offset fed so far, when its element is kept.
     fn keep_start_tag(&self, tag: &Tag) {
-        let Some(keep) = (self.keep)(&tag.name) else {
+        if !(self.keep)(&tag.name) {
+            return;
+        }
+        let end = self.fed();
+        let from = self.next_start.get();
+        let Some(start) = memchr(b'<', &self.html.as_bytes()[from..end]).map(|offset| from + offset) else {
+            debug_assert!(false, "no `<` before the start tag ending at {end}");
             return;
         };
         let found = &mut *self.found.borrow_mut();
         let first = found.attrs.len();
-        let kept = tag
-            .attrs
-            .iter()
-            .filter(|attr| keep.iter().any(|(name, _)| *name == &*attr.name.local));
-        found.attrs.extend(kept.cloned());
-        if found.attrs.len() > first {
-            found.tags.push(RealTag {
-                end: self.fed.get(),
-                name: tag.name.clone(),
-                attrs: first..found.attrs.len(),
-            });
-        }
+        found.attrs.extend(tag.attrs.iter().cloned());
+        found.tags.push(RealTag {
+            span: start..end,
+            name: tag.name.clone(),
+            self_closing: tag.self_closing,
+            attrs: first..found.attrs.len(),
+        });
+    }
+
+    /// Move [`Self::next_start`] past a token that was just emitted.
+    fn after_token(&self) {
+        let piece = self.piece.take();
+        let lone_lt = &self.html.as_bytes()[piece.clone()] == b"<";
+        self.next_start.set(if lone_lt { piece.start } else { piece.end });
+        self.piece.set(piece);
     }
 
     /// Follow `token` through open raw-text content: count the `<` of script text, and close the
@@ -212,7 +263,7 @@ fn end_tag_offset(bytes: &[u8], from: usize, name: &[u8]) -> Option<usize> {
     None
 }
 
-impl<T: 'static> TokenSink for Recorder<'_, T> {
+impl TokenSink for Recorder<'_> {
     type Handle = Rc<Node>;
 
     fn process_token(&self, token: Token, line_number: u64) -> TokenSinkResult<Rc<Node>> {
@@ -226,6 +277,9 @@ impl<T: 'static> TokenSink for Recorder<'_, T> {
             }
             _ => false,
         };
+        if !matches!(token, Token::ParseError(_)) {
+            self.after_token();
+        }
         let result = self.tree.process_token(token, line_number);
         if start_tag {
             let end = match result {
@@ -235,10 +289,7 @@ impl<T: 'static> TokenSink for Recorder<'_, T> {
                 _ => None,
             };
             if let Some(end) = end {
-                self.open.set(Some(OpenRawText {
-                    start: self.fed.get(),
-                    end,
-                }));
+                self.open.set(Some(OpenRawText { start: self.fed(), end }));
             }
         }
         result
@@ -386,10 +437,146 @@ impl TreeSink for Names {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     fn base_href(html: &str) -> Option<String> {
-        scan(html, false, |_| None::<Kept<()>>).base_href
+        scan(html, false, |_| false).base_href
+    }
+
+    /// The start and end of each `<a>` start tag in `html`.
+    fn link_spans(html: &str) -> Vec<(usize, usize)> {
+        scan(html, true, |name| name == "a")
+            .tags
+            .iter()
+            .map(|tag| (tag.span.start, tag.span.end))
+            .collect()
+    }
+
+    /// A start tag as html5ever reads it: name, attributes and whether it is self-closing.
+    type Read = (String, Vec<(String, String)>, bool);
+
+    /// Each start tag html5ever's tokenizer reads in `fragment` on its own, with the offset just
+    /// past it.
+    fn read_alone(fragment: &str) -> Vec<(usize, Read)> {
+        struct Tags {
+            fed: Cell<usize>,
+            tags: RefCell<Vec<(usize, Read)>>,
+        }
+        impl TokenSink for Tags {
+            type Handle = ();
+            fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
+                if let Token::TagToken(tag) = token
+                    && tag.kind == TagKind::StartTag
+                {
+                    let attrs = tag
+                        .attrs
+                        .iter()
+                        .map(|attr| (attr.name.local.to_string(), attr.value.to_string()))
+                        .collect();
+                    let read = (tag.name.to_string(), attrs, tag.self_closing);
+                    self.tags.borrow_mut().push((self.fed.get(), read));
+                }
+                TokenSinkResult::Continue
+            }
+        }
+        let tokenizer = Tokenizer::new(
+            Tags {
+                fed: Cell::new(0),
+                tags: RefCell::new(Vec::new()),
+            },
+            TokenizerOpts::default(),
+        );
+        let input = BufferQueue::default();
+        for piece in fragment.split_inclusive('>') {
+            tokenizer.sink.fed.set(tokenizer.sink.fed.get() + piece.len());
+            input.push_back(StrTendril::from(piece));
+            let _ = tokenizer.feed(&input);
+        }
+        tokenizer.end();
+        tokenizer.sink.tags.into_inner()
+    }
+
+    /// The start tags whose span, read on its own, is not exactly the tag the scan reports.
+    fn misread_spans(html: &str) -> Vec<(Range<usize>, String)> {
+        scan(html, true, |_| true)
+            .tags
+            .iter()
+            .filter(|tag| {
+                let attrs = tag
+                    .attrs
+                    .iter()
+                    .map(|attr| (attr.name.local.to_string(), attr.value.to_string()))
+                    .collect();
+                let read = (tag.name.to_owned(), attrs, tag.self_closing);
+                read_alone(&html[tag.span.clone()]) != [(tag.span.len(), read)]
+            })
+            .map(|tag| (tag.span.clone(), html[tag.span].to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn should_find_where_each_start_tag_begins() {
+        let wrong = [
+            ("\u{feff}<a href=1>", vec![(3, 13)]),
+            ("x&amp<a href=1>", vec![(5, 15)]),
+            ("&amp<<a href=1>", vec![(5, 15)]),
+            ("<!--<a --><a href=1>", vec![(10, 20)]),
+            ("a <3 <a href=1>", vec![(5, 15)]),
+            ("<title><a </title><a href=1>", vec![(18, 28)]),
+            ("<svg><![CDATA[<a ]]><a b=c></svg>", vec![(20, 27)]),
+            (r#"<a title="<a href=x>">"#, vec![(0, 22)]),
+            (r#"<a href=b ="x>z</a><a href="y">"#, vec![(0, 14), (19, 31)]),
+        ]
+        .into_iter()
+        .filter(|(html, spans)| link_spans(html) != *spans)
+        .collect::<Vec<_>>();
+        assert!(wrong.is_empty(), "not read as expected: {wrong:?}");
+    }
+
+    #[test]
+    fn should_read_each_tag_of_the_review_corpus_where_it_stands() {
+        // ~keep The corpus from the review of #123, to four bytes: `<a href=1 {s}>` with `s`
+        // ~keep over the bytes that move a tag's end, after a character reference, a comment
+        // ~keep and CDATA that each hold a `<a`.
+        let alphabet = ['a', '=', '"', '\'', ' ', '/', '>', '\t'];
+        let mut suffixes = vec![String::new()];
+        for _ in 0..4 {
+            let longer: Vec<String> = suffixes
+                .iter()
+                .filter(|s| s.len() == suffixes.last().map_or(0, String::len))
+                .flat_map(|s| alphabet.iter().map(move |c| format!("{s}{c}")))
+                .collect();
+            suffixes.extend(longer);
+        }
+        assert_eq!(suffixes.len(), 4681, "every suffix up to four bytes");
+        let misread: Vec<_> = suffixes
+            .iter()
+            .flat_map(|s| {
+                misread_spans(&format!(
+                    "x&amp<a href=1 {s}>z</a><!--<a -->&#<a href=2>w</a><svg><![CDATA[<a ]]><a b=c></svg>"
+                ))
+            })
+            .collect();
+        assert!(
+            misread.is_empty(),
+            "{} tags misread, first: {:?}",
+            misread.len(),
+            misread.first()
+        );
+    }
+
+    proptest! {
+        /// Each start tag the scan reports is, read on its own, one whole start tag with the
+        /// same name and attributes.
+        #[test]
+        fn each_start_tag_reads_alone_as_the_same_tag(
+            html in r#"(<a href=x>|<a b=c ="d>|<img src="y" =">|<a title="<a x>">|<title>|</title>|<script>|</script>|<svg>|</svg>|<!\[CDATA\[|\]\]>|<!--|-->|&amp|&#|&|<3|<<|[a-z0-9 <>"'/=\t-]){0,40}"#
+        ) {
+            let misread = misread_spans(&html);
+            prop_assert!(misread.is_empty(), "misread: {:?}", misread);
+        }
     }
 
     #[test]

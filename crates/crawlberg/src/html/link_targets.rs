@@ -3,16 +3,11 @@
 //! markdown.
 
 use std::borrow::Cow;
-use std::ops::Range;
 
-use html5ever::Attribute;
-use tl::{ParserOptions, VDom};
-use tracing::debug;
 use url::Url;
 
 use super::links::effective_base_url;
-use super::raw_text::mask;
-use super::start_tags::{RealTags, scan};
+use super::start_tags::{StartTag, scan};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -74,54 +69,15 @@ const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "sour
 /// except that a `data:` address on an image, a media element, an iframe or a `<graphic>` is
 /// removed, so its encoded payload stays out of the markdown. Only tags an HTML parser reads as
 /// tags are read or rewritten, so a `<base>` in `<title>` text does not count, and link-shaped
-/// text inside `<title>`, `<textarea>`, `<script>` and the like stays as written. Every byte
-/// outside a rewritten attribute is kept.
+/// text inside `<title>`, `<textarea>`, `<script>` and the like stays as written.
+///
+/// Each start tag of a [`TARGETS`] element or `<base>` is written back as the HTML parser reads
+/// it, when that differs from the source: every attribute once, in double quotes, with the
+/// rewritten addresses. Every byte outside a rewritten start tag is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
     // ~keep Scripting on, as the converter reads `<noscript>` (it drops the element).
-    // ~keep tl reads every `<name ...>` as a tag, even inside `<title>`, `<script>` or another
-    // ~keep tag's quoted value. A tag is rewritten only when this scan also ends a start tag of
-    // ~keep the same name at the same `>`, and the rewrite reads the scan's values.
-    let read = scan(html, true, |name| rewritten_attributes(name.as_bytes()));
-    // ~keep Parse the masked source, as link extraction does: `tl` reads raw-text content as
-    // ~keep markup, which both invents tags and hides real ones. Masking keeps every byte
-    // ~keep offset, so a span found in the masked source addresses the same bytes in `html`.
-    let masked = mask(html, &read.raw_text);
-    let Ok(dom) = tl::parse(&masked, ParserOptions::default()) else {
-        return Cow::Borrowed(html);
-    };
+    let read = scan(html, true, |name| rewritten_attributes(name.as_bytes()).is_some());
     let base = effective_base_url(read.base_href.as_deref(), document_url);
-    let mut edits = collect_edits(&dom, &masked, html, &base, &read.tags);
-    if edits.is_empty() {
-        return Cow::Borrowed(html);
-    }
-    edits.sort_by_key(|(span, _)| span.start);
-
-    let mut out = String::with_capacity(html.len() + edits.iter().map(|(_, v)| v.len()).sum::<usize>());
-    let mut cursor = 0;
-    for (span, value) in edits {
-        out.push_str(&html[cursor..span.start]);
-        out.push_str(&value);
-        cursor = span.end;
-    }
-    out.push_str(&html[cursor..]);
-    Cow::Owned(out)
-}
-
-/// The byte span of each attribute value that needs rewriting, with its encoded replacement.
-///
-/// The tags come from `dom`, parsed from `masked`, and each edit addresses `html` at the same
-/// span. Only the tags in `real_tags` are rewritten.
-///
-/// ~keep One pass over tl's flat node list rather than a selector query per element name:
-/// ~keep each query walks the whole tree, and there are eight element names to look for.
-fn collect_edits(
-    dom: &VDom<'_>,
-    masked: &str,
-    html: &str,
-    base: &Url,
-    real_tags: &RealTags,
-) -> Vec<(Range<usize>, String)> {
-    let mut edits = Vec::new();
     // ~keep html-to-markdown-rs copies the base into the front matter without decoding it
     // ~keep (`head_metadata.rs`, 3.14.3), so the base is written unencoded between double quotes.
     // ~keep A serialized URL can hold `"`, `<` and `>` (in a host or an opaque path), and those
@@ -131,152 +87,95 @@ fn collect_edits(
         .replace('"', "%22")
         .replace('<', "%3C")
         .replace('>', "%3E");
-    for tag in dom.nodes().iter().filter_map(|node| node.as_tag()) {
-        let name = tag.name().as_bytes();
-        let Some(attributes) = rewritten_attributes(name) else {
+
+    let mut out = String::new();
+    let mut cursor = 0;
+    let mut written = String::new();
+    for tag in read.tags.iter() {
+        written.clear();
+        write_tag(&mut written, &tag, &base, &written_base);
+        if html[tag.span.clone()] != *written {
+            out.push_str(&html[cursor..tag.span.start]);
+            out.push_str(&written);
+            cursor = tag.span.end;
+        }
+    }
+    if cursor == 0 {
+        return Cow::Borrowed(html);
+    }
+    out.push_str(&html[cursor..]);
+    Cow::Owned(out)
+}
+
+/// Write the start tag `tag` into `out` as an HTML parser reads it, with its addresses rewritten.
+///
+/// ~keep The converter parses the tag again with its own reader, which can split a tag where
+/// ~keep the HTML parser does not, or read an attribute the parser does not see (#233). Written
+/// ~keep this way, the tag holds nothing for the two readers to disagree on: each attribute once,
+/// ~keep double-quoted and encoded, and a name that is not letters, digits, `-`, `_` or `:` left
+/// ~keep out. Such a name is never an attribute the converter reads.
+fn write_tag(out: &mut String, tag: &StartTag<'_>, base: &Url, written_base: &str) {
+    let attributes = rewritten_attributes(tag.name.as_bytes()).unwrap_or_default();
+    let is_base = tag.name == "base";
+    // ~keep A `data:` address carries the whole encoded image or media, and the converter
+    // ~keep would write all of it into the markdown (#97). Removing the attribute keeps an
+    // ~keep image's alt text, and the converter falls through to the element's other address
+    // ~keep attributes, or for media to a nested `<source>`. Links keep theirs. A candidate
+    // ~keep list left with no candidates goes the same way. An emptied one would not do for
+    // ~keep `<graphic>`: the converter takes the first of its address attributes that is
+    // ~keep present, even when it is empty.
+    let drop_inline_data = INLINE_DATA_ELEMENTS.contains(&tag.name);
+    out.push('<');
+    out.push_str(tag.name);
+    for attr in tag.attrs {
+        let name = &*attr.name.local;
+        if !is_plain_name(name) {
             continue;
-        };
-        let Some(tag_start) = tag.raw().as_bytes_borrowed().and_then(|raw| span_within(masked, raw)) else {
-            continue;
-        };
-        let tag_end = start_tag_end(html, tag_start.start);
-        let Some(parsed) = real_tags.find(tag_end, name) else {
-            if attributes.iter().any(|&(attr, _)| borrowed_attr(tag, attr).is_some()) {
-                debug!(
-                    offset = tag_start.start,
-                    "tl and the HTML parser end this tag at different places"
-                );
-            }
-            continue;
-        };
-        if name.eq_ignore_ascii_case(b"base") {
+        }
+        if is_base && name == "href" {
             // ~keep Every `<base href>`, not only the first: the converter's front matter
             // ~keep keeps the last one it meets, and only the first one counts in HTML.
-            if let Some((span, _)) = parsed_value(tag, parsed, masked, "href")
-                && html[span.clone()] != *written_base
-            {
-                edits.push((with_quotes(html, span), format!("\"{written_base}\"")));
-            }
+            push_attribute(out, name, written_base);
             continue;
         }
-        // ~keep A `data:` address carries the whole encoded image or media, and the converter
-        // ~keep would write all of it into the markdown (#97). Removing the attribute keeps an
-        // ~keep image's alt text, and the converter falls through to the element's other address
-        // ~keep attributes, or for media to a nested `<source>`. Links keep theirs. A candidate
-        // ~keep list left with no candidates goes the same way. An emptied one would not do for
-        // ~keep `<graphic>`: the converter takes the first of its address attributes that is
-        // ~keep present, even when it is empty.
-        let drop_inline_data = INLINE_DATA_ELEMENTS
-            .iter()
-            .any(|element| name.eq_ignore_ascii_case(element.as_bytes()));
-        for &(attr, shape) in attributes {
-            let Some((span, value)) = parsed_value(tag, parsed, masked, attr) else {
-                continue;
-            };
-            let rewritten = if drop_inline_data && matches!(shape, Shape::Single) && is_inline_data(value) {
-                Some(String::new())
-            } else {
-                rewrite_value(value, shape, base, drop_inline_data)
-            };
-            match rewritten {
-                Some(rewritten) if drop_inline_data && rewritten.is_empty() => {
-                    edits.extend(attribute_removals(masked, span, attr, tag_end));
-                }
-                Some(rewritten) => edits.push(value_edit(html, span, &rewritten)),
-                None => {}
-            }
-        }
-    }
-    edits
-}
-
-/// The edit that replaces the attribute value at `span` in `html` with `rewritten`, encoded for
-/// its quotes.
-fn value_edit(html: &str, span: Range<usize>, rewritten: &str) -> (Range<usize>, String) {
-    let quoted = span.start > 0 && matches!(html.as_bytes()[span.start - 1], b'"' | b'\'');
-    (span, encode_attribute_value(rewritten, quoted))
-}
-
-/// The edits that remove the attribute `attr`, whose first value is at `span`, and every later
-/// copy of it from the start tag that ends at `tag_end`.
-///
-/// ~keep The converter reads the first copy of a repeated attribute, so a copy left after the
-/// ~keep first is removed would take its place, payload and all. The spans are found in
-/// ~keep `masked`, the bytes tl parsed, where the value's span was found.
-fn attribute_removals(masked: &str, span: Range<usize>, attr: &str, tag_end: usize) -> Vec<(Range<usize>, String)> {
-    let Some(first) = attribute_removal(masked, span.clone(), attr) else {
-        debug!(offset = span.start, attr, "no attribute name before a value to remove");
-        return Vec::new();
-    };
-    let later = later_copies(masked, first.end..tag_end, attr);
-    std::iter::once(first)
-        .chain(later)
-        .map(|span| (span, String::new()))
-        .collect()
-}
-
-/// The span, name to value, of each attribute named `attr` in `masked[within]`, read as tl reads
-/// the attributes of a start tag (astral-tl 0.8, `Parser::parse_attributes`).
-///
-/// ~keep tl keeps only the first copy of an attribute, so it cannot list the later ones. One
-/// ~keep pass, because a hostile tag can repeat an attribute any number of times.
-fn later_copies(masked: &str, within: Range<usize>, attr: &str) -> Vec<Range<usize>> {
-    let bytes = &masked.as_bytes()[..within.end];
-    let spaces = |i: usize| i + bytes[i..].iter().take_while(|&&b| matches!(b, b' ' | b'\n')).count();
-    let up_to = |i: usize, stop: &[u8]| i + bytes[i..].iter().take_while(|b| !stop.contains(b)).count();
-    let mut copies = Vec::new();
-    let mut i = within.start;
-    loop {
-        i = spaces(i);
-        match bytes.get(i) {
-            None | Some(b'/' | b'>') => break,
-            Some(_) => {}
-        }
-        let name_start = i;
-        i += bytes[i..]
-            .iter()
-            .take_while(|&&b| b.is_ascii_alphanumeric() || b"-_:+/".contains(&b))
-            .count();
-        if i == name_start {
-            i += 1;
-            continue;
-        }
-        let name = &bytes[name_start..i];
-        i = spaces(i);
-        if bytes.get(i) != Some(&b'=') {
-            continue;
-        }
-        i = spaces(i + 1);
-        let value_end = match bytes.get(i) {
-            Some(&quote @ (b'"' | b'\'')) => (up_to(i + 1, &[quote]) + 1).min(bytes.len()),
-            _ => up_to(i, b" \n>"),
+        let value = &*attr.value;
+        let rewritten = match attributes.iter().find(|&&(target, _)| target == name) {
+            Some((_, Shape::Single)) if drop_inline_data && is_inline_data(value) => None,
+            Some(&(_, shape)) => match rewrite_value(value, shape, base, drop_inline_data) {
+                Some(rewritten) if drop_inline_data && rewritten.is_empty() => None,
+                Some(rewritten) => Some(Cow::Owned(rewritten)),
+                None => Some(Cow::Borrowed(value)),
+            },
+            None => Some(Cow::Borrowed(value)),
         };
-        if name.eq_ignore_ascii_case(attr.as_bytes()) {
-            copies.push(name_start..value_end);
+        if let Some(rewritten) = rewritten {
+            push_attribute(out, name, &html_escape::encode_double_quoted_attribute(&rewritten));
         }
-        i = value_end;
     }
-    copies
+    if tag.self_closing {
+        out.push('/');
+    }
+    out.push('>');
 }
 
-/// The byte span of the attribute `attr` whose value is at `span` in `source`, name and quotes
-/// included.
-///
-/// `None` when the bytes before the value are not `attr`, optional whitespace and `=`.
-fn attribute_removal(source: &str, span: Range<usize>, attr: &str) -> Option<Range<usize>> {
-    let value = with_quotes(source, span);
-    let before = source[..value.start].trim_end_matches(|c: char| c.is_ascii_whitespace());
-    let before = before
-        .strip_suffix('=')?
-        .trim_end_matches(|c: char| c.is_ascii_whitespace());
-    let name_start = before.len().checked_sub(attr.len())?;
-    before
-        .get(name_start..)
-        .is_some_and(|name| name.eq_ignore_ascii_case(attr))
-        .then_some(name_start..value.end)
+/// Append ` name="value"` to `out`, with `value` already encoded.
+fn push_attribute(out: &mut String, name: &str, value: &str) {
+    out.push(' ');
+    out.push_str(name);
+    out.push_str("=\"");
+    out.push_str(value);
+    out.push('"');
 }
 
-/// The attributes [`collect_edits`] may rewrite on an element named `element`, in any case: the
+/// Whether an attribute `name` is only ASCII letters, digits, `-`, `_` and `:`.
+fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+}
+
+/// The attributes [`write_tag`] may rewrite on an element named `element`, in any case: the
 /// [`TARGETS`], and the `href` of `<base>`.
 fn rewritten_attributes(element: &[u8]) -> Option<&'static [(&'static str, Shape)]> {
     if element.eq_ignore_ascii_case(b"base") {
@@ -286,26 +185,6 @@ fn rewritten_attributes(element: &[u8]) -> Option<&'static [(&'static str, Shape
         .iter()
         .find(|(name, _)| element.eq_ignore_ascii_case(name.as_bytes()))
         .map(|(_, attributes)| *attributes)
-}
-
-/// The byte span in `masked` of the attribute `attr` on the tl tag, with the value the real
-/// parser gives it: decoded, with CR and CRLF made LF and NUL made U+FFFD, as a browser reads it.
-///
-/// ~keep The value is never read from `masked`: where the HTML parser and tl disagree on where
-/// ~keep a tag ends, the masked bytes of a value can hold a masked `<`.
-fn parsed_value<'p>(
-    tag: &tl::HTMLTag<'_>,
-    parsed: &'p [Attribute],
-    masked: &str,
-    attr: &'static str,
-) -> Option<(Range<usize>, &'p str)> {
-    let value = &*parsed.iter().find(|a| &*a.name.local == attr)?.value;
-    Some((span_within(masked, borrowed_attr(tag, attr)?)?, value))
-}
-
-/// The raw bytes of an attribute value, borrowed from the parsed input.
-fn borrowed_attr<'h>(tag: &tl::HTMLTag<'h>, attr: &'static str) -> Option<&'h [u8]> {
-    tag.attributes().get(attr).flatten().and_then(|v| v.as_bytes_borrowed())
 }
 
 /// The new, unencoded value for a decoded attribute value, or `None` when nothing in it changes.
@@ -382,68 +261,6 @@ fn resolve_candidates(list: &str, base: &Url, drop_inline_data: bool) -> Option<
     changed.then(|| candidates.join(", "))
 }
 
-/// The offset just past the `>` that ends the start tag at `start`, skipping any `>` inside a
-/// quoted attribute value. A quote or `=` inside an unquoted value is part of the value.
-fn start_tag_end(html: &str, start: usize) -> usize {
-    let bytes = html.as_bytes();
-    let mut after_equals = false;
-    let mut unquoted_value = false;
-    let mut i = start + 1;
-    while let Some(&byte) = bytes.get(i) {
-        match byte {
-            b'>' => return i + 1,
-            b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' => unquoted_value = false,
-            _ if unquoted_value => {}
-            b'=' => after_equals = true,
-            b'"' | b'\'' if after_equals => {
-                let close = bytes[i + 1..].iter().position(|&b| b == byte);
-                i = close.map_or(bytes.len(), |offset| i + 1 + offset);
-                after_equals = false;
-            }
-            _ => {
-                unquoted_value = after_equals;
-                after_equals = false;
-            }
-        }
-        i += 1;
-    }
-    bytes.len()
-}
-
-/// `span` widened to take in the quotes around the attribute value it covers, if it has any.
-fn with_quotes(html: &str, span: Range<usize>) -> Range<usize> {
-    let bytes = html.as_bytes();
-    match (span.start.checked_sub(1).map(|i| bytes[i]), bytes.get(span.end)) {
-        (Some(open @ (b'"' | b'\'')), Some(&close)) if open == close => span.start - 1..span.end + 1,
-        _ => span,
-    }
-}
-
-/// Where `part` sits inside `whole`, when `part` is a slice borrowed from it.
-///
-/// ~keep tl parses without copying, so an attribute value is a sub-slice of the input; its
-/// ~keep offset is the pointer difference, the same arithmetic tl's `HTMLTag::boundaries` uses.
-fn span_within(whole: &str, part: &[u8]) -> Option<Range<usize>> {
-    let start = (part.as_ptr() as usize).checked_sub(whole.as_ptr() as usize)?;
-    let end = start.checked_add(part.len())?;
-    (end <= whole.len() && whole.is_char_boundary(start) && whole.is_char_boundary(end)).then_some(start..end)
-}
-
-/// Encode a decoded value for writing back between the original quotes, or inside new
-/// double quotes when the original value was unquoted.
-///
-/// ~keep Every `&` is encoded because the value was decoded before resolution, and the
-/// ~keep converter decodes it again. A rebuilt candidate list contains spaces, so an unquoted
-/// ~keep original gets quotes.
-fn encode_attribute_value(value: &str, quoted: bool) -> String {
-    let encoded = html_escape::encode_quoted_attribute(value);
-    if quoted {
-        encoded.into_owned()
-    } else {
-        format!("\"{encoded}\"")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,11 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_only_the_attribute_value() {
+    fn rewrites_only_the_start_tag() {
         let html = r#"<!doctype html><p class=x>a <a  title="t" href = 'rel/child.html' >c</a> &amp; b</p>"#;
         assert_eq!(
             resolve(html, "https://example.com/dir/page.html"),
-            r#"<!doctype html><p class=x>a <a  title="t" href = 'https://example.com/dir/rel/child.html' >c</a> &amp; b</p>"#
+            r#"<!doctype html><p class=x>a <a title="t" href="https://example.com/dir/rel/child.html">c</a> &amp; b</p>"#
         );
     }
 
@@ -474,7 +291,7 @@ mod tests {
     fn matches_element_names_in_any_case_as_the_converter_does() {
         assert_eq!(
             resolve(r#"<A HREF="up.html">x</A>"#, "https://example.com/a/"),
-            r#"<A HREF="https://example.com/a/up.html">x</A>"#
+            r#"<a href="https://example.com/a/up.html">x</A>"#
         );
     }
 
@@ -494,10 +311,10 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_attribute_is_rewritten_once() {
+    fn keeps_only_the_first_copy_of_a_repeated_attribute() {
         assert_eq!(
             resolve(r#"<a href="a.html" href="b.html">x</a>"#, "https://example.com/d/"),
-            r#"<a href="https://example.com/d/a.html" href="b.html">x</a>"#
+            r#"<a href="https://example.com/d/a.html">x</a>"#
         );
     }
 
@@ -528,7 +345,7 @@ mod tests {
                 r#"<BASE HREF="/first/"><base href="/second/"><a href="leaf.html">x</a>"#,
                 "https://example.com/dir/"
             ),
-            r#"<BASE HREF="https://example.com/first/"><base href="https://example.com/first/"><a href="https://example.com/first/leaf.html">x</a>"#
+            r#"<base href="https://example.com/first/"><base href="https://example.com/first/"><a href="https://example.com/first/leaf.html">x</a>"#
         );
     }
 
@@ -544,14 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn a_quote_from_the_base_cannot_close_a_single_quoted_value() {
+    fn a_quote_from_the_base_cannot_close_the_written_value() {
         let out = resolve(
             r#"<base href="/it's/"><a href='leaf.html' onclick='x'>x</a>"#,
             "https://example.com/",
         );
         assert_eq!(
             out,
-            r#"<base href="https://example.com/it's/"><a href='https://example.com/it&#x27;s/leaf.html' onclick='x'>x</a>"#
+            r#"<base href="https://example.com/it's/"><a href="https://example.com/it's/leaf.html" onclick="x">x</a>"#
         );
     }
 
@@ -693,7 +510,7 @@ mod tests {
                 r#"<graphic url="data:image/png;base64,AA" alt="g"></graphic><graphic src = data:x href="r.png">"#,
                 "https://example.com/"
             ),
-            r#"<graphic  alt="g"></graphic><graphic  href="https://example.com/r.png">"#
+            r#"<graphic alt="g"></graphic><graphic href="https://example.com/r.png">"#
         );
     }
 
@@ -704,7 +521,7 @@ mod tests {
                 r#"<img srcset="data:image/png,x 1x, data:image/png,y 2x" alt="a"><img data-srcset="data:image/png,x" src="a.png">"#,
                 "https://example.com/"
             ),
-            r#"<img  alt="a"><img  src="https://example.com/a.png">"#
+            r#"<img alt="a"><img src="https://example.com/a.png">"#
         );
     }
 
@@ -715,7 +532,30 @@ mod tests {
                 r#"<img src="data:image/png,A" src="data:image/png,B" alt="a"><img SRC="data:image/png,A" src=b.png>"#,
                 "https://example.com/"
             ),
-            r#"<img   alt="a"><img  >"#
+            r#"<img alt="a"><img>"#
+        );
+    }
+
+    #[test]
+    fn keeps_the_slash_of_a_self_closing_tag() {
+        // ~keep Inside SVG the slash closes the element, so the text after it is not link text.
+        assert_eq!(
+            resolve(
+                r#"<svg><a href = "x.html"/><text>t</text></svg>"#,
+                "https://example.com/d/"
+            ),
+            r#"<svg><a href="https://example.com/d/x.html"/><text>t</text></svg>"#
+        );
+    }
+
+    #[test]
+    fn removes_a_data_address_the_parser_reads_after_a_misread_copy() {
+        assert_eq!(
+            resolve(
+                r#"<img src<="data:image/png,A" src="data:image/png,B" alt="a">"#,
+                "https://example.com/"
+            ),
+            r#"<img alt="a">"#
         );
     }
 
@@ -734,7 +574,7 @@ mod tests {
                 r#"<svg><graphic xlink:href="data:image/png,x" alt="g"></graphic><graphic xlink:href="g.png"></graphic></svg>"#,
                 "https://example.com/"
             ),
-            r#"<svg><graphic  alt="g"></graphic><graphic xlink:href="https://example.com/g.png"></graphic></svg>"#
+            r#"<svg><graphic alt="g"></graphic><graphic xlink:href="https://example.com/g.png"></graphic></svg>"#
         );
     }
 
@@ -767,20 +607,20 @@ mod tests {
                 r#"<script>var a = "<!--";</script><img alt="icon" src="data:image/png;base64,iVBORw0KGgo=">"#,
                 "https://example.com/dir/page.html"
             ),
-            r#"<script>var a = "<!--";</script><img alt="icon" >"#
+            r#"<script>var a = "<!--";</script><img alt="icon">"#
         );
     }
 
     #[test]
     fn a_quote_in_an_unquoted_value_opens_no_quote() {
         // ~keep The `'` of `x'y` is part of an unquoted value, so `<title>t<i</title>` sits inside
-        // ~keep the quoted `href` value and is not masked as title text.
+        // ~keep the quoted `href` value and is not read as title text.
         assert_eq!(
             resolve(
                 r#"<a b=x'y href="d'><title>t<i</title>">x</a>"#,
                 "https://example.com/dir/"
             ),
-            r#"<a b=x'y href="https://example.com/dir/d&#x27;%3E%3Ctitle%3Et%3Ci%3C/title%3E">x</a>"#
+            r#"<a b="x'y" href="https://example.com/dir/d'%3E%3Ctitle%3Et%3Ci%3C/title%3E">x</a>"#
         );
     }
 
@@ -791,7 +631,7 @@ mod tests {
                 r#"<p b=x'y>one</p><i c='><title>' >two</i><p>Go <a href="leaf.html">leaf</a> <img alt="icon" src="data:image/png;base64,iVBORw0KGgo="></p>"#,
                 "https://example.com/dir/"
             ),
-            r#"<p b=x'y>one</p><i c='><title>' >two</i><p>Go <a href="https://example.com/dir/leaf.html">leaf</a> <img alt="icon" ></p>"#
+            r#"<p b=x'y>one</p><i c='><title>' >two</i><p>Go <a href="https://example.com/dir/leaf.html">leaf</a> <img alt="icon"></p>"#
         );
     }
 
@@ -837,7 +677,7 @@ mod tests {
             ("<base href=\"/b/\r\n\">", r#"<base href="https://example.com/b/">"#),
             (
                 "<img src=\"data:image/png;base64,AA\r\nAA\" alt=\"a\">",
-                r#"<img  alt="a">"#,
+                r#"<img alt="a">"#,
             ),
         ]
         .into_iter()
@@ -853,7 +693,7 @@ mod tests {
                 r#"<img src="data:image/png;base64,AA" alt="a"><IMG data-src=" DATA:image/png,x"><a href="data:text/plain,x">d</a>"#,
                 "https://example.com/"
             ),
-            r#"<img  alt="a"><IMG ><a href="data:text/plain,x">d</a>"#
+            r#"<img alt="a"><img><a href="data:text/plain,x">d</a>"#
         );
     }
 
@@ -864,7 +704,7 @@ mod tests {
                 r#"<VIDEO src="data:video/mp4,x"><source src="data:video/mp4,y"></VIDEO><audio src="data:audio/mpeg,x"></audio><iframe src="data:text/html,x"></iframe><blockquote cite="data:text/plain,x"></blockquote>"#,
                 "https://example.com/"
             ),
-            r#"<VIDEO ><source ></VIDEO><audio ></audio><iframe ></iframe><blockquote cite="data:text/plain,x"></blockquote>"#
+            r#"<video><source></VIDEO><audio></audio><iframe></iframe><blockquote cite="data:text/plain,x"></blockquote>"#
         );
     }
 

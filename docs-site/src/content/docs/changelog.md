@@ -208,6 +208,12 @@ title: "Changelog"
   front matter now shows the decoded address, `https://example.com/it's/`. (#103)
 - **A `<graphic>` embedded in the page copied its whole encoded data into the markdown.** The
   `data:` rule for `<img>` now covers the addresses of `<graphic>` too. (#113)
+- **A malformed tag could give a link the next link's address, or leak an image's data.** The
+  markdown found where a tag ends, and read its attributes, differently from an HTML parser. In
+  `<a href=b ="x>one</a><a href="y">two</a>` the first link got the second link's address, and
+  `<img src="data:..." ="x>">` kept its whole payload in the markdown. Each link, image and media
+  tag is now written back as an HTML parser reads it, with each attribute once, before the
+  converter reads it. (#233)
 
 ### Added
 

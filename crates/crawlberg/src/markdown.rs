@@ -424,8 +424,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_less_than_sign_after_an_attribute_name_leaks_no_payload() {
-        // ~keep tl reads `src<=` as a `src` with no value, and the converter keeps that first
-        // ~keep copy, so neither payload reaches the markdown.
+        // ~keep An HTML parser reads `src<` as an attribute of its own and the later `src` as
+        // ~keep the address, so the pass leaves out both and neither payload reaches the markdown.
         let md = markdown_at(
             &format!(
                 r#"<img b=x'y alt="'><title>" src<="data:image/png;base64,{ICON_PAYLOAD}" x="</title>" src="data:image/png;base64,{ICON_PAYLOAD}">"#
@@ -434,6 +434,49 @@ mod tests {
         )
         .await;
         assert_eq!(md, "!['><title>](<>)\n");
+    }
+
+    #[tokio::test]
+    async fn a_quote_after_an_attribute_without_a_name_does_not_join_two_links() {
+        // ~keep An HTML parser reads `="x` as an attribute name, so the first tag ends at the
+        // ~keep first `>` and each link keeps its own address.
+        let md = markdown_at(r#"<a href=b ="x>one</a> <a href="y">two</a>"#, "https://example.com/").await;
+        assert_eq!(md, "[one](https://example.com/b) [two](https://example.com/y)\n");
+    }
+
+    #[tokio::test]
+    async fn a_misread_attribute_keeps_the_payload_out_of_the_image_address() {
+        // ~keep An HTML parser ends the first tag at the `>` after `="x`, so `">` is text, and
+        // ~keep it reads `==` as an attribute named `=` whose value is `src="data:..."`.
+        let mut wrong = Vec::new();
+        for (html, expected) in [
+            (
+                format!(r#"<img src="data:image/png;base64,{ICON_PAYLOAD}" ="x>"><p>after</p>"#),
+                "![](<>)\">\n\nafter\n",
+            ),
+            (
+                format!(r#"<p>before</p><img == src="data:image/png;base64,{ICON_PAYLOAD}" alt="a">"#),
+                "before\n\n![a](<>)\n",
+            ),
+        ] {
+            let md = markdown_at(&html, "https://example.com/").await;
+            if md != expected {
+                wrong.push((html, md));
+            }
+        }
+        assert!(wrong.is_empty(), "not converted as expected: {wrong:?}");
+    }
+
+    #[tokio::test]
+    async fn a_quote_after_a_tab_opens_the_value_the_parser_reads() {
+        // ~keep An HTML parser skips the tab and reads `"x src=..."` as the whole `alt` value, so
+        // ~keep the image has no address: the text is its alt text, not a `data:` address.
+        let md = markdown_at(
+            "<img alt=\t\"x src=data:image/png;base64,QUJD\">",
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(md, "![x src=data:image/png;base64,QUJD](<>)\n");
     }
 
     #[tokio::test]

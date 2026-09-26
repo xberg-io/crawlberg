@@ -7,8 +7,7 @@
 //! node from it and every extractor sees what a browser sees.
 //!
 //! The masked string has the source's byte length, and differs from it only at `<` bytes inside
-//! raw-text content. Byte offsets into it address the same bytes in the source, which is what
-//! the markdown URL-splicing path relies on.
+//! raw-text content, so byte offsets into it address the same bytes in the source.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -16,7 +15,7 @@ use std::ops::Range;
 use memchr::memchr;
 use tracing::debug;
 
-use super::start_tags::{Kept, scan};
+use super::start_tags::scan;
 
 /// Byte written over a `<` inside raw-text content.
 ///
@@ -36,7 +35,7 @@ pub(crate) struct MaskedHtml<'h> {
 /// Mask `source` for link extraction: read with scripting off, as a crawler that runs no script
 /// fetches a page, so `<noscript>` content is markup.
 pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
-    let read = scan(source, false, |_| None::<Kept<()>>);
+    let read = scan(source, false, |_| false);
     MaskedHtml {
         text: mask(source, &read.raw_text),
         base_href: read.base_href,
@@ -46,7 +45,7 @@ pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
 /// Overwrite every `<` inside `raw_text` with a space.
 ///
 /// Returns the source unchanged (and unallocated) when no range holds a `<`.
-pub(super) fn mask<'h>(source: &'h str, raw_text: &[Range<usize>]) -> Cow<'h, str> {
+fn mask<'h>(source: &'h str, raw_text: &[Range<usize>]) -> Cow<'h, str> {
     let bytes = source.as_bytes();
     let mut regions = raw_text
         .iter()
@@ -217,7 +216,7 @@ mod tests {
             html,
             "link extraction reads `<noscript>` as markup, as a browser without scripting does"
         );
-        let with_scripting = scan(html, true, |_| None::<Kept<()>>);
+        let with_scripting = scan(html, true, |_| false);
         assert_eq!(
             mask(html, &with_scripting.raw_text),
             r#"<noscript> a href="/in"></noscript><a href="/real">"#,
@@ -339,9 +338,9 @@ mod tests {
         /// and base address, with scripting on and off.
         #[test]
         fn masking_keeps_the_html5ever_reading(html in MARKUP_ISH, scripting in any::<bool>()) {
-            let source = scan(&html, scripting, |_| Some(&[("href", ())]));
+            let source = scan(&html, scripting, |_| true);
             let masked = mask(&html, &source.raw_text);
-            let reread = scan(&masked, scripting, |_| Some(&[("href", ())]));
+            let reread = scan(&masked, scripting, |_| true);
             prop_assert_eq!(&reread.tags, &source.tags);
             prop_assert_eq!(&reread.raw_text, &source.raw_text);
             prop_assert_eq!(&reread.base_href, &source.base_href);
