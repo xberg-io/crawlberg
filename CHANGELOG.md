@@ -38,6 +38,14 @@ All notable changes to crawlberg are documented here.
   means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
   copy is merely missing are reported as lag. (#162)
 
+- **A feed link whose `href` was empty or only whitespace was reported as a feed at the page URL.**
+  An empty or whitespace-only reference joins to the base itself, so `<link rel="alternate"
+  type="application/rss+xml" href="  ">` put the page in its own feeds list, and an empty `href`
+  produced a feed with an empty URL. Such a link is now skipped. Only ASCII whitespace counts as
+  blank, because HTML strips nothing else from a URL attribute. Favicons and `<img src>` share the
+  shape and still resolve a whitespace-only reference to the page URL; canonical (#137) and
+  hreflang (#126) leak the raw value instead, because they do not resolve at all. (#187)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
