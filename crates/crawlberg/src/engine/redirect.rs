@@ -512,7 +512,15 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    let target = resolve_redirect(current_url, location);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = location.len(),
+            "Location redirect target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -520,7 +528,15 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+    let target = resolve_redirect(current_url, target_path);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = target_path.len(),
+            "Refresh header target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -531,10 +547,18 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = tl::parse(&parsed_html, ParserOptions::default())
+    let raw_target = tl::parse(&parsed_html, ParserOptions::default())
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+    let target = resolve_redirect(current_url, &raw_target);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target_len = raw_target.len(),
+            "meta refresh target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 #[cfg(test)]
@@ -665,6 +689,132 @@ mod tests {
         assert!(
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
             "no further hop is allowed once max_redirects is reached"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_location_is_not_followed_but_falls_through_to_the_refresh_header() {
+        let resp = response(
+            302,
+            &[
+                ("location", "https://ex ample.com/bad"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
+        assert_eq!(
+            target, "https://example.com/from-refresh",
+            "an unparseable Location must not be followed as raw text; the chain falls \
+             through to the next redirect source instead"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_location_with_no_other_source_ends_the_chain() {
+        let resp = response(302, &[("location", "https://ex ample.com/bad")], "");
+        let chain = chain_at("https://example.com/start", &[]);
+
+        assert!(
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
+            "an unparseable Location with no other redirect source must not be followed"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_refresh_header_target_is_refused() {
+        let resp = response(200, &[("refresh", "0; url=https://ex ample.com/bad")], "");
+
+        assert!(
+            refresh_header_target(&resp, "https://example.com/start").is_none(),
+            "a Refresh header target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_meta_refresh_target_is_refused() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=https://ex ample.com/bad"></head></html>"#,
+        );
+
+        assert!(
+            meta_refresh_target(&resp, "https://example.com/start").is_none(),
+            "a meta refresh target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    /// `Visit` that records every field name/value pair, formatted with `Debug` (which is
+    /// how tracing dispatches both `%value` and plain `Display`/`Debug` fields). Same shape
+    /// as `tests/test_crawl_span_credential_redaction.rs`; duplicated rather than shared,
+    /// matching this crate's existing convention of one capturing subscriber per test.
+    struct FieldVisitor<'a>(&'a mut Vec<(String, String)>);
+
+    impl tracing::field::Visit for FieldVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            self.0.push((field.name().to_owned(), format!("{value:?}")));
+        }
+    }
+
+    /// Minimal `tracing::Subscriber` that captures every event's fields into `sink`.
+    struct CapturingSubscriber {
+        sink: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    impl tracing::Subscriber for CapturingSubscriber {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut fields = self.sink.lock().expect("sink mutex must not be poisoned");
+            event.record(&mut FieldVisitor(&mut fields));
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    /// Regression coverage for the round-3 review finding on PR #219: the debug log fired
+    /// when a redirect target fails to parse must never carry the raw target, since
+    /// `redact_url_credentials` returns an unparseable string unchanged -- exactly the case
+    /// this log line hits every time. `https://user:hunter2@ex ample.com/bad` is the
+    /// reviewer's own example.
+    #[test]
+    fn an_unparseable_location_with_credentials_is_never_logged() {
+        const RAW_PASSWORD: &str = "hunter2";
+        let resp = response(302, &[("location", "https://user:hunter2@ex ample.com/bad")], "");
+        let sink: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(CapturingSubscriber { sink: sink.clone() });
+
+        assert!(
+            http_redirect_target(&resp, "https://example.com/start").is_none(),
+            "an unparseable Location must not be followed"
+        );
+
+        let recorded = sink.lock().expect("sink mutex must not be poisoned");
+        assert!(
+            !recorded.is_empty(),
+            "expected the debug log to fire, got no recorded events"
+        );
+        let leaking: Vec<&(String, String)> = recorded.iter().filter(|(_, v)| v.contains(RAW_PASSWORD)).collect();
+        assert!(
+            leaking.is_empty(),
+            "no log field may contain the raw password '{RAW_PASSWORD}', but found: {leaking:?}"
+        );
+        // Positive twin: the already-parsed page URL must still be logged, so the absence
+        // assertion above is not vacuously true of an empty or unrelated capture.
+        assert!(
+            recorded.iter().any(|(_, v)| v.contains("example.com/start")),
+            "expected the already-parsed page URL to still be logged, got {recorded:?}"
         );
     }
 }

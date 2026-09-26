@@ -91,12 +91,29 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let sitemap_url = resolve_redirect(url, sitemap_ref);
-        let resolved = rewrite_url_host(&sitemap_url, parsed_url);
+        let Some(resolved) = resolve_sitemap_directive(url, sitemap_ref, parsed_url) else {
+            continue;
+        };
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
     }
     all_urls
+}
+
+/// The URL to fetch for one robots.txt `Sitemap:` directive, rewritten onto `parsed_url`'s
+/// host. `None` when `sitemap_ref` cannot be resolved against `url` at all, which the caller
+/// skips rather than fetching as raw text.
+fn resolve_sitemap_directive(url: &str, sitemap_ref: &str, parsed_url: &Url) -> Option<String> {
+    let resolved = resolve_redirect(url, sitemap_ref);
+    let Some(resolved) = resolved else {
+        tracing::debug!(
+            url = %crate::net::redact_url_credentials(url),
+            target_len = sitemap_ref.len(),
+            "robots.txt Sitemap: directive failed to parse; skipping it"
+        );
+        return None;
+    };
+    Some(rewrite_url_host(&resolved, parsed_url))
 }
 
 /// Collect URLs from the conventional `/sitemap.xml`, if the origin serves one.
@@ -276,6 +293,19 @@ mod tests {
             respect_robots_txt: false,
             ..CrawlConfig::builder().allow_private_networks(true).build()
         }
+    }
+
+    #[test]
+    fn an_unparseable_sitemap_directive_is_refused_not_followed_raw() {
+        let base = Url::parse("https://example.com/").expect("valid URL");
+
+        let resolved = resolve_sitemap_directive("https://example.com/", "https://ex ample.com/bad.xml", &base);
+
+        assert!(
+            resolved.is_none(),
+            "a robots.txt Sitemap: directive that fails to parse must not be followed as raw \
+             text, got {resolved:?}"
+        );
     }
 
     fn urlset(locs: &[String]) -> String {
