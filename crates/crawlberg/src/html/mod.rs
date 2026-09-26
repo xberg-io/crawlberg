@@ -108,6 +108,9 @@ pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
 /// ~keep HTML strips ASCII whitespace, form feed included, from a `<script type>` before it reads
 /// ~keep the type; the MIME parser alone would keep a form feed and reject the type. `<link type>`
 /// ~keep has no such rule and gets the same trim as a leniency, so both `type` attributes read alike.
+/// ~keep The trim runs on the essence after the `;` split, not on the whole value, so whitespace
+/// ~keep just before `;` is stripped too, which neither HTML nor the MIME rule does. That is more
+/// ~keep leniency, in the same spirit as the attribute trim above.
 pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
     get_attr(tag, "type").map(|value| {
         let essence = value.split(';').next().unwrap_or_default();
@@ -234,6 +237,7 @@ mod tests {
         assert_eq!(decode_attr_value("a\r\nb\rc\nd\0e"), "a\nb\nc\nd\u{FFFD}e");
         assert_eq!(decode_attr_value("a&amp;\r\nb\0"), "a&\nb\u{FFFD}");
         assert_eq!(decode_attr_value("a\r&amp;"), "a\n&");
+        assert_eq!(decode_attr_value("a\0&amp;"), "a\u{FFFD}&");
         assert_eq!(decode_attr_value("a\0b"), "a\u{FFFD}b");
         assert_eq!(decode_attr_value("a\rb"), "a\nb");
         assert!(matches!(decode_attr_value("plain value"), Cow::Borrowed("plain value")));
