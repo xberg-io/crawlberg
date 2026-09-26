@@ -32,9 +32,13 @@ pub(super) static FALLBACK_URL: std::sync::LazyLock<Url> =
 pub(super) struct LoopContext<'a> {
     /// ~keep `Arc` rather than a borrowed slice: `fetch_and_extract` is spawned into a
     /// ~keep `JoinSet` and must own a redirect-hop policy of its own (see `FetchResult`'s
-    /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of the exclude list.
+    /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of these lists.
+    ///
+    /// ~keep `regex::Regex::clone` allocates a fresh, cold cache pool per copy, so holding
+    /// these as slices and rebuilding an `Arc` per spawn rebuilt every pattern's cache
+    /// once per fetch.
     pub(super) exclude_regexes: Arc<[Regex]>,
-    pub(super) include_regexes: &'a [Regex],
+    pub(super) include_regexes: Arc<[Regex]>,
     pub(super) robots: &'a RobotsOutcome,
     pub(super) base_host: &'a str,
     pub(super) base_host_suffix: &'a str,
