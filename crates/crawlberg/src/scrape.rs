@@ -19,6 +19,16 @@ use crate::types::{CrawlConfig, ScrapeResult};
 ///
 /// Runs the extraction pipeline (metadata, links, images, feeds, JSON-LD, assets)
 /// on the response body returned by the Tower service stack.
+/// The `X-Robots-Tag` header value and the directives it carries, returned together because
+/// the raw value is reported on `ScrapeResult` while the directives gate link following.
+fn header_robots_directives(
+    headers: &std::collections::HashMap<String, Vec<String>>,
+) -> (Option<String>, RobotsDirectives) {
+    let value = headers.get("x-robots-tag").and_then(|v| v.first().cloned());
+    let directives = RobotsDirectives::from_header(value.as_deref());
+    (value, directives)
+}
+
 pub(crate) async fn scrape_from_crawl_response(
     url: &str,
     resp: &crate::tower::CrawlResponse,
@@ -33,8 +43,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let content_type = resp.content_type.clone();
     let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
 
-    let x_robots_tag = resp.headers.get("x-robots-tag").and_then(|v| v.first().cloned());
-    let header_robots = RobotsDirectives::from_header(x_robots_tag.as_deref());
+    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers);
 
     let downloaded_document = crate::document::build_downloaded_document(
         url,
