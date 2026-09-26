@@ -125,13 +125,24 @@ impl CrawlEngineBuilder {
         self
     }
 
-    /// Set a byte-aware predicate for document materialization during crawls.
+    /// Set a byte-aware predicate for document materialization.
     ///
-    /// The predicate receives the normalized declared MIME type and at most
-    /// `document_max_size` bytes of the already bounded response body. It replaces
-    /// the `document_mime_types`/built-in classification decision for this engine.
-    /// With no predicate, the existing MIME decision is unchanged.
-    pub fn document_filter(mut self, document_filter: impl Fn(&str, &[u8]) -> bool + Send + Sync + 'static) -> Self {
+    /// The predicate receives the normalized declared MIME type, at most
+    /// `document_max_size` bytes of the already bounded response body, and the decision
+    /// `document_mime_types`/the built-in classification would have reached. Returning that
+    /// third argument reproduces the default; `by_declared_mime || bytes.starts_with(b"%PDF")`
+    /// widens it. It applies to `crawl()`, `scrape()` and the wasm crawl loop alike. With no
+    /// predicate, the existing MIME decision is unchanged.
+    ///
+    /// The predicate runs for **every** fetched response, not only the ones the built-in
+    /// decision would have accepted — an ordinary HTML page included. A predicate that returns
+    /// `true` for HTML therefore materializes every page as a `DownloadedDocument`, duplicating
+    /// its whole body into the result and, on native targets, writing it to
+    /// `document_output_dir`. Keep the predicate as narrow as the documents it is meant to admit.
+    pub fn document_filter(
+        mut self,
+        document_filter: impl Fn(&str, &[u8], bool) -> bool + Send + Sync + 'static,
+    ) -> Self {
         self.document_filter = Some(Arc::new(document_filter));
         self
     }

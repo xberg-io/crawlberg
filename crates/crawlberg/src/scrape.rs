@@ -19,10 +19,14 @@ use crate::types::{CrawlConfig, ScrapeResult};
 ///
 /// Runs the extraction pipeline (metadata, links, images, feeds, JSON-LD, assets)
 /// on the response body returned by the Tower service stack.
+/// `document_filter` is the engine's byte-aware document predicate, threaded through so a
+/// `scrape()` and the wasm crawl loop (which takes its document from here) honour it too; the
+/// native crawl loop builds its own document record in `engine::page_result`.
 pub(crate) async fn scrape_from_crawl_response(
     url: &str,
     resp: &crate::tower::CrawlResponse,
     config: &CrawlConfig,
+    document_filter: Option<&crate::document::DocumentFilter>,
 ) -> Result<ScrapeResult, CrawlError> {
     let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
@@ -36,13 +40,16 @@ pub(crate) async fn scrape_from_crawl_response(
     let x_robots_tag = resp.headers.get("x-robots-tag").and_then(|v| v.first().cloned());
     let header_robots = RobotsDirectives::from_header(x_robots_tag.as_deref());
 
-    let downloaded_document = crate::document::build_downloaded_document(
+    let downloaded_document = crate::document::build_downloaded_document_with_filter(
         url,
         &parsed_url,
-        &content_type,
-        &resp.body_bytes,
-        decoded.was_skipped,
+        crate::document::DocumentInput {
+            content_type: &content_type,
+            body_bytes: &resp.body_bytes,
+            is_document: decoded.was_skipped,
+        },
         config,
+        document_filter,
     )
     .await;
 
@@ -309,7 +316,7 @@ mod tests {
             "text/html",
             "<html><head><title>Hi</title></head><body>hello</body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -327,7 +334,7 @@ mod tests {
         resp.headers
             .insert("x-robots-tag".to_owned(), vec!["NoIndex, NoFollow".to_owned()]);
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -342,7 +349,7 @@ mod tests {
             "text/html",
             r#"<html><head><meta name="robots" content="noindex"></head><body>x</body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -360,7 +367,7 @@ mod tests {
         body_bytes.extend_from_slice(b"</body></html>");
 
         let resp = response_with_bytes("text/html", body_bytes);
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -381,7 +388,7 @@ mod tests {
             ..offline_config()
         };
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
             .await
             .expect("scrape should succeed");
 
@@ -394,7 +401,7 @@ mod tests {
         let html = "<html><body><p>keep this</p><aside>drop this</aside></body></html>";
         let resp = response("text/html", html);
 
-        let baseline = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config())
+        let baseline = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
         let baseline_markdown = baseline.markdown.expect("markdown").content;
@@ -407,7 +414,7 @@ mod tests {
             remove_tags: vec!["aside".to_owned()],
             ..offline_config()
         };
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
             .await
             .expect("scrape should succeed");
         let markdown = result.markdown.expect("markdown").content;
@@ -425,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn scrape_marks_a_pdf_response_as_skipped() {
         let resp = response("application/pdf", "%PDF-1.7 not really a pdf");
-        let result = scrape_from_crawl_response("https://example.com/doc.pdf", &resp, &offline_config())
+        let result = scrape_from_crawl_response("https://example.com/doc.pdf", &resp, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -436,7 +443,7 @@ mod tests {
     #[tokio::test]
     async fn scrape_rejects_an_unparseable_url() {
         let resp = response("text/html", "<html></html>");
-        let error = scrape_from_crawl_response("not a url", &resp, &offline_config())
+        let error = scrape_from_crawl_response("not a url", &resp, &offline_config(), None)
             .await
             .expect_err("an unparseable URL must be rejected");
 

@@ -6,8 +6,18 @@ All notable changes to crawlberg are documented here.
 
 ### Added
 
-- `CrawlEngineBuilder::document_filter` lets Rust consumers opt into byte-aware document acceptance
-  after bounded fetches, while preserving the default declared-MIME decision. (#95)
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
 
 ## [1.8.0] - 2026-09-25
 
