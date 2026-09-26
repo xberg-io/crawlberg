@@ -82,6 +82,31 @@ fn permissive(config: CrawlConfig) -> CrawlConfig {
     }
 }
 
+/// Route every request through the fixture server, used as a plain HTTP proxy, so these tests
+/// never ask the system resolver for a `*.localhost` name.
+///
+/// ~keep macOS resolves `localhost` but not its subdomains, and the SSRF pre-check resolves every
+/// host it does not allowlist, even with `deny_private` off. The proxy carries each request to the
+/// fixture server by address, and the `localhost` suffix allowlist entry lets the pre-check permit
+/// those names without a lookup. The fixture server matches on the path alone, so every host name
+/// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
+/// scope gate ever let it through.
+fn through_fixture(mock: &MockServer, config: CrawlConfig) -> CrawlConfig {
+    CrawlConfig {
+        ssrf: crate::net::SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![crate::net::HostMatcher::suffix("localhost")],
+            ..crate::net::SsrfPolicy::default()
+        },
+        proxy: Some(crate::types::ProxyConfig {
+            url: mock.uri(),
+            username: None,
+            password: None,
+        }),
+        ..config
+    }
+}
+
 fn visited(result: &CrawlResult, base: &str) -> Vec<String> {
     result
         .pages
@@ -331,10 +356,8 @@ async fn sequential_crawl_strips_tracking_params_from_fetched_and_reported_url()
 ///
 /// ~keep Uses `*.localhost`, not a fabricated hostname: this positive case needs a real,
 /// reachable second host to prove the link is actually followed rather than merely not
-/// rejected. RFC 6761 §6.3 requires every conformant resolver to resolve `*.localhost` to
-/// the loopback address without any network traffic, unlike a public-DNS trick such as
-/// nip.io. The negative cases below use a fabricated `*.example.invalid` host instead,
-/// since a rejected link never reaches DNS resolution (see their own doc comments).
+/// rejected. `through_fixture` routes it to the fixture server, so no resolver is involved,
+/// unlike a public-DNS trick such as nip.io.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true() {
@@ -348,12 +371,15 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
     .await;
     mount_html(&mock, "/a", "<html><body>a</body></html>").await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        allow_subdomains: true,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
@@ -383,12 +409,15 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
     .await;
     mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
     let base = format!("http://foo.localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        allow_subdomains: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
@@ -422,11 +451,14 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
     .await;
     mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
@@ -462,11 +494,14 @@ async fn sequential_crawl_stays_on_the_seed_host() {
     mount_html(&mock, "/a", "<html><body>a</body></html>").await;
     mount_html_expecting(&mock, "/x", "<html><body>x</body></html>", 0).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
@@ -579,11 +614,14 @@ async fn sequential_crawl_follows_a_cross_host_document_link_by_default() {
     .await;
     mount_pdf(&mock, "/report.pdf", 1).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
     engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
@@ -605,12 +643,15 @@ async fn sequential_crawl_rejects_a_cross_host_document_link_when_stay_on_domain
     .await;
     mount_pdf(&mock, "/report.pdf", 0).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        stay_on_domain: true,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            stay_on_domain: true,
+            ..CrawlConfig::default()
+        },
+    ));
 
     engine.crawl_sequential(&base).await.expect("crawl must succeed");
 
