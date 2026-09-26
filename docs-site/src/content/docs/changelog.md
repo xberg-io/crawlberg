@@ -29,6 +29,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **The links list trimmed Unicode spaces from an address, which a browser keeps.** `href` was
+  trimmed with `str::trim`, which is Unicode-aware, so an NBSP, U+2000-200A, U+3000 or U+0085 at
+  either end of an address was dropped. HTML strips only ASCII whitespace from a URL attribute —
+  everything else is part of the value and is percent-encoded — so the links list reported a
+  different URL than the browser fetches and than the markdown rewrite emits, which already trims
+  the ASCII set only. The trim is now ASCII-only; an href that is blank in the ASCII sense is still
+  skipped. (#191)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
