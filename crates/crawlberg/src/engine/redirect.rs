@@ -512,7 +512,15 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    resolve_redirect(current_url, location)
+    let target = resolve_redirect(current_url, location);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            location = %crate::net::redact_url_credentials(location),
+            "Location redirect target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -520,7 +528,15 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    resolve_redirect(current_url, target_path)
+    let target = resolve_redirect(current_url, target_path);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target = %crate::net::redact_url_credentials(target_path),
+            "Refresh header target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -531,10 +547,18 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = tl::parse(&parsed_html, ParserOptions::default())
+    let raw_target = tl::parse(&parsed_html, ParserOptions::default())
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    resolve_redirect(current_url, &target)
+    let target = resolve_redirect(current_url, &raw_target);
+    if target.is_none() {
+        tracing::debug!(
+            current_url = %crate::net::redact_url_credentials(current_url),
+            target = %crate::net::redact_url_credentials(&raw_target),
+            "meta refresh target failed to parse; this source contributes nothing"
+        );
+    }
+    target
 }
 
 #[cfg(test)]
@@ -697,6 +721,30 @@ mod tests {
         assert!(
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
             "an unparseable Location with no other redirect source must not be followed"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_refresh_header_target_is_refused() {
+        let resp = response(200, &[("refresh", "0; url=https://ex ample.com/bad")], "");
+
+        assert!(
+            refresh_header_target(&resp, "https://example.com/start").is_none(),
+            "a Refresh header target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_meta_refresh_target_is_refused() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=https://ex ample.com/bad"></head></html>"#,
+        );
+
+        assert!(
+            meta_refresh_target(&resp, "https://example.com/start").is_none(),
+            "a meta refresh target that fails to parse must not be followed as raw text"
         );
     }
 }

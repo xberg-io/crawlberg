@@ -160,8 +160,9 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
 
 /// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
 /// `Url::join` parses either form on its own and returns the parser's normalized string.
-/// Returns `None` when neither `target` nor `base_url` parses, so a caller must refuse the
-/// target rather than follow or report it as raw text.
+/// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
+/// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
+/// caller must refuse the target rather than follow or report it as raw text.
 ///
 /// ~keep The return is always the parser's normalized form, never raw input, so a caller that
 /// ~keep re-checks it (SSRF, policy) is checking what will actually be fetched.
@@ -384,14 +385,19 @@ mod tests {
         );
     }
 
+    /// This target already IS the parser's normalized form (lower-case host, default path,
+    /// no IDN/port/dot-segment to rewrite), so parsing it is a no-op. It does not show that
+    /// every clean target survives unchanged: parsing still rewrites an IDN host to punycode,
+    /// drops a default port, lower-cases the host, adds `/` to a bare origin, removes dot
+    /// segments, percent-encodes a space, and canonicalizes `127.1` to `127.0.0.1`.
     #[test]
-    fn clean_absolute_target_is_unchanged() {
+    fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
         let clean = "https://example.com/page?a=1&b=2";
         let resolved = resolve_redirect("https://example.com/start", clean);
         assert_eq!(
             resolved,
             Some(clean.to_owned()),
-            "a target that already parses cleanly must come back byte-identical, got {resolved:?}"
+            "a target with nothing left to normalize must come back byte-identical, got {resolved:?}"
         );
     }
 }

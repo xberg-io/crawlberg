@@ -37,7 +37,10 @@ All notable changes to crawlberg are documented here.
   crafted with stray whitespace was followed and reported exactly as sent. Both forms now go
   through the same parser, and a target that fails to parse, absolute or relative, is refused
   rather than followed: the redirect source it came from contributes nothing, and the chain
-  falls through to the next source or stops. A target that already parsed cleanly is unchanged.
+  falls through to the next source or stops. A target is now followed in the URL parser's
+  normalized form: an IDN host becomes punycode, a default port is dropped, the host is
+  lower-cased, a bare origin gains a trailing `/`, dot segments are removed, a space becomes
+  `%20`, and `127.1` becomes `127.0.0.1`.
   (#207)
 
 - **A browser fetch reported no response headers at all on the crawl path.**

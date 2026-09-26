@@ -381,10 +381,17 @@ fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &
         return Some(child_url.to_owned());
     };
     if Url::parse(child_url).is_ok() {
-        Some(rewrite_url_host(child_url, base_parsed))
-    } else {
-        resolve_redirect(sitemap_url, child_url)
+        return Some(rewrite_url_host(child_url, base_parsed));
     }
+    let resolved = resolve_redirect(sitemap_url, child_url);
+    if resolved.is_none() {
+        tracing::debug!(
+            sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
+            child_url = %crate::net::redact_url_credentials(child_url),
+            "sitemap-index child <loc> failed to parse; skipping it"
+        );
+    }
+    resolved
 }
 
 /// Fetch one child sitemap named by an index and walk whatever it turns out to be.
@@ -547,6 +554,20 @@ mod tests {
         }
         body.push_str("</sitemapindex>");
         body
+    }
+
+    #[test]
+    fn an_unparseable_sitemap_index_child_loc_is_refused_not_followed_raw() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        let base = Url::parse(sitemap_url).expect("valid URL");
+
+        let resolved = resolve_child_sitemap_url(Some(&base), sitemap_url, "https://ex ample.com/bad.xml");
+
+        assert!(
+            resolved.is_none(),
+            "a sitemap-index child <loc> that fails to parse must not be followed as raw text, \
+             got {resolved:?}"
+        );
     }
 
     async fn mount_xml(mock: &MockServer, route: &str, body: String) {
