@@ -98,6 +98,7 @@ mod tests {
                     body: "ok".into(),
                     body_bytes: vec![],
                     headers: std::collections::HashMap::new(),
+                    landed_url: None,
                 })
             })
         }
