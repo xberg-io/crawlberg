@@ -10,7 +10,7 @@ use tracing::Instrument as _;
 
 use self::launch::launch_or_connect;
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, close_browser_within};
+use crate::browser_pool::{BrowserPool, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
@@ -23,10 +23,6 @@ mod navigation;
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// How long to wait for the CDP handler task to wind down after a browser is
-/// closed, before abandoning it.
-const HANDLER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Fetch a URL using a headless Chrome browser via CDP.
 ///
@@ -231,8 +227,7 @@ async fn one_shot_fetch(
     let shutdown_timeout = config.browser.shutdown_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let (mut browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await
-    {
+    let (browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
         Ok(Ok(launched)) => launched,
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(overall_deadline_error(overall_timeout)),
@@ -241,15 +236,18 @@ async fn one_shot_fetch(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    // ~keep The tab's target id lives outside the deadline future so a fetch cut off by the
+    // ~keep deadline still hands the tab to `release_browser`: an external Chrome
+    // ~keep (`browser.endpoint`) is left running, so a tab left open there would outlive this fetch.
+    let mut open_target = None;
     let fetch_outcome = tokio::time::timeout(remaining, async {
         let page = browser
             .new_page("about:blank")
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        open_target = Some(page.target_id().clone());
 
-        let result = page_fetch(url, config, &page, prior_cookies, want_screenshot).await;
-        let _ = page.close().await;
-        result
+        page_fetch(url, config, &page, prior_cookies, want_screenshot).await
     })
     .await;
 
@@ -258,12 +256,10 @@ async fn one_shot_fetch(
     // ~keep Shutdown is spawned rather than awaited inline: a Chrome process stuck behind a
     // ~keep blocking OS dialog (the originally reported case: a macOS keychain prompt) must
     // ~keep not hold up delivery of a result that was already computed above.
-    // ~keep `close_browser_within` still bounds close()/wait() by `shutdown_timeout` and
-    // ~keep force-kills the process on expiry, so this background task always finishes.
+    // ~keep `release_browser` bounds its work by `shutdown_timeout` and force-kills a launched
+    // ~keep Chrome on expiry, so this background task always finishes.
     tokio::spawn(async move {
-        close_browser_within(&mut browser, shutdown_timeout).await;
-        drop(browser);
-        let _ = tokio::time::timeout(HANDLER_SHUTDOWN_TIMEOUT, handler_handle).await;
+        release_browser(browser, handler_handle, open_target, shutdown_timeout).await;
         if let Some(dir) = data_dir {
             let _ = tokio::fs::remove_dir_all(&dir).await;
         }
