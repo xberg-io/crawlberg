@@ -36,6 +36,11 @@ title: "Changelog"
   backend already returned at once, but it reported an empty HTML skeleton as the body; it now
   reports an empty body too. (#121)
 
+  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
+  304 against its cache entry before the response reaches this check, so what the check sees is
+  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
+  what it carries.
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately
