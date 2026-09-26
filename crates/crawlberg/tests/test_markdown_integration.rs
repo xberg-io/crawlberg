@@ -158,3 +158,50 @@ async fn test_markdown_links_resolve_against_the_scrape_redirect_target() {
         md.content
     );
 }
+
+/// A scraped page's inline `data:` image keeps its alt text in the markdown, and its encoded
+/// payload stays out of both the content and `fit_content` (issue #97).
+#[tokio::test]
+async fn test_markdown_leaves_out_the_payload_of_an_inline_image() {
+    let payload = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=".repeat(40);
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!(
+                    r#"<html><body><p>Real text before the icon.</p><img src="data:image/svg+xml;base64,{payload}" alt="icon"><p>Real text after the icon.</p></body></html>"#
+                ))
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(allow_private_config())).unwrap();
+    let result = scrape(&handle, &mock.uri()).await.unwrap();
+    let md = result.markdown.expect("markdown should be present");
+    let fit = md.fit_content.clone().unwrap_or_default();
+
+    assert!(
+        md.content.contains("![icon]"),
+        "the alt text must stay, got {:?}",
+        md.content
+    );
+    assert!(md.content.contains("Real text after the icon."), "got {:?}", md.content);
+    assert!(
+        fit.contains("![icon]"),
+        "fit_content must keep the image line, got {fit:?}"
+    );
+    for text in [&md.content, &fit] {
+        assert!(
+            !text.contains("PHN2Zy"),
+            "the encoded payload must not reach the markdown, got {text:?}"
+        );
+        assert!(
+            text.len() < 200,
+            "{} bytes of markdown for two sentences and an icon",
+            text.len()
+        );
+    }
+}

@@ -7,7 +7,8 @@ use crate::types::{ContentConfig, MarkdownResult};
 /// Perform the actual HTML-to-Markdown conversion (synchronous).
 ///
 /// ~keep html-to-markdown-rs 3.14 has no base URL option and writes each address as found, so
-/// ~keep relative addresses are made absolute in the HTML first; see `resolve_link_targets`.
+/// ~keep relative addresses are made absolute, and image and media `data:` addresses emptied, in
+/// ~keep the HTML first; see `resolve_link_targets`.
 fn convert_html_to_markdown(html: &str, document_url: &Url, config: &ContentConfig) -> Option<MarkdownResult> {
     let html = crate::html::resolve_link_targets(html, document_url);
     let preset = html_to_markdown_rs::options::PreprocessingPreset::parse(&config.preprocessing_preset);
@@ -295,13 +296,13 @@ mod tests {
     #[tokio::test]
     async fn leaves_absolute_fragment_and_non_http_targets_as_written() {
         let md = markdown_at(
-            r##"<p><a href="https://other.example/x">abs</a> <a href="#section">frag</a> <a href="mailto:me@example.com">mail</a> <a href="tel:+15551234">tel</a> <a href="javascript:void(0)">js</a> <img src="data:image/gif;base64,R0lGOD" alt="px"></p>"##,
+            r##"<p><a href="https://other.example/x">abs</a> <a href="#section">frag</a> <a href="mailto:me@example.com">mail</a> <a href="tel:+15551234">tel</a> <a href="javascript:void(0)">js</a> <a href="data:text/plain,hi">data</a></p>"##,
             "https://example.com/docs/index.html",
         )
         .await;
         assert_eq!(
             md,
-            "[abs](https://other.example/x) [frag](#section) [mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) ![px](data:image/gif;base64,R0lGOD)\n"
+            "[abs](https://other.example/x) [frag](#section) [mail](mailto:me@example.com) [tel](tel:+15551234) [js](javascript:void(0)) [data](data:text/plain,hi)\n"
         );
     }
 
@@ -367,6 +368,86 @@ mod tests {
                 "attribute {attr}"
             );
         }
+    }
+
+    /// The inline SVG icon from issue #97, base64-encoded.
+    const ICON_PAYLOAD: &str = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCI+\
+        PHBhdGggZD0iTTEwIDEwIDIwIDIwIDMwIDMwIDQwIDQwIDUwIDUwIDYwIDYwIDcwIDcwIDgwIDgwIDkwIDkwIiAvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiAvPjwvc3ZnPg==";
+
+    #[tokio::test]
+    async fn an_inline_data_image_keeps_its_alt_text_and_drops_the_payload() {
+        let html = format!(
+            r#"<html><body><p>Real text before the icon.</p><img src="data:image/svg+xml;base64,{ICON_PAYLOAD}" alt="icon"><p>Real text after the icon.</p></body></html>"#
+        );
+        let md = markdown_at(&html, "https://example.com/").await;
+        assert!(
+            !md.contains("data:"),
+            "the encoded image must not reach the markdown, got: {md}"
+        );
+        assert!(
+            md.len() < 100,
+            "{} bytes of markdown for two sentences and an icon: {md}",
+            md.len()
+        );
+        assert_eq!(
+            md,
+            "Real text before the icon.\n\n![icon](<>)\n\nReal text after the icon.\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn drops_an_unencoded_svg_data_address() {
+        let md = markdown_at(
+            r#"<p><img src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="9"></svg>' alt="logo"></p>"#,
+            "https://example.com/",
+        )
+        .await;
+        assert_eq!(md, "![logo](<>)\n");
+    }
+
+    #[tokio::test]
+    async fn drops_inline_data_candidates_from_an_image_srcset() {
+        for attr in ["data-srcset", "srcset"] {
+            let html = format!(r#"<p><img {attr}="data:image/gif;base64,R0lGOD 2x" alt="a"></p>"#);
+            let md = markdown_at(&html, "https://example.com/docs/index.html").await;
+            assert_eq!(md, "![a](<>)\n", "attribute {attr}");
+        }
+    }
+
+    #[tokio::test]
+    async fn media_and_iframes_drop_an_inline_data_address() {
+        for html in [
+            format!(r#"<p>before</p><video src="data:video/mp4;base64,{ICON_PAYLOAD}"></video><p>after</p>"#),
+            format!(r#"<p>before</p><audio src="data:audio/mpeg;base64,{ICON_PAYLOAD}"></audio><p>after</p>"#),
+            format!(r#"<p>before</p><iframe src="data:text/html;base64,{ICON_PAYLOAD}"></iframe><p>after</p>"#),
+            format!(r#"<p>before</p><video><source src="data:video/mp4;base64,{ICON_PAYLOAD}"></video><p>after</p>"#),
+        ] {
+            let md = markdown_at(&html, "https://example.com/").await;
+            assert_eq!(md, "before\n\nafter\n", "for {html}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_video_falls_through_an_inline_data_address_to_its_source() {
+        let md = markdown_at(
+            r#"<video src="data:video/mp4;base64,AAAA"><source src="clip.mp4"></video>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(
+            md,
+            "[https://example.com/docs/clip.mp4](https://example.com/docs/clip.mp4)\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lazy_data_attribute_does_not_replace_a_real_srcset() {
+        let md = markdown_at(
+            r#"<p><img data-src="data:image/gif;base64,R0lGOD" srcset="big.jpg 2x" alt="a"></p>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![a](https://example.com/docs/big.jpg)\n");
     }
 
     #[tokio::test]
