@@ -125,15 +125,6 @@ fn collect_headers(resp: &reqwest::Response) -> HashMap<String, Vec<String>> {
     headers
 }
 
-/// Read the lowercase `server` header, or an empty string when absent.
-fn server_header(headers: &HashMap<String, Vec<String>>) -> String {
-    headers
-        .get("server")
-        .and_then(|v| v.first())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default()
-}
-
 /// Build the `CrawlResponse` for a 3xx without classifying it; a failed body read yields an
 /// empty body rather than an error, because the caller only needs the status and headers.
 async fn read_redirect_response(
@@ -209,20 +200,17 @@ fn content_length_shortfall_error(
 /// Classify a short 2xx body as a WAF challenge page when it carries a vendor fingerprint.
 ///
 /// ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
+/// Shares `http::waf_2xx_error` with `http::fetch_one_hop` rather than the pair of helpers that
+/// stood here, which classified the response as if it were a 403 (they hardcode that status) and
+/// showed the classifier only the `server` header — so a CDN's own `server` header refused every
+/// ordinary page it proxied, and the corpus could not scope the fingerprint by status because the
+/// status it saw was a fiction (crawlberg#231).
 #[cfg(not(target_arch = "wasm32"))]
 fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<String>>) -> Option<CrawlError> {
     if status != 200 || body.len() >= WAF_CHALLENGE_MAX_BODY_LEN {
         return None;
     }
-    let server = server_header(headers);
-    if !crate::http::is_waf_blocked(&server, body, headers) {
-        return None;
-    }
-    let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-    Some(CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-        vendor,
-    })
+    crate::http::waf_2xx_error(status, body.as_bytes(), body, headers)
 }
 
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.

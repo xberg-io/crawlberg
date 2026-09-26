@@ -381,3 +381,59 @@ async fn test_plain_503_is_not_waf() {
         "plain 503 should be ServerError, not WafBlocked: {result:?}"
     );
 }
+
+/// Akamai, Imperva and F5 stamp their own `server` header on every response they proxy, so
+/// that header alone proves the CDN is in the path and says nothing about a block. An
+/// ordinary 200 carrying it must be returned as content, not refused (crawlberg#231).
+///
+/// ~keep The assertion is on the page HTML, not on `is_ok()`: a scrape that returned an empty
+/// body would satisfy the weaker form while still having thrown the real page away.
+#[tokio::test]
+async fn a_2xx_whose_only_waf_evidence_is_cdn_presence_is_returned_as_content() {
+    let fronted = [
+        ("/akamai", "AkamaiGHost"),
+        ("/incapsula", "Incapsula"),
+        ("/bigip", "BIG-IP"),
+    ];
+    let page_html = "<html><head><title>Product page</title></head>\
+                <body><h1>Widgets for sale</h1><p>In stock today.</p></body></html>";
+
+    let mock = MockServer::start().await;
+    for (route, server) in fronted {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(page_html)
+                    .append_header("content-type", "text/html")
+                    .append_header("server", server),
+            )
+            .mount(&mock)
+            .await;
+    }
+
+    let handle = create_engine(Some(no_browser_config()))
+        .expect("create_engine with no-browser config should succeed in integration test");
+
+    for (route, server) in fronted {
+        let result = scrape(&handle, &format!("{}{route}", mock.uri())).await;
+        let page = result.unwrap_or_else(|error| panic!("a 200 behind {server} must succeed, got: {error:?}"));
+        assert_eq!(page.status_code, 200, "a 200 behind {server} must stay a 200");
+        assert!(
+            page.html.contains("Widgets for sale"),
+            "the real page behind {server} must reach the caller, got: {}",
+            page.html
+        );
+    }
+}
+
+/// A 403 whose only WAF evidence is the same CDN-presence header keeps blocking: the status
+/// is the evidence a 2xx lacks, and narrowing the 2xx path must not narrow this one.
+#[tokio::test]
+async fn a_403_whose_only_waf_evidence_is_cdn_presence_still_blocks() {
+    assert_waf_blocked(
+        "<html><body>Access Denied</body></html>",
+        vec![("content-type", "text/html"), ("server", "AkamaiGHost")],
+    )
+    .await;
+}

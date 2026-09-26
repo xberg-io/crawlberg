@@ -29,6 +29,16 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **An ordinary 200 from a site behind Akamai, Imperva or F5 is returned as content again.** Those
+  products stamp their own `server` header on every response they proxy, and a WAF fingerprint that
+  matches on response headers alone was enough to refuse the response: every 2xx served through one
+  of them failed as `WafBlocked` with the real page already in hand. A header-only fingerprint now
+  has to be corroborated by the body before a 2xx is refused, so a 200 whose only WAF evidence is
+  the CDN's presence is returned as the page it is, while a 403, a 429 or a 503 — where the status
+  is itself evidence — still blocks as before. The Tower fetch service, which is the path the
+  engine's own crawl uses, shares that decision with `http_fetch` instead of classifying every 2xx
+  as if it were a 403. (#231)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
