@@ -6,6 +6,19 @@ title: "Changelog"
 
 ### Fixed
 
+- **Four CI gates passed without examining anything.** The vendored-C-header check compared only
+  `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
+  canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every
+  tracked `crawlberg.h` from the repository index, byte-compares the generator's own outputs,
+  compares the vendored bundles as a normalised declaration stream, and fails on any copy it does
+  not classify. The e2e fixture-drift check excluded `python`, `php`, `ruby` and `c` for formatter
+  skew; measuring each formatter against alef 0.96.4 showed only `python` had any, so `ruff` is now
+  pinned and asserted and all four languages are gated. A pull request stacked on another pull
+  request's branch matched no CI workflow's `branches: [main]` base filter and ran none of them
+  while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
+  hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
+  it is resynced and gated. (#162, #127)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The
