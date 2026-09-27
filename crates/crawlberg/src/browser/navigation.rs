@@ -27,6 +27,9 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 
+/// How many times the HTML is read when a new document commits during each read.
+const HTML_READ_ATTEMPTS: usize = 3;
+
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
 /// create or close it.
@@ -75,9 +78,7 @@ pub(super) async fn page_fetch(
 /// ~keep `extra_wait` (a challenge page that moves to the real page, for example) reports the
 /// ~keep status and headers of the new document. They are those of the main-frame document
 /// ~keep committed when they are read. A response Chrome does not commit (a 204, a 2xx download)
-/// ~keep leaves the previous document in place, and its status with it. The read is a separate
-/// ~keep CDP call from reading the HTML: a navigation that commits between the two calls pairs
-/// ~keep them with a different document.
+/// ~keep leaves the previous document in place, and its status with it.
 async fn render(
     url: &str,
     config: &CrawlConfig,
@@ -114,11 +115,7 @@ async fn render(
         tokio::time::sleep(extra).await;
     }
 
-    let html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-    let frame = committed_frame(page).await?;
+    let (html, frame) = read_committed_html(page).await?;
     let document = interceptor.document(frame.loader_id.as_ref());
     if let Some(failed_url) = frame.unreachable_url {
         return error_page_outcome(failed_url, document, intercepted.redirects_followed);
@@ -148,6 +145,58 @@ async fn render(
         },
         redirects: intercepted.redirects_followed,
     })
+}
+
+/// The page HTML and the main frame of the document it was read from.
+async fn read_committed_html(page: &chromiumoxide::Page) -> Result<(String, Frame), CrawlError> {
+    read_one_document(
+        || committed_frame(page),
+        document_id,
+        || async move {
+            page.content()
+                .await
+                .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))
+        },
+    )
+    .await
+}
+
+/// The document a main frame shows: each document the frame commits has its own loader id.
+fn document_id(frame: &Frame) -> &str {
+    frame.loader_id.as_ref()
+}
+
+/// Read the HTML with `read_html` and pair it with the committed document `read_committed`
+/// reports. `loader_id` names the document a read reports.
+///
+/// ~keep The HTML and the committed document are two CDP calls, so a navigation that commits
+/// ~keep between them would pair one document's HTML with another's status. The committed
+/// ~keep document is read before and after the HTML: when both reads name one loader, the HTML
+/// ~keep is that document's. When they differ, the read is repeated, whether or not it
+/// ~keep succeeded: an HTML read sent to the document the commit replaced can fail with an
+/// ~keep unknown script context. A page that commits a new document during every read fails the
+/// ~keep fetch.
+async fn read_one_document<D, C, H>(
+    mut read_committed: impl FnMut() -> C,
+    loader_id: impl Fn(&D) -> &str,
+    mut read_html: impl FnMut() -> H,
+) -> Result<(String, D), CrawlError>
+where
+    C: Future<Output = Result<D, CrawlError>>,
+    H: Future<Output = Result<String, CrawlError>>,
+{
+    let mut document = read_committed().await?;
+    for _ in 0..HTML_READ_ATTEMPTS {
+        let html = read_html().await;
+        let committed = read_committed().await?;
+        if loader_id(&committed) == loader_id(&document) {
+            return html.map(|html| (html, committed));
+        }
+        document = committed;
+    }
+    Err(CrawlError::browser_error(format!(
+        "the page navigated to a new document during each of {HTML_READ_ATTEMPTS} reads of its HTML"
+    )))
 }
 
 /// The main frame and the document it has committed.
@@ -480,5 +529,127 @@ mod tests {
             error.to_string().contains("7s"),
             "the timeout message must name the configured timeout, got: {error}"
         );
+    }
+
+    /// Read one document from scripted reads: `loaders` answers each committed-document read in
+    /// order, and `htmls` each HTML read. The part of a committed-document read before `#` is
+    /// its loader id; the rest stands for a frame field that changes without a new document,
+    /// such as the URL after `history.pushState`. Returns the result and the number of HTML reads.
+    async fn read_scripted(
+        loaders: &[&str],
+        htmls: &[Result<&str, &str>],
+    ) -> (Result<(String, String), String>, usize) {
+        let mut loaders = loaders.iter();
+        let mut htmls = htmls.iter();
+        let mut html_reads = 0;
+        let result = read_one_document(
+            || std::future::ready(Ok(loaders.next().expect("a scripted loader read").to_string())),
+            |document: &String| document.split('#').next().unwrap_or_default(),
+            || {
+                html_reads += 1;
+                std::future::ready(match htmls.next().expect("a scripted HTML read") {
+                    Ok(html) => Ok(html.to_string()),
+                    Err(message) => Err(CrawlError::browser_error(*message)),
+                })
+            },
+        )
+        .await;
+        (result.map_err(|error| error.to_string()), html_reads)
+    }
+
+    #[tokio::test]
+    async fn the_html_is_paired_with_the_loader_read_before_and_after_it() {
+        let (result, html_reads) = read_scripted(&["a", "a"], &[Ok("<p>a</p>")]).await;
+        assert_eq!(result, Ok(("<p>a</p>".to_owned(), "a".to_owned())));
+        assert_eq!(html_reads, 1);
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_changes_without_a_new_document_is_one_document() {
+        let (result, html_reads) = read_scripted(&["a", "a#pushed"], &[Ok("<p>a</p>")]).await;
+        assert_eq!(
+            result,
+            Ok(("<p>a</p>".to_owned(), "a#pushed".to_owned())),
+            "the documents are compared by loader id, and the later frame read is returned"
+        );
+        assert_eq!(html_reads, 1);
+    }
+
+    #[tokio::test]
+    async fn a_document_committed_during_the_read_is_read_again() {
+        let (result, html_reads) = read_scripted(&["a", "b", "b"], &[Ok("<p>a</p>"), Ok("<p>b</p>")]).await;
+        assert_eq!(
+            result,
+            Ok(("<p>b</p>".to_owned(), "b".to_owned())),
+            "the HTML of document a must not be paired with document b"
+        );
+        assert_eq!(html_reads, 2);
+    }
+
+    fn main_frame(loader_id: &str) -> Frame {
+        use chromiumoxide::cdp::browser_protocol::page::{
+            CrossOriginIsolatedContextType, GatedApiFeatures, SecureContextType,
+        };
+        Frame::builder()
+            .id("main".to_owned())
+            .loader_id(loader_id.to_owned())
+            .url("http://127.0.0.1/".to_owned())
+            .domain_and_registry(String::new())
+            .security_origin("http://127.0.0.1".to_owned())
+            .mime_type("text/html".to_owned())
+            .secure_context_type(SecureContextType::SecureLocalhost)
+            .cross_origin_isolated_context_type(CrossOriginIsolatedContextType::NotIsolated)
+            .gated_api_features(Vec::<GatedApiFeatures>::new())
+            .build()
+            .expect("a main frame")
+    }
+
+    #[tokio::test]
+    async fn a_new_document_in_the_same_main_frame_is_read_again() {
+        let mut frames = [main_frame("a"), main_frame("b"), main_frame("b")].into_iter();
+        let mut htmls = ["<p>a</p>", "<p>b</p>"].into_iter();
+        let (html, frame) = read_one_document(
+            || std::future::ready(Ok(frames.next().expect("a scripted frame read"))),
+            document_id,
+            || std::future::ready(Ok(htmls.next().expect("a scripted HTML read").to_owned())),
+        )
+        .await
+        .expect("the second read is of one document");
+        assert_eq!(
+            (html.as_str(), frame.loader_id.as_ref()),
+            ("<p>b</p>", "b"),
+            "a new loader id in the same frame is a new document"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_of_a_replaced_document_is_read_again() {
+        let (result, html_reads) = read_scripted(
+            &["a", "b", "b"],
+            &[Err("Cannot find context with specified id"), Ok("<p>b</p>")],
+        )
+        .await;
+        assert_eq!(result, Ok(("<p>b</p>".to_owned(), "b".to_owned())));
+        assert_eq!(html_reads, 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_of_the_committed_document_fails_the_fetch() {
+        let (result, html_reads) = read_scripted(&["a", "a"], &[Err("boom")]).await;
+        let error = result.expect_err("a failed read of an unchanged document is an error");
+        assert!(error.contains("boom"), "the read error must be preserved, got: {error}");
+        assert_eq!(html_reads, 1);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_commits_during_every_read_fails_the_fetch() {
+        let (result, html_reads) =
+            read_scripted(&["a", "b", "c", "d"], &[Ok("<p>a</p>"), Ok("<p>b</p>"), Ok("<p>c</p>")]).await;
+        let error = result.expect_err("no read belongs to one document");
+        assert!(
+            error.contains("navigated to a new document during each of 3 reads"),
+            "got: {error}"
+        );
+        assert_eq!(html_reads, HTML_READ_ATTEMPTS);
     }
 }

@@ -19,6 +19,13 @@ title: "Changelog"
 
 ### Fixed
 
+- **A page that navigated while browser mode read it could come back wrong.** The Chromiumoxide
+  backend read the HTML of the page and the status of the page in two separate steps. A navigation
+  that committed between them returned the HTML of one document with the status and headers of the
+  next. A navigation that committed just before the HTML read failed the fetch with "Cannot find
+  context with specified id". The backend now checks that the same document is committed before
+  and after it reads the HTML, and reads the HTML again when the document changed. A page that
+  navigates during three reads in a row fails the fetch with a browser error. (#318)
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
   a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
   then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the

@@ -759,3 +759,33 @@ async fn chromiumoxide_hides_the_credentials_of_a_late_navigation_in_its_error()
         );
     }
 }
+
+/// A page that navigates on load is reported as the document it navigated to, with that
+/// document's status and HTML. The fetch reads which document is committed before it reads the
+/// HTML, and reads the HTML again when the document changed, so the HTML read does not go to the
+/// document the navigation replaced.
+#[tokio::test]
+async fn chromiumoxide_reports_the_document_a_page_navigates_to_on_load() {
+    let test_name = "chromiumoxide_reports_the_document_a_page_navigates_to_on_load";
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        config(BrowserBackend::Chromiumoxide, BrowserMode::Always),
+        "<script>addEventListener('load', () => location.assign('/next'))</script>",
+        vec![(
+            "/next",
+            page(202, "<p>next-marker</p>").set_delay(Duration::from_millis(300)),
+        )],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/next").await;
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: the next page is a page: {error:?}"));
+    assert_eq!(
+        (page.status_code, page.html.contains("next-marker")),
+        (202, true),
+        "{test_name}: the status and the HTML must be the next page's: {}",
+        page.html
+    );
+}
