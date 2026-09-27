@@ -175,7 +175,11 @@ async fn urls_from_direct_response(
     if is_html_content(&resp.content_type, &resp.body) {
         let parsed_html = mask_raw_text_markup(&resp.body);
         if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
-            return links_as_sitemap_urls(&doc, parsed_url);
+            // ~keep The page's links resolve against the URL that served it, not the one
+            // ~keep requested, matching the crawl engine (`crawl_loop.rs`'s `url_for_extract`)
+            // ~keep and the other three branches above (fixed for #339, this one missed then).
+            let base_url = Url::parse(&resp.final_url).unwrap_or_else(|_| parsed_url.clone());
+            return links_as_sitemap_urls(&doc, &base_url);
         }
     }
 
@@ -1173,5 +1177,27 @@ mod tests {
         let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
 
         assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_html_pages_link_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/start", "/dir/page.html").await;
+        mount_body(
+            &mock,
+            "/dir/page.html",
+            "text/html",
+            "<html><body><a href=\"x.html\">next</a></body></html>".to_owned(),
+        )
+        .await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/dir/x.html")],
+            "a relative href must resolve against the URL that served the page, not the one requested"
+        );
     }
 }

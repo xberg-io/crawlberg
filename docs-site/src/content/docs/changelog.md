@@ -90,6 +90,12 @@ title: "Changelog"
   `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
   of the address, alongside the address text itself. (#338)
 
+- **`map()` resolved a redirected HTML page's links against the address it requested, not the
+  one that answered.** When `/start` redirected to `/dir/page.html`, a link to `x.html` on that
+  page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
+  fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
+  redirects; the HTML link branch now does too, matching the crawl engine. (#360)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
