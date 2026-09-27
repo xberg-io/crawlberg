@@ -4,6 +4,26 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interact returned Chrome's error page as the page.** On the Chromiumoxide backend, a page
+  that went on to a URL Chrome could not show, such as a download answering 501, left Chrome's
+  own error page in place of the page. A Scrape action then returned that page's HTML, and the
+  session returned it as the final HTML with `chrome-error://chromewebdata/` as the final URL.
+  Now a Scrape action on that page fails, and a session that ends on it fails. Both errors are
+  browser errors that name the URL Chrome could not show, with its credentials redacted. The
+  check and the HTML come from one document: a read during which the page commits a new
+  document is repeated, and a page that commits a new document during three reads in a row
+  fails. (#345)
+
+- **Interact dropped an SSRF refusal when the navigation succeeded.** On the Chromiumoxide
+  backend, a page that navigated to an address the SSRF policy refuses during the wait, such as
+  `169.254.169.254`, left Chrome's error page, and the session did not report the refusal. Now
+  the session fails with the SSRF policy error, which names the refused URL with its credentials
+  redacted. A refused subresource or iframe still does not fail a page that loaded. A browser
+  fetch or session whose page reports no main frame now fails with a browser error, because a
+  refused navigation cannot be told from a refused iframe without it. (#369, #383)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
@@ -104,19 +124,6 @@ Four changes can affect an existing setup:
   (#57)
 
 ### Fixed
-
-- **Interact returned Chrome's error page as the page.** On the Chromiumoxide backend, a page
-  that went on to a URL Chrome could not show, such as a download answering 501, left Chrome's
-  own error page in place of the page. A Scrape action then returned that page's HTML, and the
-  session returned it as the final HTML with `chrome-error://chromewebdata/` as the final URL.
-  Now a Scrape action on that page fails, and a session that ends on it fails. Both errors are
-  browser errors that name the URL Chrome could not show, with its credentials redacted. (#345)
-
-- **Interact dropped an SSRF refusal when the navigation succeeded.** On the Chromiumoxide
-  backend, a page that navigated to an address the SSRF policy refuses during the wait, such as
-  `169.254.169.254`, left Chrome's error page, and the session did not report the refusal. Now
-  the session fails with the SSRF policy error, which names the refused URL with its credentials
-  redacted. A refused subresource still does not fail a page that loaded. (#369)
 
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical

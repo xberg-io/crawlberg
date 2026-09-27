@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
-use crate::chrome_frame::committed_frame;
+use crate::chrome_frame::{CommittedDocument, committed_document, read_one_document};
 use crate::error::CrawlError;
 use crate::net::redact_url_credentials;
 use crate::ssrf_intercept::InterceptOutcome;
@@ -120,11 +120,17 @@ async fn run_with_browser(
 
         let (action_results, screenshot) = run_actions(&page, actions).await;
 
-        ensure_not_error_page(&page).await?;
-        let final_html = page
-            .content()
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
+        let page_ref = &page;
+        let final_html = read_site_content(
+            || committed_document(page_ref),
+            move || async move {
+                page_ref
+                    .content()
+                    .await
+                    .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))
+            },
+        )
+        .await?;
         let final_url = evaluate_json(&page, "location.href")
             .await
             .ok()
@@ -353,27 +359,37 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             Ok(ActionData::data(value))
         }
         PageAction::Scrape => {
-            let html = page
-                .content()
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))?;
-            ensure_not_error_page(page).await?;
+            let html = read_site_content(
+                || committed_document(page),
+                move || async move {
+                    page.content()
+                        .await
+                        .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))
+                },
+            )
+            .await?;
             Ok(ActionData::data(json!({ "html": html })))
         }
     }
 }
 
-/// Fail when the main frame of `page` shows Chrome's own error page, which is never the site's
-/// content.
-async fn ensure_not_error_page(page: &chromiumoxide::Page) -> Result<(), CrawlError> {
-    error_page_verdict(committed_frame(page).await.map(|frame| frame.unreachable_url))
+/// Read the page with `read`, bound to one committed document by [`read_one_document`], and fail
+/// when that document is Chrome's own error page, which is never the site's content. A document
+/// that cannot be read fails, because a page that cannot be checked is not known to be the site's.
+async fn read_site_content<T, D, R>(read_document: impl FnMut() -> D, read: impl FnMut() -> R) -> Result<T, CrawlError>
+where
+    D: std::future::Future<Output = Result<CommittedDocument, CrawlError>>,
+    R: std::future::Future<Output = Result<T, CrawlError>>,
+{
+    let (value, document) = read_one_document(read_document, read).await?;
+    error_page_verdict(document.unreachable_url)?;
+    Ok(value)
 }
 
-/// Judge a read of the main frame's `unreachable_url`. A failed read fails, because a page that
-/// cannot be checked is not known to be the site's. The error for Chrome's error page names the
-/// URL Chrome could not show, with its credentials redacted.
-fn error_page_verdict(unreachable_url: Result<Option<String>, CrawlError>) -> Result<(), CrawlError> {
-    match unreachable_url? {
+/// Judge the main frame's `unreachable_url`. The error for Chrome's error page names the URL Chrome
+/// could not show, with its credentials redacted.
+fn error_page_verdict(unreachable_url: Option<String>) -> Result<(), CrawlError> {
+    match unreachable_url {
         Some(failed_url) => Err(CrawlError::browser_error(format!(
             "Chrome could not load {} and showed its own error page",
             redact_url_credentials(&failed_url)
@@ -616,25 +632,75 @@ mod tests {
         assert!(resolve_navigation_outcome(Ok(Ok(())), intercepted, Duration::from_secs(7)).is_ok());
     }
 
-    /// ~keep A scripted read: CDP offers no way to fail `Page.getFrameTree` while the page itself
-    /// ~keep still answers, so the failed read is tested at the verdict the call site feeds.
-    #[test]
-    fn a_failed_frame_read_fails_closed() {
-        let read = Err(CrawlError::browser_error(
-            "failed to read the committed document: closed",
-        ));
-
-        let error = error_page_verdict(read).expect_err("a page that cannot be checked must fail");
-
-        assert!(
-            error.to_string().contains("failed to read the committed document"),
-            "{error}"
-        );
+    fn committed(loader_id: &str, unreachable_url: Option<&str>) -> CommittedDocument {
+        CommittedDocument {
+            loader_id: loader_id.to_owned(),
+            unreachable_url: unreachable_url.map(str::to_owned),
+        }
     }
 
-    #[test]
-    fn chrome_s_error_page_fails_and_names_the_redacted_url() {
-        let error = error_page_verdict(Ok(Some("http://user:secret@127.0.0.1/dl".to_owned())))
+    /// Read a scripted page through [`read_site_content`]. `documents[k]` is the document the page
+    /// has committed after `k` content reads, and `contents[k]` is what content read `k` returns,
+    /// so a commit lands between a content read and the document read that follows it.
+    ///
+    /// ~keep Scripted because the window between the two CDP calls is one round trip: a real page
+    /// ~keep cannot be made to commit inside it on demand.
+    async fn read_scripted_page(documents: &[CommittedDocument], contents: &[&str]) -> Result<String, CrawlError> {
+        let reads = std::cell::Cell::new(0_usize);
+        read_site_content(
+            || {
+                let document = documents.get(reads.get()).cloned();
+                std::future::ready(document.ok_or_else(|| CrawlError::browser_error("no scripted document")))
+            },
+            || {
+                let read = reads.get();
+                reads.set(read + 1);
+                let content = contents.get(read).map(|content| (*content).to_owned());
+                std::future::ready(content.ok_or_else(|| CrawlError::browser_error("no scripted content")))
+            },
+        )
+        .await
+    }
+
+    const ERROR_PAGE_HTML: &str = "<html><body>This site can't be reached</body></html>";
+
+    /// The error page is committed when the read starts, and the site's document commits before
+    /// the page is checked. The error page's HTML must never come back as the page's content.
+    #[tokio::test]
+    async fn an_error_page_read_before_a_new_document_commits_is_never_the_content() {
+        let error_page = committed("ERROR", Some("http://127.0.0.1/dl"));
+        let site = committed("SITE", None);
+
+        let content = read_scripted_page(&[error_page, site.clone(), site], &[ERROR_PAGE_HTML, "<p>site</p>"])
+            .await
+            .expect("the site's document is committed after the second read");
+
+        assert_eq!(content, "<p>site</p>");
+    }
+
+    /// The site's document is read, and the error page commits before the page is checked. The
+    /// read is repeated on the error page, which then fails.
+    #[tokio::test]
+    async fn an_error_page_committed_during_the_read_fails_the_read() {
+        let site = committed("SITE", None);
+        let error_page = committed("ERROR", Some("http://127.0.0.1/dl"));
+
+        let error = read_scripted_page(
+            &[site, error_page.clone(), error_page],
+            &["<p>site</p>", ERROR_PAGE_HTML],
+        )
+        .await
+        .expect_err("the read belongs to Chrome's error page");
+
+        assert!(error.to_string().contains("error page"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn chrome_s_error_page_fails_and_names_the_redacted_url() {
+        let error_page = committed("ERROR", Some("http://user:secret@127.0.0.1/dl"));
+
+        let error = read_scripted_page(&[error_page.clone(), error_page], &[ERROR_PAGE_HTML])
+            .await
             .expect_err("Chrome's error page must fail");
 
         let message = error.to_string();
@@ -644,8 +710,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_page_with_no_unreachable_url_passes() {
-        assert!(error_page_verdict(Ok(None)).is_ok());
+    #[tokio::test]
+    async fn a_page_that_cannot_be_checked_fails_closed() {
+        let error = read_scripted_page(&[], &[ERROR_PAGE_HTML])
+            .await
+            .expect_err("a page that cannot be checked must fail");
+
+        assert!(error.to_string().contains("no scripted document"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn the_site_s_document_is_the_content() {
+        let site = committed("SITE", None);
+
+        let content = read_scripted_page(&[site.clone(), site], &["<p>site</p>"]).await;
+
+        assert_eq!(content.ok().as_deref(), Some("<p>site</p>"));
     }
 }

@@ -365,10 +365,7 @@ async fn chromiumoxide_interact_fails_on_a_refused_navigation_during_the_wait() 
 }
 
 /// A refused iframe document must not fail the session: only a refused main-frame navigation
-/// does (rev365b finding 1). The main frame is read once, when interception starts
-/// (`ssrf_intercept.rs:99`); with that read forced to unknown, every refused document counts as
-/// a navigation, so this iframe would fail the session too, and the PR's own tests do not cover
-/// the difference.
+/// does.
 #[cfg(feature = "browser-chromiumoxide")]
 #[tokio::test]
 async fn chromiumoxide_interact_succeeds_with_a_refused_iframe() {

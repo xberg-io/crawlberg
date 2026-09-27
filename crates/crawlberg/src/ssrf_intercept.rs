@@ -61,11 +61,25 @@ impl SsrfInterceptGuard {
 }
 
 /// Whether a request of `resource_type` from `frame` loads the document of the main frame.
+fn is_main_frame_document(frame: &FrameId, resource_type: &ResourceType, main_frame: &FrameId) -> bool {
+    *resource_type == ResourceType::Document && main_frame == frame
+}
+
+/// The main frame a refused navigation is told apart by, or an error naming why it is unknown.
 ///
-/// ~keep An unknown main frame counts the document of any frame, so a refused navigation is
-/// ~keep never mistaken for a refused subresource.
-fn is_main_frame_document(frame: &FrameId, resource_type: &ResourceType, main_frame: Option<&FrameId>) -> bool {
-    *resource_type == ResourceType::Document && main_frame.is_none_or(|main| main == frame)
+/// ~keep Without it, a refused navigation of the page cannot be told from a refused iframe
+/// ~keep document. Counting every document as a navigation would fail a page for a refused iframe,
+/// ~keep and counting none would keep Chrome's error page, so an unknown main frame fails instead.
+fn require_main_frame(resolved: Result<Option<FrameId>, String>) -> Result<FrameId, CrawlError> {
+    match resolved {
+        Ok(Some(frame)) => Ok(frame),
+        Ok(None) => Err(CrawlError::browser_error(
+            "cannot check navigations against the SSRF policy: the page reports no main frame".to_owned(),
+        )),
+        Err(error) => Err(CrawlError::browser_error(format!(
+            "cannot check navigations against the SSRF policy: failed to read the page's main frame: {error}"
+        ))),
+    }
 }
 
 /// Decide whether an intercepted request URL is permitted by the SSRF policy.
@@ -87,6 +101,8 @@ pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     policy: &SsrfPolicy,
 ) -> Result<SsrfInterceptGuard, CrawlError> {
+    let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
+
     let mut events = page
         .event_listener::<EventRequestPaused>()
         .await
@@ -96,7 +112,6 @@ pub(crate) async fn start_ssrf_interception(
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to enable request interception: {e}")))?;
 
-    let main_frame = page.mainframe().await.ok().flatten();
     let state = Arc::new(Mutex::new(InterceptOutcome::default()));
     let listener_page = page.clone();
     let listener_policy = policy.clone();
@@ -114,7 +129,7 @@ pub(crate) async fn start_ssrf_interception(
                 Err(reason) => {
                     if let Ok(mut state) = listener_state.lock() {
                         if state.blocked_navigation.is_none()
-                            && is_main_frame_document(&event.frame_id, &event.resource_type, main_frame.as_ref())
+                            && is_main_frame_document(&event.frame_id, &event.resource_type, &main_frame)
                         {
                             state.blocked_navigation = Some((request_url.clone(), reason.clone()));
                         }
@@ -143,7 +158,9 @@ mod tests {
     //! Fetch interception. These cover the security-critical verdict (the CDP
     //! plumbing around it is thin glue) and stay hermetic by using literal-IP
     //! and scheme rejections that require no DNS resolution or network.
-    use super::{FrameId, ResourceType, is_main_frame_document, ssrf_verdict, start_ssrf_interception};
+    use super::{
+        FrameId, ResourceType, is_main_frame_document, require_main_frame, ssrf_verdict, start_ssrf_interception,
+    };
     use crate::net::ssrf::SsrfPolicy;
     use tokio_stream::StreamExt;
 
@@ -194,13 +211,13 @@ mod tests {
     #[test]
     fn a_main_frame_document_is_a_navigation() {
         let main = FrameId::new("MAIN");
-        assert!(is_main_frame_document(&main, &ResourceType::Document, Some(&main)));
+        assert!(is_main_frame_document(&main, &ResourceType::Document, &main));
     }
 
     #[test]
     fn a_subresource_of_the_main_frame_is_not_a_navigation() {
         let main = FrameId::new("MAIN");
-        assert!(!is_main_frame_document(&main, &ResourceType::Image, Some(&main)));
+        assert!(!is_main_frame_document(&main, &ResourceType::Image, &main));
     }
 
     #[test]
@@ -209,17 +226,35 @@ mod tests {
         assert!(!is_main_frame_document(
             &FrameId::new("CHILD"),
             &ResourceType::Document,
-            Some(&main)
+            &main
         ));
     }
 
     #[test]
-    fn any_document_is_a_navigation_when_the_main_frame_is_unknown() {
-        assert!(is_main_frame_document(
-            &FrameId::new("CHILD"),
-            &ResourceType::Document,
-            None
-        ));
+    fn a_resolved_main_frame_is_the_frame_navigations_are_told_apart_by() {
+        let frame = require_main_frame(Ok(Some(FrameId::new("MAIN")))).expect("a resolved frame must be returned");
+        assert_eq!(frame, FrameId::new("MAIN"));
+    }
+
+    #[test]
+    fn a_page_that_reports_no_main_frame_is_refused() {
+        let error = require_main_frame(Ok(None))
+            .expect_err("without a main frame every refused document would count as a navigation");
+        assert_eq!(
+            error.to_string(),
+            "browser: cannot check navigations against the SSRF policy: the page reports no main frame"
+        );
+    }
+
+    #[test]
+    fn a_main_frame_that_cannot_be_read_is_refused() {
+        let error = require_main_frame(Err("channel closed".to_owned()))
+            .expect_err("a failed main-frame read must not count every document as a navigation");
+        assert_eq!(
+            error.to_string(),
+            "browser: cannot check navigations against the SSRF policy: failed to read the page's main frame: \
+             channel closed"
+        );
     }
 
     /// Launches a minimal headless Chrome for the interception test below, returning `None`
@@ -282,12 +317,10 @@ mod tests {
     }
 
     /// The first refused main-frame navigation is the one the caller learns about, even when a
-    /// second refused navigation follows before `finish` is called (rev365b finding 2,
-    /// `ssrf_intercept.rs:116`). Two sequential `goto()` calls on the one guard, not two
-    /// navigations racing inside one page load: the ordering the guard's `is_none()` check
-    /// depends on has to be certain for the assertion to mean anything, which is why the
-    /// reviewer's own two-navigation browser probe (two JS-triggered navigations racing each
-    /// other) came back non-deterministic.
+    /// second refused navigation follows before `finish` is called. Two sequential `goto()` calls
+    /// on the one guard, not two navigations racing inside one page load: the ordering the
+    /// first-wins check depends on has to be certain for the assertion to mean anything, and two
+    /// navigations a page starts itself race each other.
     #[tokio::test]
     async fn the_first_refused_navigation_is_kept_over_a_second() {
         const TEST_NAME: &str = "the_first_refused_navigation_is_kept_over_a_second";
