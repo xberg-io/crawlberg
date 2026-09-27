@@ -15,7 +15,7 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeBuilder, TreeBuilderOpts, TreeSink};
 use html5ever::{Attribute, LocalName, QualName, TokenizerResult, local_name, ns};
-use memchr::{memchr, memchr_iter, memchr2_iter};
+use memchr::{memchr, memchr_iter, memchr2_iter, memmem};
 
 /// What an HTML parser reads in a document.
 pub(super) struct Scan<'h> {
@@ -103,6 +103,7 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         open: Cell::new(None),
         raw_text: RefCell::new(Vec::new()),
         tokens: Cell::new(0),
+        cdata_asked: Cell::new(false),
     };
     let tokenizer = Tokenizer::new(sink, TokenizerOpts::default());
     let input = BufferQueue::default();
@@ -112,7 +113,8 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         while from < piece.end {
             let tokens = tokenizer.sink.tokens.get();
             let mut text = tokenizer.sink.text.borrow_mut();
-            let until = bound.follow(source, from..piece.end, tokens, &mut text);
+            let cdata_asked = tokenizer.sink.cdata_asked.take();
+            let until = bound.follow(source, from..piece.end, tokens, cdata_asked, &mut text);
             input.push_back(StrTendril::from(&text[from..until]));
             drop(text);
             tokenizer.sink.piece.set(from..until);
@@ -216,13 +218,17 @@ struct TagRun {
 ///
 /// ~keep html5ever does not report its state, so the tag is followed through its attribute
 /// ~keep states from the only `<` that can open one: the first `<` html5ever consumes after a
-/// ~keep token (or after an empty end tag `</>`, which emits none). In the data state every
-/// ~keep other `<` emits a token, and inside a comment, a doctype or a tag the `<` that opened it
-/// ~keep came first. From a tag's `<` to its `>` html5ever emits only parse errors, so a token
-/// ~keep emitted since shows that the `<` opened no tag, as in raw text, and the run is dropped.
-/// ~keep The overwrite starts only once html5ever has read every byte before it without a
-/// ~keep token, and it ends at the `>` where the run ends, which is the `>` where html5ever ends
-/// ~keep the tag, past any `>` inside a quoted value. Spaces keep the byte length.
+/// ~keep token, or after an empty end tag `</>`, which emits none. In the data state every other
+/// ~keep `<` emits a token, and inside a comment, a doctype or a tag the `<` that opened it came
+/// ~keep first. A CDATA section in SVG or MathML emits a token at a NUL and stays open, and the
+/// ~keep `<` after it opens nothing and emits nothing, so no run starts inside one: html5ever
+/// ~keep says when it opens one, and it ends at the first `]]>`. From a tag's `<` to its `>`
+/// ~keep html5ever emits only parse errors, so a token emitted since shows that the `<` opened
+/// ~keep no tag, as in raw text, and the run is dropped. The overwrite starts only once
+/// ~keep html5ever has read every byte before it without a token, and it ends at the `>` where
+/// ~keep the run ends, which is the `>` where html5ever ends the tag, past any `>` inside a
+/// ~keep quoted value. A `/` the run reads as the start of a self-closing `/>` is kept, so the
+/// ~keep tag stays self-closing. Spaces keep the byte length.
 #[derive(Default)]
 struct AttributeBound {
     run: Option<TagRun>,
@@ -232,21 +238,43 @@ struct AttributeBound {
     after_lt: bool,
     /// How many tokens html5ever had emitted after it consumed the last `<`, `None` after `</>`.
     tokens_at_lt: Option<usize>,
+    /// Where the last `<` is.
+    lt_at: usize,
+    /// Where the CDATA section html5ever is in ends, just past its `]]>`.
+    cdata_end: Option<usize>,
 }
 
 impl AttributeBound {
-    /// Follow `range` of `source` before it is fed, when html5ever has emitted `tokens` tokens,
-    /// and overwrite in `text` what is past the limit. Returns where the part to feed now ends:
-    /// the end of `range`, or the start of an overwrite, which waits until html5ever has read
-    /// the bytes before it. A `<` is always a range of its own.
-    fn follow(&mut self, source: &str, range: Range<usize>, tokens: usize, text: &mut Cow<'_, str>) -> usize {
+    /// Follow `range` of `source` before it is fed, when html5ever has emitted `tokens` tokens
+    /// and, with `cdata_asked`, has asked whether a CDATA section may open, and overwrite in
+    /// `text` what is past the limit. Returns where the part to feed now ends: the end of
+    /// `range`, or the start of an overwrite, which waits until html5ever has read the bytes
+    /// before it. A `<` is always a range of its own.
+    fn follow(
+        &mut self,
+        source: &str,
+        range: Range<usize>,
+        tokens: usize,
+        cdata_asked: bool,
+        text: &mut Cow<'_, str>,
+    ) -> usize {
+        let bytes = source.as_bytes();
+        if cdata_asked && bytes[self.lt_at..].starts_with(b"<![CDATA[") {
+            let content = self.lt_at + b"<![CDATA[".len();
+            self.cdata_end = Some(
+                memmem::find(&bytes[content..], b"]]>").map_or(bytes.len(), |offset| content + offset + b"]]>".len()),
+            );
+        }
+        if self.cdata_end.is_some_and(|end| range.start >= end) {
+            self.cdata_end = None;
+        }
         if self.run.is_some_and(|run| run.tokens != tokens) {
             debug_assert!(!self.overwriting, "html5ever emitted a token inside an overwritten tag");
             self.run = None;
             self.overwriting = false;
         }
         if std::mem::take(&mut self.after_lt) {
-            if self.run.is_none() && self.tokens_at_lt != Some(tokens) {
+            if self.run.is_none() && self.cdata_end.is_none() && self.tokens_at_lt != Some(tokens) {
                 self.run = Some(TagRun {
                     state: TagState::Open,
                     attributes: 0,
@@ -255,7 +283,6 @@ impl AttributeBound {
             }
             self.tokens_at_lt = Some(tokens);
         }
-        let bytes = source.as_bytes();
         let mut overwritten: Option<Range<usize>> = None;
         let mut at = range.start;
         while let Some(mut run) = self.run
@@ -290,20 +317,41 @@ impl AttributeBound {
                 }
             }
             if self.overwriting {
-                overwritten.get_or_insert(at..at).end = at + 1;
+                if matches!(
+                    self.run,
+                    Some(TagRun {
+                        state: TagState::SelfClosing,
+                        ..
+                    })
+                ) && bytes[at] == b'/'
+                {
+                    if let Some(overwritten) = overwritten.take() {
+                        overwrite(text, overwritten);
+                    }
+                } else {
+                    overwritten.get_or_insert(at..at).end = at + 1;
+                }
             }
             at += 1;
         }
-        // ~keep An overwrite starts where an attribute starts, after an ASCII space, `/`, `=` or
-        // ~keep quote, or at a range's start, and ends at a `>` or a range's end, so it is on
-        // ~keep character boundaries.
         if let Some(overwritten) = overwritten {
-            text.to_mut()
-                .replace_range(overwritten.clone(), &" ".repeat(overwritten.len()));
+            overwrite(text, overwritten);
         }
-        self.after_lt = &bytes[range.clone()] == b"<";
+        if &bytes[range.clone()] == b"<" {
+            self.after_lt = true;
+            self.lt_at = range.start;
+        }
         range.end
     }
+}
+
+/// Overwrite `range` of `text` with spaces.
+///
+/// ~keep An overwrite starts where an attribute starts, after an ASCII space, `/`, `=` or quote,
+/// ~keep or at a range's start, and ends at a `/`, a `>` or a range's end, so it is on character
+/// ~keep boundaries.
+fn overwrite(text: &mut Cow<'_, str>, range: Range<usize>) {
+    text.to_mut().replace_range(range.clone(), &" ".repeat(range.len()));
 }
 
 /// How many leading bytes of `rest` keep a tag in `state` with no attribute started.
@@ -366,6 +414,8 @@ struct Recorder<'h> {
     raw_text: RefCell<Vec<Range<usize>>>,
     /// How many tokens but parse errors the tokenizer has emitted.
     tokens: Cell<usize>,
+    /// Whether the tokenizer asked if a CDATA section may open here, and the answer was yes.
+    cdata_asked: Cell<bool>,
 }
 
 impl Recorder<'_> {
@@ -500,7 +550,11 @@ impl TokenSink for Recorder<'_> {
     }
 
     fn adjusted_current_node_present_but_not_in_html_namespace(&self) -> bool {
-        self.tree.adjusted_current_node_present_but_not_in_html_namespace()
+        let foreign = self.tree.adjusted_current_node_present_but_not_in_html_namespace();
+        if foreign {
+            self.cdata_asked.set(true);
+        }
+        foreign
     }
 }
 
@@ -908,6 +962,77 @@ mod tests {
             .map(|tag| (tag.name.to_owned(), tag.attrs.len()))
             .collect();
         assert_eq!(tags, [("div".to_owned(), ATTRIBUTE_LIMIT), ("a".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn should_leave_a_cdata_section_unchanged_even_after_a_nul() {
+        // ~keep html5ever emits a token at a NUL inside a CDATA section and stays in it, so the
+        // ~keep `<` after the NUL is the first after a token and still opens no tag.
+        let wide = attributes(3 * ATTRIBUTE_LIMIT, "");
+        for cdata in [
+            format!("<![CDATA[\0<a{wide} ]]>"),
+            format!("<![CDATA[\0<a{wide}>t]]>"),
+            format!("<![CDATA[<a{wide} ]]>"),
+        ] {
+            let html = format!("<svg>{cdata}</svg><script>var s=\"<a href='/in'>\";</script><p>after");
+            let read = scan(&html, true, |name| name == "p");
+            assert!(
+                matches!(read.text, Cow::Borrowed(_)),
+                "CDATA text is never overwritten: {}",
+                &cdata[..12]
+            );
+            assert_eq!(read.raw_text.len(), 1, "the script after the CDATA section is raw text");
+            assert_eq!(read.tags.iter().count(), 1, "the <p> after it is read");
+        }
+    }
+
+    #[test]
+    fn should_bound_a_wide_tag_after_a_cdata_section() {
+        let wide = attributes(3 * ATTRIBUTE_LIMIT, "");
+        for cdata in ["<![CDATA[]]>", "<![CDATA[\0x]]>", "<![CDATA[x]]]>"] {
+            let html = format!("<svg>{cdata}<g{wide}><a href=y>");
+            let read = scan(&html, true, |name| name == "g" || name == "a");
+            let tags: Vec<_> = read
+                .tags
+                .iter()
+                .map(|tag| (tag.name.to_owned(), tag.attrs.len()))
+                .collect();
+            assert_eq!(
+                tags,
+                [("g".to_owned(), ATTRIBUTE_LIMIT), ("a".to_owned(), 1)],
+                "after {cdata:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_keep_a_wide_tag_self_closing() {
+        for close in ["/>", "//>", " / />"] {
+            let tag = format!("<title{}{close}", attributes(3 * ATTRIBUTE_LIMIT, ""));
+            let html = format!("<svg>{tag}<style><a href=x></style></svg>");
+            let read = scan(&html, true, |name| name == "title" || name == "a");
+            let tags: Vec<_> = read
+                .tags
+                .iter()
+                .map(|tag| (tag.name.to_owned(), tag.self_closing, tag.attrs.len()))
+                .collect();
+            assert_eq!(
+                tags,
+                [("title".to_owned(), true, ATTRIBUTE_LIMIT), ("a".to_owned(), false, 1)],
+                "{close:?}: the title closes itself, so the SVG <style> is markup"
+            );
+            assert!(read.text[..5 + tag.len()].ends_with('>'), "the tag ends where it did");
+        }
+        let html = format!(
+            "<svg><title{} x=a/><style><a href=x>",
+            attributes(3 * ATTRIBUTE_LIMIT, "")
+        );
+        let read = scan(&html, true, |name| name == "title");
+        let title = read.tags.iter().next().expect("the title is read");
+        assert!(
+            !title.self_closing,
+            "a `/` inside an unquoted value does not close the tag"
+        );
     }
 
     #[test]

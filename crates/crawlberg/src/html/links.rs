@@ -138,6 +138,24 @@ mod tests {
     }
 
     #[test]
+    fn reads_links_around_wide_foreign_content_as_the_html_parser_does() {
+        let wide: String = (0..5_000).map(|i| format!(" a{i}")).collect();
+        let html = format!(
+            r#"<svg><![CDATA[{nul}<a{wide} ]]></svg><script>var s="<a href='/in-script'>";</script><svg><title{wide}/><style><a href="/in-svg-style"></style></svg>"#,
+            nul = '\0'
+        );
+        let urls: Vec<_> = extract(&html, "https://example.com/")
+            .into_iter()
+            .map(|link| link.url)
+            .collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/in-svg-style"],
+            "script text is not a link, and an SVG <style> after a self-closed <title> is markup"
+        );
+    }
+
+    #[test]
     fn resolves_protocol_relative_urls_to_the_base_scheme() {
         let html = r#"<a href="//cdn.example/x.js">script</a>"#;
         let links = extract(html, "https://example.com/page");
