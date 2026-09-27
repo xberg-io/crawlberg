@@ -6,6 +6,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and

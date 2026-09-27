@@ -541,8 +541,9 @@ mod tests {
     }
 
     /// ~keep A guard, not evidence the fix works: it passes with the pre-fix substring parse too.
-    /// It exists to catch the plausible mis-implementation of reading any leading `key:` as a
-    /// crawler name, which would discard the whole value's directives.
+    /// It exists to catch the plausible mis-implementation of reading the text before the first
+    /// `:` as a crawler name even when it holds a comma, which would discard the whole value's
+    /// directives. The next test covers a value-bearing key in first place.
     #[tokio::test]
     async fn scrape_reads_a_directive_beside_a_value_bearing_one() {
         let mut resp = response("text/html", "<html><body>plain</body></html>");
@@ -558,6 +559,24 @@ mod tests {
         assert!(
             result.nofollow_detected,
             "`unavailable_after` names a directive, not a crawler, so the value still binds us"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_a_directive_after_a_leading_value_bearing_one() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["unavailable_after: 25 Jun 2010 15:00:00 PST, nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.nofollow_detected,
+            "a leading `unavailable_after:` is a directive, not a crawler name, so the trailing nofollow binds us"
         );
     }
 
