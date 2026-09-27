@@ -16,19 +16,26 @@ use crate::net::userinfo;
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
 
 /// A caller's URL after admission: parsed, and without userinfo.
+///
+/// The text is the caller's own string when it carried no userinfo, so a URL without
+/// credentials reaches results exactly as the caller wrote it. Otherwise it is the parsed URL
+/// with the userinfo removed.
 #[derive(Debug, Clone)]
-pub(crate) struct SeedUrl(Url);
+pub(crate) struct SeedUrl {
+    url: Url,
+    text: String,
+}
 
 impl SeedUrl {
     /// The admitted URL as a string.
     pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
+        &self.text
     }
 
     /// The admitted URL.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn url(&self) -> &Url {
-        &self.0
+        &self.url
     }
 }
 
@@ -38,13 +45,16 @@ impl SeedUrl {
     pub(crate) fn for_test(url: &str) -> Self {
         let url = Url::parse(url).expect("test URL must parse");
         assert!(!userinfo::has_userinfo(&url), "a SeedUrl never carries userinfo");
-        Self(url)
+        Self {
+            text: url.as_str().to_owned(),
+            url,
+        }
     }
 }
 
 impl std::fmt::Display for SeedUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0.as_str())
+        f.write_str(&self.text)
     }
 }
 
@@ -69,6 +79,11 @@ impl CrawlEngine {
         let parsed =
             Url::parse(raw).map_err(|e| CrawlError::ssrf_violation(UNPARSEABLE_URL, format!("invalid URL: {e}")))?;
         let (clean, basic) = userinfo::split(parsed);
+        let text = if basic.is_some() {
+            clean.as_str().to_owned()
+        } else {
+            raw.to_owned()
+        };
         if basic.is_some() && self.config.auth.is_some() {
             return Err(CrawlError::invalid_config(
                 "the URL carries credentials and `auth` is also set; use only one of them",
@@ -76,7 +91,7 @@ impl CrawlEngine {
         }
         let mut engine = self.clone();
         engine.config.credential_scope = CredentialScope::for_seed(&clean, basic);
-        Ok((engine, SeedUrl(clean)))
+        Ok((engine, SeedUrl { url: clean, text }))
     }
 }
 
@@ -106,6 +121,17 @@ mod tests {
             engine.config.credential_scope.is_none(),
             "the caller's engine is unchanged"
         );
+    }
+
+    #[test]
+    fn admission_keeps_a_url_without_userinfo_as_the_caller_wrote_it() {
+        let engine = engine_with(CrawlConfig::default());
+        let (_, seed) = engine.admit("http://example.com").expect("URL must be admitted");
+        assert_eq!(seed.as_str(), "http://example.com");
+        let (_, seed) = engine
+            .admit("http://user:secret@example.com")
+            .expect("URL must be admitted");
+        assert_eq!(seed.as_str(), "http://example.com/");
     }
 
     #[test]
