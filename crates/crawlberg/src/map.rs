@@ -129,6 +129,7 @@ async fn sitemap_urls_from_well_known(
     process_sitemap_response(
         &SitemapDocument {
             url: &sitemap_url,
+            final_url: &sitemap_resp.final_url,
             body: &sitemap_resp.body,
             body_bytes: &sitemap_resp.body_bytes,
             content_type: &sitemap_resp.content_type,
@@ -155,7 +156,7 @@ async fn urls_from_direct_response(
         || url.to_lowercase().ends_with(".gz")
         || (resp.body_bytes.len() >= 2 && resp.body_bytes[0] == GZIP_MAGIC[0] && resp.body_bytes[1] == GZIP_MAGIC[1]);
     if is_gzip && let Ok(decompressed) = decompress_gzip(&resp.body_bytes) {
-        let urls = collect_urlset_entries(url, &decompressed, context, config.map_limit);
+        let urls = collect_urlset_entries(&resp.final_url, &decompressed, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -165,7 +166,7 @@ async fn urls_from_direct_response(
         if is_sitemap_index(&resp.body) {
             return fetch_sitemap_tree(url, context, config.map_limit).await;
         }
-        let urls = collect_urlset_entries(url, &resp.body, context, config.map_limit);
+        let urls = collect_urlset_entries(&resp.final_url, &resp.body, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -915,5 +916,205 @@ mod tests {
             "a <loc> that does not parse must still be dropped when the seed URL carries credentials"
         );
         assert_logged_without_secret(&fields, "hunter2", "127.0.0.1");
+    }
+
+    async fn mount_redirect(mock: &MockServer, route: &str, location: &str) {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(301).append_header("location", location))
+            .mount(mock)
+            .await;
+    }
+
+    fn sitemap_index(child_locs: &[&str]) -> String {
+        let mut body =
+            String::from(r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
+        for loc in child_locs {
+            body.push_str(&format!("<sitemap><loc>{loc}</loc></sitemap>"));
+        }
+        body.push_str("</sitemapindex>");
+        body
+    }
+
+    /// The addresses `map()` returns for `url`.
+    async fn map_urls(url: &str, config: &CrawlConfig) -> Vec<String> {
+        let result = map(url, config).await.expect("map should succeed");
+        result.urls.into_iter().map(|u| u.url).collect()
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_urlset_loc_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/sitemap.xml").await;
+        mount_body(
+            &mock,
+            "/nested/sitemap.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/nested/page")],
+            "a relative <loc> must resolve against the URL that served the sitemap, not the one requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_index_child_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/index.xml").await;
+        mount_body(
+            &mock,
+            "/nested/index.xml",
+            "application/xml",
+            sitemap_index(&["child.xml"]),
+        )
+        .await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+        mount_body(&mock, "/", "text/html", "<html><body></body></html>".to_owned()).await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-child".to_owned()],
+            "a relative index child must resolve against the URL that served the index"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_keeps_absolute_index_children_on_the_host_the_index_redirected_to() {
+        let requested = MockServer::start().await;
+        let serving = MockServer::start().await;
+        let requested_base = requested.uri();
+        // ~keep A second host name for the same loopback address, so the redirect crosses hosts.
+        let serving_base = serving.uri().replace("127.0.0.1", "localhost");
+        mount_redirect(&requested, "/sitemap.xml", &format!("{serving_base}/index.xml")).await;
+        mount_body(
+            &serving,
+            "/index.xml",
+            "application/xml",
+            sitemap_index(&["https://example.com/child.xml"]),
+        )
+        .await;
+        mount_body(
+            &serving,
+            "/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-serving-host".to_owned()]),
+        )
+        .await;
+        mount_body(
+            &requested,
+            "/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-requested-host".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&requested_base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-serving-host".to_owned()],
+            "an absolute index child must be fetched from the host that served the index"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_redirected_robots_sitemap_against_the_url_after_the_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {base}/custom.xml\n"),
+        )
+        .await;
+        mount_redirect(&mock, "/custom.xml", "/nested/custom.xml").await;
+        mount_body(
+            &mock,
+            "/nested/custom.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&base, &config).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_redirected_index_child_against_the_url_after_the_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/sitemap.xml", "application/xml", sitemap_index(&["/child.xml"])).await;
+        mount_redirect(&mock, "/child.xml", "/nested/child.xml").await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_urlset_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/feed", "/nested/feed.xml").await;
+        mount_body(
+            &mock,
+            "/nested/feed.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_gzip_urlset_against_the_url_after_a_redirect() {
+        use std::io::Write as _;
+
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(urlset(&["page".to_owned()]).as_bytes())
+            .expect("gzip write");
+        let gzipped = encoder.finish().expect("gzip finish");
+        mount_redirect(&mock, "/feed", "/nested/feed.xml.gz").await;
+        mount_bytes(&mock, "/nested/feed.xml.gz", "application/octet-stream", gzipped).await;
+
+        let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
     }
 }

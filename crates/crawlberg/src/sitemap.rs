@@ -259,6 +259,7 @@ pub(crate) async fn fetch_sitemap_tree(
     process_sitemap_response(
         &SitemapDocument {
             url: sitemap_url,
+            final_url: &resp.final_url,
             body: &resp.body,
             body_bytes: &resp.body_bytes,
             content_type: &resp.content_type,
@@ -296,7 +297,10 @@ impl<'a> SitemapWalkContext<'a> {
 
 /// An already-fetched sitemap document: where it came from and what came back.
 pub(crate) struct SitemapDocument<'a> {
+    /// The URL the walk requested, and the key its visited set records.
     pub(crate) url: &'a str,
+    /// The URL that served the document after any redirects. Every `<loc>` resolves against it.
+    pub(crate) final_url: &'a str,
     pub(crate) body: &'a str,
     pub(crate) body_bytes: &'a [u8],
     pub(crate) content_type: &'a str,
@@ -357,8 +361,8 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
     }
 }
 
-/// Parse a urlset document fetched from `document_url`, keeping only entries the walk's
-/// filter accepts and stopping once `limit` of them have been collected.
+/// Parse a urlset document served from `document_url`, the URL after any redirects, keeping
+/// only entries the walk's filter accepts and stopping once `limit` of them have been collected.
 ///
 /// ~keep Each `<loc>` goes through the same resolver as sitemap-index children, without their
 /// ~keep host rewrite: an entry on another host is returned on that host, as before. The entry
@@ -439,6 +443,10 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
 /// `child_url` cannot be resolved against `sitemap_url` at all, which the caller treats the
 /// same as a child it could not fetch.
 ///
+/// ~keep `sitemap_url` is the URL that served the index after redirects, so an absolute child
+/// ~keep is rewritten onto the host that served the index, the same host a relative child
+/// ~keep resolves to. After a redirect to another host, that is the redirect's target host.
+///
 /// ~keep Every path parses `child_url` before it is fetched or used as a dedup key. When
 /// ~keep `sitemap_url` itself failed to parse (`base` is `None`), `resolve_redirect` still
 /// ~keep parses `child_url` on its own and refuses it if that fails too, instead of handing
@@ -482,6 +490,7 @@ async fn fetch_child_sitemap(
     Box::pin(process_sitemap_response_inner(
         &SitemapDocument {
             url: child_url,
+            final_url: &child_resp.final_url,
             body: &child_resp.body,
             body_bytes: &child_resp.body_bytes,
             content_type: &child_resp.content_type,
@@ -510,7 +519,7 @@ async fn process_sitemap_response_inner(
     let reached_limit = |len: usize| limit.is_some_and(|limit| len >= limit);
 
     if !is_sitemap_index(xml_body) {
-        return collect_urlset_entries(document.url, xml_body, context, limit);
+        return collect_urlset_entries(document.final_url, xml_body, context, limit);
     }
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
@@ -524,7 +533,7 @@ async fn process_sitemap_response_inner(
     }
 
     let child_urls = parse_sitemap_index(xml_body);
-    let base = Url::parse(document.url).ok();
+    let base = Url::parse(document.final_url).ok();
     let mut all_urls = Vec::new();
     for child_url in child_urls.iter().take(MAX_SITEMAP_INDEX_CHILDREN) {
         if reached_limit(all_urls.len()) {
@@ -533,7 +542,7 @@ async fn process_sitemap_response_inner(
         if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.url, child_url) else {
+        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.final_url, child_url) else {
             continue;
         };
 
@@ -603,6 +612,7 @@ mod tests {
     fn xml_document<'a>(url: &'a str, body: &'a str) -> SitemapDocument<'a> {
         SitemapDocument {
             url,
+            final_url: url,
             body,
             body_bytes: body.as_bytes(),
             content_type: "application/xml",

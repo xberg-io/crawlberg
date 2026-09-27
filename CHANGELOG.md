@@ -77,6 +77,12 @@ All notable changes to crawlberg are documented here.
   and used as the duplicate key. The fragment is now dropped there, so both addresses fetch
   and dedupe as one document. (#324)
 
+- **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
+  answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
+  `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
+  the sitemap's URL after redirects. An absolute index child is fetched from the host that served
+  the index, which after a redirect to another host is the redirect's target host. (#339)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
