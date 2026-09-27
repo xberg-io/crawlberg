@@ -4,6 +4,56 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Fixed
+
+- **An image embedded in the page copied its whole encoded data into the markdown.** An
+  `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
+  icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
+  and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
+  real URL is still used in its place. `fit_content` follows the same rule, and it now keeps
+  these `![icon](<>)` lines where it used to drop them. A `<video>`, `<audio>`, `<iframe>` or
+  `<source>` with a `data:` address no longer writes its payload either: a video or audio
+  element uses its nested `<source>` instead, and otherwise the markdown leaves out the
+  link. (#97)
+- **Link-shaped text in a page title was rewritten.** `<title>use <a href="x.html"> tags</title>`
+  got a full address in its front matter title, because the rewrite of relative links read the
+  title's text as markup. The contents of `<title>`, `<textarea>`, `<script>`, `<style>`,
+  `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>` and `<plaintext>` are text, as a
+  browser reads them, and now stay as written. A `<base href>` inside title text no longer
+  changes where the markdown's links resolve, and a `<!--` inside script text no longer leaves
+  the links and images after it untouched. (#102)
+- **The front matter showed character references in the base address.** A page with
+  `<base href="https://example.com/it&#x27;s/">` got `base: https://example.com/it&#x27;s/`. The
+  front matter now shows the decoded address, `https://example.com/it's/`. (#103)
+- **A `<graphic>` embedded in the page copied its whole encoded data into the markdown.** The
+  `data:` rule for `<img>` now covers the addresses of `<graphic>` too. (#113)
+- **Links, images and the base address were read from raw text, and a comment opener in raw text
+  hid the real markup after it.** A browser reads the contents of `script`, `style`, `title`,
+  `textarea`, `xmp`, `iframe`, `noembed`, `noframes` and `plaintext` as text. `tl` parses them as
+  markup, so `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+  `<base href>` inside title text changed the base for the whole page. In the other direction a
+  `<!--` in that text started a comment for the parser, which then swallowed every tag up to the
+  next `-->`: real links after it were missing from the links list altogether, not merely
+  mis-resolved. The `<` characters inside raw-text content are now masked before the page is
+  parsed, at the places an HTML parser finds that content, so link, image, feed, favicon,
+  heading, meta-tag and `<meta http-equiv="refresh">` extraction all see the document a browser
+  sees. Inside `svg` and `math` these elements are markup, as in a browser, except under svg's
+  `foreignObject`, `desc` and `title`; MathML's text integration points `mi`, `mo`, `mn`, `ms` and
+  `mtext`; and its `annotation-xml` HTML integration point. Link extraction reads `<noscript>` as
+  markup, as a browser without scripting does; the markdown reads it as text, as the converter
+  does. The base address is the first `<base href>` an HTML parser puts in the document, so one in
+  raw text or in `<template>` contents does not count. Title text and JSON-LD payloads are
+  unchanged unless they contain a literal `<`, which valid HTML writes as `&lt;`. (#124, #125,
+  #201)
+
+## [1.8.0] - 2026-09-27
+
+Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
+defects a green e2e suite could not see: the fixtures covering the affected behaviours passed with
+the bugs fully present, and the assertion vocabulary cannot express request counts or elapsed time
+at all, so the whole "how many requests did we send, and how long did we wait" class was invisible
+by construction.
+
 ### Upgrading
 
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
@@ -27,6 +77,74 @@ title: "Changelog"
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+
+Four changes can affect an existing setup:
+
+- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
+  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
+  relied on reaching a loopback or private address through `interact()` must now opt in
+  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
+
+- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
+  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
+  encrypted with a keychain-backed key and the mock keychain uses a different one.
+- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
+  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
+  versions. Older configurations still load unchanged.
+- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
+  originally discovered one, so it keys on where the content actually came from. This also feeds
+  `CrawlResult::unique_normalized_urls()`.
+
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
+
+- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
+  to `false`. The head values remain available on `PageMetadata`, which is populated independently
+  of the converter. (#64)
+- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
+  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
+  pattern anchored with `$` changes meaning once the query joins the text. (#61)
+- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
+  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
+  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
+  from the key. (#65)
+- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
+  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
+- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
+- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
+  many hops it took. (#62)
+- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
+  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
+  (#57)
+
 ### Fixed
 
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
@@ -37,6 +155,15 @@ title: "Changelog"
   declaration the vendored copy has and the canonical header does not still fails, because that
   means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
   copy is merely missing are reported as lag. (#162)
+
+- **A whitespace-only favicon `href` or image `src` reported the page as its own favicon or image.**
+  The guard was `is_empty()`, which is false for `"  "`, and resolving a whitespace-only reference
+  against a base yields the base itself, so `<link rel="icon" href="  ">`, `<img src="  ">` and a
+  blank `og:image`/`twitter:image` `content` all listed the page URL. Such an address is now
+  skipped, via a shared `is_blank_address` helper. Only ASCII whitespace counts as blank, because
+  HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
+  percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
+  they do not resolve at all. (#220)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
@@ -114,24 +241,19 @@ title: "Changelog"
   now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
   was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
 
-- **Links, images and the base address were read from raw text, and a comment opener in raw text
-  hid the real markup after it.** A browser reads the contents of `script`, `style`, `title`,
-  `textarea`, `xmp`, `iframe`, `noembed`, `noframes` and `plaintext` as text. `tl` parses them as
-  markup, so `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
+  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
+  element handling and parses the contents of these elements as markup, so
+  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
   `<base href>` inside title text changed the base for the whole page. In the other direction a
-  `<!--` in that text started a comment for the parser, which then swallowed every tag up to the
-  next `-->`: real links after it were missing from the links list altogether, not merely
-  mis-resolved. The `<` characters inside raw-text content are now masked before the page is
-  parsed, at the places an HTML parser finds that content, so link, image, feed, favicon,
-  heading, meta-tag and `<meta http-equiv="refresh">` extraction all see the document a browser
-  sees. Inside `svg` and `math` these elements are markup, as in a browser, except under svg's
-  `foreignObject`, `desc` and `title`; MathML's text integration points `mi`, `mo`, `mn`, `ms` and
-  `mtext`; and its `annotation-xml` HTML integration point. Link extraction reads `<noscript>` as
-  markup, as a browser without scripting does; the markdown reads it as text, as the converter
-  does. The base address is the first `<base href>` an HTML parser puts in the document, so one in
-  raw text or in `<template>` contents does not count. Title text and JSON-LD payloads are
-  unchanged unless they contain a literal `<`, which valid HTML writes as `&lt;`. (#124, #125,
-  #201)
+  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
+  every tag up to the next `-->`: real links after the script were missing from the links list
+  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
+  masked in the source before it is parsed — the point at which a browser stops reading markup —
+  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
+  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
+  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
+  `math` are left alone, because a browser parses those as markup too. (#124, #125)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
@@ -187,123 +309,13 @@ title: "Changelog"
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
-- **An image embedded in the page copied its whole encoded data into the markdown.** An
-  `<img>` whose address is a `data:` URL wrote the full payload into the text, so one inline
-  icon added kilobytes of unreadable characters. The markdown now keeps the image's alt text
-  and leaves the address empty, as in `![icon](<>)`. A lazy-load attribute or `srcset` with a
-  real URL is still used in its place. `fit_content` follows the same rule, and it now keeps
-  these `![icon](<>)` lines where it used to drop them. A `<video>`, `<audio>`, `<iframe>` or
-  `<source>` with a `data:` address no longer writes its payload either: a video or audio
-  element uses its nested `<source>` instead, and otherwise the markdown leaves out the
-  link. (#97)
-- **Link-shaped text in a page title was rewritten.** `<title>use <a href="x.html"> tags</title>`
-  got a full address in its front matter title, because the rewrite of relative links read the
-  title's text as markup. The contents of `<title>`, `<textarea>`, `<script>`, `<style>`,
-  `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>` and `<plaintext>` are text, as a
-  browser reads them, and now stay as written. A `<base href>` inside title text no longer
-  changes where the markdown's links resolve, and a `<!--` inside script text no longer leaves
-  the links and images after it untouched. (#102)
-- **The front matter showed character references in the base address.** A page with
-  `<base href="https://example.com/it&#x27;s/">` got `base: https://example.com/it&#x27;s/`. The
-  front matter now shows the decoded address, `https://example.com/it's/`. (#103)
-- **A `<graphic>` embedded in the page copied its whole encoded data into the markdown.** The
-  `data:` rule for `<img>` now covers the addresses of `<graphic>` too. (#113)
+- **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
+  matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
+  reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
+  common case, since RFC 4193 randomises the unique-local global id. Both prefixes are now matched
+  as ranges. These addresses were refused before and are refused now; only the reason string in the
+  error and the log field changes. (#205)
 
-### Added
-
-- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
-  the response bytes rather than the declared MIME type alone. The predicate receives the
-  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
-  decision `document_mime_types`/the built-in classification would have reached, so it can widen
-  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
-  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
-  decision is unchanged.
-
-  The predicate runs for every fetched response, an ordinary HTML page included, so one that
-  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
-  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
-  as the documents it is meant to admit. (#95)
-
-- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
-  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
-  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
-  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
-  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
-  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
-  addresses of `<graphic>`. Character references in an address are decoded first, so
-  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
-  `fit_content` can now drop a line of relative links that it kept before, the same way it
-  already treated absolute links. (#63)
-- **The markdown front matter showed the base address as written.** A page with
-  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
-  the same address that relative links resolve against. (#94)
-
-### Internal
-
-- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
-  conversion option that resolves relative addresses the same way the pre-pass above does, and the
-  caret requirement admits it on a routine `cargo update` with nothing to compile against and
-  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
-  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
-  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
-  pre-pass does. (#190)
-
-- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
-  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
-  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
-  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
-  closed as before. (#73)
-
-## [1.8.0] - 2026-09-25
-
-Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
-green e2e suite could not see: the fixtures covering the affected behaviours passed with the bugs
-fully present, and the assertion vocabulary cannot express request counts or elapsed time at all,
-so the whole "how many requests did we send, and how long did we wait" class was invisible by
-construction.
-
-### Upgrading
-
-Four changes can affect an existing setup:
-
-- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
-  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
-  relied on reaching a loopback or private address through `interact()` must now opt in
-  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
-
-- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
-  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
-  encrypted with a keychain-backed key and the mock keychain uses a different one.
-- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
-  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
-  versions. Older configurations still load unchanged.
-- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
-  originally discovered one, so it keys on where the content actually came from. This also feeds
-  `CrawlResult::unique_normalized_urls()`.
-
-### Added
-
-- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
-  to `false`. The head values remain available on `PageMetadata`, which is populated independently
-  of the converter. (#64)
-- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
-  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
-  pattern anchored with `$` changes meaning once the query joins the text. (#61)
-- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
-  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
-  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
-  from the key. (#65)
-- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
-  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
-- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
-- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
-  many hops it took. (#62)
-- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
-  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
-  (#57)
-
-### Fixed
 
 - **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
   host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
@@ -372,6 +384,22 @@ Four changes can affect an existing setup:
   entries are config or log files, one is generated, and the remaining two are the same defect in
   poly's parameter counting, which counts an attribute on a parameter as a parameter. Reported as
   Goldziher/poly#28.
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
+- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
+  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
+  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
+  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
+  closed as before. (#73)
 
 ## [1.7.2] - 2026-09-24
 
