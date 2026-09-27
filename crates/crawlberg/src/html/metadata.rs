@@ -221,7 +221,9 @@ pub(crate) fn detect_nofollow(dom: &VDom<'_>) -> bool {
 /// `Refresh` header value, read with the HTML "shared declarative refresh steps" and then cleaned by
 /// [`clean_url`](super::clean_url).
 ///
-/// Returns `None` when the value does not start with a delay, names no target, or names a blank one.
+/// Returns `None` when the value does not start with a delay, has something other than a separator
+/// after the delay, names no target, names a blank one, or names an absolute address whose scheme is not
+/// `http` or `https` (`mailto:`, `javascript:`, `data:` and so on), which the crawl cannot follow.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn refresh_target(value: &str) -> Option<Cow<'_, str>> {
     let rest = value.trim_ascii_start();
@@ -234,7 +236,11 @@ pub(crate) fn refresh_target(value: &str) -> Option<Cow<'_, str>> {
     }
     let rest = rest.trim_ascii_start();
     let rest = rest.strip_prefix([';', ',']).unwrap_or(rest).trim_ascii_start();
-    super::clean_url(Cow::Borrowed(refresh_url(rest)))
+    let target = super::clean_url(Cow::Borrowed(refresh_url(rest)))?;
+    match Url::parse(&target) {
+        Ok(absolute) if !matches!(absolute.scheme(), "http" | "https") => None,
+        _ => Some(target),
+    }
 }
 
 /// The address in what follows a refresh delay: after an optional `url=` label in any case, and
@@ -587,7 +593,7 @@ mod tests {
     /// A `u` that does not start a whole `url=` label is part of the address, quotes included.
     #[test]
     fn refresh_target_keeps_a_partial_url_label_as_the_address() {
-        assert_eq!(refresh_target("0; urn:x").as_deref(), Some("urn:x"));
+        assert_eq!(refresh_target("0; ur=/next").as_deref(), Some("ur=/next"));
         assert_eq!(refresh_target("0; url /next").as_deref(), Some("url /next"));
         assert_eq!(refresh_target("0; u'/next'").as_deref(), Some("u'/next'"));
     }
@@ -615,6 +621,11 @@ mod tests {
         assert_eq!(refresh_target("-1; url=/next"), None);
         assert_eq!(refresh_target("0x; url=/next"), None);
         assert_eq!(refresh_target(""), None);
+    }
+
+    /// A refresh with no target, or a blank one, reloads the page itself, which is no new address.
+    #[test]
+    fn refresh_target_is_none_for_a_refresh_of_the_page_itself() {
         assert_eq!(refresh_target("5"), None);
         assert_eq!(refresh_target("5; url="), None);
     }
@@ -624,5 +635,48 @@ mod tests {
     fn refresh_target_is_cleaned_by_the_url_rule() {
         assert_eq!(refresh_target("0; url= /next\u{A0}\n").as_deref(), Some("/next\u{A0}"));
         assert_eq!(refresh_target("0; url='\u{1}/next '").as_deref(), Some("/next"));
+    }
+
+    /// Whitespace may come between the delay and the `;` or `,` separator.
+    #[test]
+    fn refresh_target_skips_whitespace_before_the_separator() {
+        assert_eq!(refresh_target("0 ; url=/next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0\t,/next").as_deref(), Some("/next"));
+    }
+
+    /// The quoted address ends at the first matching quote, as the HTML refresh steps say.
+    #[test]
+    fn refresh_target_cuts_at_the_first_matching_quote() {
+        assert_eq!(refresh_target("0; url='/a'b'").as_deref(), Some("/a"));
+        assert_eq!(refresh_target("0; url=\"/a\"b\"").as_deref(), Some("/a"));
+    }
+
+    /// An absolute address with a scheme other than `http` or `https` is no target the crawl can
+    /// follow; a relative, scheme-relative or web address still is.
+    #[test]
+    fn refresh_target_is_none_for_a_scheme_the_crawl_cannot_fetch() {
+        for value in [
+            "0; mailto:a@example.com",
+            "0; url=javascript:void(0)",
+            "0; url='JavaScript:alert(1)'",
+            "0; tel:+15550100",
+            "0; vbscript:x",
+            "0; data:text/html,hi",
+            "0; about:blank",
+            "0; url:/next",
+            "0; url=ja\tvascript:x",
+        ] {
+            assert_eq!(refresh_target(value), None, "{value:?}");
+        }
+        assert_eq!(
+            refresh_target("0; HTTPS://example.com/x").as_deref(),
+            Some("HTTPS://example.com/x")
+        );
+        assert_eq!(
+            refresh_target("0; http://example.com/x").as_deref(),
+            Some("http://example.com/x")
+        );
+        assert_eq!(refresh_target("0; //example.com/x").as_deref(), Some("//example.com/x"));
+        assert_eq!(refresh_target("0; /mailto:a").as_deref(), Some("/mailto:a"));
     }
 }

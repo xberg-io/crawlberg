@@ -301,10 +301,12 @@ All notable changes to crawlberg are documented here.
   crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
   was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
   target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
-  follows the HTML refresh steps: a leading delay, then `;` or `,`, then an optional `url=` in any
-  case, then an optional pair of matching quotes. The URL parser's rule then cleans the target. As
-  in a browser, a value with no leading delay is not a refresh, a target without `url=` is
-  followed, and a `url=` inside the address no longer starts the target. (#206, #208)
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the crawl cannot fetch, such as `mailto:`, `javascript:` or `data:`, is no longer a
+  redirect: the page is kept, where the scrape used to fail with an SSRF policy error. (#206, #208)
 
 ### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
