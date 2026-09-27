@@ -326,21 +326,24 @@ mod tests {
         let mut monitor = ResourceMonitor::new();
         monitor.start(Duration::from_millis(20)).await;
 
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut sample_count = monitor.metrics().await.sample_count;
-        while sample_count < 2 {
-            assert!(
-                Instant::now() < deadline,
-                "timed out after 10s waiting for >=2 samples, got {sample_count}"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            sample_count = monitor.metrics().await.sample_count;
-        }
+        let wait_for_samples = async {
+            loop {
+                if monitor.metrics().await.sample_count >= 2 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_secs(10), wait_for_samples)
+                .await
+                .is_ok(),
+            "timed out after 10s waiting for >=2 samples, got {}",
+            monitor.metrics().await.sample_count
+        );
         monitor.stop();
 
-        assert!(
-            sample_count >= 2,
-            "expected >=2 samples, got {sample_count}"
-        );
+        let sample_count = monitor.metrics().await.sample_count;
+        assert!(sample_count >= 2, "expected >=2 samples, got {sample_count}");
     }
 }
