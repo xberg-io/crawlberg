@@ -296,12 +296,12 @@ All notable changes to crawlberg are documented here.
 - **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
   browser does, and a target of only control characters is no redirect.
 
-- **Images and assets with a script address were reported.** The images list skipped only `data:`
+- **Images with a script address were reported.** The images list skipped only `data:`
   addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
-  `javascript:...` came back as an image. Asset discovery skipped `data:` only for images, so an
-  image, stylesheet or script asset with a script address, or a stylesheet or script with a `data:`
-  address, was discovered. Both now skip `data:`, `javascript:` and `vbscript:` addresses in any
-  case, as the links list does. (#276)
+  `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
+  addresses in any case, as the links list does. Asset discovery now skips the same addresses when
+  it finds assets on the page. No asset with one of these addresses was downloaded before, because
+  the downloader accepts only `http:` and `https:`. (#276)
 
 ### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
