@@ -213,6 +213,15 @@ All notable changes to crawlberg are documented here.
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
 
+### Changed
+
+- **Upgraded `html-to-markdown-rs` to 3.15.** Brings the converter's `base_url` support (3.15.0)
+  and its `<blockquote cite>` resolution (3.15.1), so a cited blockquote's relative citation is
+  now resolved rather than emitted relative. crawlberg still does its own link resolution in
+  `crates/crawlberg/src/html/link_targets.rs` and does **not** yet set `ConversionOptions::base_url`
+  — adopting it is blocked on xberg-io/html-to-markdown#519, whose raw-source `<base href>` prescan
+  would reintroduce the tree-order and `<base>`-in-`<title>` bugs crawlberg already fixed.
+
 ### Internal
 
 - **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
