@@ -36,8 +36,6 @@ async fn scrape_bytes(body_bytes: Vec<u8>, content_type: &str) -> (String, crawl
 }
 
 /// Each discovered feed as (url, title, feed type), for an exact-value assertion.
-///
-// ~keep `FeedType` has no `PartialEq`, so the variant is compared through its `Debug` form.
 fn feed_tuples(result: &crawlberg::ScrapeResult) -> Vec<(String, Option<String>, String)> {
     result
         .feeds
