@@ -68,7 +68,7 @@ async fn native_browser_fetch_inner(
         );
     }
 
-    let native_config = build_native_config(config, prior_cookies);
+    let native_config = build_native_config(config, prior_cookies)?;
 
     let timeout = config.browser.timeout;
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
@@ -147,22 +147,17 @@ fn build_extra_headers(config: &CrawlConfig) -> std::collections::HashMap<String
 
 /// The proxy URL to render through: the browser-specific proxy if set, else the
 /// crawl-wide one, with any configured credentials inlined into the URL.
-fn resolve_proxy_url(config: &CrawlConfig) -> Option<String> {
-    config.browser.proxy.as_ref().or(config.proxy.as_ref()).map(|p| {
-        if p.username.is_some() || p.password.is_some() {
-            let user = p.username.as_deref().unwrap_or("");
-            let pass = p.password.as_deref().unwrap_or("");
-            if let Some(rest) = p.url.strip_prefix("http://") {
-                format!("http://{user}:{pass}@{rest}")
-            } else if let Some(rest) = p.url.strip_prefix("https://") {
-                format!("https://{user}:{pass}@{rest}")
-            } else {
-                p.url.clone()
-            }
-        } else {
-            p.url.clone()
-        }
-    })
+///
+/// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds credentials via
+/// percent-encoded userinfo rather than a naive string splice — a `:`, `@`, or `/` in a
+/// credential can no longer corrupt the authority — and supports any scheme with an
+/// authority component (http, https, socks5, socks5h), not just an `http://`/`https://`
+/// prefix.
+fn resolve_proxy_url(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
+    let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
+        return Ok(None);
+    };
+    crate::proxy::proxy_url_with_credentials(proxy).map(Some)
 }
 
 /// Translate the crawl-level wait strategy into the native backend's own.
@@ -197,15 +192,15 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 fn build_native_config(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
-) -> crawlberg_browser::adapter::NativeBrowserConfig {
-    crawlberg_browser::adapter::NativeBrowserConfig {
+) -> Result<crawlberg_browser::adapter::NativeBrowserConfig, CrawlError> {
+    Ok(crawlberg_browser::adapter::NativeBrowserConfig {
         user_agent: config.user_agent.clone(),
         timeout: config.browser.timeout,
         wait_until: native_wait_until(&config.browser.wait),
         extra_headers: build_extra_headers(config),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
-        proxy_url: resolve_proxy_url(config),
+        proxy_url: resolve_proxy_url(config)?,
         prior_cookies: to_native_cookies(prior_cookies),
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
@@ -214,7 +209,7 @@ fn build_native_config(
         capture_network_events: config.browser.capture_network_events,
         ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
         allow_file_access: false,
-    }
+    })
 }
 
 /// Project the response headers of one captured network event into [`ResponseMeta`].
@@ -297,34 +292,76 @@ mod tests {
             proxy: Some(proxy("http://proxy:8080", Some("u"), Some("p"))),
             ..CrawlConfig::default()
         };
-        assert_eq!(resolve_proxy_url(&http).as_deref(), Some("http://u:p@proxy:8080"));
+        assert_eq!(
+            resolve_proxy_url(&http).expect("http proxy must resolve").as_deref(),
+            Some("http://u:p@proxy:8080/")
+        );
 
         let https = CrawlConfig {
             proxy: Some(proxy("https://proxy:8443", Some("u"), Some("p"))),
             ..CrawlConfig::default()
         };
-        assert_eq!(resolve_proxy_url(&https).as_deref(), Some("https://u:p@proxy:8443"));
+        assert_eq!(
+            resolve_proxy_url(&https).expect("https proxy must resolve").as_deref(),
+            Some("https://u:p@proxy:8443/")
+        );
     }
 
     #[test]
-    fn a_proxy_without_credentials_or_a_known_scheme_is_passed_through_unchanged() {
+    fn a_credential_free_proxy_is_passed_through_unchanged() {
         let plain = CrawlConfig {
             proxy: Some(proxy("http://proxy:8080", None, None)),
             ..CrawlConfig::default()
         };
-        assert_eq!(resolve_proxy_url(&plain).as_deref(), Some("http://proxy:8080"));
+        assert_eq!(
+            resolve_proxy_url(&plain)
+                .expect("credential-free proxy must resolve")
+                .as_deref(),
+            Some("http://proxy:8080")
+        );
 
+        assert_eq!(
+            resolve_proxy_url(&CrawlConfig::default()).expect("no proxy configured must resolve to None"),
+            None
+        );
+    }
+
+    #[test]
+    fn socks5_credentials_are_inlined_not_dropped() {
         let socks = CrawlConfig {
             proxy: Some(proxy("socks5://proxy:1080", Some("u"), Some("p"))),
             ..CrawlConfig::default()
         };
         assert_eq!(
-            resolve_proxy_url(&socks).as_deref(),
-            Some("socks5://proxy:1080"),
-            "credentials cannot be inlined into a non-http(s) proxy URL"
+            resolve_proxy_url(&socks).expect("socks5 proxy must resolve").as_deref(),
+            Some("socks5://u:p@proxy:1080"),
+            "SOCKS5 credentials must be embedded via userinfo, not silently dropped"
         );
+    }
 
-        assert_eq!(resolve_proxy_url(&CrawlConfig::default()), None);
+    #[test]
+    fn a_password_with_special_characters_is_percent_encoded_not_spliced_raw() {
+        // ~keep A `:`/`@`/`/` in a credential must not be able to terminate the userinfo early
+        // and smuggle in a different host — the old `format!("{scheme}://{user}:{pass}@{rest}")`
+        // splice let it.
+        let config = CrawlConfig {
+            proxy: Some(proxy("http://proxy.test:8080", Some("alice"), Some("p@ss:w/ord"))),
+            ..CrawlConfig::default()
+        };
+        let resolved = resolve_proxy_url(&config)
+            .expect("proxy with special-character password must still resolve")
+            .expect("proxy was configured");
+        assert!(
+            !resolved.contains("p@ss:w/ord"),
+            "the raw password must not appear unencoded in the resolved URL, got '{resolved}'"
+        );
+        let parsed = url::Url::parse(&resolved).expect("resolved proxy URL must itself be valid");
+        assert_eq!(
+            parsed.host_str(),
+            Some("proxy.test"),
+            "special characters in the password must not corrupt the host, got '{resolved}'"
+        );
+        assert_eq!(parsed.port(), Some(8080));
     }
 
     #[test]
@@ -338,7 +375,12 @@ mod tests {
             ..CrawlConfig::default()
         };
 
-        assert_eq!(resolve_proxy_url(&config).as_deref(), Some("http://browser-proxy:2"));
+        assert_eq!(
+            resolve_proxy_url(&config)
+                .expect("browser proxy must resolve")
+                .as_deref(),
+            Some("http://browser-proxy:2")
+        );
     }
 
     #[test]
