@@ -91,6 +91,12 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
+/// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
+/// lower case, without the colon). An address that does not parse has no scheme.
+pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
+    Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
+}
+
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
 /// around the value.
 ///
@@ -272,5 +278,37 @@ mod tests {
             }
         }
         assert_eq!(checked, (1..=5).map(|n| 8_usize.pow(n)).sum::<usize>());
+    }
+
+    #[test]
+    fn a_scheme_is_recognised_as_the_url_parser_reads_it() {
+        let cases = [
+            ("data", "data:", true),
+            ("data", "DATA:image/png;base64,AA", true),
+            ("data", "Data:text/plain,x", true),
+            ("data", "dAtA:,", true),
+            ("data", "data://host/x", true),
+            ("data", "data://[x", false),
+            ("data", "DATA://h:99999", false),
+            ("data", "", false),
+            ("data", "data", false),
+            ("data", "data/x.png", false),
+            ("data", "database.png", false),
+            ("data", "data%3Ax", false),
+            ("data", "data :x", false),
+            ("data", "d\u{e4}ta:x", false),
+            ("data", "x-data:y", false),
+            ("data", "https://example.com/data:x", false),
+            ("javascript", "JAVASCRIPT:alert(1)", true),
+            ("mailto", "Mailto:x@example.com", true),
+            ("tel", "TEL:+1", true),
+            ("tel", "tel://a b", false),
+            ("tel", "telx:1", false),
+            ("vbscript", "VBScript:msgbox(1)", true),
+            ("vbscript", "vbscriptx:1", false),
+        ];
+        for (scheme, address, expected) in cases {
+            assert_eq!(has_scheme(address, scheme), expected, "for {scheme:?} in {address:?}");
+        }
     }
 }

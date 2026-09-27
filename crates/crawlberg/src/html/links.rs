@@ -29,21 +29,12 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
         }
     }
 
-    if let Ok(resolved) = base_url.join(href) {
-        if resolved.host_str() != base_url.host_str() {
-            return LinkType::External;
-        }
-        LinkType::Internal
-    } else if href.starts_with("http://") || href.starts_with("https://") {
-        if let Ok(u) = Url::parse(href)
-            && u.host_str() != base_url.host_str()
-        {
-            return LinkType::External;
-        }
-        LinkType::Internal
-    } else {
-        LinkType::Internal
+    if let Ok(resolved) = base_url.join(href)
+        && resolved.host_str() != base_url.host_str()
+    {
+        return LinkType::External;
     }
+    LinkType::Internal
 }
 
 /// The URL a document's relative references resolve against: the `href` of its first `<base>`
@@ -85,7 +76,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
             if resolved
                 .as_ref()
-                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "javascript" | "tel" | "data"))
+                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "javascript" | "vbscript" | "tel" | "data"))
             {
                 continue;
             }

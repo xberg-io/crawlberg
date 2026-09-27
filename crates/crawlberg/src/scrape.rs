@@ -838,6 +838,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_skips_inline_data_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <img src=\"DATA:image/png;base64,AA\"><img src=\"i.png\">\
+             <picture><source srcset=\"Data:image/png;base64,AA 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_vbscript_links_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\"vbscript:msgbox(1)\">a</a><a href=\"VBScript:msgbox(1)\">b</a>\
+             <a href=\"next.html\">c</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_inline_data_meta_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"DATA:image/png;base64,AA\">\
+             <meta name=\"twitter:image\" content=\"data:image/png;base64,AA\">\
+             <meta property=\"og:image\" content=\"og.png\"></head><body></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/og.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_a_data_image_address_the_url_parser_cannot_read_at_every_image_site() {
+        let resp = response(
+            "text/html",
+            "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\"></head><body>\
+             <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["data://[a", "data://[b", "DATA://h:99999"]
+        );
+    }
+
+    #[tokio::test]
     async fn scrape_treats_an_address_of_only_c0_controls_as_blank() {
         let resp = response(
             "text/html",

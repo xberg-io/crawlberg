@@ -105,6 +105,13 @@ All notable changes to crawlberg are documented here.
 - **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
   browser does, and a target of only control characters is no redirect.
 
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
