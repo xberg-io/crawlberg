@@ -132,12 +132,14 @@ impl Page {
         false
     }
 
-    /// Parse a sub-resource reference against the page URL; `None` when it does not parse.
+    /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
+    /// carries userinfo, which is refused before anything logs or fetches it.
     fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
         Url::options()
             .base_url(self.url.as_ref())
             .parse(reference)
             .ok()
+            .filter(|url| !crate::net::credential::has_userinfo(url))
             .map(String::from)
     }
 

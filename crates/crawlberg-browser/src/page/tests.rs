@@ -359,6 +359,34 @@ async fn an_absolute_module_src_is_recorded_under_its_parsed_address() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_subresource_address_with_userinfo_is_skipped_before_it_is_fetched_or_logged() {
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |origin| {
+            let with_userinfo = origin.replacen("http://", "http://user:s3cret@", 1);
+            format!(
+                "<html><head><link rel=\"stylesheet\" href=\"{with_userinfo}/x.css\"></head><body>\
+                 <script src=\"{with_userinfo}/blocked.js\"></script>\
+                 <script src=\"{origin}/ok.js\"></script></body></html>"
+            )
+        },
+        &[("/ok.js", "application/javascript", &ok), ("/x.css", "text/css", "p{}")],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+    assert!(event_urls(&page, "Stylesheet").is_empty());
+    let with_userinfo = origin.replacen("http://", "http://user:s3cret@", 1);
+    assert_eq!(page.resolve_subresource_url(&format!("{with_userinfo}/a.js")), None);
+    assert_eq!(
+        page.resolve_subresource_url("/a.js"),
+        Some(format!("{origin}/a.js")),
+        "a reference without userinfo still resolves"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_subresource_address_that_does_not_parse_is_skipped() {
     let ok = push("ok");
     let (origin, mut page) = navigate_intercepted(
