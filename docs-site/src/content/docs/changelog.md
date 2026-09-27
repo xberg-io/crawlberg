@@ -32,6 +32,15 @@ title: "Changelog"
   redacted. The action runs once: a script that navigates away from the error page still runs
   and still reports the failure. (#355)
 
+- **The browser page used an absolute subresource address without parsing it.** A `<script src>`
+  or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
+  block list and the network events exactly as written, while a relative address was parsed and
+  normalized. A script address with trailing spaces or an inner tab or newline therefore slipped
+  past a block pattern such as `*blocked.js` and was still fetched and run. A module script's
+  network event also carried the raw address. Every script and stylesheet address in the page
+  markup now goes through the URL parser against the page address, and an address that does not
+  parse is skipped. (#225)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were

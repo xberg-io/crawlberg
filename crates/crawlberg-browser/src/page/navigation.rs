@@ -151,7 +151,14 @@ impl Page {
 
         let mut allowed = Vec::new();
         for href in &hrefs {
-            let full_url = self.resolve_subresource_url(href);
+            let Some(full_url) = self.resolve_subresource_url(href) else {
+                tracing::debug!(
+                    "skipping unparseable <link rel=stylesheet href>: page={} href_len={}",
+                    self.url_string(),
+                    href.len(),
+                );
+                continue;
+            };
             if !subresource_allowed(self.url.as_ref(), &full_url) {
                 tracing::warn!(
                     "blocking cross-scheme <link rel=stylesheet href>: page={} href={}",
