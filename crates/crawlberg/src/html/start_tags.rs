@@ -1236,4 +1236,12 @@ mod tests {
         let html = format!("{}<base href=\"/deep/\">", "<span>".repeat(100_000));
         assert_eq!(base_href(&html).as_deref(), Some("/deep/"));
     }
+
+    #[test]
+    fn should_scan_and_drop_deeply_nested_template_contents() {
+        // ~keep Each `<template>` sits in the contents of the one before it, which are not its
+        // ~keep children, so only a drop that also queues the contents stays off the stack.
+        let html = format!("<base href=\"/deep/\">{}", "<template>".repeat(100_000));
+        assert_eq!(base_href(&html).as_deref(), Some("/deep/"));
+    }
 }
