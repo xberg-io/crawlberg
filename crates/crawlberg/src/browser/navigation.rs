@@ -7,14 +7,14 @@ use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
-use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, GetFrameTreeParams};
+use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, Frame, GetFrameTreeParams};
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
-use crate::http::HttpResponse;
-use crate::ssrf_intercept::{SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
+use crate::http::{HttpResponse, status_error};
+use crate::ssrf_intercept::{DocumentResponse, SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -59,18 +59,14 @@ pub(super) async fn page_fetch(
     let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
     let rendered = render(url, config, page, &interceptor, want_screenshot).await;
     let late = interceptor.finish().await;
-    let rendered = rendered?;
     // ~keep A main-frame navigation the policy refused leaves Chrome's error page in place of
     // ~keep the page, so it fails the fetch even when the navigation `goto` waited for succeeded:
-    // ~keep the refused one can come during the load or after it, during `extra_wait`.
+    // ~keep the refused one can come during the load or after it, during `extra_wait`. It is
+    // ~keep checked before the render's own result, which fails on that same error page.
     if let Some((blocked_url, reason)) = late.blocked_navigation {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
-    Ok(rendered)
+    rendered
 }
 
 /// Navigate `page` to `url` under `interceptor` and read the rendered page.
@@ -122,8 +118,12 @@ async fn render(
         .content()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-    let loader_id = committed_loader_id(page).await?;
-    let (status, headers) = interceptor.document(&loader_id).map_or_else(
+    let frame = committed_frame(page).await?;
+    let document = interceptor.document(frame.loader_id.as_ref());
+    if let Some(failed_url) = frame.unreachable_url {
+        return error_page_outcome(failed_url, document, intercepted.redirects_followed);
+    }
+    let (status, headers) = document.map_or_else(
         || (RENDERED_PAGE_STATUS, HashMap::new()),
         |doc| (doc.status, doc.headers),
     );
@@ -150,12 +150,47 @@ async fn render(
     })
 }
 
-/// The loader id of the document the main frame has committed.
-async fn committed_loader_id(page: &chromiumoxide::Page) -> Result<String, CrawlError> {
+/// The main frame and the document it has committed.
+async fn committed_frame(page: &chromiumoxide::Page) -> Result<Frame, CrawlError> {
     page.execute(GetFrameTreeParams::default())
         .await
-        .map(|tree| tree.result.frame_tree.frame.loader_id.into())
+        .map(|tree| tree.result.frame_tree.frame.clone())
         .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
+}
+
+/// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
+/// response, if one arrived, is `document`.
+///
+/// ~keep The error page is Chrome's, never the server's content. A status HTTP mode raises as an
+/// ~keep error (404, 500, 403, ...) is reported with no body, so it raises the same error, and a
+/// ~keep soft 404 or 403 is the same bodiless page HTTP mode reports. For any other status HTTP
+/// ~keep mode returns the server's body, which Chrome never rendered, so the fetch fails as a
+/// ~keep seed that Chrome answers with its error page fails: with a browser error.
+fn error_page_outcome(
+    failed_url: String,
+    document: Option<DocumentResponse>,
+    redirects: usize,
+) -> Result<BrowserPage, CrawlError> {
+    let shown_url = crate::net::redact_url_credentials(&failed_url);
+    let Some(document) = document else {
+        return Err(CrawlError::browser_error(format!(
+            "Chrome could not load {shown_url} and showed its own error page"
+        )));
+    };
+    if document.status != 403 && status_error(document.status, &failed_url).is_none() {
+        return Err(CrawlError::browser_error(format!(
+            "{shown_url} answered HTTP {}, and Chrome showed its own error page instead of a document",
+            document.status
+        )));
+    }
+    Ok(BrowserPage {
+        response: stopped_response(StoppedResponse {
+            url: failed_url,
+            status: document.status,
+            headers: document.headers,
+        }),
+        redirects,
+    })
 }
 
 /// The response a navigation stopped on without a document, with no body, as the HTTP
@@ -406,6 +441,27 @@ mod tests {
             CrawlError::SsrfPolicyViolation { url, reason, .. } => {
                 assert_eq!(url, "http://169.254.169.254/");
                 assert_eq!(reason, "cloud metadata address");
+            }
+            other => panic!("expected an SSRF policy violation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_blocked_request_is_reported_without_the_credentials_of_its_url() {
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+        let blocked = Some((
+            "http://user:s3cretpw@169.254.169.254/latest/".to_owned(),
+            "cloud metadata address".to_owned(),
+        ));
+        let error = resolve_navigation_outcome(navigation, blocked, TEST_TIMEOUT)
+            .expect_err("a blocked request must surface as an error");
+
+        match error {
+            CrawlError::SsrfPolicyViolation { url, .. } => {
+                assert!(
+                    !url.contains("s3cretpw") && url.contains("169.254.169.254/latest/"),
+                    "{url}"
+                );
             }
             other => panic!("expected an SSRF policy violation, got: {other:?}"),
         }

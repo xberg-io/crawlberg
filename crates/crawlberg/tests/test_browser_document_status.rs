@@ -526,3 +526,236 @@ async fn chromiumoxide_keeps_the_page_when_an_iframe_is_refused_after_the_load()
     };
     assert_start_page(test_name, result);
 }
+
+/// Browser mode with a two-second extra wait, so a navigation the start page starts late lands
+/// before the HTML is read.
+fn late_navigation_config() -> CrawlConfig {
+    let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    config.browser.extra_wait = Some(Duration::from_secs(2));
+    config
+}
+
+/// A download at `/dl` that answers `status`.
+fn download(status: u16) -> ResponseTemplate {
+    ResponseTemplate::new(status)
+        .set_body_raw("bin", "application/octet-stream")
+        .append_header("content-disposition", "attachment; filename=x.bin")
+}
+
+const LATE_DOWNLOAD: &str = "<script>setTimeout(() => location.assign('/dl'), 300)</script>";
+
+/// A download whose status is not an error in HTTP mode makes Chrome show its own error page.
+/// That page is not the server's content, so the fetch fails and names the status.
+#[tokio::test]
+async fn chromiumoxide_fails_when_a_late_download_leaves_chrome_s_error_page() {
+    let test_name = "chromiumoxide_fails_when_a_late_download_leaves_chrome_s_error_page";
+    for status in [501, 505, 599] {
+        let Some((result, site)) = scrape_start_page(
+            test_name,
+            late_navigation_config(),
+            LATE_DOWNLOAD,
+            vec![("/dl", download(status))],
+        )
+        .await
+        else {
+            return;
+        };
+        assert_requested(test_name, &site, "/dl").await;
+        match result {
+            Err(CrawlError::BrowserError { message, .. }) => {
+                assert!(
+                    message.contains("/dl") && message.contains(&format!("HTTP {status}")),
+                    "{test_name}: {status}: {message}"
+                );
+            }
+            other => panic!("{test_name}: {status}: Chrome's error page must fail the fetch: {other:?}"),
+        }
+    }
+}
+
+/// A download whose status HTTP mode raises as an error fails with that error, a WAF found from
+/// its headers included. Under `soft_http_errors` a 404 download is a page with its status, its
+/// own URL and no body, as in HTTP mode.
+#[tokio::test]
+async fn chromiumoxide_reports_a_late_error_download_as_http_mode_does() {
+    let test_name = "chromiumoxide_reports_a_late_error_download_as_http_mode_does";
+    let waf = download(403).append_header("x-datadome", "protected");
+    for (status, response, expected) in [
+        (500, download(500), "ServerError"),
+        (404, download(404), "NotFound"),
+        (403, download(403), "Forbidden"),
+        (403, waf, "WafBlocked"),
+    ] {
+        let Some((result, site)) = scrape_start_page(
+            test_name,
+            late_navigation_config(),
+            LATE_DOWNLOAD,
+            vec![("/dl", response)],
+        )
+        .await
+        else {
+            return;
+        };
+        assert_requested(test_name, &site, "/dl").await;
+        assert_eq!(
+            scrape_outcome(result),
+            Err(expected.to_owned()),
+            "{test_name}: {status} {expected}"
+        );
+    }
+    let mut soft = late_navigation_config();
+    soft.soft_http_errors = true;
+    let Some((result, site)) = scrape_start_page(test_name, soft, LATE_DOWNLOAD, vec![("/dl", download(404))]).await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/dl").await;
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: a soft 404 is a page: {error:?}"));
+    assert_eq!((page.status_code, page.html.as_str()), (404, ""), "{test_name}");
+    assert!(page.final_url.ends_with("/dl"), "{test_name}: {}", page.final_url);
+}
+
+/// A late navigation that fails at the network leaves Chrome's error page with no response, so the
+/// fetch fails instead of reporting status 200 with that page as content.
+#[tokio::test]
+async fn chromiumoxide_fails_when_a_late_navigation_fails_at_the_network() {
+    let test_name = "chromiumoxide_fails_when_a_late_navigation_fails_at_the_network";
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free local port")
+        .port();
+    let unreachable = format!("http://127.0.0.1:{closed_port}/gone");
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        late_navigation_config(),
+        &format!("<script>setTimeout(() => location.assign('{unreachable}'), 300)</script>"),
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) => {
+            assert!(
+                message.contains(&unreachable) && !message.contains("HTTP "),
+                "{test_name}: no response arrived, so no status: {message}"
+            );
+        }
+        other => panic!("{test_name}: the failed navigation must fail the fetch, not report status 200: {other:?}"),
+    }
+}
+
+/// A seed that redirects to a page whose late download answers 404 is a page with status 404,
+/// as a 404 at the end of a redirect is in HTTP mode: the redirect the seed took counts.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_seed_redirect_when_a_late_download_answers_404() {
+    let test_name = "chromiumoxide_keeps_the_seed_redirect_when_a_late_download_answers_404";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/seed"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/"))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(page(START_STATUS, &format!("<p>start-marker</p>{LATE_DOWNLOAD}")))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/dl"))
+        .respond_with(download(404))
+        .mount(&site)
+        .await;
+    let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/seed").await else {
+        return;
+    };
+    assert_requested(test_name, &site, "/").await;
+    assert_requested(test_name, &site, "/dl").await;
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: a 404 after a redirect is a page: {error:?}"));
+    assert_eq!((page.status_code, page.html.as_str()), (404, ""), "{test_name}");
+    assert!(page.final_url.ends_with("/dl"), "{test_name}: {}", page.final_url);
+}
+
+/// The password in a navigation's URL never reaches the error: not when a late navigation's
+/// connection fails, not when the server answers a download Chrome refuses, and not when the SSRF
+/// policy refuses a late navigation or a seed's redirect.
+#[tokio::test]
+async fn chromiumoxide_hides_the_credentials_of_a_late_navigation_in_its_error() {
+    let test_name = "chromiumoxide_hides_the_credentials_of_a_late_navigation_in_its_error";
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a free local port")
+        .port();
+    let late_assign = |target: &str| format!("<script>setTimeout(() => location.assign('{target}'), 300)</script>");
+    let with_credentials =
+        |site: &MockServer, route: &str| site.uri().replacen("http://", "http://user:s3cretpw@", 1) + route;
+    let mut outcomes = Vec::new();
+    let unreachable = format!("http://user:s3cretpw@127.0.0.1:{closed_port}/gone");
+    let Some((result, _site)) =
+        scrape_start_page(test_name, late_navigation_config(), &late_assign(&unreachable), vec![]).await
+    else {
+        return;
+    };
+    outcomes.push(("closed port", format!("127.0.0.1:{closed_port}/gone"), result));
+    for (status, case) in [(501, "501 download"), (404, "404 download")] {
+        let site = MockServer::start().await;
+        let start = page(
+            START_STATUS,
+            &format!("<p>start-marker</p>{}", late_assign(&with_credentials(&site, "/dl"))),
+        );
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(start)
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/dl"))
+            .respond_with(download(status))
+            .mount(&site)
+            .await;
+        let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/").await else {
+            return;
+        };
+        assert_requested(test_name, &site, "/dl").await;
+        outcomes.push((case, "/dl".to_owned(), result));
+    }
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        loopback_only(Some(Duration::from_secs(2))),
+        &late_assign("http://user:s3cretpw@169.254.169.254/latest/"),
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    outcomes.push(("refused navigation", "169.254.169.254/latest/".to_owned(), result));
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/hop"))
+        .respond_with(
+            ResponseTemplate::new(302).append_header("location", "http://user:s3cretpw@169.254.169.254/latest/"),
+        )
+        .mount(&site)
+        .await;
+    let Some(result) = browser_scrape_with(test_name, loopback_only(None), &site, "/hop").await else {
+        return;
+    };
+    assert_requested(test_name, &site, "/hop").await;
+    outcomes.push(("refused seed redirect", "169.254.169.254/latest/".to_owned(), result));
+    for (case, shown, result) in outcomes {
+        let error = match result {
+            Err(error) => error,
+            Ok(page) => panic!(
+                "{test_name}: {case}: the navigation must fail the fetch: {}",
+                page.status_code
+            ),
+        };
+        let text = format!("{error} {error:?}");
+        assert!(
+            text.contains(&shown) && !text.contains("s3cretpw"),
+            "{test_name}: {case}: the error must name {shown} without the password: {text}"
+        );
+    }
+}

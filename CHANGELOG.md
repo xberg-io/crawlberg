@@ -184,6 +184,17 @@ All notable changes to crawlberg are documented here.
   is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
   the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
   or iframe keeps the page. (#143)
+- **Browser mode returned Chrome's error page as the page.** When the main frame ended on
+  Chrome's own error page, the Chromiumoxide backend returned that page's HTML as content. This
+  happened for a download with a status such as 501, 505 or 599, and for a navigation that failed
+  at the network. Now such a fetch fails with a browser error that names the URL, and the status
+  when the server answered.
+  A status that HTTP mode reports as an error, such as 404 or 500, gives that error, as before.
+  A page the server itself sends with a 501 is still a page. (#317, #319)
+- **An error could show the password of a URL.** When the SSRF policy refused a navigation in
+  browser mode, the error kept the credentials of the refused URL. A 404 error kept them too, in
+  HTTP mode and in browser mode. These errors now show the URL with its credentials redacted.
+  (#347)
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
