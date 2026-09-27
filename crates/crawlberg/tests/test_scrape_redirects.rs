@@ -345,3 +345,127 @@ async fn scrape_propagates_network_error_through_redirect() {
         "error must be CrawlError::Connection, got: {err:?}"
     );
 }
+
+/// A `Refresh` header with a `javascript:` target is ignored, as a browser ignores it: the scrape
+/// returns the page instead of failing the hop on the scheme check (#279).
+#[tokio::test]
+async fn scrape_ignores_a_javascript_refresh_header() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>Start page</body></html>")
+                .append_header("refresh", "0; url=javascript:void(0)")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = default_engine();
+    let url = format!("{}/start", mock.uri());
+    let result = scrape(&handle, &url)
+        .await
+        .expect("a javascript: refresh must not fail the scrape");
+
+    assert_eq!(result.final_url, url);
+    assert_eq!(result.status_code, 200);
+    assert!(
+        result.html.contains("Start page"),
+        "the start page must be returned, got: {}",
+        result.html
+    );
+}
+
+/// A meta refresh with a blank target reloads the page in a browser, so a later meta refresh with
+/// a longer delay is not followed (#279).
+#[tokio::test]
+async fn scrape_does_not_skip_a_blank_meta_refresh_for_a_later_one() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"<html><head><meta http-equiv="refresh" content="0; url="><meta http-equiv="refresh" content="3; url=/second"></head><body>Start page</body></html>"#,
+                )
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/second"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>Second page</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = default_engine();
+    let url = format!("{}/start", mock.uri());
+    let result = scrape(&handle, &url).await.expect("scrape must succeed");
+
+    assert_eq!(result.final_url, url, "the later refresh must not be followed");
+    assert!(
+        result.html.contains("Start page"),
+        "the start page must be returned, got: {}",
+        result.html
+    );
+}
+
+/// A refresh, meta or header, to an address the crawl cannot fetch (`mailto:`, `javascript:`) is no
+/// redirect: scrape() keeps the page, as a browser does. The same page with a web target still
+/// follows it, so the page is kept because of the target's scheme and not because refresh is ignored.
+#[tokio::test]
+async fn scrape_keeps_the_page_when_a_refresh_names_a_scheme_it_cannot_fetch() {
+    let cases = [
+        ("meta", "0; mailto:a@example.com", false),
+        ("meta", "0; url=javascript:void(0)", false),
+        ("header", "0; mailto:a@example.com", false),
+        ("meta", "0; /final", true),
+        ("header", "0; /final", true),
+    ];
+    for (form, value, follows) in cases {
+        let mock = MockServer::start().await;
+        let mut start = ResponseTemplate::new(200).append_header("content-type", "text/html");
+        start = if form == "meta" {
+            start.set_body_string(format!(
+                "<html><head><meta http-equiv=\"refresh\" content=\"{value}\"></head><body>Kept page</body></html>"
+            ))
+        } else {
+            start
+                .append_header("refresh", value)
+                .set_body_string("<html><body>Kept page</body></html>")
+        };
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(start)
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/final"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<html><body>Final page</body></html>")
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(&mock)
+            .await;
+
+        let page = scrape(&default_engine(), &format!("{}/start", mock.uri()))
+            .await
+            .unwrap_or_else(|e| panic!("{form} refresh {value:?} must not fail the scrape: {e}"));
+
+        let expected = if follows { "Final page" } else { "Kept page" };
+        assert!(
+            page.html.contains(expected),
+            "{form} refresh {value:?} must end on the page saying {expected:?}, got {:?}",
+            page.html
+        );
+    }
+}
