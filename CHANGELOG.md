@@ -132,6 +132,13 @@ All notable changes to crawlberg are documented here.
   tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
   that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
 
+- **Images with a script address were reported.** The images list skipped only `data:`
+  addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
+  `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
+  addresses in any case, as the links list does. Asset discovery now skips the same addresses when
+  it finds assets on the page. No asset with one of these addresses was downloaded before, because
+  the downloader accepts only `http:` and `https:`. (#276)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
