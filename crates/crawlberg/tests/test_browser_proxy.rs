@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
-    CrawlError, HostMatcher, PageAction, ProxyConfig, ScrapeResult, create_engine, interact, scrape,
+    CrawlError, HostMatcher, PageAction, ProxyConfig, ScrapeResult, SessionKey, create_engine, interact, scrape,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -288,6 +288,7 @@ async fn a_parked_page_is_not_reused_for_a_crawl_with_another_proxy() {
         config
     };
     let name = "a_parked_page_is_not_reused_for_a_crawl_with_another_proxy";
+    let key_a = SessionKey::from_url(TARGET, Some(&format!("http://{address_a}"))).expect("a session key");
     let Some(first) = render_url(name, affine(address_a), TARGET, &seen_a).await else {
         return;
     };
@@ -295,6 +296,13 @@ async fn a_parked_page_is_not_reused_for_a_crawl_with_another_proxy() {
     let Some(second) = render_url(name, affine(address_b), TARGET, &seen_b).await else {
         return;
     };
+    let parked_a = sessions.acquire(&key_a).await;
+    assert!(
+        parked_a.is_some(),
+        "the first crawl's page must stay parked under proxy A's address"
+    );
+    drop(parked_a);
+    sessions.shutdown().await;
     pool.shutdown().await;
     assert!(
         second.html.contains("served-by-proxy-b"),
@@ -350,4 +358,48 @@ async fn a_render_and_an_interact_session_on_a_connected_chrome_go_through_the_p
         interacted.final_html
     );
     assert!(target_requests(&seen).len() >= 2, "the proxy must see both sessions");
+}
+
+/// A loopback address no server listens on: a direct request gets a refused connection, so the
+/// page can only come from the proxy.
+///
+/// ~keep A port bound and released, not a low fixed one: Chrome refuses ports such as 1 as
+/// ~keep unsafe before it consults any proxy.
+async fn loopback_target() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind a loopback port");
+    let port = listener.local_addr().expect("loopback address").port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}/loopback")
+}
+
+/// Chrome sends loopback requests direct unless told not to, for a launch flag and for a
+/// browser context alike.
+#[tokio::test]
+async fn a_loopback_page_goes_through_the_proxy_on_a_launch_and_in_a_pool() {
+    let name = "a_loopback_page_goes_through_the_proxy_on_a_launch_and_in_a_pool";
+    let (address, seen) = spawn_proxy().await;
+    let target = loopback_target().await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    for (label, pooled) in [("one-shot launch", false), ("shared pool", true)] {
+        let mut config = render_config(proxy_at(address.clone(), None, None));
+        config
+            .ssrf
+            .allowlist
+            .push(HostMatcher::cidr("127.0.0.1/32").expect("a valid CIDR"));
+        config.browser.session_affinity = false;
+        if pooled {
+            config.browser_pool = Some(Arc::clone(&pool));
+        }
+        let before = requests_for(&seen, &target).len();
+        let Some(result) = render_url(&format!("{name} ({label})"), config, &target, &seen).await else {
+            pool.shutdown().await;
+            return;
+        };
+        assert!(result.html.contains(MARKER), "{label}: got {}", result.html);
+        assert!(
+            requests_for(&seen, &target).len() > before,
+            "{label}: the proxy must see the loopback request"
+        );
+    }
+    pool.shutdown().await;
 }

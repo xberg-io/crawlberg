@@ -49,7 +49,8 @@ title: "Changelog"
   Chrome launch now takes the proxy, read the same way as the HTTP client reads it. A shared
   browser pool, or a Chrome reached through `browser.endpoint`, opens each page in a browser
   context made with that crawl's proxy, so crawls with different proxies share one Chrome and
-  each goes through its own proxy. (#434)
+  each goes through its own proxy. Requests to a loopback address go through the proxy too;
+  Chrome sends them direct by default. (#434)
 - **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
   launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
   proxy with `username` and `password` made no connection and failed without saying why. The

@@ -123,8 +123,15 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
     builder
 }
 
+/// Chrome's proxy bypass rule that removes its built-in loopback bypass, so requests to
+/// `localhost` and `127.0.0.1` go through the proxy like every other request.
+///
+/// ~keep Without it Chrome sends loopback requests direct whatever proxy is set, both for
+/// ~keep `--proxy-server` and for a browser context's `proxyServer`.
+const NO_LOOPBACK_BYPASS: &str = "<-loopback>";
+
 /// Route `builder`'s Chrome through `proxy`, when there is one. Every launch path calls this,
-/// so the flag is written once; the credentials are answered by the request interception.
+/// so the flags are written once.
 pub(crate) fn apply_proxy(
     builder: BrowserConfigBuilder,
     proxy: Option<&crate::proxy::ChromeProxy>,
@@ -132,7 +139,9 @@ pub(crate) fn apply_proxy(
     match proxy {
         // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
         // ~keep `----proxy-server=...` and the proxy was silently never applied.
-        Some(proxy) => builder.arg(format!("proxy-server={}", proxy.server)),
+        Some(proxy) => builder
+            .arg(format!("proxy-server={}", proxy.server))
+            .arg(format!("proxy-bypass-list={NO_LOOPBACK_BYPASS}")),
         None => builder,
     }
 }
@@ -178,6 +187,7 @@ async fn create_proxy_context(browser: &Browser, server: &str) -> Result<Browser
     let params = CreateBrowserContextParams {
         dispose_on_detach: Some(true),
         proxy_server: Some(server.to_owned()),
+        proxy_bypass_list: Some(NO_LOOPBACK_BYPASS.to_owned()),
         ..CreateBrowserContextParams::default()
     };
     tokio::time::timeout(PAGE_OPEN_TIMEOUT, browser.create_browser_context(params))

@@ -361,6 +361,10 @@ mod tests {
             debug.contains("key: \"proxy-server=http://127.0.0.1:3128\""),
             "the render's Chrome must be launched through the proxy: {debug}"
         );
+        assert!(
+            debug.contains("proxy-bypass-list=<-loopback>"),
+            "loopback requests must not bypass the proxy: {debug}"
+        );
     }
 
     /// A profile directory nobody took ownership of is removed when its guard drops.

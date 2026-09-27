@@ -126,7 +126,7 @@ pub struct BrowserConfig {
     #[serde(default, with = "option_duration_ms")]
     pub extra_wait: Option<Duration>,
     /// Proxy for browser fetches. Overrides `CrawlConfig.proxy` when set.
-    /// Native backend supports http/https only; Chrome also supports socks4/socks5, and no credentials.
+    /// Native backend supports http/https only (no SOCKS5).
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
     /// URL patterns to block before the network request fires. Supports `*`
