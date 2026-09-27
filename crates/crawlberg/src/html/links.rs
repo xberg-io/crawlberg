@@ -86,15 +86,16 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             // per the WHATWG URL spec, so no special-casing is needed here.
             let link_type = classify_link(href, &effective_base);
 
-            let resolved_url =
-                crate::net::userinfo::resolve(&effective_base, href).map_or_else(|| href.to_owned(), String::from);
+            let Some(resolved_url) = crate::net::userinfo::resolve(&effective_base, href) else {
+                continue;
+            };
 
             let rel = get_attr(tag, "rel").map(String::from);
             let nofollow = rel.as_ref().map(|r| r.contains("nofollow")).unwrap_or(false);
             let text = tag.inner_text(parser).trim().to_owned();
 
             links.push(LinkInfo {
-                url: resolved_url,
+                url: resolved_url.into(),
                 text,
                 link_type,
                 rel,
@@ -193,6 +194,19 @@ mod tests {
             links[0].url, "https://cdn.example/assets/img.png",
             "absolute base href should still resolve relative hrefs, got {}",
             links[0].url
+        );
+    }
+
+    #[test]
+    fn a_link_whose_href_does_not_resolve_is_dropped() {
+        let links = extract(
+            r#"<a href="http://[not-an-address/">broken</a><a href="/ok">ok</a>"#,
+            "https://example.com/page",
+        );
+        assert_eq!(
+            links.iter().map(|link| link.url.as_str()).collect::<Vec<_>>(),
+            ["https://example.com/ok"],
+            "only the href that resolves may be returned, got {links:?}"
         );
     }
 
