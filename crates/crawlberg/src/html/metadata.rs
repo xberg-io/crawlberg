@@ -538,6 +538,18 @@ mod tests {
     }
 
     #[test]
+    fn a_robots_name_is_trimmed_of_ascii_whitespace_only() {
+        assert_eq!(
+            robots_contents("<meta name=\" robots\t\" content=\"noindex\">", "crawlberg/1.0"),
+            vec!["noindex".to_owned()]
+        );
+        assert!(
+            robots_contents("<meta name=\"\u{a0}robots\" content=\"noindex\">", "crawlberg/1.0").is_empty(),
+            "a no-break space is not ASCII whitespace, so the name is not `robots`"
+        );
+    }
+
+    #[test]
     fn robots_and_refresh_names_match_in_any_case() {
         assert_eq!(
             robots_contents(r#"<meta name="Robots" content="noindex, nofollow">"#, "crawlberg/1.0"),
