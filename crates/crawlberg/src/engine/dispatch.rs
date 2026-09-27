@@ -174,6 +174,7 @@ impl CrawlEngine {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn escalation_reason_to_error(reason: &crate::types::EscalationReason, url: &str) -> CrawlError {
         use crate::types::EscalationReason;
+        let url = crate::net::redact_url_credentials(url);
         match reason {
             EscalationReason::WafBlocked { vendor } => CrawlError::WafBlocked {
                 vendor: vendor.clone(),

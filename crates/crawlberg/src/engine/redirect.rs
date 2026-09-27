@@ -164,7 +164,9 @@ impl<'a> RedirectPolicy<'a> {
         let Ok(parsed) = Url::parse(url) else {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: cannot parse {url} to determine its origin"),
+                // ~keep The address is left out: the redactor cannot find the userinfo in a
+                // ~keep value that does not parse, and the refused URL is reported on its own.
+                reason: "robots_unreachable: cannot parse the URL to determine its origin".to_owned(),
             }));
         };
         // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would

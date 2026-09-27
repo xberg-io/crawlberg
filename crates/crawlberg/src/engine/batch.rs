@@ -135,7 +135,8 @@ impl CrawlEngine {
                     results.push((
                         url.clone(),
                         Err(CrawlError::other(format!(
-                            "task panicked while processing {url}: {join_error}"
+                            "task panicked while processing {}: {join_error}",
+                            crate::net::redact_url_credentials(&url)
                         ))),
                     ));
                     continue;

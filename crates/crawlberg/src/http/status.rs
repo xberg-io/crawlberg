@@ -17,7 +17,10 @@ pub(crate) fn status_error(status: u16, url: &str) -> Option<CrawlError> {
     let source = HttpStatus(status);
     Some(match status {
         401 => CrawlError::unauthorized_with_source("unauthorized", source),
-        404 => CrawlError::not_found_with_source(format!("not_found: {url}"), source),
+        404 => CrawlError::not_found_with_source(
+            format!("not_found: {}", crate::net::redact_url_credentials(url)),
+            source,
+        ),
         408 => CrawlError::timeout_with_source("timeout", source),
         410 => CrawlError::gone_with_source("gone", source),
         429 => CrawlError::rate_limited_with_source("rate_limited", source),

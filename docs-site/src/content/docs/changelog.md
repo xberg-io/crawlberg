@@ -29,6 +29,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **Several engine errors printed the password of a URL that carried one.** A crawl, scrape or
+  batch of `http://user:password@host/` could show the password in the error text: a 404, an
+  escalation that had no tier left, a failed push onto a custom frontier, and a batch task that
+  panicked all printed the URL as given. These messages now print the URL with its credentials
+  replaced by `***`. A redirect to an address that does not parse is refused as before, but the
+  refusal no longer repeats that address, because credentials cannot be found reliably in a value
+  that does not parse. (#368)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

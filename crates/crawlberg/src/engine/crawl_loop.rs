@@ -403,10 +403,10 @@ impl CrawlEngine {
         state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
         let url = entry.url.clone();
-        self.frontier
-            .push(entry)
-            .await
-            .map_err(|e| CrawlError::other_with_source(format!("pushing {url} onto the crawl frontier failed"), e))?;
+        self.frontier.push(entry).await.map_err(|e| {
+            let url = crate::net::redact_url_credentials(&url);
+            CrawlError::other_with_source(format!("pushing {url} onto the crawl frontier failed"), e)
+        })?;
         state.frontier_pending += 1;
         Ok(())
     }
