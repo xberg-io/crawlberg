@@ -155,7 +155,7 @@ fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
         return None;
     }
     match Url::parse(trimmed) {
-        Err(url::ParseError::RelativeUrlWithoutBase) => base.join(trimmed).ok().map(String::from),
+        Err(url::ParseError::RelativeUrlWithoutBase) => crate::net::userinfo::resolve(base, trimmed).map(String::from),
         _ => None,
     }
 }

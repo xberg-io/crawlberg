@@ -164,7 +164,8 @@ impl<'a> RedirectPolicy<'a> {
         let Ok(parsed) = Url::parse(url) else {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: cannot parse {url} to determine its origin"),
+                // ~keep The address is left out: text that does not parse cannot be redacted.
+                reason: "robots_unreachable: cannot parse the URL to determine its origin".to_owned(),
             }));
         };
         // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
@@ -318,12 +319,6 @@ pub(crate) async fn follow_redirects(
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
-    // ~keep Scopes configured credentials to the host the chain started on; hops that leave
-    // ~keep it must not carry the caller's Authorization header to a redirect target.
-    let origin_host = url::Url::parse(initial_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned));
-
     let mut browser_used = false;
     loop {
         if let Some(policy) = policy.as_deref_mut()
@@ -340,7 +335,7 @@ pub(crate) async fn follow_redirects(
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&chain.current_url);
         let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url, origin_host.as_deref())
+            .fetch_response(&chain.current_url)
             .await
         {
             Ok(pair) => pair,
@@ -512,7 +507,7 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    resolve_redirect(current_url, location)
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -520,7 +515,7 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
     let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+    resolve_redirect(current_url, target_path)
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -534,7 +529,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     let target = tl::parse(&parsed_html, ParserOptions::default())
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+    resolve_redirect(current_url, &target)
 }
 
 #[cfg(test)]

@@ -345,6 +345,10 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
 fn collect_filtered_urls(xml_body: &str, filter: &MapFilter, limit: Option<usize>) -> Vec<SitemapUrl> {
     let mut urls = Vec::new();
     for entry in parse_sitemap_xml(xml_body) {
+        let entry = SitemapUrl {
+            url: crate::net::userinfo::parse(&entry.url).map_or(entry.url.clone(), String::from),
+            ..entry
+        };
         if !filter.matches(&entry.url) {
             continue;
         }
@@ -373,13 +377,13 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
     true
 }
 
-/// Resolve one child `<loc>` of a sitemap index against the index's own URL.
-fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> String {
+/// Resolve one child `<loc>` of a sitemap index against the index's own URL, without userinfo.
+fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> Option<String> {
     let Some(base_parsed) = base else {
-        return child_url.to_owned();
+        return crate::net::userinfo::parse(child_url).map(String::from);
     };
     if Url::parse(child_url).is_ok() {
-        rewrite_url_host(child_url, base_parsed)
+        Some(rewrite_url_host(child_url, base_parsed))
     } else {
         resolve_redirect(sitemap_url, child_url)
     }
@@ -462,7 +466,9 @@ async fn process_sitemap_response_inner(
         if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let resolved = resolve_child_sitemap_url(base.as_ref(), document.url, child_url);
+        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.url, child_url) else {
+            continue;
+        };
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(

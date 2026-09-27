@@ -98,10 +98,10 @@ impl CrawlEngine {
     /// so that callers can consume results incrementally via [`crawl_stream`](Self::crawl_stream).
     pub(crate) async fn crawl_with_sender(
         &self,
-        url: &str,
+        seed: &super::SeedUrl,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
-        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, url);
+        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, seed.as_str());
         let client = build_client(&self.config)?;
         let bounds = CrawlBounds::resolve(&self.config, &seed_url)?;
 
@@ -402,6 +402,10 @@ impl CrawlEngine {
         entry: FrontierEntry,
         state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
+        debug_assert!(
+            !crate::net::userinfo::str_has_userinfo(&entry.url),
+            "a URL reaching the frontier never carries userinfo"
+        );
         let url = entry.url.clone();
         self.frontier
             .push(entry)

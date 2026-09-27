@@ -13,6 +13,7 @@ use url::Url;
 use crate::html::get_attr;
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_CSS, SEL_SCRIPT_SRC};
 use crate::http::http_fetch;
+use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
 /// A reference to an asset discovered in an HTML page.
@@ -31,7 +32,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(href) = get_attr(tag, "href")
-                && let Ok(url) = base_url.join(href)
+                && let Some(url) = resolve(base_url, href)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -46,7 +47,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
-                && let Ok(url) = base_url.join(src)
+                && let Some(url) = resolve(base_url, src)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -62,7 +63,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
                 && !src.starts_with("data:")
-                && let Ok(url) = base_url.join(src)
+                && let Some(url) = resolve(base_url, src)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),

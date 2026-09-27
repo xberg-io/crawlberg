@@ -10,6 +10,7 @@ use tower::Service;
 
 use super::types::{CrawlRequest, CrawlResponse};
 use crate::error::{CrawlError, classify_reqwest_error};
+use crate::net::credentials::credential_header;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
@@ -34,6 +35,7 @@ fn apply_headers(
     mut req: reqwest::RequestBuilder,
     config: &CrawlConfig,
     crawl_req: &CrawlRequest,
+    url: &url::Url,
 ) -> reqwest::RequestBuilder {
     if !crawl_req.headers.contains_key("user-agent") {
         if let Some(ref ua) = config.user_agent {
@@ -46,28 +48,8 @@ fn apply_headers(
         }
     }
 
-    // ~keep Withhold configured credentials once a redirect chain has left its origin host;
-    // ~keep reqwest's own cross-host stripping never runs because we follow redirects manually.
-    if let Some(ref auth) = config.auth {
-        if crawl_req.is_on_origin_host() {
-            match auth {
-                crate::types::AuthConfig::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                crate::types::AuthConfig::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                crate::types::AuthConfig::Header { name, value } => {
-                    req = req.header(name.as_str(), value.as_str());
-                }
-            }
-        } else {
-            tracing::debug!(
-                origin = crawl_req.origin_host.as_deref().unwrap_or(""),
-                target = crawl_req.domain().unwrap_or_default(),
-                "withholding configured credentials from a cross-host redirect hop"
-            );
-        }
+    if let Some((name, value)) = credential_header(config, url) {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     for (k, v) in &config.custom_headers {
@@ -248,7 +230,7 @@ async fn do_fetch(
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
-    let http_req = apply_headers(client.get(url.to_string()), config, req);
+    let http_req = apply_headers(client.get(url.to_string()), config, req, &url);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;

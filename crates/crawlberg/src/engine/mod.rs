@@ -1,5 +1,6 @@
 //! CrawlEngine composes trait implementations into a crawl pipeline.
 
+mod admission;
 #[cfg(not(target_arch = "wasm32"))]
 mod batch;
 mod builder;
@@ -26,6 +27,7 @@ mod selection;
 #[cfg(any(target_arch = "wasm32", test))]
 mod wasm_crawl;
 
+pub(crate) use admission::SeedUrl;
 pub(crate) use selection::take_selected;
 
 use std::sync::Arc;
@@ -127,18 +129,18 @@ impl CrawlEngine {
         url: &str,
         actions: &[crate::interact::PageAction],
     ) -> Result<InteractionResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
-        crate::interact::run(self, url, actions).await
+        let (engine, seed) = self.admit(url)?;
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&seed));
+        crate::interact::run(&engine, &seed, actions).await
     }
 
     /// Discover all pages on a website by following links and sitemaps.
     #[tracing::instrument(name = "crawl.engine.map", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn map(&self, url: &str) -> Result<MapResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
-        self.config.validate()?;
-        crate::map::map(url, &self.config).await
+        let (engine, seed) = self.admit(url)?;
+        tracing::Span::current().record(URL_FULL, tracing::field::display(&seed));
+        engine.config.validate()?;
+        crate::map::map(&seed, &engine.config).await
     }
 }
 

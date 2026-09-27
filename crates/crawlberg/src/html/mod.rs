@@ -22,10 +22,7 @@ use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
 pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
-    base_url
-        .join(src)
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| src.to_owned())
+    crate::net::userinfo::resolve(base_url, src).map_or_else(|| src.to_owned(), String::from)
 }
 
 /// Get a string attribute value from an HTMLTag.

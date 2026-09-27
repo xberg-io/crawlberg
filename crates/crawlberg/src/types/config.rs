@@ -321,6 +321,14 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub dispatch: Option<DispatchProfile>,
+    /// The seed host that credentials are scoped to, and the credentials the seed URL carried.
+    ///
+    /// Set by the engine when it admits a seed URL; a caller cannot build one and leaves it
+    /// `None`.
+    #[doc(hidden)]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub credential_scope: Option<crate::net::CredentialScope>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -399,6 +407,7 @@ impl Default for CrawlConfig {
             ssrf: SsrfPolicy::from_env(),
             ssrf_deny_private_explicit: None,
             dispatch: None,
+            credential_scope: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]

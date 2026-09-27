@@ -52,14 +52,13 @@ impl CrawlEngine {
         &self,
         tier: crate::types::Tier,
         url: &str,
-        origin_host: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         match tier {
             crate::types::Tier::Http => {
                 let client = crate::http::build_client(&self.config)?;
                 let mut service = self.build_service(&client);
                 use tower::Service;
-                let mut req = CrawlRequest::new(url).with_origin_host(origin_host.map(str::to_owned));
+                let mut req = CrawlRequest::new(url);
                 req.tier = Some(Self::tier_name(tier));
                 let resp = service.call(req).await?;
                 Ok((resp, false))

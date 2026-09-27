@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::net::origin::same_host;
+use crate::net::credentials::credential_header;
 use crate::net::ssrf::validate_url;
-use crate::types::{AuthConfig, CrawlConfig};
+use crate::types::CrawlConfig;
 
 use headers::build_headers_map;
 
@@ -91,7 +91,6 @@ struct FetchContext<'a> {
     config: &'a CrawlConfig,
     extra_headers: &'a HashMap<String, String>,
     client: &'a reqwest::Client,
-    initial_url: &'a url::Url,
 }
 
 /// What one hop produced: a redirect target still to follow, or a finished response.
@@ -184,6 +183,11 @@ pub(crate) async fn http_fetch(
 ) -> Result<HttpResponse, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
+    debug_assert!(
+        !crate::net::userinfo::has_userinfo(&initial_url),
+        "a URL reaching the fetch layer never carries userinfo"
+    );
+
     validate_url(&initial_url, &config.ssrf)
         .await
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
@@ -193,9 +197,8 @@ pub(crate) async fn http_fetch(
         config,
         extra_headers,
         client,
-        initial_url: &initial_url,
     };
-    let mut current_url = initial_url.clone();
+    let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
@@ -320,36 +323,18 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
     req.send().await.map_err(classify_reqwest_error)
 }
 
-/// Attach the configured credentials, but only while the hop is still on the origin they
-/// were configured for.
+/// Attach the credential header when the hop is on the seed's host.
 ///
 /// ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
-/// ~keep strip-credentials-on-cross-host behaviour never runs and we must do it here:
-/// ~keep an open redirect off an authenticated origin would otherwise hand the
-/// ~keep configured Authorization header straight to the redirect target.
+/// ~keep strip-credentials-on-cross-host behaviour never runs; the per-hop host check in
+/// ~keep `credential_header` replaces it.
 fn apply_auth(
     req: reqwest::RequestBuilder,
     context: &FetchContext<'_>,
     current_url: &url::Url,
 ) -> reqwest::RequestBuilder {
-    if !same_host(context.initial_url, current_url) {
-        if context.config.auth.is_some() {
-            tracing::debug!(
-                origin = context.initial_url.host_str().unwrap_or(""),
-                target = current_url.host_str().unwrap_or(""),
-                "withholding configured credentials from a cross-host redirect hop"
-            );
-        }
-        return req;
-    }
-
-    match context.config.auth {
-        Some(AuthConfig::Basic {
-            ref username,
-            ref password,
-        }) => req.basic_auth(username, Some(password)),
-        Some(AuthConfig::Bearer { ref token }) => req.bearer_auth(token),
-        Some(AuthConfig::Header { ref name, ref value }) => req.header(name.as_str(), value.as_str()),
+    match credential_header(context.config, current_url) {
+        Some((name, value)) => req.header(name.as_str(), value.as_str()),
         None => req,
     }
 }
@@ -361,9 +346,9 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)?;
 
-    Some(match current_url.join(&location) {
-        Ok(next_url) => RedirectTarget::Follow(next_url),
-        Err(_) => RedirectTarget::Unresolvable,
+    Some(match crate::net::userinfo::resolve(current_url, &location) {
+        Some(next_url) => RedirectTarget::Follow(next_url),
+        None => RedirectTarget::Unresolvable,
     })
 }
 
@@ -613,18 +598,15 @@ mod tests {
         );
     }
 
-    /// ~keep Regression: `redact_url_credentials` existed and was unit-tested, but every
-    /// real `SsrfPolicyViolation` site built the variant with a struct literal carrying
-    /// the raw URL — so a refused `http://user:pass@host/` leaked the credential into API
-    /// error bodies, MCP payloads and tracing fields. Testing the helper in isolation is
-    /// exactly what hid that, so this drives a real `http_fetch` rejection instead.
+    /// ~keep Regression: a refused `http://user:pass@host/` once leaked the credential into
+    /// API error bodies, MCP payloads and tracing fields. This drives a real SSRF refusal
+    /// through the public entry point, which admits the URL before any fetch sees it.
     #[tokio::test]
     async fn http_fetch_ssrf_rejection_does_not_leak_url_credentials() {
-        let config = CrawlConfig::default();
-        let client = build_client(&config).expect("client must build");
+        let engine = crate::CrawlEngine::builder().build().expect("engine must build");
         let url = "http://alice:hunter2@169.254.169.254/latest/meta-data/";
 
-        let err = match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
+        let err = match engine.scrape(url).await {
             Err(e) => e,
             Ok(_) => panic!("the link-local metadata address must be refused by the default policy"),
         };
