@@ -7,7 +7,8 @@
 //! node from it and every extractor sees what a browser sees.
 //!
 //! The masked string has the source's byte length, and differs from it only at `<` bytes inside
-//! raw-text content, so byte offsets into it address the same bytes in the source.
+//! raw-text content and at the attributes of a tag past the limit the HTML parser is given
+//! (overwritten with spaces), so byte offsets into it address the same bytes in the source.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -26,7 +27,7 @@ const MARKUP_MASK: char = ' ';
 
 /// A document with its raw-text markup masked, and the base address an HTML parser reads in it.
 pub(crate) struct MaskedHtml<'h> {
-    /// The source with every `<` inside raw-text content overwritten.
+    /// The source with every `<` inside raw-text content overwritten, as the HTML parser read it.
     pub(crate) text: Cow<'h, str>,
     /// The decoded `href` of the first `<base>` in the document that has one.
     pub(crate) base_href: Option<String>,
@@ -36,8 +37,12 @@ pub(crate) struct MaskedHtml<'h> {
 /// fetches a page, so `<noscript>` content is markup.
 pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
     let read = scan(source, false, |_| false);
+    let text = match read.text {
+        Cow::Borrowed(text) => mask(text, &read.raw_text),
+        Cow::Owned(text) => Cow::Owned(mask(&text, &read.raw_text).into_owned()),
+    };
     MaskedHtml {
-        text: mask(source, &read.raw_text),
+        text,
         base_href: read.base_href,
     }
 }
@@ -195,6 +200,24 @@ mod tests {
             mask_raw_text_markup(html).text,
             html,
             "a `<script>` inside a comment is not an element"
+        );
+    }
+
+    #[test]
+    fn should_mask_the_text_the_parser_read_for_a_very_wide_tag() {
+        let wide: String = (0..5_000).map(|i| format!(" a{i}")).collect();
+        let html = format!("<div{wide}><title><b></title>");
+        let masked = mask_raw_text_markup(&html).text;
+        assert_eq!(masked.len(), html.len(), "the byte length is kept");
+        assert!(
+            !masked.contains(" a1024 "),
+            "the attributes past the limit are overwritten"
+        );
+        assert!(masked.contains(" a1023 "), "the attributes up to the limit are kept");
+        assert!(
+            masked.ends_with("><title> b></title>"),
+            "raw text is still masked: {}",
+            &masked[masked.len() - 40..]
         );
     }
 

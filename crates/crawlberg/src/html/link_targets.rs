@@ -58,7 +58,7 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// write their whole encoded payload into the markdown.
 const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "source", "graphic"];
 
-/// Return `html` with every relative address in [`TARGETS`] resolved against the document's
+/// Return `source` with every relative address in [`TARGETS`] resolved against the document's
 /// base URL (its first `<base href>`, else `document_url`), using WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
@@ -75,10 +75,13 @@ const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "sour
 /// it, when that differs from the source: every attribute once, in double quotes, with the
 /// rewritten addresses. An attribute whose name has a character other than a letter, a digit,
 /// `-`, `_` or `:` is left out, as the converter never reads it. Every byte outside a rewritten
-/// start tag is kept, except an empty end tag `</>` just before one, which an HTML parser ignores.
-pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
+/// start tag is kept, except an empty end tag `</>` just before one, which an HTML parser ignores,
+/// and the attributes of a tag past the limit the HTML parser is given, which are overwritten
+/// with spaces (see `start_tags::AttributeBound`).
+pub(crate) fn resolve_link_targets<'h>(source: &'h str, document_url: &Url) -> Cow<'h, str> {
     // ~keep Scripting on, as the converter reads `<noscript>` (it drops the element).
-    let read = scan(html, true, |name| rewritten_attributes(name.as_bytes()).is_some());
+    let read = scan(source, true, |name| rewritten_attributes(name.as_bytes()).is_some());
+    let html: &str = &read.text;
     let base = effective_base_url(read.base_href.as_deref(), document_url);
     // ~keep html-to-markdown-rs copies the base into the front matter without decoding it
     // ~keep (`head_metadata.rs`, 3.14.3), so the base is written unencoded between double quotes.
@@ -103,7 +106,7 @@ pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow
         }
     }
     if cursor == 0 {
-        return Cow::Borrowed(html);
+        return read.text;
     }
     out.push_str(&html[cursor..]);
     Cow::Owned(out)

@@ -445,6 +445,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_very_wide_tag_converts_and_leaks_no_payload() {
+        let wide: String = (0..50_000).map(|i| format!(" a{i}")).collect();
+        let data = format!(r#"src="data:image/png;base64,{ICON_PAYLOAD}""#);
+        let mut wrong = Vec::new();
+        for html in [
+            format!(r#"<p>before</p><img {data}{wide} alt="i"><p>after</p>"#),
+            format!(r#"<p>before</p><img{wide} {data} alt="i"><p>after</p>"#),
+            format!(r#"<p>before</p><div{wide}><img {data}></div><p>after</p>"#),
+        ] {
+            let md = markdown_at(&html, "https://example.com/").await;
+            if md.contains(ICON_PAYLOAD) || !md.contains("before") || !md.contains("after") {
+                wrong.push(md);
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "a wide tag lost the page or leaked the payload: {wrong:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wide_candidate_in_a_comment_leaks_no_payload() {
+        // ~keep The attributes past the limit are overwritten up to the next `>`, which here is
+        // ~keep the comment's end, so the comment runs on over the image. The converter must be
+        // ~keep given that same text: given the source, it would render the image the pass
+        // ~keep never read as a tag.
+        let wide: String = (0..5_000).map(|i| format!(" a{i}")).collect();
+        let html = format!(r#"<p>before</p><!-- <a{wide} --><img src="data:image/png;base64,{ICON_PAYLOAD}" alt="i">"#);
+        let md = markdown_at(&html, "https://example.com/").await;
+        assert!(md.contains("before"), "the page is converted: {md}");
+        assert!(!md.contains(ICON_PAYLOAD), "the payload leaked: {md}");
+    }
+
+    #[tokio::test]
     async fn a_misread_attribute_keeps_the_payload_out_of_the_image_address() {
         // ~keep An HTML parser ends the first tag at the `>` after `="x`, so `">` is text, and
         // ~keep it reads `==` as an attribute named `=` whose value is `src="data:..."`.

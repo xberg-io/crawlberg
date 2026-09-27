@@ -121,6 +121,21 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_very_wide_link_as_the_html_parser_read_it() {
+        let wide: String = (0..50_000).map(|i| format!(" a{i}")).collect();
+        let html = format!(r#"<a href="/first"{wide}>1</a><a{wide} href="/past">2</a><a href="/last">3</a>"#);
+        let urls: Vec<_> = extract(&html, "https://example.com/")
+            .into_iter()
+            .map(|link| link.url)
+            .collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/first", "https://example.com/last"],
+            "an address past the attribute limit is not read, by the parser or by tl"
+        );
+    }
+
+    #[test]
     fn resolves_protocol_relative_urls_to_the_base_scheme() {
         let html = r#"<a href="//cdn.example/x.js">script</a>"#;
         let links = extract(html, "https://example.com/page");
