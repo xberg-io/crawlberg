@@ -23,13 +23,8 @@ pub struct CrawlRequest {
 #[cfg(not(target_arch = "wasm32"))]
 impl CrawlRequest {
     pub fn new(url: impl Into<String>) -> Self {
-        let url = url.into();
-        debug_assert!(
-            !crate::net::userinfo::str_has_userinfo(&url),
-            "a URL reaching the fetch layer never carries userinfo"
-        );
         Self {
-            url,
+            url: url.into(),
             headers: HashMap::new(),
             tier: None,
         }

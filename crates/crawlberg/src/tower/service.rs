@@ -222,6 +222,7 @@ async fn do_fetch(
     let url =
         url::Url::parse(&req.url).map_err(|e| CrawlError::ssrf_violation(&req.url, format!("invalid URL: {e}")))?;
 
+    crate::net::userinfo::refuse(&url)?;
     validate_url(&url, &config.ssrf)
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
@@ -313,6 +314,47 @@ impl Service<CrawlRequest> for HttpFetchService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_request_url_with_userinfo_is_refused_before_the_network() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig::builder().allow_private_networks(true).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+
+        let credentialed = CrawlRequest {
+            url: mock.uri().replacen("http://", "http://user:TOWER-PW-8b2c@", 1) + "/in",
+            headers: std::collections::HashMap::new(),
+            tier: None,
+        };
+        let error = do_fetch(&client, &config, &credentialed)
+            .await
+            .map(|_| ())
+            .expect_err("a URL with userinfo must be refused");
+        let text = error.to_string();
+        assert!(
+            !text.contains("TOWER-PW-8b2c"),
+            "the error must not print the password: {text}"
+        );
+
+        do_fetch(&client, &config, &CrawlRequest::new(format!("{}/out", mock.uri())))
+            .await
+            .expect("the same URL without userinfo must be fetched");
+        let paths: Vec<String> = mock
+            .received_requests()
+            .await
+            .expect("request recording is on")
+            .into_iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
+    }
 
     #[test]
     fn only_3xx_is_returned_to_the_caller_as_a_redirect() {

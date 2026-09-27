@@ -183,11 +183,6 @@ pub(crate) async fn http_fetch(
 ) -> Result<HttpResponse, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
-    debug_assert!(
-        !crate::net::userinfo::has_userinfo(&initial_url),
-        "a URL reaching the fetch layer never carries userinfo"
-    );
-
     validate_url(&initial_url, &config.ssrf)
         .await
         .map_err(|e| CrawlError::ssrf_violation(url, e.to_string()))?;
@@ -298,6 +293,7 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
 
 /// Build and send the GET for one hop.
 async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) -> Result<reqwest::Response, CrawlError> {
+    crate::net::userinfo::refuse(current_url)?;
     // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
     let mut req = context
         .client
@@ -881,6 +877,41 @@ mod tests {
 
         assert_eq!(response.status, 302, "the 3xx itself must be returned");
         assert_eq!(response.body, "moved", "its body must be read");
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+
+        let credentialed = mock.uri().replacen("http://", "http://user:FETCH-PW-4d1e@", 1) + "/in";
+        let error = http_fetch(&credentialed, &config, &HashMap::new(), &client)
+            .await
+            .map(|_| ())
+            .expect_err("a URL with userinfo must be refused");
+        let text = error.to_string();
+        assert!(
+            !text.contains("FETCH-PW-4d1e"),
+            "the error must not print the password: {text}"
+        );
+        assert!(text.contains("credentials"), "the error names the refusal: {text}");
+
+        http_fetch(&format!("{}/out", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("the same URL without userinfo must be fetched");
+        let paths: Vec<String> = mock
+            .received_requests()
+            .await
+            .expect("request recording is on")
+            .into_iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
     }
 
     fn permissive_config() -> CrawlConfig {

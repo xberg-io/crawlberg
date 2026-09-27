@@ -28,6 +28,22 @@ pub(crate) fn strip(url: &mut Url) {
     }
 }
 
+/// Refuse `url` before it reaches the network when it carries userinfo.
+///
+/// ~keep reqwest turns a URL's userinfo into `Authorization: Basic` for whatever host the URL
+/// ~keep names, so this holds in release builds too. The error names the URL without it.
+pub(crate) fn refuse(url: &Url) -> Result<(), crate::error::CrawlError> {
+    if !has_userinfo(url) {
+        return Ok(());
+    }
+    let mut clean = url.clone();
+    strip(&mut clean);
+    Err(crate::error::CrawlError::ssrf_violation(
+        clean,
+        "a URL with credentials in it is refused",
+    ))
+}
+
 /// Split `url` into the clean URL and its percent-decoded `(username, password)`.
 pub(crate) fn split(mut url: Url) -> (Url, Option<(String, String)>) {
     if !has_userinfo(&url) {
