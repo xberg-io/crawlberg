@@ -693,6 +693,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_comma_inside_a_parenthesised_srcset_descriptor_does_not_split_the_candidate() {
+        // ~keep The inline candidate goes with its whole descriptor, so nothing inside the
+        // ~keep parentheses reaches the converter as a candidate of its own.
+        let md = markdown_at(
+            r#"<p><img srcset="data:image/png,x 1x (a, b.png 3x ), c.png 2x" alt="a"></p>"#,
+            "https://example.com/docs/index.html",
+        )
+        .await;
+        assert_eq!(md, "![a](https://example.com/docs/c.png)\n");
+    }
+
+    #[tokio::test]
     async fn resolves_embedded_media_sources() {
         for html in [
             r#"<iframe src="embed/v.html"></iframe>"#,

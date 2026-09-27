@@ -6,6 +6,7 @@ use url::Url;
 use crate::types::{ImageInfo, ImageSource};
 
 use super::get_attr;
+use super::link_targets::{is_inline_data, srcset_candidates};
 use super::resolve_url;
 use super::selectors::{SEL_IMG_SRC, SEL_OG_IMAGE, SEL_SOURCE_SRCSET, SEL_TWITTER_IMAGE};
 
@@ -52,7 +53,8 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
     }
 }
 
-/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor.
+/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
+/// skipping an inline `data:` candidate.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -63,12 +65,10 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
             continue;
         };
         let srcset = get_attr(tag, "srcset").unwrap_or("");
-        if srcset.is_empty() {
+        let Some((raw_url, _)) = srcset_candidates(srcset).next() else {
             continue;
-        }
-        let first_url = srcset.split(',').next().unwrap_or("").trim();
-        let raw_url = first_url.split_whitespace().next().unwrap_or("");
-        if raw_url.is_empty() {
+        };
+        if is_inline_data(raw_url) {
             continue;
         }
         images.push(ImageInfo {
@@ -187,9 +187,45 @@ mod tests {
     }
 
     #[test]
-    fn srcset_that_is_empty_or_descriptor_only_yields_nothing() {
+    fn srcset_that_is_empty_or_only_separators_yields_nothing() {
         assert_eq!(extract(r#"<source srcset="">"#), Vec::<Flat>::new());
-        assert_eq!(extract(r#"<source srcset=" , b.png">"#), Vec::<Flat>::new());
+        assert_eq!(extract("<source srcset=\" , \t,\">"), Vec::<Flat>::new());
+    }
+
+    #[test]
+    fn srcset_skips_leading_separators_as_a_browser_does() {
+        assert_eq!(
+            extract(r#"<source srcset=" , b.png">"#),
+            vec![flat("https://example.com/dir/b.png", "picture_source")]
+        );
+    }
+
+    #[test]
+    fn srcset_keeps_a_comma_inside_the_first_url() {
+        assert_eq!(
+            extract(r#"<source srcset="a,b.png 1x, c.png 2x">"#),
+            vec![flat("https://example.com/dir/a,b.png", "picture_source")]
+        );
+    }
+
+    #[test]
+    fn srcset_keeps_a_leading_no_break_space_in_the_first_url() {
+        assert_eq!(
+            extract("<source srcset=\"\u{a0}a.png 1x\">"),
+            vec![flat("https://example.com/dir/%C2%A0a.png", "picture_source")]
+        );
+    }
+
+    #[test]
+    fn srcset_whose_first_candidate_is_inline_data_is_skipped() {
+        assert_eq!(
+            extract(r#"<source srcset="data:image/png;base64,AA 1x, b.png 2x">"#),
+            Vec::<Flat>::new()
+        );
+        assert_eq!(
+            extract(r#"<source srcset="DATA:image/png;base64,AA">"#),
+            Vec::<Flat>::new()
+        );
     }
 
     #[test]

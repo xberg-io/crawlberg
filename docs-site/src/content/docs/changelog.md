@@ -231,6 +231,16 @@ title: "Changelog"
   `<img src="data:..." ="x>">` kept its whole payload in the markdown. Each link, image and media
   tag is now written back as an HTML parser reads it, with each attribute once, before the
   converter reads it. (#233)
+- **A comma inside a parenthesised `srcset` descriptor split the candidate.** In
+  `srcset="a.png 1x (x, y), b.png 2x"` the text after the comma became a candidate of its own, so
+  the markdown could show an address taken from inside the parentheses. A comma inside
+  parentheses is now part of the descriptor, as a browser reads it. Image discovery reads
+  `<source srcset>` with the same rule: a comma inside the first URL stays in it, leading commas
+  are skipped, and an inline `data:` first candidate is skipped in any letter case. Both readers
+  now separate a `srcset` only at the five whitespace characters the HTML spec names (space, tab,
+  line feed, form feed, carriage return). So the markdown rewrite keeps any other space, such as
+  a no-break space, in a descriptor, and image discovery keeps a leading no-break space as part of
+  the first URL, as a browser does. (#271)
 
 ### Added
 
