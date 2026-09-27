@@ -573,8 +573,7 @@ impl CrawlConfig {
 
     fn validate_browser_endpoint(&self) -> Result<(), CrawlError> {
         if let Some(ref endpoint) = self.browser.endpoint
-            && !endpoint.starts_with("ws://")
-            && !endpoint.starts_with("wss://")
+            && !crate::net::is_websocket_scheme(endpoint)
         {
             return Err(CrawlError::invalid_config(format!(
                 "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
@@ -772,6 +771,39 @@ mod tests {
         let config = CrawlConfig {
             browser: BrowserConfig {
                 endpoint: Some("http://not-websocket:3000".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+    }
+
+    #[test]
+    fn validate_accepts_upper_and_mixed_case_ws_browser_endpoint() {
+        for endpoint in [
+            "WS://localhost:9222",
+            "WSS://localhost:9222",
+            "Ws://localhost:9222",
+            "wSs://localhost:9222",
+        ] {
+            let config = CrawlConfig {
+                browser: BrowserConfig {
+                    endpoint: Some(endpoint.to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_upper_case_http_browser_endpoint() {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some("HTTP://not-websocket:3000".into()),
                 ..Default::default()
             },
             ..Default::default()

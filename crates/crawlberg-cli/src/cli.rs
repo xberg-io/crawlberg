@@ -99,7 +99,7 @@ impl From<CliBrowserMode> for BrowserMode {
 
 /// Validate that a `--browser-endpoint` value is a WebSocket URL (`ws://` or `wss://`).
 pub fn parse_browser_endpoint(value: &str) -> Result<String, String> {
-    if value.starts_with("ws://") || value.starts_with("wss://") {
+    if crawlberg::net::is_websocket_scheme(value) {
         Ok(value.to_owned())
     } else {
         Err(format!(
@@ -447,10 +447,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_browser_endpoint_accepts_upper_and_mixed_case_ws_schemes() {
+        assert!(parse_browser_endpoint("WS://127.0.0.1:9222/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("WSS://remote.host/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("Ws://127.0.0.1:9222/devtools/browser/abc").is_ok());
+        assert!(parse_browser_endpoint("wSs://remote.host/devtools/browser/abc").is_ok());
+    }
+
+    #[test]
     fn parse_browser_endpoint_rejects_non_ws_urls() {
         assert!(parse_browser_endpoint("http://127.0.0.1:9222").is_err());
         assert!(parse_browser_endpoint("https://remote.host").is_err());
         assert!(parse_browser_endpoint("127.0.0.1:9222").is_err());
+        assert!(parse_browser_endpoint("HTTP://127.0.0.1:9222").is_err());
     }
 
     #[test]
