@@ -256,10 +256,10 @@ fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
     let numeric_end = rest[digits_end..]
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))
         .map_or(rest.len(), |offset| digits_end + offset);
-    // The refresh steps collect the leading digits as the delay, then separately collect and
-    // discard a run of digits and `.`. A value that never collects a single digit in either run
-    // (a lone `.`, or a run of only `.`) names no delay at all, so it is not a refresh: Chrome
-    // does not act on it, unlike a delay of zero (#353).
+    // Read literally, the shared declarative refresh steps accept a value with no digit: when the
+    // leading digits are empty and the next character is `.`, they continue with a delay of 0, an
+    // immediate refresh to the page itself. Chrome does not: a lone `.`, or a run of only `.`,
+    // schedules no refresh (oracle case `d06_dot_only_then_longer`). This follows Chrome (#353).
     if !rest[..numeric_end].bytes().any(|c| c.is_ascii_digit()) {
         return None;
     }
@@ -637,9 +637,8 @@ mod tests {
         assert_eq!(delay("x; url=/next"), None);
     }
 
-    /// The refresh steps collect the time as ASCII digits, then a separate run of digits and
-    /// `.` that is ignored. A value that never collects a single digit names no delay at all,
-    /// so it is not a refresh: Chrome does not act on it, unlike a delay of zero (#353).
+    /// A delay with no digit anywhere (a lone `.`) is no refresh, as in Chrome. The literal
+    /// refresh steps would read it as a delay of 0 (#353).
     #[test]
     fn parse_refresh_treats_a_delay_with_no_digit_as_no_refresh() {
         assert!(parse_refresh(".; url=/next").is_none());
