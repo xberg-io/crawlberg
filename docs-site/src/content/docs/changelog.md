@@ -4,6 +4,14 @@ title: "Changelog"
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-27
+
+Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
+defects a green e2e suite could not see: the fixtures covering the affected behaviours passed with
+the bugs fully present, and the assertion vocabulary cannot express request counts or elapsed time
+at all, so the whole "how many requests did we send, and how long did we wait" class was invisible
+by construction.
+
 ### Upgrading
 
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
@@ -26,6 +34,74 @@ title: "Changelog"
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
+
+
+Four changes can affect an existing setup:
+
+- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
+  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
+  relied on reaching a loopback or private address through `interact()` must now opt in
+  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
+
+- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
+  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
+  encrypted with a keychain-backed key and the mock keychain uses a different one.
+- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
+  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
+  versions. Older configurations still load unchanged.
+- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
+  originally discovered one, so it keys on where the content actually came from. This also feeds
+  `CrawlResult::unique_normalized_urls()`.
+
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
+
+- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
+  to `false`. The head values remain available on `PageMetadata`, which is populated independently
+  of the converter. (#64)
+- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
+  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
+  pattern anchored with `$` changes meaning once the query joins the text. (#61)
+- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
+  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
+  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
+  from the key. (#65)
+- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
+  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
+- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
+- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
+  many hops it took. (#62)
+- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
+  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
+  (#57)
 
 ### Fixed
 
@@ -198,101 +274,6 @@ title: "Changelog"
   as ranges. These addresses were refused before and are refused now; only the reason string in the
   error and the log field changes. (#205)
 
-### Added
-
-- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
-  the response bytes rather than the declared MIME type alone. The predicate receives the
-  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
-  decision `document_mime_types`/the built-in classification would have reached, so it can widen
-  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
-  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
-  decision is unchanged.
-
-  The predicate runs for every fetched response, an ordinary HTML page included, so one that
-  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
-  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
-  as the documents it is meant to admit. (#95)
-
-- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
-  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
-  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
-  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
-  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
-  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
-  addresses of `<graphic>`. Character references in an address are decoded first, so
-  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
-  `fit_content` can now drop a line of relative links that it kept before, the same way it
-  already treated absolute links. (#63)
-- **The markdown front matter showed the base address as written.** A page with
-  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
-  the same address that relative links resolve against. (#94)
-
-### Internal
-
-- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
-  conversion option that resolves relative addresses the same way the pre-pass above does, and the
-  caret requirement admits it on a routine `cargo update` with nothing to compile against and
-  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
-  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
-  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
-  pre-pass does. (#190)
-
-- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
-  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
-  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
-  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
-  closed as before. (#73)
-
-## [1.8.0] - 2026-09-25
-
-Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
-green e2e suite could not see: the fixtures covering the affected behaviours passed with the bugs
-fully present, and the assertion vocabulary cannot express request counts or elapsed time at all,
-so the whole "how many requests did we send, and how long did we wait" class was invisible by
-construction.
-
-### Upgrading
-
-Four changes can affect an existing setup:
-
-- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
-  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
-  relied on reaching a loopback or private address through `interact()` must now opt in
-  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
-
-- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
-  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
-  encrypted with a keychain-backed key and the mock keychain uses a different one.
-- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
-  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
-  versions. Older configurations still load unchanged.
-- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
-  originally discovered one, so it keys on where the content actually came from. This also feeds
-  `CrawlResult::unique_normalized_urls()`.
-
-### Added
-
-- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
-  to `false`. The head values remain available on `PageMetadata`, which is populated independently
-  of the converter. (#64)
-- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
-  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
-  pattern anchored with `$` changes meaning once the query joins the text. (#61)
-- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
-  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
-  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
-  from the key. (#65)
-- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
-  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
-- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
-- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
-  many hops it took. (#62)
-- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
-  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
-  (#57)
-
-### Fixed
 
 - **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
   host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
@@ -361,6 +342,22 @@ Four changes can affect an existing setup:
   entries are config or log files, one is generated, and the remaining two are the same defect in
   poly's parameter counting, which counts an attribute on a parameter as a parameter. Reported as
   Goldziher/poly#28.
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
+- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
+  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
+  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
+  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
+  closed as before. (#73)
 
 ## [1.7.2] - 2026-09-24
 
