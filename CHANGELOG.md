@@ -29,6 +29,19 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Interact returned Chrome's error page as the page.** On the Chromiumoxide backend, a page
+  that went on to a URL Chrome could not show, such as a download answering 501, left Chrome's
+  own error page in place of the page. A Scrape action then returned that page's HTML, and the
+  session returned it as the final HTML with `chrome-error://chromewebdata/` as the final URL.
+  Now a Scrape action on that page fails, and a session that ends on it fails. Both errors are
+  browser errors that name the URL Chrome could not show, with its credentials redacted. (#345)
+
+- **Interact dropped an SSRF refusal when the navigation succeeded.** On the Chromiumoxide
+  backend, a page that navigated to an address the SSRF policy refuses during the wait, such as
+  `169.254.169.254`, left Chrome's error page, and the session did not report the refusal. Now
+  the session fails with the SSRF policy error, which names the refused URL with its credentials
+  redacted. A refused subresource still does not fail a page that loaded. (#369)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

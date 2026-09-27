@@ -66,7 +66,7 @@ pub(super) async fn page_fetch(
     })
     .await;
 
-    let blocked = interceptor.finish().await;
+    let blocked = interceptor.finish().await.blocked;
     resolve_navigation_outcome(navigation, blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {

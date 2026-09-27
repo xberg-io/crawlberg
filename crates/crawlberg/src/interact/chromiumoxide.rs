@@ -10,7 +10,10 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
+use crate::chrome_frame::committed_frame;
 use crate::error::CrawlError;
+use crate::net::redact_url_credentials;
+use crate::ssrf_intercept::InterceptOutcome;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -117,6 +120,7 @@ async fn run_with_browser(
 
         let (action_results, screenshot) = run_actions(&page, actions).await;
 
+        ensure_not_error_page(&page).await?;
         let final_html = page
             .content()
             .await
@@ -200,8 +204,8 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     })
     .await;
 
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    let intercepted = interceptor.finish().await;
+    resolve_navigation_outcome(navigation, intercepted, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -216,21 +220,27 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
 /// ~keep interception surfaces as `CrawlError::SsrfPolicyViolation`, taking priority over the
 /// ~keep generic navigation error Chrome reports for the same failed request (CDP's
 /// ~keep `BlockedByClient` typically surfaces to `page.goto` as an ordinary `net::ERR_FAILED`).
+/// ~keep A refused main-frame navigation fails even when the navigation succeeded: the page
+/// ~keep navigated again during the wait, and Chrome shows its error page in its place (#369).
+/// ~keep A refused subresource alone does not fail a navigation that succeeded.
 fn resolve_navigation_outcome(
     navigation: Result<Result<(), CrawlError>, tokio::time::error::Elapsed>,
-    blocked: Option<(String, String)>,
+    intercepted: InterceptOutcome,
     timeout: Duration,
 ) -> Result<(), CrawlError> {
+    // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
+    // ~keep `browser::navigation::resolve_navigation_outcome`: the blocked URL is the raw
+    // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
+    // ~keep refused request had. xberg-io/crawlberg#180.
+    if let Some((blocked_url, reason)) = intercepted.blocked_navigation {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
     let navigation_error = match navigation {
         Ok(Ok(())) => return Ok(()),
         Ok(Err(error)) => error,
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
-    if let Some((blocked_url, reason)) = blocked {
-        // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
-        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
-        // ~keep refused request had. xberg-io/crawlberg#180.
+    if let Some((blocked_url, reason)) = intercepted.blocked {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
@@ -347,8 +357,28 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
                 .content()
                 .await
                 .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))?;
+            ensure_not_error_page(page).await?;
             Ok(ActionData::data(json!({ "html": html })))
         }
+    }
+}
+
+/// Fail when the main frame of `page` shows Chrome's own error page, which is never the site's
+/// content.
+async fn ensure_not_error_page(page: &chromiumoxide::Page) -> Result<(), CrawlError> {
+    error_page_verdict(committed_frame(page).await.map(|frame| frame.unreachable_url))
+}
+
+/// Judge a read of the main frame's `unreachable_url`. A failed read fails, because a page that
+/// cannot be checked is not known to be the site's. The error for Chrome's error page names the
+/// URL Chrome could not show, with its credentials redacted.
+fn error_page_verdict(unreachable_url: Result<Option<String>, CrawlError>) -> Result<(), CrawlError> {
+    match unreachable_url? {
+        Some(failed_url) => Err(CrawlError::browser_error(format!(
+            "Chrome could not load {} and showed its own error page",
+            redact_url_credentials(&failed_url)
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -528,13 +558,16 @@ mod tests {
     /// ~keep which `ssrf_intercept` records unchanged. xberg-io/crawlberg#180.
     #[test]
     fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
-        let blocked = Some((
-            "https://user:secret@10.0.0.1/".to_owned(),
-            "denied by SSRF policy: private_network".to_owned(),
-        ));
+        let intercepted = InterceptOutcome {
+            blocked: Some((
+                "https://user:secret@10.0.0.1/".to_owned(),
+                "denied by SSRF policy: private_network".to_owned(),
+            )),
+            ..InterceptOutcome::default()
+        };
         let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
 
-        let error = resolve_navigation_outcome(navigation, blocked, Duration::from_secs(7))
+        let error = resolve_navigation_outcome(navigation, intercepted, Duration::from_secs(7))
             .expect_err("a blocked request must surface as an error");
 
         let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
@@ -549,5 +582,70 @@ mod tests {
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
         );
+    }
+
+    fn refused(url: &str) -> Option<(String, String)> {
+        Some((url.to_owned(), "denied by SSRF policy: link_local".to_owned()))
+    }
+
+    /// A page that navigates to a refused URL during the wait leaves Chrome's error page while the
+    /// navigation itself succeeded. The refusal must still fail the session (#369).
+    #[test]
+    fn a_refused_main_frame_navigation_fails_a_navigation_that_succeeded() {
+        let intercepted = InterceptOutcome {
+            blocked: refused("http://user:secret@169.254.169.254/latest"),
+            blocked_navigation: refused("http://user:secret@169.254.169.254/latest"),
+        };
+
+        let error = resolve_navigation_outcome(Ok(Ok(())), intercepted, Duration::from_secs(7))
+            .expect_err("a refused main-frame navigation must fail the session");
+
+        let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
+            panic!("expected an SSRF policy violation, got: {error:?}");
+        };
+        assert_eq!(url.as_str(), "http://***:***@169.254.169.254/latest");
+    }
+
+    #[test]
+    fn a_refused_subresource_does_not_fail_a_navigation_that_succeeded() {
+        let intercepted = InterceptOutcome {
+            blocked: refused("http://169.254.169.254/pixel.png"),
+            ..InterceptOutcome::default()
+        };
+
+        assert!(resolve_navigation_outcome(Ok(Ok(())), intercepted, Duration::from_secs(7)).is_ok());
+    }
+
+    /// ~keep A scripted read: CDP offers no way to fail `Page.getFrameTree` while the page itself
+    /// ~keep still answers, so the failed read is tested at the verdict the call site feeds.
+    #[test]
+    fn a_failed_frame_read_fails_closed() {
+        let read = Err(CrawlError::browser_error(
+            "failed to read the committed document: closed",
+        ));
+
+        let error = error_page_verdict(read).expect_err("a page that cannot be checked must fail");
+
+        assert!(
+            error.to_string().contains("failed to read the committed document"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn chrome_s_error_page_fails_and_names_the_redacted_url() {
+        let error = error_page_verdict(Ok(Some("http://user:secret@127.0.0.1/dl".to_owned())))
+            .expect_err("Chrome's error page must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("***:***@127.0.0.1/dl") && !message.contains("secret"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_page_with_no_unreachable_url_passes() {
+        assert!(error_page_verdict(Ok(None)).is_ok());
     }
 }

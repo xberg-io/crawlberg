@@ -8,6 +8,8 @@ use std::time::Duration;
 
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use base64::Engine as _;
+#[cfg(feature = "browser-chromiumoxide")]
+use crawlberg::HostMatcher;
 use crawlberg::ScrollDirection;
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 use crawlberg::{BrowserBackend, BrowserConfig, BrowserMode};
@@ -146,6 +148,274 @@ async fn chromiumoxide_interact_click_wait_screenshot_and_scrape() {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     assert!(scrape_data.contains("clicked"));
+}
+
+/// A server with a start page at `/` that runs `late_navigation` 300 ms after it loads, and a
+/// download at `/dl` that answers 501. Chrome cannot show that download, so it commits its own
+/// error page in place of the start page.
+#[cfg(feature = "browser-chromiumoxide")]
+async fn late_501_download_site(late_navigation: &str) -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!(
+                "<html><body><p id=\"start\">start page</p>\
+                 <script>setTimeout(() => {{ {late_navigation} }}, 300)</script></body></html>"
+            ),
+            "text/html",
+        ))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/dl"))
+        .respond_with(
+            ResponseTemplate::new(501)
+                .set_body_raw("bin", "application/octet-stream")
+                .append_header("content-disposition", "attachment; filename=x.bin"),
+        )
+        .mount(&mock)
+        .await;
+    mock
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+async fn assert_download_requested(test_name: &str, mock: &MockServer) {
+    let requests = mock.received_requests().await.unwrap_or_default();
+    assert!(
+        requests.iter().any(|request| request.url.path() == "/dl"),
+        "{test_name}: the start page never reached the download, so Chrome never showed its error page"
+    );
+}
+
+#[cfg(feature = "browser-chromiumoxide")]
+fn chromiumoxide_interact_config() -> CrawlConfig {
+    CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Chromiumoxide,
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            ..BrowserConfig::default()
+        },
+        ..allow_private_config()
+    }
+}
+
+/// A session that ends on Chrome's error page fails with a browser error that names the URL Chrome
+/// could not show, with its credentials redacted. It never returns Chrome's page as the final HTML.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_page() {
+    let test_name = "chromiumoxide_interact_fails_when_the_session_ends_on_chrome_s_error_page";
+    let mock = late_501_download_site(
+        "location.assign(new URL('/dl', location.href).href.replace('http://', 'http://user:secret@'))",
+    )
+    .await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+            PageAction::Scrape,
+        ],
+    )
+    .await;
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(CrawlError::BrowserError { message, .. }) => {
+            assert_download_requested(test_name, &mock).await;
+            assert!(
+                message.contains("***:***@") && message.contains("/dl") && message.contains("error page"),
+                "{test_name}: the error must name the redacted URL Chrome could not show: {message}"
+            );
+            assert!(
+                !message.contains("secret"),
+                "{test_name}: the error must not carry the URL's password: {message}"
+            );
+        }
+        other => panic!("{test_name}: Chrome's error page must fail the session: {other:?}"),
+    }
+}
+
+/// A Scrape action run while the page shows Chrome's error page fails, and its data is never that
+/// page. The session then goes back to the start page, so it ends on a real page and succeeds.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
+    let test_name = "chromiumoxide_interact_scrape_fails_on_chrome_s_error_page";
+    // ~keep The flag stops the start page from starting the download again when the session
+    // ~keep goes back to it.
+    let mock = late_501_download_site(
+        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
+    )
+    .await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+            PageAction::Scrape,
+            PageAction::ExecuteJs {
+                script: "history.back()".to_string(),
+            },
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: the session ends on the start page and must succeed: {error:?}"),
+    };
+
+    assert_download_requested(test_name, &mock).await;
+    let scrape = &result.action_results[1];
+    assert_eq!(scrape.action_type, "scrape", "{test_name}");
+    assert!(
+        !scrape.success && scrape.data.is_none(),
+        "{test_name}: the Scrape action must fail with no data on Chrome's error page: {scrape:?}"
+    );
+    let error = scrape.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("/dl") && error.contains("error page"),
+        "{test_name}: the Scrape error must name the URL Chrome could not show: {error}"
+    );
+    assert!(
+        result.final_html.contains("start page"),
+        "{test_name}: the session must end on the start page: {}",
+        result.final_html
+    );
+}
+
+/// A page that navigates to a refused address during the wait fails the session with the SSRF
+/// policy error, even though Chrome reports the navigation it waited for as fine (#369). The
+/// error does not carry the credentials of the refused URL.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_fails_on_a_refused_navigation_during_the_wait() {
+    let test_name = "chromiumoxide_interact_fails_on_a_refused_navigation_during_the_wait";
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>start page</p><script>setTimeout(() => \
+             location.assign('http://user:secret@169.254.169.254/latest'), 50)</script></body></html>",
+            "text/html",
+        ))
+        .mount(&mock)
+        .await;
+    // ~keep The allowlist lets the mock server's loopback address through and keeps every other
+    // ~keep private address refused, so only the page's own navigation is blocked.
+    let config = CrawlConfig {
+        ssrf: SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        },
+        ..chromiumoxide_interact_config()
+    };
+    let engine = create_engine(Some(config)).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![PageAction::Wait {
+            milliseconds: Some(100),
+            selector: None,
+        }],
+    )
+    .await;
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(error @ CrawlError::SsrfPolicyViolation { .. }) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("169.254.169.254"),
+                "{test_name}: the error must name the refused address: {message}"
+            );
+            assert!(
+                !message.contains("secret"),
+                "{test_name}: the error must not carry the URL's password: {message}"
+            );
+        }
+        other => panic!("{test_name}: the refused navigation must fail with the SSRF policy error: {other:?}"),
+    }
+}
+
+/// A refused iframe document must not fail the session: only a refused main-frame navigation
+/// does (rev365b finding 1). The main frame is read once, when interception starts
+/// (`ssrf_intercept.rs:99`); with that read forced to unknown, every refused document counts as
+/// a navigation, so this iframe would fail the session too, and the PR's own tests do not cover
+/// the difference.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_succeeds_with_a_refused_iframe() {
+    let test_name = "chromiumoxide_interact_succeeds_with_a_refused_iframe";
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<html><body><p>start</p><iframe src=\"http://169.254.169.254/frame\"></iframe></body></html>",
+            "text/html",
+        ))
+        .mount(&mock)
+        .await;
+    // ~keep Same allowlist as the sibling refused-navigation test above: the mock server's
+    // ~keep loopback address is let through, every other private address stays refused.
+    let config = CrawlConfig {
+        ssrf: SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid")],
+            ..SsrfPolicy::default()
+        },
+        ..chromiumoxide_interact_config()
+    };
+    let engine = create_engine(Some(config)).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![PageAction::Wait {
+            milliseconds: Some(300),
+            selector: None,
+        }],
+    )
+    .await;
+
+    match result {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Ok(result) => {
+            assert!(
+                result.final_html.contains("start"),
+                "{test_name}: a refused iframe document must not fail the session: {}",
+                result.final_html
+            );
+        }
+        other => panic!("{test_name}: a refused iframe document must not fail the session: {other:?}"),
+    }
 }
 
 #[cfg(feature = "browser-native")]
