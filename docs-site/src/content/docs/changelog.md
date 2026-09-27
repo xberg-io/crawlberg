@@ -4,6 +4,19 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
+  of such a page returned the rendered HTML with status 200. It now returns the same error that
+  HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
+  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
+  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
+  mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
+  that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
+  response headers of the document the page shows, so a WAF block is found from the headers of a
+  403 page as well as from its body. (#143)
+
 ### Fixed
 
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
@@ -45,6 +58,12 @@ title: "Changelog"
   The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
   on the native backend `interact` still follows every redirect a chain offers, up to the
   backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
+  stopped checking requests against the SSRF policy when the page finished loading, so a script
+  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
+  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
+  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
+  or iframe keeps the page. (#143)
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when

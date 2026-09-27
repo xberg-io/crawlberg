@@ -128,8 +128,9 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let mut http_resp =
-            crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
+        let http_resp = crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
+        let redirected = http_resp.final_url != url;
+        let mut http_resp = crate::http::rendered_status_outcome(http_resp, redirected, &self.config)?;
         let raw_extras = http_resp.browser_extras.take();
         let crawl_resp = crate::tower::CrawlResponse {
             status: http_resp.status,

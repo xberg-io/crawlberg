@@ -2,18 +2,19 @@
 //! HTML (plus an optional screenshot). This is the per-page work shared by both
 //! the pooled and one-shot chromiumoxide fetch paths in the parent module.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, GetFrameTreeParams};
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::{StoppedResponse, start_ssrf_interception};
+use crate::ssrf_intercept::{SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -21,7 +22,8 @@ use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 const STEALTH_VIEWPORT_WIDTH: u32 = 1920;
 const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 
-/// Synthetic status and content type reported for a CDP-rendered page.
+/// Status reported for a CDP-rendered page when no main-frame response was intercepted,
+/// and the content type reported for every rendered page.
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
 
@@ -54,10 +56,40 @@ pub(super) async fn page_fetch(
     apply_prior_cookies(page, prior_cookies).await;
     apply_extra_headers(page, config).await?;
 
-    let timeout = config.browser.timeout;
-
     let interceptor = start_ssrf_interception(page, &config.ssrf, config.max_redirects).await?;
+    let rendered = render(url, config, page, &interceptor, want_screenshot).await;
+    let late = interceptor.finish().await;
+    let rendered = rendered?;
+    // ~keep A main-frame navigation the policy refused leaves Chrome's error page in place of
+    // ~keep the page, so it fails the fetch even when the navigation `goto` waited for succeeded:
+    // ~keep the refused one can come during the load or after it, during `extra_wait`.
+    if let Some((blocked_url, reason)) = late.blocked_navigation {
+        return Err(CrawlError::SsrfPolicyViolation {
+            url: blocked_url,
+            reason,
+            source: None,
+        });
+    }
+    Ok(rendered)
+}
 
+/// Navigate `page` to `url` under `interceptor` and read the rendered page.
+///
+/// ~keep The interception stays on until the HTML is read, so a page that navigates during
+/// ~keep `extra_wait` (a challenge page that moves to the real page, for example) reports the
+/// ~keep status and headers of the new document. They are those of the main-frame document
+/// ~keep committed when they are read. A response Chrome does not commit (a 204, a 2xx download)
+/// ~keep leaves the previous document in place, and its status with it. The read is a separate
+/// ~keep CDP call from reading the HTML: a navigation that commits between the two calls pairs
+/// ~keep them with a different document.
+async fn render(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    interceptor: &SsrfInterceptGuard,
+    want_screenshot: bool,
+) -> Result<BrowserPage, CrawlError> {
+    let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
@@ -71,7 +103,7 @@ pub(super) async fn page_fetch(
     })
     .await;
 
-    let intercepted = interceptor.finish().await;
+    let intercepted = interceptor.navigation_outcome();
     if intercepted.blocked.is_none()
         && let Some(stop) = intercepted.stopped_response
     {
@@ -90,6 +122,11 @@ pub(super) async fn page_fetch(
         .content()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
+    let loader_id = committed_loader_id(page).await?;
+    let (status, headers) = interceptor.document(&loader_id).map_or_else(
+        || (RENDERED_PAGE_STATUS, HashMap::new()),
+        |doc| (doc.status, doc.headers),
+    );
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
     // ~keep resolve against. An unreadable URL falls back to the requested one.
@@ -98,20 +135,27 @@ pub(super) async fn page_fetch(
     let body_bytes = html.as_bytes().to_vec();
     let screenshot = capture_screenshot(page, config, want_screenshot).await;
 
-    // ~keep CDP `page.content()` does not expose HTTP status; rendered pages report synthetic 200 here.
     Ok(BrowserPage {
         response: HttpResponse {
-            status: RENDERED_PAGE_STATUS,
+            status,
             content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
             body: html,
             body_bytes,
-            headers: std::collections::HashMap::new(),
+            headers,
             browser_extras: None,
             final_url,
             screenshot,
         },
         redirects: intercepted.redirects_followed,
     })
+}
+
+/// The loader id of the document the main frame has committed.
+async fn committed_loader_id(page: &chromiumoxide::Page) -> Result<String, CrawlError> {
+    page.execute(GetFrameTreeParams::default())
+        .await
+        .map(|tree| tree.result.frame_tree.frame.loader_id.into())
+        .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
 }
 
 /// The response a navigation stopped on without a document, with no body, as the HTTP
