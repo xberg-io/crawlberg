@@ -307,6 +307,134 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
     );
 }
 
+/// An ExecuteJs action run while the page shows Chrome's error page fails, through the same
+/// document-bound check Scrape uses (#355). The script still runs a second time to recover the
+/// session, so it ends on a real page and interact() succeeds.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
+    let test_name = "chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page";
+    // ~keep The flag stops the start page from starting the download again when the session
+    // ~keep goes back to it.
+    let mock = late_501_download_site(
+        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
+    )
+    .await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+            PageAction::ExecuteJs {
+                script: "document.title".to_string(),
+            },
+            PageAction::ExecuteJs {
+                script: "history.back()".to_string(),
+            },
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: the session ends on the start page and must succeed: {error:?}"),
+    };
+
+    assert_download_requested(test_name, &mock).await;
+    let execute_js = &result.action_results[1];
+    assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
+    assert!(
+        !execute_js.success && execute_js.data.is_none(),
+        "{test_name}: the ExecuteJs action must fail with no data on Chrome's error page: {execute_js:?}"
+    );
+    let error = execute_js.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("/dl") && error.contains("error page"),
+        "{test_name}: the ExecuteJs error must name the URL Chrome could not show: {error}"
+    );
+    assert!(
+        result.final_html.contains("start page"),
+        "{test_name}: the session must end on the start page: {}",
+        result.final_html
+    );
+}
+
+/// A Screenshot action run while the page shows Chrome's error page fails, through the same
+/// document-bound check Scrape uses (#355). The session then goes back to the start page, so it
+/// ends on a real page and succeeds.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
+    let test_name = "chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page";
+    // ~keep The flag stops the start page from starting the download again when the session
+    // ~keep goes back to it.
+    let mock = late_501_download_site(
+        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
+    )
+    .await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+            PageAction::Screenshot { full_page: Some(false) },
+            PageAction::ExecuteJs {
+                script: "history.back()".to_string(),
+            },
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: the session ends on the start page and must succeed: {error:?}"),
+    };
+
+    assert_download_requested(test_name, &mock).await;
+    let screenshot_action = &result.action_results[1];
+    assert_eq!(screenshot_action.action_type, "screenshot", "{test_name}");
+    assert!(
+        !screenshot_action.success && screenshot_action.data.is_none(),
+        "{test_name}: the Screenshot action must fail with no data on Chrome's error page: {screenshot_action:?}"
+    );
+    let error = screenshot_action.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("/dl") && error.contains("error page"),
+        "{test_name}: the Screenshot error must name the URL Chrome could not show: {error}"
+    );
+    assert!(
+        result.final_html.contains("start page"),
+        "{test_name}: the session must end on the start page: {}",
+        result.final_html
+    );
+}
+
 /// A page that navigates to a refused address during the wait fails the session with the SSRF
 /// policy error, even though Chrome reports the navigation it waited for as fine (#369). The
 /// error does not carry the credentials of the refused URL.

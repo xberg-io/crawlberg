@@ -356,4 +356,55 @@ mod tests {
             "{TEST_NAME}: the first refused navigation must be kept over the second: {url}"
         );
     }
+
+    /// A failed main-frame read must fail `start_ssrf_interception` promptly, at the main-frame
+    /// step itself, before `event_listener`/`Fetch.enable` are ever reached. If it read the main
+    /// frame after enabling interception instead, a failed read would leave interception on with
+    /// no listener to answer it, hanging every request the page makes next.
+    ///
+    /// `page.mainframe()`, `page.event_listener()` and `page.execute()` (used for `Fetch.enable`)
+    /// all route through the one command channel a page holds to Chrome; aborting the browser's
+    /// handler task drops that channel's receiver, so every one of those calls fails the same way
+    /// once it is reached. That makes the ordering observable from outside: whichever call runs
+    /// first is the one whose error text comes back. Reproduces the reviewer's own reorder
+    /// mutation (rev365d arm 4, main-frame read moved after `event_listener`/`Fetch.enable`): under
+    /// that mutation `event_listener` runs first and fails with a different message, turning this
+    /// test red.
+    #[tokio::test]
+    async fn a_failed_main_frame_read_fails_promptly_before_interception_starts() {
+        const TEST_NAME: &str = "a_failed_main_frame_read_fails_promptly_before_interception_starts";
+        let Some((mut browser, handler_task, page, user_data_dir)) = launch_test_page().await else {
+            return;
+        };
+
+        // Stop the task that services this page's command channel. Every command sent through it
+        // from here on fails with a channel-closed error, so which call fails first is now
+        // observable in the error text alone.
+        handler_task.abort();
+        tokio::task::yield_now().await;
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            start_ssrf_interception(&page, &deny_policy()),
+        )
+        .await;
+
+        let _ = browser.close().await;
+        let _ = std::fs::remove_dir_all(&user_data_dir);
+
+        let result =
+            outcome.unwrap_or_else(|_| panic!("{TEST_NAME}: a failed main-frame read must not hang, must fail"));
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => {
+                panic!("{TEST_NAME}: a page with no working command channel must not resolve to a running interceptor")
+            }
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to read the page's main frame"),
+            "{TEST_NAME}: the main-frame read must be the first thing that fails, before request \
+             interception is ever switched on, so no request is left paused: {message}"
+        );
+    }
 }

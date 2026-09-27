@@ -344,10 +344,12 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
                 .format(CaptureScreenshotFormat::Png)
                 .full_page(full_page.unwrap_or(false))
                 .build();
-            let bytes = page
-                .screenshot(params)
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))?;
+            let bytes = fail_if_run_on_error_page(page, async {
+                page.screenshot(params)
+                    .await
+                    .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))
+            })
+            .await?;
             let len = bytes.len();
             Ok(ActionData {
                 data: Some(json!({ "bytes": len, "format": "png" })),
@@ -355,7 +357,7 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             })
         }
         PageAction::ExecuteJs { script } => {
-            let value = evaluate_json(page, script).await?;
+            let value = fail_if_run_on_error_page(page, evaluate_json(page, script)).await?;
             Ok(ActionData::data(value))
         }
         PageAction::Scrape => {
@@ -382,6 +384,27 @@ where
     R: std::future::Future<Output = Result<T, CrawlError>>,
 {
     let (value, document) = read_one_document(read_document, read).await?;
+    error_page_verdict(document.unreachable_url)?;
+    Ok(value)
+}
+
+/// Run `action` once, and fail when the document committed just before it started was Chrome's
+/// own error page.
+///
+/// ~keep Checks once, not bound to a document the way [`read_site_content`] binds Scrape's read:
+/// ~keep that binding repeats the read when the document changes between its own before and after
+/// ~keep check, which is safe for Scrape's `page.content()` but not here. ExecuteJs and Screenshot
+/// ~keep can have side effects: a script may navigate the page away from the error page, the same
+/// ~keep `history.back()` every error-page test in this file already uses to recover the session.
+/// ~keep A fast back-navigation can commit inside the round trip of an after-check, and repeating
+/// ~keep the script on that mismatch would run it a second time, overshooting the navigation it
+/// ~keep just made (measured: doubles `history.back()` into `about:blank`).
+async fn fail_if_run_on_error_page<T>(
+    page: &chromiumoxide::Page,
+    action: impl std::future::Future<Output = Result<T, CrawlError>>,
+) -> Result<T, CrawlError> {
+    let document = committed_document(page).await?;
+    let value = action.await?;
     error_page_verdict(document.unreachable_url)?;
     Ok(value)
 }

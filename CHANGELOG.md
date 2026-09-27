@@ -24,6 +24,12 @@ All notable changes to crawlberg are documented here.
   fetch or session whose page reports no main frame now fails with a browser error, because a
   refused navigation cannot be told from a refused iframe without it. (#369, #383)
 
+- **Interact ran ExecuteJs and Screenshot on Chrome's error page.** On the Chromiumoxide
+  backend, an ExecuteJs or Screenshot action run after the page went on to a URL Chrome could
+  not show returned data from that error page instead of failing, the same gap #345 closed for
+  Scrape. Now both actions fail through the same document-bound check, with a browser error
+  that names the URL Chrome could not show, credentials redacted. (#355)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were

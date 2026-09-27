@@ -47,7 +47,8 @@ pub(crate) async fn committed_document(page: &chromiumoxide::Page) -> Result<Com
 /// ~keep committed document is read before and after `read`: when both loader ids agree, the result
 /// ~keep is that document's. When they differ, `read` is repeated, whether or not it succeeded: a
 /// ~keep read sent to the document the commit replaced can fail with an unknown script context. A
-/// ~keep page that commits a new document during every read is an error.
+/// ~keep page that commits a new document during every read is an error. Because `read` can run
+/// ~keep more than once, it must have no side effects: a script that navigates would run twice.
 pub(crate) async fn read_one_document<T, D, R>(
     mut read_document: impl FnMut() -> D,
     mut read: impl FnMut() -> R,
