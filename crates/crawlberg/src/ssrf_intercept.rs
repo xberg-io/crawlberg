@@ -257,8 +257,11 @@ mod tests {
         );
     }
 
-    /// Launches a minimal headless Chrome for the interception test below, returning `None`
-    /// when this machine has no usable Chrome. `tests/common::is_missing_chrome_message` lives
+    /// Launches a minimal headless Chrome for the test named `test_name`, returning `None`
+    /// when this machine has no usable Chrome. Each test gets its own profile directory: two
+    /// Chrome processes on one profile directory refuse each other through Chrome's profile lock,
+    /// and the second test would then be skipped. The returned guard removes the directory when
+    /// it drops, on every exit path of the test. `tests/common::is_missing_chrome_message` lives
     /// in a separate compilation unit (each file under `tests/` is its own binary) and is not
     /// reachable from a unit test in `src/`, so this mirrors `browser_pool_tests.rs`'s own
     /// launch-and-skip convention instead. The builder chain below (`no_sandbox`,
@@ -270,47 +273,47 @@ mod tests {
         clippy::print_stderr,
         reason = "test-only skip announcement, matching browser_pool_tests.rs's convention"
     )]
-    async fn launch_test_page() -> Option<(
+    async fn launch_test_page(
+        test_name: &str,
+    ) -> Option<(
         chromiumoxide::browser::Browser,
         tokio::task::JoinHandle<()>,
         chromiumoxide::Page,
-        std::path::PathBuf,
+        tempfile::TempDir,
     )> {
         use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
 
-        const TEST_NAME: &str = "the_first_refused_navigation_is_kept_over_a_second";
-
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "crawlberg-ssrf-intercept-first-wins-test-{}",
-            std::process::id()
-        ));
+        let profile_dir = tempfile::Builder::new()
+            .prefix(&format!("crawlberg-ssrf-intercept-{test_name}-"))
+            .tempdir()
+            .unwrap_or_else(|error| panic!("{test_name}: the Chrome profile directory must be created: {error}"));
         let mut builder = ChromeBrowserConfig::builder()
             .no_sandbox()
             .new_headless_mode()
-            .user_data_dir(&user_data_dir)
+            .user_data_dir(profile_dir.path())
             .disable_default_args();
         builder = crate::browser_pool::apply_default_args(builder);
         let browser_config = match builder.build() {
             Ok(config) => config,
             Err(error) => {
-                eprintln!("skipping {TEST_NAME}: no usable Chrome found: {error}");
+                eprintln!("skipping {test_name}: no usable Chrome found: {error}");
                 return None;
             }
         };
         let (mut browser, mut handler) = match Browser::launch(browser_config).await {
             Ok(pair) => pair,
             Err(error) => {
-                eprintln!("skipping {TEST_NAME}: no usable Chrome found: {error}");
+                eprintln!("skipping {test_name}: no usable Chrome found: {error}");
                 return None;
             }
         };
         let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
         match browser.new_page("about:blank").await {
-            Ok(page) => Some((browser, handler_task, page, user_data_dir)),
+            Ok(page) => Some((browser, handler_task, page, profile_dir)),
             Err(error) => {
                 handler_task.abort();
                 let _ = browser.close().await;
-                eprintln!("skipping {TEST_NAME}: could not open a tab: {error}");
+                eprintln!("skipping {test_name}: could not open a tab: {error}");
                 None
             }
         }
@@ -324,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_refused_navigation_is_kept_over_a_second() {
         const TEST_NAME: &str = "the_first_refused_navigation_is_kept_over_a_second";
-        let Some((mut browser, handler_task, page, user_data_dir)) = launch_test_page().await else {
+        let Some((mut browser, handler_task, page, _profile_dir)) = launch_test_page(TEST_NAME).await else {
             return;
         };
 
@@ -343,7 +346,6 @@ mod tests {
         let outcome = guard.finish().await;
         handler_task.abort();
         let _ = browser.close().await;
-        let _ = std::fs::remove_dir_all(&user_data_dir);
 
         assert!(first.is_ok(), "{TEST_NAME}: the first goto must not hang: {first:?}");
         assert!(second.is_ok(), "{TEST_NAME}: the second goto must not hang: {second:?}");
@@ -366,14 +368,12 @@ mod tests {
     /// all route through the one command channel a page holds to Chrome; aborting the browser's
     /// handler task drops that channel's receiver, so every one of those calls fails the same way
     /// once it is reached. That makes the ordering observable from outside: whichever call runs
-    /// first is the one whose error text comes back. Reproduces the reviewer's own reorder
-    /// mutation (rev365d arm 4, main-frame read moved after `event_listener`/`Fetch.enable`): under
-    /// that mutation `event_listener` runs first and fails with a different message, turning this
-    /// test red.
+    /// first is the one whose error text comes back. With the main-frame read moved after
+    /// `event_listener`/`Fetch.enable`, `event_listener` fails first with a different message.
     #[tokio::test]
     async fn a_failed_main_frame_read_fails_promptly_before_interception_starts() {
         const TEST_NAME: &str = "a_failed_main_frame_read_fails_promptly_before_interception_starts";
-        let Some((mut browser, handler_task, page, user_data_dir)) = launch_test_page().await else {
+        let Some((mut browser, handler_task, page, _profile_dir)) = launch_test_page(TEST_NAME).await else {
             return;
         };
 
@@ -390,7 +390,6 @@ mod tests {
         .await;
 
         let _ = browser.close().await;
-        let _ = std::fs::remove_dir_all(&user_data_dir);
 
         let result =
             outcome.unwrap_or_else(|_| panic!("{TEST_NAME}: a failed main-frame read must not hang, must fail"));

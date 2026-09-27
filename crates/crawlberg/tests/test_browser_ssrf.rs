@@ -37,31 +37,43 @@ fn narrow_policy_config() -> CrawlConfig {
     }
 }
 
-/// A page whose own navigation is refused must fail render with the SSRF policy error, naming
-/// the refused address. The seed itself is allowlisted; a server-side redirect carries the
-/// navigation to the refused address, so this exercises `ssrf_intercept.rs`'s per-request Fetch
-/// interception (the `blocked_navigation` field `browser/navigation.rs:69` reads), not the
-/// upfront seed check `validate_url` already covers on its own.
+/// A page whose own navigation is refused must fail render with the SSRF policy error, and
+/// Chrome must never reach the refused address. The seed is allowlisted; a server-side redirect
+/// carries the navigation to a server on the IPv6 loopback, which the policy refuses. The test
+/// watches that server, so it can tell a request refused before Chrome sends it from a response
+/// fetched and then discarded by the engine's later check of the landed URL.
 #[tokio::test]
 async fn render_fails_with_the_ssrf_error_when_its_own_navigation_is_refused() {
     let test_name = "render_fails_with_the_ssrf_error_when_its_own_navigation_is_refused";
-    let mock = MockServer::start().await;
+    let refused_listener = std::net::TcpListener::bind("[::1]:0")
+        .unwrap_or_else(|error| panic!("{test_name}: the refused server must bind the IPv6 loopback: {error}"));
+    let refused = MockServer::builder().listener(refused_listener).start().await;
+    // ~keep The refused server answers like the metadata service it stands for, so a request that
+    // ~keep reaches it loads a page and only the engine's later check of the landed URL refuses it.
+    Mock::given(method("GET"))
+        .and(path("/latest"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>metadata</body></html>", "text/html"))
+        .mount(&refused)
+        .await;
+    let refused_url = format!("http://{}/latest", refused.address());
+    let seed = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))
-        .respond_with(ResponseTemplate::new(302).append_header("location", "http://169.254.169.254/latest"))
-        .mount(&mock)
+        .respond_with(ResponseTemplate::new(302).append_header("location", refused_url.as_str()))
+        .mount(&seed)
         .await;
 
     let engine = create_engine(Some(narrow_policy_config())).expect("engine must build");
-    let result = scrape(&engine, &mock.uri()).await;
+    let result = scrape(&engine, &seed.uri()).await;
 
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
+            return;
         }
         Err(CrawlError::SsrfPolicyViolation { url, reason, .. }) => {
             assert!(
-                url.contains("169.254.169.254"),
+                url.contains("[::1]") && url.contains("/latest"),
                 "{test_name}: the error must name the refused address: {url}"
             );
             assert!(
@@ -71,6 +83,52 @@ async fn render_fails_with_the_ssrf_error_when_its_own_navigation_is_refused() {
         }
         other => panic!("{test_name}: the refused navigation must fail with the SSRF policy error: {other:?}"),
     }
+
+    let seed_requests = seed
+        .received_requests()
+        .await
+        .expect("wiremock records requests by default");
+    assert!(
+        !seed_requests.is_empty(),
+        "{test_name}: Chrome must have loaded the allowlisted seed that redirects"
+    );
+    let refused_requests = refused
+        .received_requests()
+        .await
+        .expect("wiremock records requests by default");
+    assert!(
+        refused_requests.is_empty(),
+        "{test_name}: Chrome must never send the refused navigation's request: {:?}",
+        refused_requests
+            .iter()
+            .map(|request| request.url.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    // ~keep Positive control: the refused server records a request that does reach it, so the
+    // ~keep zero above is the refusal and not a server that cannot see requests.
+    let mut control = tokio::net::TcpStream::connect(refused.address())
+        .await
+        .unwrap_or_else(|error| panic!("{test_name}: the control request must connect: {error}"));
+    tokio::io::AsyncWriteExt::write_all(
+        &mut control,
+        b"GET /control HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{test_name}: the control request must be sent: {error}"));
+    let mut response = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(&mut control, &mut response)
+        .await
+        .unwrap_or_else(|error| panic!("{test_name}: the control response must be read: {error}"));
+    let control_requests = refused
+        .received_requests()
+        .await
+        .expect("wiremock records requests by default");
+    assert_eq!(
+        control_requests.len(),
+        1,
+        "{test_name}: the refused server must record the control request"
+    );
 }
 
 /// A page with only a refused image must still render successfully: only a refused main-frame

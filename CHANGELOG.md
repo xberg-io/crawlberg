@@ -27,8 +27,10 @@ All notable changes to crawlberg are documented here.
 - **Interact ran ExecuteJs and Screenshot on Chrome's error page.** On the Chromiumoxide
   backend, an ExecuteJs or Screenshot action run after the page went on to a URL Chrome could
   not show returned data from that error page instead of failing, the same gap #345 closed for
-  Scrape. Now both actions fail through the same document-bound check, with a browser error
-  that names the URL Chrome could not show, credentials redacted. (#355)
+  Scrape. Now each action checks the page once, just before it runs, and fails on Chrome's
+  error page with a browser error that names the URL Chrome could not show, credentials
+  redacted. The action runs once: a script that navigates away from the error page still runs
+  and still reports the failure. (#355)
 
 ## [1.8.0] - 2026-09-27
 

@@ -307,9 +307,9 @@ async fn chromiumoxide_interact_scrape_fails_on_chrome_s_error_page() {
     );
 }
 
-/// An ExecuteJs action run while the page shows Chrome's error page fails, through the same
-/// document-bound check Scrape uses (#355). The script still runs a second time to recover the
-/// session, so it ends on a real page and interact() succeeds.
+/// An ExecuteJs action run while the page shows Chrome's error page fails, through a check of
+/// the page made just before the script runs (#355). A second ExecuteJs action then goes back to
+/// the start page, so the session ends on a real page and interact() succeeds.
 #[cfg(feature = "browser-chromiumoxide")]
 #[tokio::test]
 async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
@@ -372,9 +372,9 @@ async fn chromiumoxide_interact_execute_js_fails_on_chrome_s_error_page() {
     );
 }
 
-/// A Screenshot action run while the page shows Chrome's error page fails, through the same
-/// document-bound check Scrape uses (#355). The session then goes back to the start page, so it
-/// ends on a real page and succeeds.
+/// A Screenshot action run while the page shows Chrome's error page fails, through a check of
+/// the page made just before the capture (#355). The session then goes back to the start page,
+/// so it ends on a real page and succeeds.
 #[cfg(feature = "browser-chromiumoxide")]
 #[tokio::test]
 async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
@@ -431,6 +431,70 @@ async fn chromiumoxide_interact_screenshot_fails_on_chrome_s_error_page() {
     assert!(
         result.final_html.contains("start page"),
         "{test_name}: the session must end on the start page: {}",
+        result.final_html
+    );
+}
+
+/// A script run on Chrome's error page that navigates away from it reports the failure, because
+/// the page was checked before the script ran, and the script runs exactly once: the session ends
+/// on the start page, where one `history.back()` leads. Run twice, it would go past the start page
+/// to `about:blank`; not run, the session would end on the error page and fail.
+#[cfg(feature = "browser-chromiumoxide")]
+#[tokio::test]
+async fn chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once_and_fails() {
+    let test_name = "chromiumoxide_interact_script_that_leaves_chrome_s_error_page_runs_once_and_fails";
+    // ~keep The flag stops the start page from starting the download again when the session
+    // ~keep goes back to it.
+    let mock = late_501_download_site(
+        "if (!sessionStorage.getItem('left')) { sessionStorage.setItem('left', '1'); location.assign('/dl'); }",
+    )
+    .await;
+    let engine = create_engine(Some(chromiumoxide_interact_config())).unwrap();
+
+    let result = interact(
+        &engine,
+        &mock.uri(),
+        vec![
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+            PageAction::ExecuteJs {
+                script: "history.back()".to_string(),
+            },
+            PageAction::Wait {
+                milliseconds: Some(2000),
+                selector: None,
+            },
+        ],
+    )
+    .await;
+
+    let result = match result {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: the script must leave the error page, so the session succeeds: {error:?}"),
+    };
+
+    assert_download_requested(test_name, &mock).await;
+    let execute_js = &result.action_results[1];
+    assert_eq!(execute_js.action_type, "executeJs", "{test_name}");
+    assert!(
+        !execute_js.success && execute_js.data.is_none(),
+        "{test_name}: a script run on Chrome's error page must report failure even when it navigates \
+         away: {execute_js:?}"
+    );
+    let error = execute_js.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("/dl") && error.contains("error page"),
+        "{test_name}: the ExecuteJs error must name the URL Chrome could not show: {error}"
+    );
+    assert!(
+        result.final_html.contains("start page"),
+        "{test_name}: the script must run once, going back to the start page and no further: {}",
         result.final_html
     );
 }
