@@ -37,11 +37,19 @@ All notable changes to crawlberg are documented here.
   pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
   without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
   (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
-  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
-  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
-  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
-  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
-  `--enable-features` values with commas. (#79, #80)
+  `--user-data-dir` in any form, `--headless=new` included. `BrowserPool::new` still accepts the
+  config: the refusal comes when the pool launches Chrome, as an error from `warm` and
+  `acquire_page` that names `BrowserPoolConfig.chrome_args`. Write each flag once, as `--flag` or
+  `--flag=value` with a lowercase name, and join several `--enable-features` values with commas.
+  (#79, #80)
+
+- **`BrowserProfile::chrome_args()` is removed.** It returned a single `--user-data-dir=<path>`
+  flag meant for a caller's `chrome_args` list, and `chrome_args` now refuses `--user-data-dir` in
+  any form, so the method had no valid return value left. Nothing in crawlberg ever called it: a
+  profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
+  already set the launch's `--user-data-dir` directly. Code that called
+  `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
+  `CrawlConfig.browser_profile` and let crawlberg apply it.
 
 ### Fixed
 
