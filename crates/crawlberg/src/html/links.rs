@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{LinkInfo, LinkType};
 
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{get_attr, get_url_attr, has_link_qualifier};
+use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -76,10 +76,7 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             };
             // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
-            if matches!(
-                resolved_url.scheme(),
-                "mailto" | "javascript" | "vbscript" | "tel" | "data"
-            ) {
+            if matches!(resolved_url.scheme(), "mailto" | "tel") || INLINE_SCHEMES.contains(&resolved_url.scheme()) {
                 continue;
             }
 
