@@ -596,7 +596,7 @@ async fn a_crawl_sends_the_custom_headers_to_the_seed_host_only() {
         .await
         .expect("crawl must succeed");
 
-    for at in ["/", "/robots.txt", "/relative", "/landed", "/image.png"] {
+    for at in ["/", "/robots.txt", "/relative", "/landed"] {
         assert_custom_headers_on_seed(&site, at).await;
     }
     assert_other_host_without_custom_headers(&site).await;

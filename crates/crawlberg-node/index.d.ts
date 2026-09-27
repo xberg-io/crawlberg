@@ -510,10 +510,7 @@ export interface CrawlConfig {
    * enabled.
    */
   readonly trackingParams?: Array<string>;
-  /**
-   * Custom HTTP headers to send with each request to the seed URL's host. A request to another host
-   * does not carry them.
-   */
+  /** Custom HTTP headers to send with each request. */
   readonly customHeaders?: Record<string, string>;
   /** Timeout for individual HTTP requests (in milliseconds when serialized). */
   readonly requestTimeout?: number;

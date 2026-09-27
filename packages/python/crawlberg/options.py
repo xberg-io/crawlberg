@@ -507,7 +507,7 @@ class CrawlConfig:
 
     custom_headers: dict[str, str] = field(default_factory=dict)
 
-    """Custom HTTP headers to send with each request to the seed URL's host. A request to another host does not carry them."""
+    """Custom HTTP headers to send with each request."""
 
     request_timeout: int = 30000
 

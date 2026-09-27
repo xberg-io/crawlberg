@@ -415,8 +415,7 @@ pub const CrawlConfig = struct {
     /// `["utm_*", "fbclid", "gclid", "ref"]`, applied only once `strip_tracking_params` is
     /// enabled.
     tracking_params: []const []const u8,
-    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
-    /// does not carry them.
+    /// Custom HTTP headers to send with each request.
     custom_headers: std.StringHashMap([]const u8),
     /// Timeout for individual HTTP requests (in milliseconds when serialized).
     request_timeout: i64,
