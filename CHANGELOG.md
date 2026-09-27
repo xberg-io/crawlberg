@@ -305,8 +305,9 @@ All notable changes to crawlberg are documented here.
   `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
   the target. As in a browser, a value with no leading delay is not a refresh, and a target without
   `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
-  to an address the crawl cannot fetch, such as `mailto:`, `javascript:` or `data:`, is no longer a
-  redirect: the page is kept, where the scrape used to fail with an SSRF policy error. (#206, #208)
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
 
 ### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
