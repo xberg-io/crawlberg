@@ -15,6 +15,12 @@ All notable changes to crawlberg are documented here.
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
 
+- **The Alef pin named 0.97.0, but the committed Go binding already carried 0.97.1's goroutine
+  thread pinning.** Regenerating with the pinned 0.97.0 binary drops `runtime.LockOSThread` around
+  the FFI's cgo calls; regenerating with 0.97.1 reproduces the committed binding exactly.
+  `alef verify` could not see the mismatch itself, because it re-hashes whatever is on disk rather
+  than re-rendering it (see the `~keep` comment above the pin). Repinned Alef to 0.97.1. (#412)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
