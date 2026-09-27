@@ -309,6 +309,13 @@ title: "Changelog"
   `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
   fail with an SSRF policy error. (#206, #208)
 
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
 ### Added
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
   the response bytes rather than the declared MIME type alone. The predicate receives the

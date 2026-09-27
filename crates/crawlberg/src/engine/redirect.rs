@@ -740,4 +740,108 @@ mod tests {
             "no further hop is allowed once max_redirects is reached"
         );
     }
+
+    /// The hop the chain takes from a page whose head holds `contents` as meta refresh tags, in order,
+    /// and whose `Refresh` header is `header`.
+    fn refresh_hop(header: Option<&str>, contents: &[&str]) -> Option<String> {
+        let metas: String = contents
+            .iter()
+            .map(|content| format!("<meta http-equiv=\"refresh\" content=\"{content}\">"))
+            .collect();
+        let headers: Vec<(&str, &str)> = header.map(|value| ("refresh", value)).into_iter().collect();
+        let resp = response(
+            200,
+            &headers,
+            &format!("<html><head>{metas}</head><body>x</body></html>"),
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+        next_redirect_target(&resp, &chain, MAX_REDIRECTS).map(|(target, _)| target)
+    }
+
+    /// Chrome acts on the meta refresh with the shortest delay, and on the later tag when two
+    /// delays tie (#279). ~keep
+    #[test]
+    fn the_meta_refresh_with_the_shortest_delay_wins_and_a_tie_goes_to_the_later_tag() {
+        let second = Some("https://example.com/second".to_owned());
+        assert_eq!(refresh_hop(None, &["0; url=/first", "0; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["3; url=/first", "0; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), second);
+        assert_eq!(
+            refresh_hop(None, &["0; url=/first", "3; url=/second"]),
+            Some("https://example.com/first".to_owned())
+        );
+        assert_eq!(
+            refresh_hop(None, &["2; url=/first", "0; url=/second", "1; url=/third"]),
+            second
+        );
+    }
+
+    /// A meta refresh with a blank or self target reloads the page, and a later tag with a
+    /// longer delay does not replace it: the chain stays where it is (#279). ~keep
+    #[test]
+    fn a_meta_refresh_of_the_same_page_is_not_skipped_for_a_later_longer_one() {
+        for first in ["0; url=", "0", "0;", "0; url=''", "0; url=/start"] {
+            assert_eq!(
+                refresh_hop(None, &[first, "3; url=/second"]),
+                None,
+                "{first:?} reloads the page, so the later refresh must not be followed"
+            );
+        }
+        assert_eq!(
+            refresh_hop(None, &["0; url=", "0; url=/second"]),
+            Some("https://example.com/second".to_owned()),
+            "a later refresh with the same delay replaces the reload"
+        );
+    }
+
+    /// A `javascript:` refresh target is no refresh at all: the next meta refresh is used whatever
+    /// its delay, and a lone one leaves the chain where it is (#279). ~keep
+    #[test]
+    fn a_javascript_meta_refresh_is_ignored() {
+        for first in [
+            "0; url=javascript:void(0)",
+            "0; url=JavaScript:void(0)",
+            "0; url= \tjavascript:void(0)",
+            "0; url=java&#9;script:void(0)",
+        ] {
+            assert_eq!(
+                refresh_hop(None, &[first, "3; url=/second"]),
+                Some("https://example.com/second".to_owned()),
+                "{first:?} must be ignored"
+            );
+        }
+        assert_eq!(refresh_hop(None, &["0; url=javascript:void(0)"]), None);
+    }
+
+    /// A `javascript:` `Refresh` header is ignored rather than followed into the SSRF scheme check,
+    /// and the meta refresh in the body is used (#279). ~keep
+    #[test]
+    fn a_javascript_refresh_header_is_ignored() {
+        assert_eq!(refresh_hop(Some("0; url=javascript:void(0)"), &[]), None);
+        assert_eq!(
+            refresh_hop(Some("0; url=javascript:void(0)"), &["3; url=/second"]),
+            Some("https://example.com/second".to_owned())
+        );
+    }
+
+    /// A refresh to a scheme the crawl cannot follow keeps the page, and it still competes by delay
+    /// as Chrome schedules it: a web refresh with a longer delay, before or after it, is not
+    /// followed, while a later web refresh with the same delay replaces it. ~keep
+    #[test]
+    fn a_non_web_meta_refresh_keeps_the_page_and_still_competes_by_delay() {
+        for (non_web, web) in [
+            ("mailto:a@example.com", "/second"),
+            ("data:text/html,x", "https://example.com/second"),
+        ] {
+            let non_web = format!("0; url={non_web}");
+            let web = format!("3; url={web}");
+            assert_eq!(refresh_hop(None, &[&non_web, &web]), None, "{non_web:?} then {web:?}");
+            assert_eq!(refresh_hop(None, &[&web, &non_web]), None, "{web:?} then {non_web:?}");
+            assert_eq!(
+                refresh_hop(None, &[&non_web, "0; url=/second"]),
+                Some("https://example.com/second".to_owned()),
+                "a later web refresh with the same delay replaces {non_web:?}"
+            );
+        }
+    }
 }
