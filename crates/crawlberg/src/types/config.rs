@@ -18,6 +18,11 @@ const MAX_REDIRECT_HOPS: usize = 100;
 /// Proxy URL schemes reqwest can build a proxy from.
 const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
 
+/// Unsupported proxy URL schemes a refusal shows by name. Any other scheme is not shown: a
+/// proxy written without a scheme, such as `KEY:@host:port`, parses with its user name as the
+/// scheme.
+const NAMED_PROXY_SCHEMES: [&str; 5] = ["socks4", "socks4a", "ftp", "ws", "wss"];
+
 /// Range a `CrawlConfig::retry_codes` entry must fall in to be a real HTTP status code.
 const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
 
@@ -508,8 +513,13 @@ impl CrawlConfig {
             .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
         let scheme = parsed.scheme();
         if !SUPPORTED_PROXY_SCHEMES.contains(&scheme) {
+            let shown = if NAMED_PROXY_SCHEMES.contains(&scheme) {
+                format!(" '{scheme}'")
+            } else {
+                String::new()
+            };
             return Err(CrawlError::invalid_config(format!(
-                "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
+                "invalid proxy URL scheme{shown} (expected http, https, socks5, or socks5h)"
             )));
         }
         Ok(())
@@ -803,6 +813,61 @@ mod tests {
             error.to_string().contains("duplicate scheme 'HTTP'"),
             "validation error must identify the duplicate scheme, got: {error}"
         );
+    }
+
+    fn proxy_scheme_error(url: &str) -> String {
+        let config = CrawlConfig {
+            proxy: Some(ProxyConfig {
+                url: url.into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let error = config
+            .validate()
+            .expect_err(&format!("{url} must be refused"))
+            .to_string();
+        assert!(
+            error.contains("invalid proxy URL scheme"),
+            "{url} must be refused for its scheme, got: {error}"
+        );
+        error
+    }
+
+    #[test]
+    fn validate_refuses_an_unknown_proxy_scheme_without_showing_it() {
+        for (url, parsed_scheme) in [
+            ("operator:s3cr3t@proxy:8080", "operator"),
+            ("KEY:@host:1", "key"),
+            ("localhost:3128", "localhost"),
+            ("gopher://x", "gopher"),
+        ] {
+            let error = proxy_scheme_error(url);
+            let lowered = error.to_lowercase();
+            for shown in [parsed_scheme, "s3cr3t", "key", "'"] {
+                assert!(
+                    !lowered.contains(shown),
+                    "the refusal of {url} shows {shown:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_refuses_a_known_unsupported_proxy_scheme_by_name() {
+        for (url, scheme) in [
+            ("socks4://proxy:1080", "socks4"),
+            ("socks4a://proxy:1080", "socks4a"),
+            ("ftp://proxy:21", "ftp"),
+            ("ws://proxy:80", "ws"),
+            ("wss://proxy:443", "wss"),
+        ] {
+            let error = proxy_scheme_error(url);
+            assert!(
+                error.contains(&format!("'{scheme}'")),
+                "the error must name the scheme, got: {error}"
+            );
+        }
     }
 
     #[test]
