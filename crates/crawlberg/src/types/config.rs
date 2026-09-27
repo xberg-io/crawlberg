@@ -15,9 +15,6 @@ const MAX_CRAWL_DEPTH: usize = 100;
 /// Upper bound accepted for `CrawlConfig::max_redirects`.
 const MAX_REDIRECT_HOPS: usize = 100;
 
-/// Proxy URL schemes reqwest can build a proxy from.
-const SUPPORTED_PROXY_SCHEMES: [&str; 4] = ["http", "https", "socks5", "socks5h"];
-
 /// Range a `CrawlConfig::retry_codes` entry must fall in to be a real HTTP status code.
 const HTTP_STATUS_CODE_RANGE: std::ops::RangeInclusive<u16> = 100..=599;
 
@@ -504,15 +501,8 @@ impl CrawlConfig {
         let Some(ref proxy) = self.proxy else {
             return Ok(());
         };
-        let parsed = url::Url::parse(&proxy.url)
-            .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL '{}': {e}", proxy.url)))?;
-        let scheme = parsed.scheme();
-        if !SUPPORTED_PROXY_SCHEMES.contains(&scheme) {
-            return Err(CrawlError::invalid_config(format!(
-                "invalid proxy URL scheme '{scheme}' (expected http, https, socks5, or socks5h)"
-            )));
-        }
-        Ok(())
+        let parsed = crate::proxy::parse_proxy_url(&proxy.url)?;
+        crate::proxy::ensure_supported_scheme(&parsed)
     }
 
     fn validate_auth(&self) -> Result<(), CrawlError> {
@@ -876,6 +866,29 @@ mod tests {
         assert!(
             rendered.contains("svc-account"),
             "Debug output should still show the non-secret username, got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_scheme_less_proxy_url_without_naming_the_embedded_username() {
+        let config = CrawlConfig {
+            proxy: Some(ProxyConfig {
+                url: "alice:s3cr3t@proxy.internal:8080".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let error = config
+            .validate()
+            .expect_err("a scheme-less proxy URL must be rejected")
+            .to_string();
+        assert!(
+            !error.contains("alice"),
+            "error must not name the embedded username, got: {error}"
+        );
+        assert!(
+            !error.contains("s3cr3t"),
+            "error must not leak the embedded password, got: {error}"
         );
     }
 
