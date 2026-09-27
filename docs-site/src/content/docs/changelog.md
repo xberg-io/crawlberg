@@ -15,6 +15,12 @@ title: "Changelog"
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
 
+- **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
+  address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
+  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, so
+  a websocket endpoint with no host is still refused, and a rejection error redacts any
+  `user:pass@` credentials the address carries instead of printing them in full. (#343)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were

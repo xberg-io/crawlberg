@@ -23,7 +23,13 @@ pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 /// parsed scheme instead of testing the raw text for a lower-case `ws://`/`wss://`
 /// prefix, so `WS://host` and `Wss://host` are accepted the same as `ws://host`: the
 /// `url` crate lower-cases the scheme while parsing.
-pub fn is_websocket_scheme(url: &str) -> bool {
+///
+/// ~keep `pub(crate)`, not `pub`: alef treats every `pub` item in this crate as part of
+/// the FFI-bound surface it generates bindings for, with no way to mark one Rust-only.
+/// `crawlberg-cli` needs the identical check but cannot see a `pub(crate)` item across
+/// the crate boundary, so it keeps its own copy (`crawlberg-cli/src/cli.rs`) rather than
+/// force this into the managed surface for a binding that never calls it.
+pub(crate) fn is_websocket_scheme(url: &str) -> bool {
     url::Url::parse(url)
         .map(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
         .unwrap_or(false)
@@ -61,5 +67,29 @@ mod websocket_scheme_tests {
     fn rejects_unparseable_url() {
         assert!(!is_websocket_scheme("not a url"));
         assert!(!is_websocket_scheme(""));
+    }
+
+    #[test]
+    fn rejects_host_less_scheme() {
+        // ~keep `ws`/`wss` are WHATWG special schemes, so `Url::parse` itself refuses an
+        // empty host (`EmptyHost`) rather than returning a URL with no host to check. Measured:
+        // `ws:///path` is NOT one of these forms even though it looks host-less — a special
+        // scheme's extra slash is ignored, so the text after it (`path`) parses as the host,
+        // not as a path on an empty host (`ws:///path` == `ws://path/`).
+        assert!(!is_websocket_scheme("ws://"));
+        assert!(!is_websocket_scheme("ws:///"));
+        assert!(!is_websocket_scheme("ws://@"));
+        assert!(!is_websocket_scheme("ws://:1234"));
+    }
+
+    #[test]
+    fn accepts_no_slash_and_whitespace_padded_forms() {
+        // ~keep The old `starts_with("ws://")` prefix check rejected both of these; `Url::parse`
+        // accepts them because `ws`/`wss` are special schemes (a missing `//` still parses an
+        // authority, so `ws:host` == `ws://host/`) and because the parser trims leading/trailing
+        // C0 control and space before it looks at the scheme at all. Both carry a real host, so
+        // both are the same address as the slashed, untrimmed spelling and are accepted.
+        assert!(is_websocket_scheme("ws:host"));
+        assert!(is_websocket_scheme(" ws://host "));
     }
 }

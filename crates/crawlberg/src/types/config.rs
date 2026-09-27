@@ -565,8 +565,11 @@ impl CrawlConfig {
         if let Some(ref endpoint) = self.browser.endpoint
             && !crate::net::is_websocket_scheme(endpoint)
         {
+            // ~keep `endpoint` may carry userinfo (ws://user:pass@host/); redact before it
+            // reaches this error, which flows into API error bodies and MCP error payloads.
+            let redacted = crate::net::redact_url_credentials(endpoint);
             return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
+                "browser.endpoint must start with ws:// or wss://, got: {redacted:?}"
             )));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
@@ -801,6 +804,55 @@ mod tests {
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_host_less_ws_browser_endpoint() {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some("ws://".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            config.validate().is_err(),
+            "a websocket endpoint with no host must be refused"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_no_slash_and_whitespace_padded_ws_browser_endpoint() {
+        // ~keep same WHATWG special-scheme normalization `parse_browser_endpoint` in the CLI
+        // relies on: a missing `//` or padding whitespace still parses to a real host, so
+        // both are accepted like any other spelling of the same address.
+        for endpoint in ["ws:localhost:9222", " ws://localhost:9222 "] {
+            let config = CrawlConfig {
+                browser: BrowserConfig {
+                    endpoint: Some(endpoint.to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_browser_endpoint_error_never_contains_a_password() {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some("http://user:hunter2@localhost:9222".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
     }
 
     #[test]
