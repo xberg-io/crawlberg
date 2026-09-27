@@ -21,6 +21,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **The links list, images and asset discovery reported `file:` and `blob:` addresses.** A
+  `file:///etc/passwd` link, a `<img src="file:///x.png">`, or a stylesheet or script with a
+  `blob:` address was reported as a normal link, image or asset, though the crawler can never
+  fetch any of them: it fetches only `http` and `https`. A `file:` link also raised an SSRF
+  warning during a crawl. All three now report only `http` and `https` addresses, the same as
+  they already did for `mailto:`, `tel:` and the inline `data:`, `javascript:` and `vbscript:`
+  schemes. (#275, #341)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and
