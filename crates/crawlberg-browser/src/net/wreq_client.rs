@@ -215,6 +215,7 @@ mod tests {
         accepted.abort();
     }
 
+    #[derive(Debug)]
     struct AllowAll;
 
     #[async_trait::async_trait]
