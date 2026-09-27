@@ -29,6 +29,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A proxy credentials error could print a caller's own secret, mislabeled as the proxy's
+  scheme.** A proxy URL written without a `scheme://` prefix parses the text before its first
+  `:` as the scheme, so a proxy written as `KEY:@host:1` with a username set the scheme to
+  `key`. The shared proxy-credentials helper named the rejecting scheme in its error, so this
+  came back as `proxy scheme "key" does not support embedded credentials` — echoing whatever the
+  caller had put there, whether or not it happened to look like a scheme. The message now names
+  no scheme at all: the caller already knows which proxy they configured. (#330)
+
 - **A proxy address with an upper-case scheme lost its configured credentials, and one that
   failed to parse dropped the proxy entirely.** The native browser backend matched the proxy's
   scheme with a case-sensitive `http://`/`https://` prefix check, so `HTTP://user:pass@proxy:8080`

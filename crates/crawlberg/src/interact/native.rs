@@ -215,6 +215,40 @@ mod tests {
              pass the bare URL through"
         );
     }
+
+    #[test]
+    fn a_scheme_less_proxy_url_does_not_echo_its_leading_text_as_a_scheme() {
+        // `KEY:@host:1` has no real scheme: the URL parser reads the text before the
+        // first ':' as the scheme, so a caller's own credential-shaped value (an API
+        // key pasted where a `scheme://` prefix belonged) would otherwise come back
+        // out in the error, mislabeled as "the scheme".
+        let config = CrawlConfig {
+            proxy: Some(proxy("KEY:@host:1", Some("u"), None)),
+            ..CrawlConfig::default()
+        };
+
+        let err = resolved_proxy(&config).expect_err("a scheme-less proxy URL must be refused, not resolved");
+        let message = err.to_string();
+        assert!(
+            !message.to_lowercase().contains("key"),
+            "the error must not name the text the parser read as the scheme, got {message:?}"
+        );
+    }
+
+    #[test]
+    fn a_mailto_proxy_url_does_not_echo_its_scheme() {
+        let config = CrawlConfig {
+            proxy: Some(proxy("mailto:a@b", Some("u"), None)),
+            ..CrawlConfig::default()
+        };
+
+        let err = resolved_proxy(&config).expect_err("a proxy scheme with no authority must be refused");
+        let message = err.to_string();
+        assert!(
+            !message.contains("mailto"),
+            "the error must not name the rejecting scheme, got {message:?}"
+        );
+    }
 }
 
 #[cfg(test)]

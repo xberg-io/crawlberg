@@ -46,24 +46,28 @@ pub(crate) fn embed_proxy_credentials(proxy: &ProxyConfig) -> Result<String, Cra
     let mut parsed =
         Url::parse(&proxy.url).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
 
-    let scheme_rejects_credentials = |parsed: &Url| {
-        CrawlError::invalid_config(format!(
-            "proxy scheme {:?} does not support embedded credentials",
-            parsed.scheme()
-        ))
-    };
-
     let username = escape_percent(proxy.username.as_deref().unwrap_or(""));
     parsed
         .set_username(&username)
-        .map_err(|()| scheme_rejects_credentials(&parsed))?;
+        .map_err(|()| scheme_rejects_credentials())?;
 
     let password = proxy.password.as_deref().map(escape_percent);
     parsed
         .set_password(password.as_deref())
-        .map_err(|()| scheme_rejects_credentials(&parsed))?;
+        .map_err(|()| scheme_rejects_credentials())?;
 
     Ok(parsed.to_string())
+}
+
+/// Build the error for a proxy scheme with no authority component to hold credentials.
+///
+/// ~keep Never name the parsed scheme: a scheme-less proxy URL like `KEY:@host:1` parses
+/// the text before its first `:` as its scheme, so a caller's own credential-shaped value
+/// (an API key pasted where a `scheme://` prefix belonged) would otherwise be echoed back
+/// verbatim. The caller already knows which proxy they configured; no scheme list is
+/// needed to act on this error.
+fn scheme_rejects_credentials() -> CrawlError {
+    CrawlError::invalid_config("this proxy scheme does not support embedded credentials".to_owned())
 }
 
 /// Escape a literal `%` to `%25` so it survives the percent-decode a proxy
@@ -224,8 +228,14 @@ mod tests {
         match result {
             Err(CrawlError::InvalidConfig { message, .. }) => {
                 assert!(
-                    message.contains("mailto") && message.contains("does not support embedded credentials"),
-                    "expected a message naming the rejecting scheme, got {message:?}"
+                    message.contains("does not support embedded credentials"),
+                    "expected a message naming the failure, got {message:?}"
+                );
+                assert!(
+                    !message.contains("mailto"),
+                    "the message must not name the parsed scheme: a scheme-less proxy URL parses \
+                     the text before its first ':' as the scheme, which can be a caller's own \
+                     credential-shaped value; got {message:?}"
                 );
             }
             other => panic!("a scheme with no authority component must return InvalidConfig, got {other:?}"),
