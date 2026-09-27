@@ -644,6 +644,49 @@ mod tests {
         );
     }
 
+    async fn http_fetch_refusal_reason(url: &str) -> String {
+        let config = CrawlConfig::default();
+        let client = build_client(&config).expect("client must build");
+        match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
+            Err(CrawlError::SsrfPolicyViolation { reason, .. }) => reason,
+            Err(other) => panic!("{url} must be refused by the SSRF policy, got {other:?}"),
+            Ok(_) => panic!("{url} must be refused by the SSRF policy, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn http_fetch_scheme_refusal_does_not_show_a_user_name_parsed_as_the_scheme() {
+        for (url, parsed_scheme, secret) in [
+            ("user:token@host", "user", "token"),
+            ("KEY:@h:1", "key", "key"),
+            ("localhost:3128", "localhost", "3128"),
+        ] {
+            let reason = http_fetch_refusal_reason(url).await;
+            assert!(
+                reason.contains("disallowed scheme"),
+                "{url} must be refused for its scheme, got: {reason}"
+            );
+            let lowered = reason.to_lowercase();
+            for shown in [parsed_scheme, secret] {
+                assert!(
+                    !lowered.contains(shown),
+                    "the refusal of {url} shows {shown:?}: {reason}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_fetch_scheme_refusal_names_a_known_scheme() {
+        for (url, named) in [
+            ("ftp://x", "disallowed scheme: ftp"),
+            ("file:///x", "disallowed scheme: file"),
+        ] {
+            let reason = http_fetch_refusal_reason(url).await;
+            assert_eq!(reason, named, "the refusal of {url} must name its scheme");
+        }
+    }
+
     /// Same redirect chain as above, but with a builder value large enough to reach the
     /// end — proving `.max_redirects(N)` is actually honored (not just enforced too
     /// tightly) by the same loop.

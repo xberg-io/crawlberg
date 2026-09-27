@@ -295,6 +295,37 @@ async fn disallowed_scheme_gopher_refused() {
     }
 }
 
+/// An address written without a scheme parses with its user name as the scheme, so the
+/// refusal must not name a scheme it does not recognise.
+#[tokio::test]
+async fn disallowed_scheme_does_not_show_a_user_name_parsed_as_the_scheme() {
+    for (target, parsed_scheme, secret) in [
+        ("user:token@host", "user", "token"),
+        ("KEY:@h:1", "key", "key"),
+        ("localhost:3128", "localhost", "3128"),
+    ] {
+        let err = validate_url(&url(target), &default_policy())
+            .await
+            .expect_err("a scheme other than http or https must be rejected");
+        assert!(
+            matches!(err, SsrfError::DisallowedScheme(_)),
+            "{target} must be refused for its scheme, got {err:?}"
+        );
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            rendered.contains("disallowed scheme: unrecognized"),
+            "{target} must be refused as an unrecognised scheme, got: {rendered}"
+        );
+        let lowered = rendered.to_lowercase();
+        for shown in [parsed_scheme, secret] {
+            assert!(
+                !lowered.contains(shown),
+                "the refusal of {target} shows {shown:?}: {rendered}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn engine_preserves_empty_scheme_allowlist_as_deny_all() {
     let mock = MockServer::start().await;

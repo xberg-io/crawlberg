@@ -119,6 +119,13 @@ Four changes can affect an existing setup:
 
 ### Fixed
 
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. (#329)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

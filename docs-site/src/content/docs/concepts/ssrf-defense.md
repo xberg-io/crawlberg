@@ -139,6 +139,11 @@ pub enum CrawlError {
 `url` is the refused URL (original input or the redirect target that failed).
 `reason` is one of `"loopback"`, `"private_network"`, `"link_local"`,
 `"unique_local"`, `"multicast"`, `"unspecified"`, or `"disallowed scheme: <scheme>"`.
+`<scheme>` names the scheme only when it is on a fixed list of known ones, such as
+`ftp` or `file`. An unlisted scheme, including one an address without a scheme
+parses into (`user:token@host` parses with scheme `user`), gives
+`"disallowed scheme: unrecognized"` instead. This keeps a credential from a
+scheme-less address out of the reason.
 
 The default retry policy classifies `SsrfPolicyViolation` as permanent —
 the crawler will not retry the request.
