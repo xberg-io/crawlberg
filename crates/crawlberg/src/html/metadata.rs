@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{ArticleMetadata, PageMetadata};
 
 use super::selectors::{META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE};
-use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_inline_scheme, has_rel, resolve_url};
+use super::{attr_eq, clean_url, decode_attr_value, get_attr, get_url_attr, has_inline_scheme, has_rel, resolve_url};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -33,24 +33,71 @@ fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
 /// `article` and `og_locale_alternates` are only folded into the [`PageMetadata`] by
 /// [`MetaAccumulator::finish`] if at least one corresponding tag was seen, so an absent
 /// block stays `None` rather than becoming an empty one. ~keep
-struct MetaAccumulator {
+struct MetaAccumulator<'a> {
     metadata: PageMetadata,
     article: ArticleMetadata,
     has_article: bool,
     og_locale_alternates: Vec<String>,
+    base_url: &'a Url,
 }
 
-impl MetaAccumulator {
-    fn new(metadata: PageMetadata) -> Self {
+impl<'a> MetaAccumulator<'a> {
+    fn new(metadata: PageMetadata, base_url: &'a Url) -> Self {
         Self {
             metadata,
             article: ArticleMetadata::default(),
             has_article: false,
             og_locale_alternates: Vec::new(),
+            base_url,
+        }
+    }
+
+    /// Clean, resolve against the page base, and drop `content` if it resolves to an inline
+    /// `data:` or script address, the same check the links, images, assets and head links use.
+    fn address(&self, content: String) -> Option<String> {
+        let cleaned = clean_url(Cow::Owned(content))?;
+        let resolved = resolve_url(&cleaned, self.base_url);
+        if has_inline_scheme(&resolved) {
+            None
+        } else {
+            Some(resolved)
         }
     }
 
     fn apply(&mut self, name_lower: &str, content: String) {
+        match name_lower {
+            "og:url" => {
+                if let Some(address) = self.address(content) {
+                    self.metadata.og_url = Some(address);
+                }
+                return;
+            }
+            "og:image" => {
+                if let Some(address) = self.address(content) {
+                    self.metadata.og_image = Some(address);
+                }
+                return;
+            }
+            "og:video" => {
+                if let Some(address) = self.address(content) {
+                    self.metadata.og_video = Some(address);
+                }
+                return;
+            }
+            "og:audio" => {
+                if let Some(address) = self.address(content) {
+                    self.metadata.og_audio = Some(address);
+                }
+                return;
+            }
+            "twitter:image" => {
+                if let Some(address) = self.address(content) {
+                    self.metadata.twitter_image = Some(address);
+                }
+                return;
+            }
+            _ => {}
+        }
         let md = &mut self.metadata;
         match name_lower {
             "description" => md.description = Some(content),
@@ -62,18 +109,13 @@ impl MetaAccumulator {
             "robots" => md.robots = Some(content),
             "og:title" => md.og_title = Some(content),
             "og:type" => md.og_type = Some(content),
-            "og:image" => md.og_image = Some(content),
             "og:description" => md.og_description = Some(content),
-            "og:url" => md.og_url = Some(content),
             "og:site_name" => md.og_site_name = Some(content),
             "og:locale" => md.og_locale = Some(content),
-            "og:video" => md.og_video = Some(content),
-            "og:audio" => md.og_audio = Some(content),
             "og:locale:alternate" => self.og_locale_alternates.push(content),
             "twitter:card" => md.twitter_card = Some(content),
             "twitter:title" => md.twitter_title = Some(content),
             "twitter:description" => md.twitter_description = Some(content),
-            "twitter:image" => md.twitter_image = Some(content),
             "twitter:site" => md.twitter_site = Some(content),
             "twitter:creator" => md.twitter_creator = Some(content),
             "dc.title" => md.dc_title = Some(content),
@@ -174,7 +216,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
         md.html_dir = get_attr(tag, "dir").map(Cow::into_owned);
     }
 
-    let mut accumulator = MetaAccumulator::new(md);
+    let mut accumulator = MetaAccumulator::new(md, base_url);
 
     super::query_tags(dom, SEL_META, |tag, _parser| {
         let name = get_attr(tag, "name")
@@ -395,17 +437,21 @@ mod tests {
         );
         assert_eq!(md.og_title.as_deref(), Some("ot"));
         assert_eq!(md.og_type.as_deref(), Some("oy"));
-        assert_eq!(md.og_image.as_deref(), Some("oi"));
+        assert_eq!(
+            md.og_image.as_deref(),
+            Some("https://example.com/dir/oi"),
+            "an address field resolves against the page base"
+        );
         assert_eq!(md.og_description.as_deref(), Some("od"));
-        assert_eq!(md.og_url.as_deref(), Some("ou"));
+        assert_eq!(md.og_url.as_deref(), Some("https://example.com/dir/ou"));
         assert_eq!(md.og_site_name.as_deref(), Some("os"));
         assert_eq!(md.og_locale.as_deref(), Some("ol"));
-        assert_eq!(md.og_video.as_deref(), Some("ov"));
-        assert_eq!(md.og_audio.as_deref(), Some("oa"));
+        assert_eq!(md.og_video.as_deref(), Some("https://example.com/dir/ov"));
+        assert_eq!(md.og_audio.as_deref(), Some("https://example.com/dir/oa"));
         assert_eq!(md.twitter_card.as_deref(), Some("tc"));
         assert_eq!(md.twitter_title.as_deref(), Some("tt"));
         assert_eq!(md.twitter_description.as_deref(), Some("td"));
-        assert_eq!(md.twitter_image.as_deref(), Some("ti"));
+        assert_eq!(md.twitter_image.as_deref(), Some("https://example.com/dir/ti"));
         assert_eq!(md.twitter_site.as_deref(), Some("ts"));
         assert_eq!(md.twitter_creator.as_deref(), Some("tr"));
         assert_eq!(

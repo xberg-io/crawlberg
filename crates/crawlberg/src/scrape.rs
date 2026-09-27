@@ -1117,4 +1117,105 @@ mod tests {
             "expected an invalid-URL error, got: {error}"
         );
     }
+
+    type MetaAddressGetter = fn(&ScrapeResult) -> Option<&str>;
+
+    #[tokio::test]
+    async fn scrape_skips_og_and_twitter_addresses_with_an_inline_scheme() {
+        let fields: [(&str, &str, MetaAddressGetter); 5] = [
+            ("property", "og:url", |r| r.metadata.og_url.as_deref()),
+            ("property", "og:video", |r| r.metadata.og_video.as_deref()),
+            ("property", "og:audio", |r| r.metadata.og_audio.as_deref()),
+            ("property", "og:image", |r| r.metadata.og_image.as_deref()),
+            ("name", "twitter:image", |r| r.metadata.twitter_image.as_deref()),
+        ];
+        for (attr, name, get) in fields {
+            for scheme in [
+                "javascript:alert(1)",
+                "JavaScript:alert(1)",
+                "VBScript:msgbox(1)",
+                "Data:text/html,x",
+                "DATA:text/html,x",
+            ] {
+                let result = scrape_head(&format!(r#"<meta {attr}="{name}" content="{scheme}">"#)).await;
+                assert_eq!(get(&result), None, "for {name} with {scheme}");
+            }
+            let result = scrape_head(&format!(r#"<meta {attr}="{name}" content="x.png">"#)).await;
+            assert_eq!(
+                get(&result),
+                Some("https://example.com/x.png"),
+                "for {name} against the page base"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_treats_a_whitespace_only_og_or_twitter_address_as_absent() {
+        let result = scrape_head(
+            "<meta property=\"og:url\" content=\"  \">\
+             <meta property=\"og:video\" content=\"\t\n\">\
+             <meta property=\"og:audio\" content=\" \">\
+             <meta property=\"og:image\" content=\" \">\
+             <meta name=\"twitter:image\" content=\" \">",
+        )
+        .await;
+        assert_eq!(result.metadata.og_url, None);
+        assert_eq!(result.metadata.og_video, None);
+        assert_eq!(result.metadata.og_audio, None);
+        assert_eq!(result.metadata.og_image, None);
+        assert_eq!(result.metadata.twitter_image, None);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_a_valid_og_or_twitter_address_when_another_tag_is_a_script_address() {
+        let result = scrape_head(
+            "<meta property=\"og:url\" content=\"javascript:alert(1)\">\
+             <meta property=\"og:url\" content=\"page.html\">\
+             <meta property=\"og:video\" content=\"video.mp4\">\
+             <meta property=\"og:video\" content=\"vbscript:x\">",
+        )
+        .await;
+        assert_eq!(
+            result.metadata.og_url.as_deref(),
+            Some("https://example.com/page.html"),
+            "a script address does not clear a valid one seen before or after it"
+        );
+        assert_eq!(
+            result.metadata.og_video.as_deref(),
+            Some("https://example.com/video.mp4")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_og_and_twitter_addresses_against_the_base_href() {
+        let result = scrape_head(
+            "<base href=\"/dir/\">\
+             <meta property=\"og:url\" content=\"canon.html\">\
+             <meta property=\"og:video\" content=\"v.mp4\">\
+             <meta property=\"og:audio\" content=\"a.mp3\">\
+             <meta property=\"og:image\" content=\"og.png\">\
+             <meta name=\"twitter:image\" content=\"tw.png\">",
+        )
+        .await;
+        assert_eq!(
+            result.metadata.og_url.as_deref(),
+            Some("https://example.com/dir/canon.html")
+        );
+        assert_eq!(
+            result.metadata.og_video.as_deref(),
+            Some("https://example.com/dir/v.mp4")
+        );
+        assert_eq!(
+            result.metadata.og_audio.as_deref(),
+            Some("https://example.com/dir/a.mp3")
+        );
+        assert_eq!(
+            result.metadata.og_image.as_deref(),
+            Some("https://example.com/dir/og.png")
+        );
+        assert_eq!(
+            result.metadata.twitter_image.as_deref(),
+            Some("https://example.com/dir/tw.png")
+        );
+    }
 }

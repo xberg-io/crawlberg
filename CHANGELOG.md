@@ -19,6 +19,14 @@ All notable changes to crawlberg are documented here.
   gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
   remove that step. (#126)
 
+- **`metadata.og_url`, `og_image`, `og_video`, `og_audio` and `twitter_image` are now absolute
+  URLs, and a script address gives no value at all.** Each was the meta tag's `content` as the
+  page wrote it, so `<meta property="og:image" content="/img/hero.png">` gave `/img/hero.png`, and
+  a `javascript:` or `vbscript:` address came back unchanged. Each field now resolves against the
+  page's base URL and normalizes as the canonical URL does, and is absent instead when the address
+  resolves to `data:`, `javascript:` or `vbscript:`. If your code joins a relative address to the
+  page URL, remove that step. (#312)
+
 ### Fixed
 
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
@@ -146,8 +154,15 @@ All notable changes to crawlberg are documented here.
   links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
   type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
   list, are checked on the address after it resolves against the base, so an address that resolves
-  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
-  unchanged: they still report the `content` without resolving or checking it. (#291)
+  to a script scheme is skipped too. (#291)
+
+- **The `og:url`, `og:image`, `og:video`, `og:audio` and `twitter:image` metadata fields reported a
+  script address unchecked.** `<meta property="og:url" content="javascript:alert(1)">` gave
+  `javascript:alert(1)` as the page's Open Graph URL, with no base resolution and no scheme check,
+  unlike the images list entries for the same two properties. These five fields now resolve against
+  the page base and skip an address that resolves to `data:`, `javascript:` or `vbscript:`, through
+  the same check the links, images, assets and head links use. A whitespace-only address is treated
+  as absent, as it is everywhere else. (#312)
 
 ## [1.8.0] - 2026-09-27
 
