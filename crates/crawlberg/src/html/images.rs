@@ -1,16 +1,17 @@
 //! Image extraction from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
 use crate::types::{ImageInfo, ImageSource};
 
-use super::get_attr;
-use super::is_blank_address;
-use super::resolve_url;
-use super::selectors::{SEL_IMG_SRC, SEL_OG_IMAGE, SEL_SOURCE_SRCSET, SEL_TWITTER_IMAGE};
+use super::link_targets::srcset_candidates;
+use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
+use super::{INLINE_SCHEMES, attr_eq, clean_url, get_attr, get_url_attr, has_inline_scheme, resolve_url};
 
-/// Extract all images from a parsed HTML document.
+/// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
 /// Sources are appended in a fixed order — `<img>`, `<picture><source>`, `og:image`,
 /// `twitter:image` — and downstream dedup depends on it. ~keep
@@ -18,18 +19,26 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     let mut images = Vec::new();
     collect_img_elements(dom, base_url, &mut images);
     collect_picture_sources(dom, base_url, &mut images);
-    collect_meta_images(dom, base_url, SEL_OG_IMAGE, &ImageSource::OgImage, &mut images);
     collect_meta_images(
         dom,
         base_url,
-        SEL_TWITTER_IMAGE,
+        "property",
+        "og:image",
+        &ImageSource::OgImage,
+        &mut images,
+    );
+    collect_meta_images(
+        dom,
+        base_url,
+        "name",
+        "twitter:image",
         &ImageSource::TwitterImage,
         &mut images,
     );
     images
 }
 
-/// Collect `<img src>` images, skipping blank and inline `data:` sources.
+/// Collect `<img src>` images, skipping blank sources and inline `data:` or script sources.
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -39,13 +48,16 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let src = get_attr(tag, "src").unwrap_or("");
-        if is_blank_address(src) || src.starts_with("data:") {
+        let Some(src) = get_url_attr(tag, "src") else {
+            continue;
+        };
+        let resolved = base_url.join(&src);
+        if resolved.as_ref().is_ok_and(|u| INLINE_SCHEMES.contains(&u.scheme())) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(src, base_url),
-            alt: get_attr(tag, "alt").map(String::from),
+            url: resolved.map_or_else(|_| src.into_owned(), String::from),
+            alt: get_attr(tag, "alt").map(Cow::into_owned),
             width: get_attr(tag, "width").and_then(|w| w.parse::<u32>().ok()),
             height: get_attr(tag, "height").and_then(|h| h.parse::<u32>().ok()),
             source: ImageSource::Img,
@@ -53,7 +65,8 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
     }
 }
 
-/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor.
+/// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
+/// skipping blank candidates and candidates that resolve to an inline `data:` or script address.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -63,17 +76,19 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let srcset = get_attr(tag, "srcset").unwrap_or("");
-        if srcset.is_empty() {
+        let srcset = get_attr(tag, "srcset").unwrap_or_default();
+        let Some(raw_url) = srcset_candidates(&srcset)
+            .next()
+            .and_then(|(url, _)| clean_url(Cow::Borrowed(url)))
+        else {
             continue;
-        }
-        let first_url = srcset.split(',').next().unwrap_or("").trim();
-        let raw_url = first_url.split_whitespace().next().unwrap_or("");
-        if raw_url.is_empty() {
+        };
+        let url = resolve_url(&raw_url, base_url);
+        if has_inline_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(raw_url, base_url),
+            url,
             alt: None,
             width: None,
             height: None,
@@ -82,30 +97,36 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
     }
 }
 
-/// Collect images from `<meta ... content>` tags matched by `selector`.
+/// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
+/// skipping contents that resolve to an inline `data:` or script address.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
-    selector: &str,
+    attr: &str,
+    name: &str,
     source: &ImageSource,
     images: &mut Vec<ImageInfo>,
 ) {
     let parser = dom.parser();
-    let Some(iter) = dom.query_selector(selector) else {
+    let Some(iter) = dom.query_selector(SEL_META) else {
         return;
     };
     for handle in iter {
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
-        let Some(content) = get_attr(tag, "content") else {
+        if !attr_eq(tag, attr, name) {
+            continue;
+        }
+        let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
-        if is_blank_address(content) {
+        let url = resolve_url(&content, base_url);
+        if has_inline_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(content, base_url),
+            url,
             alt: None,
             width: None,
             height: None,
@@ -116,8 +137,6 @@ fn collect_meta_images(
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
     /// Flattened `ImageInfo` used so a whole extraction can be compared in one
@@ -125,7 +144,7 @@ mod tests {
     type Flat = (String, Option<String>, Option<u32>, Option<u32>, String);
 
     fn extract(html: &str) -> Vec<Flat> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let dom = crate::html::parse_html(html).expect("valid HTML");
         let base_url = Url::parse("https://example.com/dir/page.html").expect("valid base URL");
         extract_images(&dom, &base_url)
             .into_iter()
@@ -205,6 +224,38 @@ mod tests {
     }
 
     #[test]
+    fn inline_data_images_are_skipped_in_any_spelling() {
+        assert_eq!(
+            extract(r#"<img src="DATA:image/png;base64,AA"><img src="&#68;ata:image/gif;base64,R0"><img src="i.png">"#),
+            [flat("https://example.com/dir/i.png", "img")]
+        );
+    }
+
+    #[test]
+    fn script_sources_are_skipped_in_any_spelling() {
+        let html = concat!(
+            r#"<img src="javascript:alert(1)"><img src="VBScript:msgbox(1)"><img src="&#74;ava&#9;script:x">"#,
+            r#"<img src="i.png">"#,
+            r#"<source srcset="JavaScript:alert(1) 1x"><source srcset="vbscript:x"><source srcset="s.png">"#,
+            r#"<meta property="og:image" content="javascript:alert(1)">"#,
+            r#"<meta property="og:image" content="VBSCRIPT:x">"#,
+            r#"<meta property="og:image" content="og.png">"#,
+            r#"<meta name="twitter:image" content="Javascript:alert(1)">"#,
+            r#"<meta name="twitter:image" content="vbscript:x">"#,
+            r#"<meta name="twitter:image" content="tw.png">"#,
+        );
+        assert_eq!(
+            extract(html),
+            [
+                flat("https://example.com/dir/i.png", "img"),
+                flat("https://example.com/dir/s.png", "picture_source"),
+                flat("https://example.com/dir/og.png", "og:image"),
+                flat("https://example.com/dir/tw.png", "twitter:image"),
+            ]
+        );
+    }
+
+    #[test]
     fn srcset_takes_the_first_candidate_without_its_descriptor() {
         assert_eq!(
             extract(r#"<source srcset="a.png 1x, b.png 2x">"#),
@@ -213,9 +264,17 @@ mod tests {
     }
 
     #[test]
-    fn srcset_that_is_empty_or_descriptor_only_yields_nothing() {
+    fn srcset_that_is_empty_or_only_separators_yields_nothing() {
         assert_eq!(extract(r#"<source srcset="">"#), Vec::<Flat>::new());
-        assert_eq!(extract(r#"<source srcset=" , b.png">"#), Vec::<Flat>::new());
+        assert_eq!(extract("<source srcset=\" , \t,\">"), Vec::<Flat>::new());
+    }
+
+    #[test]
+    fn srcset_skips_leading_separators_as_a_browser_does() {
+        assert_eq!(
+            extract(r#"<source srcset=" , b.png">"#),
+            vec![flat("https://example.com/dir/b.png", "picture_source")]
+        );
     }
 
     #[test]

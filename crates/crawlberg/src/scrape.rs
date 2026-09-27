@@ -1,6 +1,5 @@
 //! Single-page scrape operation.
 
-use tl::ParserOptions;
 use url::Url;
 
 use crate::assets;
@@ -126,8 +125,8 @@ fn extract_from_body(
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&decoded.body);
-    let doc = tl::parse(&parsed_html, ParserOptions::default())
-        .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
+    let doc =
+        crate::html::parse_html(&parsed_html).map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
     let page_robots = header_robots.with_meta_tags(&doc);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
@@ -506,6 +505,604 @@ mod tests {
 
         assert!(result.is_pdf, "a PDF content type must be recognised");
         assert!(result.was_skipped, "a PDF must be flagged as skipped for extraction");
+    }
+
+    fn urls<T>(items: &[T], url: impl Fn(&T) -> &str) -> Vec<String> {
+        items.iter().map(|item| url(item).to_owned()).collect()
+    }
+
+    #[tokio::test]
+    async fn scrape_decodes_character_references_in_addresses() {
+        let resp = response(
+            "text/html",
+            r#"<html><body><a href="list?a=1&amp;b=2">q</a> <a href="&#47;root.html">r</a>
+            <img src="i.png?a=1&amp;b=2" alt="Tom &amp; Jerry"></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            ["https://example.com/dir/list?a=1&b=2", "https://example.com/root.html"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/dir/i.png?a=1&b=2"]
+        );
+        assert_eq!(result.images[0].alt.as_deref(), Some("Tom & Jerry"));
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_markup_written_in_uppercase() {
+        let resp = response(
+            "text/html",
+            r#"<HTML LANG="en"><HEAD><TITLE>Upper</TITLE><META NAME="robots" CONTENT="noindex">
+            <LINK REL="canonical" HREF="/canon"></HEAD>
+            <BODY><A HREF="up.html">x</A><IMG SRC="u.png"></BODY></HTML>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/dir/up.html"]);
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/dir/u.png"]);
+        assert_eq!(result.metadata.title.as_deref(), Some("Upper"));
+        assert_eq!(result.metadata.html_lang.as_deref(), Some("en"));
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/canon")
+        );
+        assert!(result.noindex_detected, "an uppercase robots meta tag must be read");
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_images_against_the_base_href() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><base href="/assets/"><meta property="og:image" content="og.png"></head>
+            <body><a href="leaf.html">l</a><img src="logo.png">
+            <picture><source srcset="wide.png 2x"></picture></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            ["https://example.com/assets/leaf.html"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            [
+                "https://example.com/assets/logo.png",
+                "https://example.com/assets/wide.png",
+                "https://example.com/assets/og.png"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_matches_attribute_values_in_any_case() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><META NAME="ROBOTS" CONTENT="noindex, nofollow">
+            <link rel="Canonical" href="https://example.com/canon">
+            <link rel="Alternate" type="application/RSS+xml" href="https://example.com/feed.xml">
+            <link rel="ALTERNATE" hreflang="de" href="https://example.com/de/">
+            <link rel="Shortcut Icon" href="https://example.com/a.ico"><link rel="ICON" href="https://example.com/b.ico">
+            <meta property="OG:IMAGE" content="https://example.com/og.png">
+            <meta name="Twitter:Image" content="https://example.com/tw.png">
+            <script type="application/LD+JSON">{"@type":"Thing","name":"t"}</script></head>
+            <body><a href="https://other.example/" rel="External NoFollow">x</a></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "an uppercase robots name must be read");
+        assert!(result.nofollow_detected, "an uppercase robots name must be read");
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/canon")
+        );
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/de/"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["https://example.com/a.ico", "https://example.com/b.ico"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/og.png", "https://example.com/tw.png"]
+        );
+        assert_eq!(result.json_ld.len(), 1, "got {:?}", result.json_ld);
+        assert!(result.links[0].nofollow, "rel is a token list compared in any case");
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_nofollow_from_a_comma_separated_rel() {
+        let resp = response(
+            "text/html",
+            r#"<html><body><a href="/a" rel="ugc,nofollow">a</a><a href="/b" rel="nofollow,ugc">b</a>
+            <a href="/c" rel="UGC , NoFollow">c</a><a href="/d" rel="ugc,sponsored">d</a></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let nofollow: Vec<(&str, bool)> = result.links.iter().map(|l| (l.text.as_str(), l.nofollow)).collect();
+        assert_eq!(
+            nofollow,
+            [("a", true), ("b", true), ("c", true), ("d", false)],
+            "a comma separates the link qualifiers"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_head_links_against_the_base_href() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><base href="/other/">
+            <link rel="alternate" type="application/rss+xml" href="feed.xml">
+            <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/other/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/other/fav.ico"]);
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/other/c.html")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_trims_attribute_values_and_reads_a_type_by_its_mime_essence() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name=" robots " content="noindex">
+            <meta name=" Description " content="d">
+            <link rel="alternate" type=" application/rss+xml; charset=utf-8 " href="/feed.xml">
+            <script type="application/LD+JSON; charset=utf-8">{"@type":"Thing","name":"t"}</script>
+            </head></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.noindex_detected,
+            "a robots name with spaces around it must be read"
+        );
+        assert_eq!(result.metadata.robots.as_deref(), Some("noindex"));
+        assert_eq!(result.metadata.description.as_deref(), Some("d"));
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        assert_eq!(result.json_ld.len(), 1, "got {:?}", result.json_ld);
+    }
+
+    #[tokio::test]
+    async fn scrape_reports_no_canonical_url_for_a_blank_href() {
+        for head in [
+            r#"<link rel="canonical" href="">"#,
+            "<link rel=\"canonical\" href=\" \t\n\">",
+        ] {
+            let resp = response("text/html", &format!("<html><head>{head}</head></html>"));
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+                .await
+                .expect("scrape should succeed");
+            assert_eq!(result.metadata.canonical_url, None, "for {head}");
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_hreflang_addresses_against_the_base_href() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><base href="/other/">
+            <link rel="alternate" hreflang="de" href="de.html">
+            <link rel="alternate" hreflang="fr" href="https://example.org/fr/">
+            <link rel="alternate" hreflang="es" href=" ">
+            <link rel="alternate" hreflang=" en-GB " href="en.html">
+            <link rel="alternate" hreflang=" " href="blank.html"></head></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(hreflangs, |h| &h.url),
+            [
+                "https://example.com/other/de.html",
+                "https://example.org/fr/",
+                "https://example.com/other/en.html"
+            ]
+        );
+        assert_eq!(urls(hreflangs, |h| &h.lang), ["de", "fr", "en-GB"]);
+    }
+
+    async fn scrape_head(head: &str) -> ScrapeResult {
+        let resp = response("text/html", &format!("<html><head>{head}</head><body></body></html>"));
+        scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed")
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_feeds_with_an_inline_address() {
+        let result = scrape_head(
+            "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"JavaScript:alert(1)\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"VBScript:msgbox(1)\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"java&#9;script:x\">\
+             <link rel=\"alternate\" type=\"application/feed+json\" href=\"DATA:application/json,{}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">",
+        )
+        .await;
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_hreflangs_with_an_inline_address() {
+        let result = scrape_head(
+            "<link rel=\"alternate\" hreflang=\"de\" href=\"javascript:alert(1)\">\
+             <link rel=\"alternate\" hreflang=\"fr\" href=\"VBSCRIPT:x\">\
+             <link rel=\"alternate\" hreflang=\"es\" href=\"data:text/html,x\">\
+             <link rel=\"alternate\" hreflang=\"en\" href=\"en.html\">",
+        )
+        .await;
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/en.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_script_favicons_and_keeps_a_data_favicon() {
+        let result = scrape_head(
+            "<link rel=\"icon\" href=\"javascript:alert(1)\">\
+             <link rel=\"shortcut icon\" href=\"VBScript:msgbox(1)\">\
+             <link rel=\"apple-touch-icon\" href=\"JAVASCRIPT:x\">\
+             <link rel=\"icon\" href=\"data:image/png;base64,iVBORw0KGgo=\">\
+             <link rel=\"icon\" href=\"fav.ico\">",
+        )
+        .await;
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reports_no_canonical_url_for_an_inline_address() {
+        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+            let result = scrape_head(&format!("<link rel=\"canonical\" href=\"{href}\">")).await;
+            assert_eq!(result.metadata.canonical_url, None, "for {href}");
+        }
+        let result = scrape_head("<link rel=\"canonical\" href=\"c.html\">").await;
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/c.html")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_takes_the_canonical_url_from_the_first_canonical_link_only() {
+        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+            let result = scrape_head(&format!(
+                "<link rel=\"canonical\" href=\"{href}\"><link rel=\"canonical\" href=\"c.html\">"
+            ))
+            .await;
+            assert_eq!(result.metadata.canonical_url, None, "for {href} first");
+            let result = scrape_head(&format!(
+                "<link rel=\"canonical\" href=\"c.html\"><link rel=\"canonical\" href=\"{href}\">"
+            ))
+            .await;
+            assert_eq!(
+                result.metadata.canonical_url.as_deref(),
+                Some("https://example.com/c.html"),
+                "for {href} second"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_head_links_that_resolve_to_a_script_base() {
+        let result = scrape_head(
+            "<base href=\"javascript:alert(1)//\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"#feed\">\
+             <link rel=\"alternate\" hreflang=\"de\" href=\"#de\">\
+             <link rel=\"icon\" href=\"#icon\">\
+             <link rel=\"canonical\" href=\"#top\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"https://example.com/feed.xml\">\
+             <link rel=\"alternate\" hreflang=\"en\" href=\"https://example.com/en/\">\
+             <link rel=\"icon\" href=\"https://example.com/fav.ico\">",
+        )
+        .await;
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/en/"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/fav.ico"]);
+        assert_eq!(result.metadata.canonical_url, None);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_images_that_resolve_to_a_script_or_data_base() {
+        for (base, image) in [
+            ("javascript:alert(1)//", "#x"),
+            ("JavaScript://host/", "x.png"),
+            ("vbscript://host/", "x.png"),
+            ("data:text/html,x", "#x"),
+        ] {
+            let resp = response(
+                "text/html",
+                &format!(
+                    "<html><head><base href=\"{base}\">\
+                     <meta property=\"og:image\" content=\"{image}\">\
+                     <meta name=\"twitter:image\" content=\"{image}\">\
+                     <meta property=\"og:image\" content=\"https://example.com/og.png\">\
+                     <meta name=\"twitter:image\" content=\"https://example.com/tw.png\"></head><body>\
+                     <img src=\"{image}\"><img src=\"https://example.com/i.png\">\
+                     <picture><source srcset=\"{image} 1x\"></picture>\
+                     <picture><source srcset=\"https://example.com/s.png 1x\"></picture></body></html>"
+                ),
+            );
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+                .await
+                .expect("scrape should succeed");
+            assert_eq!(
+                urls(&result.images, |i| &i.url),
+                [
+                    "https://example.com/i.png",
+                    "https://example.com/s.png",
+                    "https://example.com/og.png",
+                    "https://example.com/tw.png",
+                ],
+                "for {image:?} against {base:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_normalizes_newlines_and_nul_in_attribute_values() {
+        let resp = response(
+            "text/html",
+            "<html><body><a href=\"a.html\" rel=\"nofollow\r\nexternal\">a</a>\
+             <img src=\"i.png\" alt=\"one\rtwo\0three\"><img src=\"j.png\" alt=\"a\0b\"></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(result.links[0].rel.as_deref(), Some("nofollow\nexternal"));
+        assert_eq!(result.images[0].alt.as_deref(), Some("one\ntwo\u{FFFD}three"));
+        assert_eq!(result.images[1].alt.as_deref(), Some("a\u{FFFD}b"));
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_feed_and_icon_links_with_a_blank_href() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"alternate\" type=\"application/rss+xml\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\" \t\n\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">\
+             <link rel=\"icon\" href=\" \">\
+             <link rel=\"icon\" href=\"fav.ico\"></head></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/fav.ico"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_a_type_with_form_feeds_around_it() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"alternate\" type=\"\x0Capplication/atom+xml\x0C\" href=\"/atom.xml\">\
+             <script type=\"\x0Capplication/ld+json\x0C\">{\"@type\":\"Thing\",\"name\":\"t\"}</script>\
+             </head></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/atom.xml"]);
+        assert!(
+            matches!(result.feeds[0].feed_type, crate::types::FeedType::Atom),
+            "got {:?}",
+            result.feeds
+        );
+        assert_eq!(result.json_ld.len(), 1, "got {:?}", result.json_ld);
+    }
+
+    #[tokio::test]
+    async fn scrape_decodes_character_references_in_image_and_icon_addresses() {
+        let resp = response(
+            "text/html",
+            r#"<html><head>
+            <link rel="icon" href="&#32;&#32;"><link rel="icon" href="&#102;av.ico">
+            <meta property="og:image" content="&#32;"><meta property="og:image" content="og&#46;png">
+            <meta name="twitter:image" content="&#x74;w.png"></head><body>
+            <img src="&#32;&#9;"><img src="i&amp;j.png">
+            <picture><source srcset="&#32;&#32;"></picture>
+            <picture><source srcset="s&#46;png 2x"></picture></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/dir/fav.ico"]);
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            [
+                "https://example.com/dir/i&j.png",
+                "https://example.com/dir/s.png",
+                "https://example.com/dir/og.png",
+                "https://example.com/dir/tw.png"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_blank_or_inline_image_sources_and_splits_srcset_as_a_browser_does() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"  \">\
+             <meta name=\"twitter:image\" content=\"\t\u{1}\"></head><body>\
+             <img src=\" \"><img src=\"\u{B}\"><img src=\"i.png\">\
+             <picture><source srcset=\"a\u{A0}b.png 2x, c.png 1x\"></picture>\
+             <picture><source srcset=\"\u{1} 1x, d.png 2x\"></picture>\
+             <picture><source srcset=\"data:image/png;base64,AA 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/i.png", "https://example.com/a%C2%A0b.png"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_inline_data_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <img src=\"DATA:image/png;base64,AA\"><img src=\"i.png\">\
+             <picture><source srcset=\"Data:image/png;base64,AA 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_vbscript_links_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\"vbscript:msgbox(1)\">a</a><a href=\"VBScript:msgbox(1)\">b</a>\
+             <a href=\"next.html\">c</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_script_image_sources_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"JavaScript:alert(1)\">\
+             <meta name=\"twitter:image\" content=\"vbscript:x\"></head><body>\
+             <img src=\"javascript:alert(1)\"><img src=\"VBScript:msgbox(1)\"><img src=\"i.png\">\
+             <picture><source srcset=\"JAVASCRIPT:alert(1) 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_inline_data_meta_images_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"DATA:image/png;base64,AA\">\
+             <meta name=\"twitter:image\" content=\"data:image/png;base64,AA\">\
+             <meta property=\"og:image\" content=\"og.png\"></head><body></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/og.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_a_data_image_address_the_url_parser_cannot_read_at_every_image_site() {
+        let resp = response(
+            "text/html",
+            "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\"></head><body>\
+             <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["data://[a", "data://[b", "DATA://h:99999"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_treats_an_address_of_only_c0_controls_as_blank() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <link rel=\"canonical\" href=\"\u{B}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\u{1}\u{B}\u{1F}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"\u{1}feed.xml\u{1F}\">\
+             <link rel=\"icon\" href=\"\u{1C}\"><link rel=\"icon\" href=\"\u{1C}f.ico\"></head><body>\
+             <a href=\"\u{1}\">a</a><a href=\"java\tscript:alert(1)\">j</a>\
+             <a href=\"\u{B}next.html\">b</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(result.metadata.canonical_url, None);
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/f.ico"]);
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_unicode_spaces_at_the_ends_of_a_link_address() {
+        let resp = response(
+            "text/html",
+            "<html><body>\
+             <a href=\" \t\u{A0}nbsp.html\u{3000}\n\">a</a>\
+             <a href=\"\u{2003}em.html\u{85}\">b</a>\
+             <a href=\"\u{A0}\">c</a>\
+             <a href=\" \t\">d</a></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            [
+                "https://example.com/%C2%A0nbsp.html%E3%80%80",
+                "https://example.com/%E2%80%83em.html%C2%85",
+                "https://example.com/%C2%A0",
+            ]
+        );
     }
 
     #[tokio::test]
