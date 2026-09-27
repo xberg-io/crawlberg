@@ -21,6 +21,13 @@ title: "Changelog"
 
 ### Fixed
 
+- **Links after an abruptly closed comment were not extracted.** `tl` ends a comment by
+  searching for a literal `-->` right after the opening `<!--`, so it never recognized
+  `<!-->` or `<!--->`, which close before any `-->` exists, or a comment closed with
+  `--!>` instead of `-->`. After any of the three, `tl` kept reading as if still inside
+  the comment, so every link, image and base address past it was missed. The raw-text
+  masking pass now neutralizes these three forms before `tl` parses the page. (#212)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and

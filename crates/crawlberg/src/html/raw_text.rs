@@ -17,6 +17,14 @@
 //! cannot build a node — or start a comment — from it, and every extractor is fixed at
 //! once with no change to its signature.
 //!
+//! The same walk also carries a comment fix. A browser ends a comment at three forms
+//! `tl` does not (`comment_end` below has the exact mechanism of each): `<!-->` and
+//! `<!--->`, which close before any `-->` exists to find, because the opener's own
+//! dashes serve as the close, and a comment closed with `--!>` instead of `-->`. `tl`
+//! then keeps reading as if still inside the comment, so every link, image and base
+//! address after it is missed. Each form is fixed with a single-byte overwrite that never
+//! changes the source's length, so it lives in this pass rather than a second one.
+//!
 //! Only `<` is rewritten, so raw-text content a consumer legitimately reads — a `<title>`'s
 //! text, a `<script type="application/ld+json">` payload — survives unless it contains a
 //! literal `<`, which in valid HTML is written `&lt;` and is left alone. Content that does
@@ -58,28 +66,40 @@ const FOREIGN_ELEMENTS: [&[u8]; 2] = [b"svg", b"math"];
 /// character reference the way `&` could.
 const MARKUP_MASK: char = ' ';
 
-/// Overwrite every `<` inside the content of a raw-text element with a space.
+/// Overwrite every `<` inside the content of a raw-text element with a space, and patch
+/// every abrupt comment ending `tl` mis-parses.
 ///
-/// Returns the source unchanged (and unallocated) when no raw-text element contains a
-/// `<`. The returned string always has the same byte length as `source`, and differs from
-/// it only at `<` bytes inside raw-text content.
+/// Returns the source unchanged (and unallocated) when there is nothing to edit. The
+/// returned string always has the same byte length as `source`.
 pub(crate) fn mask_raw_text_markup(source: &str) -> Cow<'_, str> {
-    let regions = markup_bearing_regions(source);
-    if regions.is_empty() {
+    let edits = plan_edits(source);
+    if edits.is_empty() {
         return Cow::Borrowed(source);
     }
 
     let mut masked = String::with_capacity(source.len());
     let mut cursor = 0;
-    for region in &regions {
-        masked.push_str(&source[cursor..region.start]);
-        for character in source[region.start..region.end].chars() {
-            masked.push(if character == '<' { MARKUP_MASK } else { character });
+    for edit in &edits {
+        match edit {
+            Edit::RawText(region) => {
+                masked.push_str(&source[cursor..region.start]);
+                for character in source[region.start..region.end].chars() {
+                    masked.push(if character == '<' { MARKUP_MASK } else { character });
+                }
+                cursor = region.end;
+            }
+            Edit::Byte { at, with } => {
+                masked.push_str(&source[cursor..*at]);
+                masked.push(*with as char);
+                cursor = *at + 1;
+            }
         }
-        cursor = region.end;
     }
     masked.push_str(&source[cursor..]);
-    debug!(regions = regions.len(), "masked markup inside raw-text element content");
+    debug!(
+        edits = edits.len(),
+        "masked markup and abrupt comment endings before parsing"
+    );
     Cow::Owned(masked)
 }
 
@@ -95,16 +115,27 @@ enum Step {
     LeaveForeign(usize),
 }
 
-/// The byte ranges of raw-text content that contain at least one `<`.
-fn markup_bearing_regions(source: &str) -> Vec<Range<usize>> {
+/// A single overwrite to apply before `tl` parses the page. Every edit replaces one
+/// existing byte, or every `<` in an existing range, and never inserts or removes a byte,
+/// so a masked string always has the source's exact length and the same offsets.
+enum Edit {
+    /// Raw-text content, at least one `<` of which should become a space.
+    RawText(Range<usize>),
+    /// The single byte at this offset should become `with`.
+    Byte { at: usize, with: u8 },
+}
+
+/// The edits needed before `tl` parses `source`: raw-text regions with a `<` to mask, and
+/// abrupt comment endings to neutralise, in source order.
+fn plan_edits(source: &str) -> Vec<Edit> {
     let bytes = source.as_bytes();
-    let mut regions: Vec<Range<usize>> = Vec::new();
+    let mut edits: Vec<Edit> = Vec::new();
     let mut foreign_depth: usize = 0;
     let mut cursor = 0;
 
     while let Some(offset) = bytes.get(cursor..).and_then(|rest| memchr(b'<', rest)) {
         let at = cursor + offset;
-        let next = match classify(bytes, at, foreign_depth > 0) {
+        let next = match classify(bytes, at, foreign_depth > 0, &mut edits) {
             Step::Resume(next) => next,
             Step::EnterForeign(next) => {
                 foreign_depth += 1;
@@ -117,7 +148,7 @@ fn markup_bearing_regions(source: &str) -> Vec<Range<usize>> {
             Step::RawText(content) => {
                 let resume = content.end;
                 if memchr(b'<', &bytes[content.clone()]).is_some() {
-                    regions.push(content);
+                    edits.push(Edit::RawText(content));
                 }
                 resume
             }
@@ -126,15 +157,15 @@ fn markup_bearing_regions(source: &str) -> Vec<Range<usize>> {
         // or a malformed tag turns the loop into a spin.
         cursor = next.max(at + 1);
     }
-    regions
+    edits
 }
 
 /// Decide what the markup starting at `at` (a `<`) means for the scan.
-fn classify(bytes: &[u8], at: usize, in_foreign: bool) -> Step {
+fn classify(bytes: &[u8], at: usize, in_foreign: bool, edits: &mut Vec<Edit>) -> Step {
     let rest = &bytes[at..];
 
     if rest.starts_with(b"<!--") {
-        return Step::Resume(end_of_comment(bytes, at + 4));
+        return Step::Resume(comment_end(bytes, at, edits));
     }
     if rest.starts_with(b"<!") || rest.starts_with(b"<?") {
         return Step::Resume(end_of_tag(bytes, at + 2).0);
@@ -181,15 +212,49 @@ fn named_in(name: &[u8], candidates: &[&[u8]]) -> bool {
     candidates.iter().any(|candidate| name.eq_ignore_ascii_case(candidate))
 }
 
-/// Offset just past a comment's `-->`, or the end of input when it has none.
+/// Offset just past a comment as a browser reads it, patching the source so `tl` agrees.
 ///
-/// ~keep `tl` ends a comment at the first `-->` and swallows to end of input without
-/// one. Matching that exactly is what keeps this scan and `tl`'s tree agreeing on which
-/// `<script>` is real and which sits inside a comment.
-fn end_of_comment(bytes: &[u8], from: usize) -> usize {
-    match bytes.get(from..).and_then(|rest| memmem::find(rest, b"-->")) {
-        Some(offset) => from + offset + b"-->".len(),
-        None => bytes.len(),
+/// `tl` ends a comment at the first literal `-->` found after the opening `<!--` at
+/// `at`, and swallows to end of input without one. That matches a browser for a normal
+/// comment, but misses three closes a browser recognises:
+/// - `<!-->`: the comment closes before any `-->` exists past the opener, so nothing is
+///   there for `tl` to find. The `!` is masked with a space, so `<` is no longer followed
+///   by anything that opens a tag or a comment for `tl` (or a browser) and the whole
+///   thing becomes inert text, exactly as it renders.
+/// - `<!--->`: the same abrupt close, one byte later.
+/// - A comment closed with `--!>` instead of `-->`: `tl` finds the `--` and then checks
+///   only the single byte after it for `>`, so `!` fails that check and `tl` reads on
+///   for the next `--`, anywhere later or never. Its `!` is overwritten with `>`, so
+///   `tl`'s own check succeeds one byte before the browser's close; the comment's own
+///   `>` is left as one stray, harmless character of text right after it.
+///
+/// ~keep Every other comment keeps `tl`'s plain `-->` search unpatched, which is what
+/// keeps this scan and `tl`'s tree agreeing on which `<script>` is real and which sits
+/// inside a comment.
+fn comment_end(bytes: &[u8], at: usize, edits: &mut Vec<Edit>) -> usize {
+    let content_start = at + 4;
+    if bytes.get(content_start) == Some(&b'>') {
+        edits.push(Edit::Byte { at: at + 1, with: b' ' });
+        return content_start + 1;
+    }
+    if bytes.get(content_start) == Some(&b'-') && bytes.get(content_start + 1) == Some(&b'>') {
+        edits.push(Edit::Byte { at: at + 1, with: b' ' });
+        return content_start + 2;
+    }
+
+    let rest = &bytes[content_start..];
+    let normal = memmem::find(rest, b"-->");
+    let bang = memmem::find(rest, b"--!>");
+    match (bang, normal) {
+        (Some(bang_offset), normal_offset) if normal_offset.is_none_or(|n| bang_offset < n) => {
+            edits.push(Edit::Byte {
+                at: content_start + bang_offset + 2,
+                with: b'>',
+            });
+            content_start + bang_offset + 3
+        }
+        (_, Some(normal_offset)) => content_start + normal_offset + b"-->".len(),
+        (_, None) => bytes.len(),
     }
 }
 
@@ -400,6 +465,98 @@ mod tests {
             r#"<script data-x="a>b"> a href="/x"></script>"#,
             "a `>` inside a quoted attribute value should not end the start tag"
         );
+    }
+
+    #[test]
+    fn should_extract_a_link_after_a_normal_comment() {
+        let html = r#"<!-- a comment --><a href="/next">next</a>"#;
+        let links = extract_links_through_the_pipeline(html);
+        assert_eq!(
+            links,
+            vec!["https://example.com/next"],
+            "control: a well-formed comment should not hide the link after it"
+        );
+    }
+
+    #[test]
+    fn should_extract_a_link_after_an_abruptly_closed_empty_comment() {
+        let html = r#"<!--><a href="/next">next</a>"#;
+        let links = extract_links_through_the_pipeline(html);
+        assert_eq!(
+            links,
+            vec!["https://example.com/next"],
+            "`<!-->` should close before the link, not swallow it"
+        );
+    }
+
+    #[test]
+    fn should_extract_a_link_after_an_abruptly_closed_dash_comment() {
+        let html = r#"<!---><a href="/next">next</a>"#;
+        let links = extract_links_through_the_pipeline(html);
+        assert_eq!(
+            links,
+            vec!["https://example.com/next"],
+            "`<!--->` should close before the link, not swallow it"
+        );
+    }
+
+    #[test]
+    fn should_extract_a_link_after_a_comment_closed_with_bang() {
+        let html = r#"<!-- a --!><a href="/next">next</a>"#;
+        let links = extract_links_through_the_pipeline(html);
+        assert_eq!(
+            links,
+            vec!["https://example.com/next"],
+            "`--!>` should close the comment before the link, not swallow it"
+        );
+    }
+
+    #[test]
+    fn should_neutralise_an_abruptly_closed_empty_comment() {
+        let html = r#"<!--><a href="/x">l</a>"#;
+        assert_eq!(
+            mask_raw_text_markup(html),
+            r#"< --><a href="/x">l</a>"#,
+            "the `!` of `<!-->` should be masked so tl never starts a comment there"
+        );
+    }
+
+    #[test]
+    fn should_neutralise_an_abruptly_closed_dash_comment() {
+        let html = r#"<!---><a href="/x">l</a>"#;
+        assert_eq!(
+            mask_raw_text_markup(html),
+            r#"< ---><a href="/x">l</a>"#,
+            "the `!` of `<!--->` should be masked so tl never starts a comment there"
+        );
+    }
+
+    #[test]
+    fn should_patch_a_bang_closed_comment_so_tl_finds_its_close() {
+        let html = r#"<!-- a --!><a href="/x">l</a>"#;
+        assert_eq!(
+            mask_raw_text_markup(html),
+            r#"<!-- a -->><a href="/x">l</a>"#,
+            "the `!` of `--!>` should become a `>` so tl's own close check succeeds a byte early"
+        );
+    }
+
+    #[test]
+    fn should_leave_a_normal_comment_untouched() {
+        let html = r#"<!-- a comment --><a href="/x">l</a>"#;
+        assert_eq!(mask_raw_text_markup(html), html, "a well-formed comment needs no edit");
+    }
+
+    /// Run the same pipeline every call site does: mask, parse, then extract links.
+    fn extract_links_through_the_pipeline(html: &str) -> Vec<String> {
+        let masked = mask_raw_text_markup(html);
+        let dom = crate::html::parse_html(&masked).expect("valid HTML");
+        let document_url = url::Url::parse("https://example.com/page").expect("valid document URL");
+        let base_url = crate::html::effective_base_url(&dom, &document_url);
+        crate::html::extract_links(&dom, &base_url)
+            .into_iter()
+            .map(|link| link.url)
+            .collect()
     }
 
     proptest! {
