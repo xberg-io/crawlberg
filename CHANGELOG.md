@@ -135,8 +135,11 @@ All notable changes to crawlberg are documented here.
 - **The Alef pin named 0.97.0, but the committed Go binding already carried 0.97.1's goroutine
   thread pinning.** Regenerating with the pinned 0.97.0 binary drops `runtime.LockOSThread` around
   the FFI's cgo calls; regenerating with 0.97.1 reproduces the committed binding exactly.
-  `alef verify` could not see the mismatch itself, because it re-hashes whatever is on disk rather
-  than re-rendering it (see the `~keep` comment above the pin). Repinned Alef to 0.97.1. (#412)
+  `alef verify` did not compare the Go binding with a fresh render, so it could not see the
+  mismatch. Repinned Alef to 0.97.1. Alef 0.97.1 no longer turns off the SSRF private-network
+  check in the wasm e2e tests and wasm doc snippets on its own, so `alef.toml` now asks for it with
+  `wasm_config_overrides`. The Rust mock server in `e2e/rust` and `test_apps/rust` is regenerated
+  with 0.97.1. (#412)
 
 ## [1.8.0] - 2026-09-27
 
