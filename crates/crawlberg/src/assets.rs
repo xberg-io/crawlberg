@@ -173,3 +173,31 @@ pub(crate) async fn download_assets(
         downloaded
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_discovered_asset_url_loses_its_userinfo() {
+        let html = r#"<link rel="stylesheet" href="http://user:s3cret@example.com/a.css">
+            <script src="http://user:s3cret@example.com/a.js"></script>
+            <img src="http://user:s3cret@example.com/a.png">"#;
+        let dom = tl::parse(html, tl::ParserOptions::default()).expect("valid HTML");
+        let base = Url::parse("https://example.com/").expect("test URL must parse");
+
+        let urls: Vec<String> = discover_assets(&dom, &base)
+            .into_iter()
+            .map(|asset| asset.url)
+            .collect();
+
+        assert_eq!(
+            urls,
+            vec![
+                "http://example.com/a.css",
+                "http://example.com/a.js",
+                "http://example.com/a.png"
+            ]
+        );
+    }
+}

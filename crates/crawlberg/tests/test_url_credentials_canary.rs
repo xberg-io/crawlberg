@@ -860,6 +860,62 @@ async fn a_response_fetched_with_url_credentials_is_never_served_from_the_shared
     );
 }
 
+/// A robots.txt read with the caller's credentials never answers a later anonymous crawl.
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_robots_txt_read_with_credentials_is_not_shared_with_an_anonymous_crawl() {
+    let site = site().await;
+    let engine = CrawlEngine::builder()
+        .config(CrawlConfig {
+            max_depth: Some(0),
+            ..config()
+        })
+        .build()
+        .expect("engine must build");
+
+    engine
+        .crawl(&site.credentialed("/"))
+        .await
+        .expect("the credentialed crawl must succeed");
+    engine
+        .crawl(&site.clean("/"))
+        .await
+        .expect("the anonymous crawl must succeed");
+
+    let robots = authorization_on(&site.seed_host, "/robots.txt").await;
+    assert!(
+        robots
+            .iter()
+            .any(|header| header.as_deref() == Some(basic_header().as_str())),
+        "the credentialed crawl reads robots.txt with its credentials: {robots:?}"
+    );
+    assert!(
+        robots.iter().any(Option::is_none),
+        "the anonymous crawl reads robots.txt itself, not the credentialed copy: {robots:?}"
+    );
+}
+
+/// A stream reports a refused seed without echoing it.
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_stream_error_for_an_unparseable_seed_does_not_echo_it() {
+    let harness = harness(config());
+    let raw = format!("http://{USER}:{PASSWORD}@exa mple.test/");
+
+    let single: Vec<CrawlEvent> = harness.engine.crawl_stream(&raw).collect().await;
+    let batch: Vec<CrawlEvent> = harness.engine.batch_crawl_stream(&[raw.as_str()]).collect().await;
+
+    for events in [&single, &batch] {
+        let output = serde_json::to_string(events).expect("events serialize");
+        assert!(
+            events.iter().any(|event| matches!(event, CrawlEvent::Error { .. })),
+            "the refusal must be reported: {output}"
+        );
+        assert!(output.contains("invalid URL"), "{output}");
+        assert!(!output.contains(PASSWORD), "the stream echoed the seed: {output}");
+    }
+}
+
 // ---- page-supplied URLs ---------------------------------------------------------------
 
 /// A page's link with userinfo that the SSRF policy rejects is logged without the userinfo.

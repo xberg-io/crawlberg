@@ -135,3 +135,28 @@ impl ModuleLoader for BrowserModuleLoader {
         })))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_import_with_userinfo_is_refused_without_it() {
+        let loader = BrowserModuleLoader::new("http://example.com/");
+        let error = loader
+            .resolve(
+                "http://user:s3cret@example.com/m.js",
+                "http://example.com/",
+                deno_core::ResolutionKind::DynamicImport,
+            )
+            .expect_err("a module URL with userinfo must be refused");
+        let message = error.to_string();
+        assert!(!message.contains("s3cret"), "{message}");
+        assert!(message.contains("http://example.com/m.js"), "{message}");
+
+        let resolved = loader
+            .resolve("/m.js", "http://example.com/", deno_core::ResolutionKind::DynamicImport)
+            .expect("an import without userinfo resolves");
+        assert_eq!(resolved.as_str(), "http://example.com/m.js");
+    }
+}

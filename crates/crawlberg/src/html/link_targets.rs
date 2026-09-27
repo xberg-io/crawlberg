@@ -376,4 +376,15 @@ mod tests {
             Some("https://example.com/p/a.png, https://example.com/p/b.png 2x")
         );
     }
+
+    #[test]
+    fn a_link_target_loses_its_userinfo() {
+        assert_eq!(
+            resolve(
+                r#"<a href="//user:s3cret@example.com/a">x</a><a href="http://page:pw@example.com/b">y</a>"#,
+                "https://example.com/"
+            ),
+            r#"<a href="https://example.com/a">x</a><a href="http://example.com/b">y</a>"#
+        );
+    }
 }

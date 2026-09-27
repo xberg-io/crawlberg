@@ -394,3 +394,36 @@ mod native_worker_hang_tests {
         std::mem::forget(executor);
     }
 }
+
+#[cfg(test)]
+mod credential_scope_tests {
+    use super::build_native_config;
+    use crate::types::{AuthConfig, CrawlConfig};
+
+    #[test]
+    fn a_bearer_token_is_scoped_to_the_seed_host_and_kept_out_of_extra_headers() {
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        let config = CrawlConfig {
+            auth: Some(AuthConfig::Bearer {
+                token: "secret-token".to_owned(),
+            }),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ..CrawlConfig::default()
+        };
+
+        let native = build_native_config(&config).expect("an admitted config must build");
+
+        assert!(
+            !native.extra_headers.contains_key("Authorization"),
+            "every host receives extra_headers, so the token must not be there"
+        );
+        let credential = native
+            .origin_credential
+            .expect("the token must be scoped to the seed host");
+        assert_eq!(credential.host, "example.com");
+        assert_eq!(
+            (credential.name.as_str(), credential.value.as_str()),
+            ("Authorization", "Bearer secret-token")
+        );
+    }
+}

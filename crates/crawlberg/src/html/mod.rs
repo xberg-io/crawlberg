@@ -121,3 +121,17 @@ pub(crate) use links::extract_links;
 pub(crate) use metadata::detect_meta_refresh;
 pub(crate) use metadata::{detect_nofollow, detect_noindex};
 pub(crate) use raw_text::mask_raw_text_markup;
+
+#[cfg(test)]
+mod resolve_url_tests {
+    use super::*;
+
+    #[test]
+    fn a_resolved_url_loses_its_userinfo() {
+        let base = Url::parse("https://example.com/").expect("test URL must parse");
+        assert_eq!(
+            resolve_url("http://user:s3cret@example.com/i.png", &base),
+            "http://example.com/i.png"
+        );
+    }
+}

@@ -924,4 +924,18 @@ mod tests {
             .map(|_| ())
             .expect_err(&format!("status {status} must produce an error"))
     }
+
+    #[test]
+    fn a_redirect_location_loses_its_userinfo() {
+        let current = url::Url::parse("http://example.com/start").expect("test URL must parse");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::LOCATION,
+            reqwest::header::HeaderValue::from_static("http://user:s3cret@example.com/end"),
+        );
+        let Some(RedirectTarget::Follow(next)) = redirect_target(&current, &headers) else {
+            panic!("the Location must be followed");
+        };
+        assert_eq!(next.as_str(), "http://example.com/end");
+    }
 }

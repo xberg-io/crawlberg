@@ -818,4 +818,27 @@ mod tests {
         assert_eq!(urls.len(), 2);
         assert!(urls.iter().all(|entry| entry.url.contains("keep")));
     }
+
+    #[test]
+    fn a_child_sitemap_url_loses_its_userinfo_with_or_without_a_base() {
+        let child = "http://user:s3cret@example.com/child.xml";
+        assert_eq!(
+            resolve_child_sitemap_url(None, "http://example.com/sitemap.xml", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+        let base = Url::parse("http://example.com/").expect("test URL must parse");
+        assert_eq!(
+            resolve_child_sitemap_url(Some(&base), "http://example.com/sitemap.xml", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+    }
+
+    #[test]
+    fn a_sitemap_loc_loses_its_userinfo() {
+        let xml = r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>http://user:s3cret@example.com/a</loc></url></urlset>"#;
+        let filter = MapFilter::from_config(&CrawlConfig::default()).expect("the default filter compiles");
+        let urls = collect_filtered_urls(xml, &filter, None);
+        let found: Vec<&str> = urls.iter().map(|entry| entry.url.as_str()).collect();
+        assert_eq!(found, vec!["http://example.com/a"]);
+    }
 }

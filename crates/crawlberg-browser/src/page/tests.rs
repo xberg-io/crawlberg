@@ -799,3 +799,110 @@ async fn a_non_networkidle_wait_leaves_the_lifecycle_at_loaded() {
 
     assert_eq!(page.lifecycle, LifecycleState::Loaded);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_to_a_url_with_userinfo_is_refused_without_it() {
+    let script = fetch_script("http://user:s3cret@127.0.0.1:9/data.json", "");
+    let html = format!("<html><body><script>{script}</script></body></html>");
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigate");
+
+    let result = fetch_result(&mut page, &base).await;
+    let error = result["error"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        error.contains("credentials") && error.contains("http://127.0.0.1:9/data.json"),
+        "the fetch must be refused and name the URL without its userinfo, got {result}"
+    );
+    assert!(
+        !error.contains("s3cret"),
+        "the password must not be named, got {result}"
+    );
+}
+
+/// Serves `responses` on `listener`, recording each raw request head.
+fn serve_raw_recording(
+    listener: TcpListener,
+    responses: StdHashMap<String, String>,
+) -> Arc<std::sync::Mutex<Vec<String>>> {
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = requests.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let responses = responses.clone();
+            let log = log.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                let read = socket.read(&mut buf).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..read]).to_string();
+                let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                log.lock().expect("lock").push(request);
+                let fallback = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
+                let response = responses.get(&path).unwrap_or(&fallback);
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+            });
+        }
+    });
+    requests
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let script = fetch_script("/start", "");
+    let html = format!("<html><body><script>{script}</script></body></html>");
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://user:s3cret@{addr}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", &html)),
+            ("/start", &redirect),
+            ("/end", &ok_response("text/plain", "arrived")),
+        ]),
+    );
+    let base = format!("http://{addr}");
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigate");
+
+    let result = fetch_result(&mut page, &base).await;
+    assert_eq!(result["text"], "arrived", "the redirect must be followed, got {result}");
+    let requests = requests.lock().expect("lock");
+    let end = requests
+        .iter()
+        .find(|request| request.starts_with("GET /end "))
+        .expect("the redirect target must have been requested");
+    assert!(
+        !end.to_lowercase().contains("authorization:"),
+        "the Location's userinfo must not become credentials: {end}"
+    );
+}
+
+#[cfg(feature = "stealth")]
+#[tokio::test(flavor = "current_thread")]
+async fn a_stealth_page_scopes_the_context_credential_like_the_plain_client() {
+    let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false);
+    let credential = crate::net::OriginCredential {
+        host: "example.com".to_owned(),
+        name: "Authorization".to_owned(),
+        value: "Basic dXNlcjpwdw==".to_owned(),
+    };
+    context
+        .http_client
+        .set_origin_credential(Some(credential.clone()))
+        .await;
+
+    let page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let stealth = page
+        .stealth_client
+        .as_ref()
+        .expect("a stealth context gives the page a stealth client");
+    assert_eq!(stealth.origin_credential.read().await.as_ref(), Some(&credential));
+}

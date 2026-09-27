@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, ScrapeResult, create_engine, scrape,
+    AuthConfig, BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, ScrapeResult, create_engine,
+    scrape,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -55,7 +56,16 @@ fn png() -> ResponseTemplate {
 
 /// Scrape `url` in Chrome, or `None` when no usable Chrome exists on this host.
 async fn scrape_in_browser(test_name: &str, url: &str) -> Option<Result<ScrapeResult, CrawlError>> {
-    let engine = create_engine(Some(browser_config())).expect("engine must build");
+    scrape_in_browser_with(test_name, browser_config(), url).await
+}
+
+/// Scrape `url` in Chrome with `config`, or `None` when no usable Chrome exists on this host.
+async fn scrape_in_browser_with(
+    test_name: &str,
+    config: CrawlConfig,
+    url: &str,
+) -> Option<Result<ScrapeResult, CrawlError>> {
+    let engine = create_engine(Some(config)).expect("engine must build");
     match scrape(&engine, url).await {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
@@ -205,4 +215,98 @@ async fn a_navigation_a_page_starts_to_a_url_with_userinfo_is_refused() {
         requests_for(&seed, "/landed").await.is_empty(),
         "a navigation to a URL with userinfo must never reach the network"
     );
+}
+
+/// A page on the seed host that loads one image from the seed host and one from `other`.
+async fn mount_seed_and_third_party(seed: &MockServer, other: &MockServer) {
+    let other_port = other.address().port();
+    let page = format!(
+        r#"<html><body><p>seed</p><img src="/seed.png"><img src="http://localhost:{other_port}/third.png"></body></html>"#
+    );
+    mount(seed, "/", ResponseTemplate::new(200).set_body_raw(page, "text/html")).await;
+    mount(seed, "/seed.png", png()).await;
+    mount(other, "/third.png", png()).await;
+}
+
+/// The seed host got `expected` as its `Authorization` on the page and its image, and the
+/// third-party image was requested without one.
+async fn assert_scoped_authorization(seed: &MockServer, other: &MockServer, expected: &str) {
+    for at in ["/", "/seed.png"] {
+        let requests = requests_for(seed, at).await;
+        assert!(!requests.is_empty(), "{at} on the seed host must have been requested");
+        for headers in &requests {
+            assert_eq!(
+                header(headers, "authorization"),
+                Some(expected),
+                "{at} on the seed host carries the configured credential: {headers:?}"
+            );
+        }
+    }
+    let third_party = requests_for(other, "/third.png").await;
+    assert!(
+        !third_party.is_empty(),
+        "the third-party image must have been requested"
+    );
+    for headers in &third_party {
+        assert_eq!(
+            header(headers, "authorization"),
+            None,
+            "a third-party request never gets the credential: {headers:?}"
+        );
+    }
+}
+
+fn bearer_config() -> CrawlConfig {
+    CrawlConfig {
+        auth: Some(AuthConfig::Bearer {
+            token: BEARER.to_owned(),
+        }),
+        ..browser_config()
+    }
+}
+
+const BEARER: &str = "bearer-canary";
+
+#[tokio::test]
+async fn configured_bearer_auth_goes_to_seed_host_requests_only() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    mount_seed_and_third_party(&seed, &other).await;
+
+    let Some(outcome) = scrape_in_browser_with(
+        "configured_bearer_auth_goes_to_seed_host_requests_only",
+        bearer_config(),
+        &format!("{}/", seed.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+    outcome.expect("scrape must succeed");
+
+    assert_scoped_authorization(&seed, &other, &format!("Bearer {BEARER}")).await;
+}
+
+#[cfg(feature = "interact")]
+#[tokio::test]
+async fn configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_only() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    mount_seed_and_third_party(&seed, &other).await;
+
+    let engine = create_engine(Some(bearer_config())).expect("engine must build");
+    match crawlberg::interact(&engine, &format!("{}/", seed.uri()), Vec::new()).await {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(
+                "configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_only",
+                &message,
+            );
+            return;
+        }
+        outcome => {
+            outcome.expect("the interaction must succeed");
+        }
+    }
+
+    assert_scoped_authorization(&seed, &other, &format!("Bearer {BEARER}")).await;
 }

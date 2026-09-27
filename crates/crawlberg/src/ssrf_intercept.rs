@@ -201,4 +201,58 @@ mod tests {
             "loopback must pass when deny_private=false: {verdict:?}"
         );
     }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_and_recorded_without_it() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@example.com/a", &deny_policy()).await else {
+            panic!("a URL with userinfo must be refused");
+        };
+        assert_eq!(recorded, "http://example.com/a");
+        assert!(reason.contains("credentials"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_url_is_recorded_without_its_text() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@exa mple/", &deny_policy()).await else {
+            panic!("a malformed URL must be refused");
+        };
+        assert_eq!(recorded, "(unparseable URL)");
+        assert!(reason.contains("invalid URL"), "{reason}");
+    }
+
+    #[test]
+    fn the_credential_replaces_a_page_header_of_the_same_name_and_keeps_the_rest() {
+        use chromiumoxide::cdp::browser_protocol::network::Headers;
+
+        use super::headers_with_credentials;
+        use crate::types::{AuthConfig, CrawlConfig};
+
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        let config = CrawlConfig {
+            auth: Some(AuthConfig::Bearer {
+                token: "tok".to_owned(),
+            }),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ..CrawlConfig::default()
+        };
+        let headers = Headers::new(serde_json::json!({"Cookie": "a=b", "authorization": "page-value"}));
+
+        let entries = headers_with_credentials(&config, &seed, &headers).expect("the seed host gets the credential");
+        let pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.value.as_str()))
+            .collect();
+        assert!(
+            pairs.contains(&("Cookie", "a=b")),
+            "the page's headers are kept: {pairs:?}"
+        );
+        let authorization: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .collect();
+        assert_eq!(authorization, vec![&("Authorization", "Bearer tok")], "{pairs:?}");
+
+        let other = url::Url::parse("http://other.test/").expect("test URL must parse");
+        assert!(headers_with_credentials(&config, &other, &headers).is_none());
+    }
 }

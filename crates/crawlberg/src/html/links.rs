@@ -195,4 +195,18 @@ mod tests {
             links[0].url
         );
     }
+
+    #[test]
+    fn a_link_and_a_base_href_lose_their_userinfo() {
+        let links = extract(
+            r#"<a href="http://user:s3cret@example.com/a">a</a>"#,
+            "https://example.com/page",
+        );
+        assert_eq!(links[0].url, "http://example.com/a");
+
+        let html = r#"<base href="http://user:s3cret@example.com/dir/"><a href="page.html">link</a>"#;
+        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
+        let document = Url::parse("https://example.com/").expect("valid base URL");
+        assert_eq!(effective_base_url(&dom, &document).as_str(), "http://example.com/dir/");
+    }
 }
