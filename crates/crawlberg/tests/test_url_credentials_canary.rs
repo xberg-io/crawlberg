@@ -547,7 +547,11 @@ async fn assert_custom_headers_on_seed(site: &Site, at: &str) {
     assert!(!requests.is_empty(), "{at} on the seed host must have been requested");
     for request in requests {
         let custom: Vec<_> = request.headers.get_all(CUSTOM_HEADER).iter().collect();
-        assert_eq!(custom, [CUSTOM_VALUE], "{at} on the seed host must carry the custom header once");
+        assert_eq!(
+            custom,
+            [CUSTOM_VALUE],
+            "{at} on the seed host must carry the custom header once"
+        );
         let authorization: Vec<_> = request
             .headers
             .get_all("authorization")
