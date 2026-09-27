@@ -206,4 +206,23 @@ mod tests {
             links[0].url
         );
     }
+
+    #[test]
+    fn a_data_or_javascript_base_falls_back_to_the_document_url() {
+        let document_url = Url::parse("https://example.com/dir/page.html").expect("valid document URL");
+        for (href, expected) in [
+            (" DATA:text/html,x ", "https://example.com/dir/page.html"),
+            ("\t JavaScript:alert(1)// \n", "https://example.com/dir/page.html"),
+            ("JAVASCRIPT://example.org/", "https://example.com/dir/page.html"),
+            ("/other/", "https://example.com/other/"),
+            ("https://cdn.example/assets/", "https://cdn.example/assets/"),
+        ] {
+            let dom = crate::html::parse_html(&format!(r#"<base href="{href}">"#)).expect("valid HTML");
+            assert_eq!(
+                effective_base_url(&dom, &document_url).as_str(),
+                expected,
+                "for base {href:?}"
+            );
+        }
+    }
 }

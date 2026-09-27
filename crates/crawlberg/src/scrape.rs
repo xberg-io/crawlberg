@@ -663,6 +663,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_uses_the_page_url_as_the_base_for_a_data_or_javascript_base_href() {
+        for (base, dir) in [
+            (" DATA:text/html,x ", "https://example.com/dir/"),
+            (" JavaScript:alert(1)// ", "https://example.com/dir/"),
+            ("JAVASCRIPT://example.org/", "https://example.com/dir/"),
+            ("/other/", "https://example.com/other/"),
+            ("https://cdn.example/", "https://cdn.example/"),
+        ] {
+            let resp = response(
+                "text/html",
+                &format!(
+                    r#"<html><head><base href="{base}">
+                    <link rel="alternate" type="application/rss+xml" href="feed.xml">
+                    <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head>
+                    <body><p><a href="leaf.html">leaf</a><img src="logo.png"></p></body></html>"#
+                ),
+            );
+            let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+                .await
+                .expect("scrape should succeed");
+
+            assert_eq!(urls(&result.links, |l| &l.url), [format!("{dir}leaf.html")], "for {base:?}");
+            assert_eq!(urls(&result.images, |i| &i.url), [format!("{dir}logo.png")], "for {base:?}");
+            assert_eq!(urls(&result.feeds, |f| &f.url), [format!("{dir}feed.xml")], "for {base:?}");
+            let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+            assert_eq!(urls(favicons, |f| &f.url), [format!("{dir}fav.ico")], "for {base:?}");
+            assert_eq!(
+                result.metadata.canonical_url,
+                Some(format!("{dir}c.html")),
+                "for {base:?}"
+            );
+            let markdown = result.markdown.expect("markdown").content;
+            assert!(
+                markdown.contains(&format!("[leaf]({dir}leaf.html)")),
+                "for {base:?}, got: {markdown}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn scrape_trims_attribute_values_and_reads_a_type_by_its_mime_essence() {
         let resp = response(
             "text/html",
