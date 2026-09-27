@@ -359,7 +359,7 @@ async fn an_absolute_module_src_is_recorded_under_its_parsed_address() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_subresource_address_with_userinfo_is_skipped_before_it_is_fetched_or_logged() {
+async fn a_subresource_address_with_userinfo_is_skipped_when_it_resolves() {
     let ok = push("ok");
     let (origin, mut page) = navigate_intercepted(
         |origin| {
