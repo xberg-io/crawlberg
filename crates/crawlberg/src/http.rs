@@ -644,6 +644,44 @@ mod tests {
         );
     }
 
+    /// ~keep Regression coverage for #442: `http_fetch` -> `send_hop_request` is the one
+    /// call site robots.txt (`helpers.rs`), sitemaps (`sitemap.rs`) and asset downloads
+    /// (`assets.rs`) all fetch through, and it shares `classify_reqwest_error` with the
+    /// page-fetch path `test_transport_error_credential_redaction.rs` already covers. That
+    /// test never reaches this call site (page fetches go through `tower/service.rs`
+    /// instead), so a change that reintroduced the raw URL here specifically would still
+    /// pass every existing test. This drives `http_fetch` directly against a closed port.
+    #[tokio::test]
+    async fn http_fetch_transport_error_does_not_leak_url_credentials() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("must bind an ephemeral port");
+        let port = listener.local_addr().expect("must read local addr").port();
+        drop(listener);
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://alice:hunter2@127.0.0.1:{port}/robots.txt");
+
+        let err = match http_fetch(&url, &config, &std::collections::HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("a connection to a closed port must fail"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the closed-port transport error must never carry the URL's password, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the closed-port transport error must never carry the URL's username, got {rendered}"
+        );
+        assert!(
+            rendered.contains("127.0.0.1"),
+            "the host must still be named so the error stays actionable, got {rendered}"
+        );
+    }
+
     /// Same redirect chain as above, but with a builder value large enough to reach the
     /// end — proving `.max_redirects(N)` is actually honored (not just enforced too
     /// tightly) by the same loop.
