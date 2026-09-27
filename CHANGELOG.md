@@ -29,6 +29,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The browser's JavaScript module loader printed a page-supplied module URL's credentials.**
+  Loading an ES module whose URL carried a user name and password wrote both, unredacted, into
+  the "Invalid module URL" and "Module ... blocked by SSRF policy" error text. A URL that parses
+  now has its username and password replaced with `***` before either error is built; a URL that
+  fails to parse is not printed at all, only its byte length. (#357)
+
 - **The browser's JavaScript module loader logged the configured proxy address with its
   credentials.** Loading an ES module through a proxy wrote the full proxy address, password
   included, to a debug log line, and a proxy address that failed to parse wrote it again into

@@ -1,11 +1,12 @@
 //! ES-module loading and evaluation for dynamic `import()` and inline module scripts.
 
 use super::BrowserJsRuntime;
+use crate::js::module_loader::redact_module_url;
 
 impl BrowserJsRuntime {
     pub async fn load_module(&mut self, url: &str) -> Result<(), String> {
-        let specifier =
-            deno_core::ModuleSpecifier::parse(url).map_err(|e| format!("Invalid module URL {}: {}", url, e))?;
+        let specifier = deno_core::ModuleSpecifier::parse(url)
+            .map_err(|e| format!("Invalid module URL {}: {}", redact_module_url(url), e))?;
 
         let module_id = self
             .runtime
@@ -76,5 +77,38 @@ impl BrowserJsRuntime {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCRIPT_SRC_PASSWORD: &str = "s3cret";
+
+    /// Regression for #357: `<script type="module" src="...">` reaches `load_module`
+    /// with the page's raw, unresolved `src` attribute (`page/scripts.rs`), so an
+    /// unparseable value here is real page-supplied input, unlike the pre-parsed
+    /// `ModuleSpecifier` `BrowserModuleLoader::load` always receives.
+    #[tokio::test(flavor = "current_thread")]
+    async fn load_module_error_does_not_carry_credentials_for_an_unparseable_url() {
+        let mut rt = BrowserJsRuntime::new();
+        let url = format!("://user:{SCRIPT_SRC_PASSWORD}@evil.invalid/mod.js");
+
+        let err = rt
+            .load_module(&url)
+            .await
+            .expect_err("an unparseable module URL must fail to load");
+
+        // ~keep Positive twin for the absence assertion below: the error must still
+        // say why the load failed, so the test cannot pass because nothing prints.
+        assert!(
+            err.contains("Invalid module URL"),
+            "expected the invalid-module-URL branch, got '{err}'"
+        );
+        assert!(
+            !err.contains(SCRIPT_SRC_PASSWORD),
+            "the module URL's credentials must never reach the error text, got '{err}'"
+        );
     }
 }

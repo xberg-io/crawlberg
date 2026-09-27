@@ -45,6 +45,38 @@ fn io_err(msg: String) -> ModuleLoaderError {
     deno_error::JsErrorBox::generic(msg)
 }
 
+/// Redact a page-supplied module URL before it reaches an error message.
+///
+/// `crawlberg-browser` cannot depend on the core `crawlberg` crate (the dependency
+/// runs the other way, behind the optional `browser-native` feature), so it cannot
+/// reuse `crawlberg::net::redact_url_credentials` and carries its own copy of the same
+/// idea (#357). A URL that parses gets a present username/password replaced with
+/// `***`, exactly like the core redactor. A URL that does NOT parse is never printed
+/// at all: unlike the core redactor, which returns an unparseable string unchanged
+/// because that string is typically a DNS error message rather than attacker-supplied,
+/// a module URL that fails to parse here is page-supplied input reaching an error
+/// path, so only its byte length is reported.
+///
+/// `pub(crate)`: `js::runtime::modules::load_module` builds the identical error
+/// message from a raw `<script type="module" src="...">` URL and reuses this same
+/// function rather than carrying its own copy.
+pub(crate) fn redact_module_url(raw: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(raw) else {
+        return format!("<{} byte URL, does not parse>", raw.len());
+    };
+    // ~keep Only redact a component that was actually present, so a username-only URL
+    // does not grow a fabricated password. `set_username`/`set_password` fail only for
+    // schemes without an authority (data:, mailto:, ...), which by construction cannot
+    // have parsed a non-empty username/password in the first place.
+    if !parsed.username().is_empty() {
+        let _ = parsed.set_username("***");
+    }
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("***"));
+    }
+    parsed.to_string()
+}
+
 impl ModuleLoader for BrowserModuleLoader {
     fn resolve(
         &self,
@@ -72,11 +104,15 @@ impl ModuleLoader for BrowserModuleLoader {
         let ssrf = self.ssrf.clone();
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {
-            let parsed =
-                ModuleSpecifier::parse(&url).map_err(|e| io_err(format!("Invalid module URL {}: {}", url, e)))?;
-            ssrf.validate(&parsed)
-                .await
-                .map_err(|e| io_err(format!("Module {} blocked by SSRF policy: {}", url, e)))?;
+            let parsed = ModuleSpecifier::parse(&url)
+                .map_err(|e| io_err(format!("Invalid module URL {}: {}", redact_module_url(&url), e)))?;
+            ssrf.validate(&parsed).await.map_err(|e| {
+                io_err(format!(
+                    "Module {} blocked by SSRF policy: {}",
+                    redact_module_url(&url),
+                    e
+                ))
+            })?;
 
             let mut builder = reqwest::Client::builder();
             if let Some(ref proxy) = proxy_url {
@@ -118,8 +154,8 @@ impl ModuleLoader for BrowserModuleLoader {
                 .await
                 .map_err(|e| io_err(format!("Failed to read module body {}: {}", url, e)))?;
 
-            let specifier =
-                ModuleSpecifier::parse(&url).map_err(|e| io_err(format!("Invalid module URL {}: {}", url, e)))?;
+            let specifier = ModuleSpecifier::parse(&url)
+                .map_err(|e| io_err(format!("Invalid module URL {}: {}", redact_module_url(&url), e)))?;
 
             Ok(ModuleSource::new(
                 deno_core::ModuleType::JavaScript,
@@ -256,6 +292,74 @@ mod tests {
         assert!(
             !message.contains(PROXY_PASSWORD),
             "the proxy password must never reach the error text, got '{message}'"
+        );
+    }
+
+    const MODULE_URL_PASSWORD: &str = "s3cret";
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ssrf_blocked_error_does_not_carry_the_module_url_credentials() {
+        // ~keep `BrowserModuleLoader::new` wires up the real `DefaultSsrfValidator`
+        // (via `from_env`), and this cloud-metadata address is on its default deny
+        // list, so this exercises the production SSRF policy, not a test-only stand-in.
+        let loader = BrowserModuleLoader::new("https://example.com/");
+        let url = format!("http://user:{MODULE_URL_PASSWORD}@169.254.169.254/x.js");
+
+        let err = run_load(&loader, &url)
+            .await
+            .expect_err("a cloud metadata address must be blocked by the default SSRF policy");
+        let message = err.to_string();
+
+        // ~keep Positive twin for the absence assertion below: the message must still
+        // say why the load failed, so the test cannot pass merely because nothing prints.
+        assert!(
+            message.contains("blocked by SSRF policy"),
+            "expected the SSRF-blocked branch, got '{message}'"
+        );
+        assert!(
+            !message.contains(MODULE_URL_PASSWORD),
+            "the module URL's password must never reach the error text, got '{message}'"
+        );
+    }
+
+    #[test]
+    fn redact_module_url_replaces_credentials_when_the_url_parses() {
+        let redacted = redact_module_url(&format!("http://user:{MODULE_URL_PASSWORD}@evil.example/mod.js"));
+
+        assert!(
+            !redacted.contains(MODULE_URL_PASSWORD),
+            "the password must not survive redaction, got '{redacted}'"
+        );
+        // ~keep Positive twin: the host must survive, so the test cannot pass because
+        // redaction blanked the whole string instead of only the credentials.
+        assert_eq!(
+            redacted, "http://***:***@evil.example/mod.js",
+            "unexpected redacted form: '{redacted}'"
+        );
+    }
+
+    #[test]
+    fn redact_module_url_never_prints_an_unparseable_url() {
+        // ~keep Missing scheme before `://` (same shape as `unparseable_proxy_url`
+        // above), so `url::Url::parse` rejects it while it still carries credential
+        // syntax an unredacted print would leak.
+        let raw = format!("://user:{MODULE_URL_PASSWORD}@evil.invalid/mod.js");
+
+        let redacted = redact_module_url(&raw);
+
+        assert!(
+            !redacted.contains(MODULE_URL_PASSWORD),
+            "an unparseable module URL's credentials must never reach the output, got '{redacted}'"
+        );
+        assert!(
+            !redacted.contains("evil.invalid"),
+            "an unparseable module URL must not be printed at all, got '{redacted}'"
+        );
+        // ~keep Positive twin: the length must still be reported, so the test cannot
+        // pass because the function returned an empty or constant placeholder.
+        assert!(
+            redacted.contains(&raw.len().to_string()),
+            "expected the byte length to be reported, got '{redacted}'"
         );
     }
 }
