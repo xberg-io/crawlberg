@@ -9,12 +9,13 @@ use url::Url;
 
 use crate::html::{
     HtmlExtraction, detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content,
-    is_pdf_content, is_pdf_url,
+    is_pdf_content, is_pdf_url, mask_raw_text_markup,
 };
 use crate::types::*;
 use regex::Regex;
 
 use crate::helpers::RobotsOutcome;
+use crate::scrape::RobotsDirectives;
 use crate::traits::*;
 
 /// Fallback URL used when a fetched URL fails to parse during extraction.
@@ -43,6 +44,19 @@ pub(super) struct LoopContext<'a> {
     pub(super) tx: &'a Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
 }
 
+/// Whether this is a streaming crawl whose receiver has been dropped.
+pub(super) fn receiver_gone(tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>) -> bool {
+    tx.as_ref().is_some_and(tokio::sync::mpsc::Sender::is_closed)
+}
+
+/// Resolve once a streaming crawl's receiver is dropped; never for a non-streaming crawl.
+pub(super) async fn receiver_closed(tx: &Option<tokio::sync::mpsc::Sender<CrawlEvent>>) {
+    match tx {
+        Some(sender) => sender.closed().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The page whose links are being discovered, as link discovery sees it.
 pub(super) struct ParentPage<'a> {
     pub(super) url: &'a str,
@@ -63,6 +77,8 @@ pub(super) struct FetchResult {
     pub(super) body_bytes: Vec<u8>,
     pub(super) headers: HashMap<String, Vec<String>>,
     pub(super) extraction: HtmlExtraction,
+    /// The page's own `noindex` / `nofollow`, from its `X-Robots-Tag` headers and meta tags.
+    pub(super) robots: RobotsDirectives,
     pub(super) is_binary: bool,
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
@@ -97,6 +113,7 @@ pub(super) struct PageExtraction {
     pub(super) body: String,
     pub(super) body_bytes: Vec<u8>,
     pub(super) extraction: HtmlExtraction,
+    pub(super) robots: RobotsDirectives,
     pub(super) is_binary: bool,
     pub(super) is_pdf: bool,
     pub(super) detected_charset: Option<String>,
@@ -185,6 +202,7 @@ impl CrawlState {
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
+    x_robots_tag: Option<&str>,
     body: String,
     body_bytes: Vec<u8>,
 ) -> PageExtraction {
@@ -200,22 +218,31 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
-    let extraction = if let Ok(doc) = tl::parse(&body, ParserOptions::default()) {
-        extract_page_data(&doc, &body, &parsed_url, is_html && !is_binary && !is_pdf, false)
+    let header_robots = RobotsDirectives::from_header(x_robots_tag);
+    // ~keep Parse the masked source, never `body`: `tl` reads the contents of raw-text elements
+    // ~keep as markup, which both invents tags and hides real ones.
+    let parsed_html = mask_raw_text_markup(&body);
+    let (extraction, robots) = if let Ok(doc) = tl::parse(&parsed_html, ParserOptions::default()) {
+        (
+            extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false),
+            header_robots.with_meta_tags(&doc),
+        )
     } else {
-        HtmlExtraction {
+        let extraction = HtmlExtraction {
             metadata: PageMetadata::default(),
             links: Vec::new(),
             images: Vec::new(),
             feeds: Vec::new(),
             json_ld: Vec::new(),
-        }
+        };
+        (extraction, header_robots)
     };
 
     PageExtraction {
         body,
         body_bytes,
         extraction,
+        robots,
         is_binary,
         is_pdf,
         detected_charset,

@@ -59,6 +59,7 @@ pub struct CrawlEngine {
     pub(crate) event_emitter: Arc<dyn EventEmitter>,
     pub(crate) strategy: Arc<dyn CrawlStrategy>,
     pub(crate) content_filter: Arc<dyn ContentFilter>,
+    pub(crate) document_filter: Option<Arc<crate::document::DocumentFilter>>,
     pub(crate) cache: Arc<dyn CrawlCache>,
     /// Optional event sink for streaming crawl events to external consumers
     /// (e.g., NATS, dashboards, analytics).

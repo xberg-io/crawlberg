@@ -2101,6 +2101,8 @@ const _: fn() = || {
         let _: bool = CrawlPageResult.browser_used;
         let _: String = CrawlPageResult.final_url;
         let _: i64 = CrawlPageResult.redirect_count;
+        let _: bool = CrawlPageResult.noindex_detected;
+        let _: bool = CrawlPageResult.nofollow_detected;
     }
     {
         let CrawlResult = None::<crate::CrawlResult>.unwrap();
@@ -3051,6 +3053,8 @@ impl SseDecode for crate::CrawlPageResult {
         let mut var_browserUsed = <bool>::sse_decode(deserializer);
         let mut var_finalUrl = <String>::sse_decode(deserializer);
         let mut var_redirectCount = <i64>::sse_decode(deserializer);
+        let mut var_noindexDetected = <bool>::sse_decode(deserializer);
+        let mut var_nofollowDetected = <bool>::sse_decode(deserializer);
         return crate::CrawlPageResult {
             url: var_url,
             normalized_url: var_normalizedUrl,
@@ -3075,6 +3079,8 @@ impl SseDecode for crate::CrawlPageResult {
             browser_used: var_browserUsed,
             final_url: var_finalUrl,
             redirect_count: var_redirectCount,
+            noindex_detected: var_noindexDetected,
+            nofollow_detected: var_nofollowDetected,
         };
     }
 }
@@ -4964,6 +4970,8 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlPageResult> {
             self.0.browser_used.into_into_dart().into_dart(),
             self.0.final_url.into_into_dart().into_dart(),
             self.0.redirect_count.into_into_dart().into_dart(),
+            self.0.noindex_detected.into_into_dart().into_dart(),
+            self.0.nofollow_detected.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6126,6 +6134,8 @@ impl SseEncode for crate::CrawlPageResult {
         <bool>::sse_encode(self.browser_used, serializer);
         <String>::sse_encode(self.final_url, serializer);
         <i64>::sse_encode(self.redirect_count, serializer);
+        <bool>::sse_encode(self.noindex_detected, serializer);
+        <bool>::sse_encode(self.nofollow_detected, serializer);
     }
 }
 

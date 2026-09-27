@@ -41,6 +41,7 @@ pub struct CrawlEngineBuilder {
     event_emitter: Option<Arc<dyn EventEmitter>>,
     strategy: Option<Arc<dyn CrawlStrategy>>,
     content_filter: Option<Arc<dyn ContentFilter>>,
+    document_filter: Option<Arc<crate::document::DocumentFilter>>,
     cache: Option<Arc<dyn CrawlCache>>,
     #[cfg(not(target_arch = "wasm32"))]
     event_sink: Option<Arc<dyn EventSink>>,
@@ -63,6 +64,7 @@ impl CrawlEngineBuilder {
             event_emitter: None,
             strategy: None,
             content_filter: None,
+            document_filter: None,
             cache: None,
             #[cfg(not(target_arch = "wasm32"))]
             event_sink: None,
@@ -120,6 +122,28 @@ impl CrawlEngineBuilder {
     #[allow(dead_code)]
     pub fn content_filter(mut self, content_filter: impl ContentFilter + 'static) -> Self {
         self.content_filter = Some(Arc::new(content_filter));
+        self
+    }
+
+    /// Set a byte-aware predicate for document materialization.
+    ///
+    /// The predicate receives the normalized declared MIME type, at most
+    /// `document_max_size` bytes of the already bounded response body, and the decision
+    /// `document_mime_types`/the built-in classification would have reached. Returning that
+    /// third argument reproduces the default; `by_declared_mime || bytes.starts_with(b"%PDF")`
+    /// widens it. It applies to `crawl()`, `scrape()` and the wasm crawl loop alike. With no
+    /// predicate, the existing MIME decision is unchanged.
+    ///
+    /// The predicate runs for **every** fetched response, not only the ones the built-in
+    /// decision would have accepted — an ordinary HTML page included. A predicate that returns
+    /// `true` for HTML therefore materializes every page as a `DownloadedDocument`, duplicating
+    /// its whole body into the result and, on native targets, writing it to
+    /// `document_output_dir`. Keep the predicate as narrow as the documents it is meant to admit.
+    pub fn document_filter(
+        mut self,
+        document_filter: impl Fn(&str, &[u8], bool) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.document_filter = Some(Arc::new(document_filter));
         self
     }
 
@@ -250,6 +274,7 @@ impl CrawlEngineBuilder {
             content_filter: self
                 .content_filter
                 .unwrap_or_else(|| default_content_filter(bm25_filter)),
+            document_filter: self.document_filter,
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
             event_sink,

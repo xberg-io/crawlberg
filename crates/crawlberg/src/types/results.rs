@@ -138,7 +138,7 @@ pub struct ScrapeResult {
     pub noindex_detected: bool,
     /// Whether a nofollow directive was detected.
     pub nofollow_detected: bool,
-    /// The X-Robots-Tag header value, if present.
+    /// The X-Robots-Tag header values, joined with `, ` when the response sent more than one.
     pub x_robots_tag: Option<String>,
     /// Whether the content is a PDF.
     pub is_pdf: bool,
@@ -238,6 +238,14 @@ pub struct CrawlPageResult {
     /// Redirect hops taken to reach `final_url` from `url`.
     #[serde(default)]
     pub redirect_count: usize,
+    /// Whether the page asked not to be indexed, by its robots meta tag or `X-Robots-Tag`
+    /// header. The page is still crawled and its links still followed.
+    #[serde(default)]
+    pub noindex_detected: bool,
+    /// Whether the page asked that its links not be followed, by its robots meta tag or
+    /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
+    #[serde(default)]
+    pub nofollow_detected: bool,
 }
 
 /// The result of a multi-page crawl operation.

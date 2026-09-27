@@ -4,6 +4,40 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
+  of such a page returned the rendered HTML with status 200. It now returns the same error that
+  HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
+  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
+  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
+  mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
+  that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
+  response headers of the document the page shows, so a WAF block is found from the headers of a
+  403 page as well as from its body. (#143)
+
+- **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
+  `nofollow_detected` are always serialised, and `CrawlPageResult` carries
+  `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
+  every older crawlberg** — even when both values are `false`. The break is one-directional: an
+  older result still loads here, because both fields default to `false`.
+
+  What this affects:
+
+  - A cross-version pipeline that serialises a crawl result on one crawlberg and reads it on
+    another. Upgrade the readers before, or with, the writers.
+  - A persisted `CrawlCache`: entries written by this version cannot be read back by an older
+    build, so a rollback must treat the cache as cold rather than reuse it.
+  - Any binding that round-trips a page result through JSON across the FFI boundary
+    (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
+    versions.
+
+- **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
+  constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
+  Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
+  and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
+
 ### Fixed
 
 - **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
@@ -12,6 +46,110 @@ title: "Changelog"
   fetch at once with the status, final URL and empty body that HTTP mode reports. The native
   backend already returned at once, but it reported an empty HTML skeleton as the body; it now
   reports an empty body too. (#121)
+
+  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
+  304 against its cache entry before the response reaches this check, so what the check sees is
+  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
+  what it carries.
+
+- **The vendored C header gate failed for lag rather than for a defect.** It required each
+  prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
+  header, but a vendored copy ships beside a dylib from the last release, so it legitimately
+  lacks whatever the canonical header has gained since — adding two `CrawlPageResult` getters
+  for #135 turned `main` red for that reason alone. The comparison is now one-directional: a
+  declaration the vendored copy has and the canonical header does not still fails, because that
+  means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
+  copy is merely missing are reported as lag. (#162)
+
+- **A browser fetch reported no response headers at all on the crawl path.**
+  `browser_http_to_crawl` built an empty header map, so every header a browser backend had
+  collected was discarded before the crawl or the escalation path could read it — `ETag`,
+  `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF classifier, however faithfully the
+  backend reported them. This is why a `nofollow` sent only as an `X-Robots-Tag` header had no effect
+  in browser mode even after the crawl learned to honour it. Headers are now carried through. The
+  chromiumoxide backend still hardcodes its own status, content type and headers, so this reaches
+  callers today on the native backend only; #166 covers the rest. (#148)
+
+- **Dropping a one-shot browser fetch ran no teardown at all.** Teardown was straight-line code
+  after the fetch, reached only once the fetch had finished, so a caller that dropped the future
+  while it ran — a cancelled request, a `select!` that lost, a deadline above crawlberg — got none
+  of it. Against a `browser.endpoint` Chrome that left crawlberg's CDP websocket open, and the tab
+  it had opened open with it: a connected `chromiumoxide::Browser` owns no child process, so
+  dropping it does nothing, and its handler loop never ends by itself. Against a launched Chrome
+  the process went with the dropped handle, but its `--user-data-dir` stayed on disk. Teardown now
+  belongs to a value whose `Drop` runs it, so a dropped fetch and a finished one take the same
+  path, and the profile directory is owned by a guard from the moment it is created rather than
+  from the moment the launch succeeds — a fetch cancelled mid-launch never had a session to tear
+  down. One window remains open: the Chrome process that `Browser::launch` is still building
+  cannot be reaped from outside it, so a fetch cancelled during the launch can leave that process
+  behind, and it recreates the directory it was just removed from (#198). (#131)
+
+- **Teardown waited five seconds for the CDP handler after killing a hung Chrome.** Killing the
+  process does not end the task that runs its CDP handler: chromiumoxide's handler loop returns
+  only when a `Browser.close` response reaches it, and a closed websocket merely parks the loop, so
+  the wait could never do anything but expire in full and abort the task anyway — about five
+  seconds added to every teardown that had to kill a Chrome that had stopped responding. The close
+  now reports whether the process exited or had to be killed, and the handler is aborted at once in
+  the killed case. A browser that closed cleanly is unchanged, still given the same grace period to
+  wind its handler down. (#146)
+
+- **A pooled browser fetch that hit its overall deadline leaked its page.** `overall_timeout`
+  wrapped the whole pooled fetch, so expiry dropped that future before it could release the page it
+  had borrowed from the shared browser — and `chromiumoxide::Page` has no closing `Drop`, so the CDP
+  target stayed open for the rest of the process's life, still running scripts. The deadline now
+  bounds page acquisition and navigation individually and the release runs on every path, the
+  deadline one included. That release is bounded by `shutdown_timeout` rather than by the overall
+  deadline, so a browser too wedged to close a page cannot hold a fetch open, and an
+  already-computed result is no longer replaced by a timeout error because teardown was slow.
+  Closing a timed-out page's popups is not covered here. (#179)
+
+- **A refused URL's credentials reached the error text.** The browser navigation path and interact
+  mode built the SSRF violation error with a struct literal instead of the redacting constructor, so
+  a request Chrome was refused at a redirect — `https://user:secret@10.0.0.1/` — carried its
+  `user:pass@` userinfo into the error message, and from there into API error bodies, MCP error
+  payloads and tracing fields. Both sites now build the error through `CrawlError::ssrf_violation`,
+  which redacts the userinfo before it is stored. The pre-navigation seed check and the HTTP
+  redirect path already used the redacting path and are unchanged. (#180)
+
+- **Four CI gates passed without examining anything.** The vendored-C-header check compared only
+  `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
+  canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every
+  tracked `crawlberg.h` from the repository index, byte-compares the generator's own outputs,
+  compares the vendored bundles as a normalised declaration stream, and fails on any copy it does
+  not classify. The e2e fixture-drift check excluded `python`, `php`, `ruby` and `c` for formatter
+  skew; measuring each formatter against alef 0.96.4 showed only `python` had any, so `ruff` is now
+  pinned and asserted and all four languages are gated. A pull request stacked on another pull
+  request's branch matched no CI workflow's `branches: [main]` base filter and ran none of them
+  while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
+  hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
+  it is resynced and gated. (#162, #127)
+
+- **A WAF challenge served with 503 or 429 was retried instead of escalated.** WAF detection ran
+  only for a 403 and for a 2xx, so a Cloudflare or Akamai interstitial served with 503 became a
+  plain server error — and a challenge served with 429 a plain rate limit — before anything looked
+  at the response. It was then retried by the same JavaScript-less client that provoked it and
+  never reached the browser or bypass tier. A 403, 429 or 503 is now fingerprinted before it is
+  turned into an error: a detected challenge is a WAF block and escalates, while a 429 or 503 with
+  no WAF signal is unchanged — same error, same message, its status still attached, and still
+  retried exactly as `retry_codes` says. Escalation is chosen over retry for a detected challenge
+  because re-issuing the identical request only reproduces it. Response headers are checked first,
+  so a challenge named by a header costs no body read; only a 429 or 503 whose headers say nothing
+  now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
+  was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
+
+- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
+  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
+  element handling and parses the contents of these elements as markup, so
+  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+  `<base href>` inside title text changed the base for the whole page. In the other direction a
+  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
+  every tag up to the next `-->`: real links after the script were missing from the links list
+  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
+  masked in the source before it is parsed — the point at which a browser stops reading markup —
+  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
+  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
+  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
+  `math` are left alone, because a browser parses those as markup too. (#124, #125)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
@@ -24,14 +162,28 @@ title: "Changelog"
   refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
   redirect response at the limit, with the same redirect count, status and final URL that HTTP
   mode reports, and the next hop is never requested. Only the redirects of the requested page
-  count. A navigation a script starts after the page loads, and any redirect it follows, does not
-  count. This applies to the Chromiumoxide backend. (#90)
+  count, and this applies to the Chromiumoxide backend. (#90)
+
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports
   the URL that answered, empty HTML, and a failed result for each action that names the status.
-  The SSRF check still applies to every request. This applies to the Chromiumoxide backend.
-  (#116, #140)
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
+  on the native backend `interact` still follows every redirect a chain offers, up to the
+  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
+  stopped checking requests against the SSRF policy when the page finished loading, so a script
+  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
+  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
+  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
+  or iframe keeps the page. (#143)
 - **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
   and stopped when the navigation finished. In `interact`, a click, a form submission, a script
   `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
@@ -40,19 +192,107 @@ title: "Changelog"
   request is judged by the policy of the page it belongs to: the page, its frames, and the
   popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
   is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
-  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its page and popups are closed while their requests are still refused, and the
-  check is turned off only after that. This applies to the Chromiumoxide backend. (#153, #165,
-  #168)
+  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its
+  page and popups are closed while their requests are still refused, and the check is turned off
+  only after every request it refused has been failed. This applies to the Chromiumoxide backend.
+  (#153, #165, #168, #281)
 - **An `interact` action whose request the SSRF check refused was reported as successful.** The
-  action now fails with the SSRF policy error that names the refused URL. A request counts for the
-  action that was running when Chrome sent it. This applies to the Chromiumoxide backend. (#167)
-- **A page rendered in browser mode always reported status 200.** The Chromiumoxide backend now
-  reports the status the server answered for the page whose HTML it returns, and both browser
-  backends handle it the way HTTP mode does. A status that HTTP mode reports as an error is the same
-  error: a 404 page is a not-found error, a 403 page is a forbidden or WAF error, and a 500 page is
-  a server error. A crawl in browser mode keeps the same pages as one in HTTP mode. Under
-  `soft_http_errors`, and for a 404 at the end of a redirect, the page keeps its status and has an
-  empty body, as in HTTP mode. (#143)
+  action now fails with the SSRF policy error that names the refused URL. A refused request never
+  counts for an action other than the one that was running when Chrome paused it. This applies to
+  the Chromiumoxide backend. (#167)
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
+- **A dropped batch stream still reported every seed it had not started.** The batch went on
+  starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
+  and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
+  is dropped, and a seed it never started reports nothing. (#91)
+
+- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
+  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
+  statuses; only a status that raised no error of its own was checked against the list. A non-empty
+  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
+  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
+  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
+  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
+  empty list they retry these failures up to `retry_count` instead of never. (#76)
+
+  This narrows retries for any configuration that already sets `retry_codes`, including a list
+  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
+  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
+  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
+  0, so a configuration that never raised it sends one request either way and is unaffected.
+
+- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
+  whether or not a response caused it, so a transport timeout was retried under
+  `retry_codes = [408]`. An error raised for a response status now carries that status, and
+  `retry_codes` matches only that. (#92)
+- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
+  success on these paths, while `map()` already reported it as a server error, so an empty
+  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
+  path now maps a status to the same error, so a 504 is a server error everywhere and is
+  retried like a 503. The messages of these errors on `map()` now match the other paths:
+  `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
+  now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
+  `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
+  it is a hint and not a robots directive. A `noindex` page is still crawled and its links
+  followed. Each page result now reports both directives in `noindex_detected` and
+  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
+  **Upgrading** above for the wire-format consequence of the two new fields. (#135)
+- **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
+  `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
+  Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
+- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
+  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
+  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
+  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
+  closed as before. (#73)
 
 ## [1.8.0] - 2026-09-25
 

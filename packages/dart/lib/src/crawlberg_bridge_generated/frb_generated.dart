@@ -3067,8 +3067,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 23)
-      throw Exception('unexpected arr length: expect 23 but see ${arr.length}');
+    if (arr.length != 25)
+      throw Exception('unexpected arr length: expect 25 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -3095,6 +3095,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       browserUsed: dco_decode_bool(arr[20]),
       finalUrl: dco_decode_String(arr[21]),
       redirectCount: dco_decode_i_64(arr[22]),
+      noindexDetected: dco_decode_bool(arr[23]),
+      nofollowDetected: dco_decode_bool(arr[24]),
     );
   }
 
@@ -4622,6 +4624,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_browserUsed = sse_decode_bool(deserializer);
     var var_finalUrl = sse_decode_String(deserializer);
     var var_redirectCount = sse_decode_i_64(deserializer);
+    var var_noindexDetected = sse_decode_bool(deserializer);
+    var var_nofollowDetected = sse_decode_bool(deserializer);
     return CrawlPageResult(
       url: var_url,
       normalizedUrl: var_normalizedUrl,
@@ -4646,6 +4650,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       browserUsed: var_browserUsed,
       finalUrl: var_finalUrl,
       redirectCount: var_redirectCount,
+      noindexDetected: var_noindexDetected,
+      nofollowDetected: var_nofollowDetected,
     );
   }
 
@@ -6481,6 +6487,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.browserUsed, serializer);
     sse_encode_String(self.finalUrl, serializer);
     sse_encode_i_64(self.redirectCount, serializer);
+    sse_encode_bool(self.noindexDetected, serializer);
+    sse_encode_bool(self.nofollowDetected, serializer);
   }
 
   @protected

@@ -22,21 +22,24 @@ on:
       - "scripts/sync_plugin_version.py"
       - ".task/tools/version-sync.yml"
       - ".github/workflows/ci-plugin.yaml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "plugin/**"
-      - ".claude-plugin/**"
-      - ".agents/plugins/**"
-      - ".ai-rulez/config.toml"
-      - "scripts/sync_plugin_version.py"
-      - ".task/tools/version-sync.yml"
-      - ".github/workflows/ci-plugin.yaml"
+  # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+  # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
+  # ~keep before merging any PR that needs its own CI.
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "Cargo.toml"
+  #     - "plugin/**"
+  #     - ".claude-plugin/**"
+  #     - ".agents/plugins/**"
+  #     - ".ai-rulez/config.toml"
+  #     - "scripts/sync_plugin_version.py"
+  #     - ".task/tools/version-sync.yml"
+  #     - ".github/workflows/ci-plugin.yaml"
   workflow_dispatch:
 
 concurrency:
-  group: ci-plugin-${{ github.ref }}
+  group: ci-plugin-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
   cancel-in-progress: true
 
 permissions:

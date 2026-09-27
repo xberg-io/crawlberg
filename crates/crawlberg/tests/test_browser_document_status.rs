@@ -35,7 +35,8 @@ fn page(status: u16, body: &str) -> ResponseTemplate {
 }
 
 /// `/` links to `/ok`, `/missing` and `/broken`, which answer 200, 404 and 500 with a page.
-/// `/moved` redirects to `/missing`.
+/// `/moved` redirects to `/missing`. `/waf` is a 403 page that only its headers fingerprint as
+/// a WAF block.
 async fn site() -> MockServer {
     let site = MockServer::start().await;
     let routes = [
@@ -56,6 +57,11 @@ async fn site() -> MockServer {
             .await;
     }
     Mock::given(method("GET"))
+        .and(path("/waf"))
+        .respond_with(page(403, "<p>forbidden-marker</p>").append_header("x-datadome", "protected"))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/moved"))
         .respond_with(ResponseTemplate::new(302).append_header("location", "/missing"))
         .mount(&site)
@@ -73,11 +79,14 @@ fn scrape_outcome(result: Result<crawlberg::ScrapeResult, CrawlError>) -> Result
 }
 
 fn error_kind(error: &CrawlError) -> String {
-    format!("{error:?}")
-        .split([' ', '{', '('])
-        .next()
-        .unwrap_or_default()
-        .to_owned()
+    match error {
+        CrawlError::NotFound { .. } => "NotFound",
+        CrawlError::Forbidden { .. } => "Forbidden",
+        CrawlError::WafBlocked { .. } => "WafBlocked",
+        CrawlError::ServerError { .. } => "ServerError",
+        other => return format!("unexpected: {other:?}"),
+    }
+    .to_owned()
 }
 
 fn chrome_missing(test_name: &str, error: &CrawlError) -> bool {
@@ -100,6 +109,7 @@ async fn assert_scrape_matches_http_mode(test_name: &str, backend: BrowserBacken
         ("/ok", Ok(200)),
         ("/missing", Err("NotFound".to_owned())),
         ("/broken", Err("ServerError".to_owned())),
+        ("/waf", Err("WafBlocked".to_owned())),
         ("/moved", Ok(404)),
     ] {
         let url = format!("{}{route}", site.uri());
@@ -139,28 +149,35 @@ async fn native_scrape_reports_the_document_status_as_http_mode_does() {
     .await;
 }
 
-/// With `soft_http_errors`, a 404 page is a page with status 404 and no body in both modes.
+/// With `soft_http_errors`, a 404 or 403 page is a page with its status and no body in both
+/// modes.
 #[tokio::test]
-async fn chromiumoxide_soft_http_errors_report_a_404_page_as_http_mode_does() {
-    let test_name = "chromiumoxide_soft_http_errors_report_a_404_page_as_http_mode_does";
+async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does() {
+    let test_name = "chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_does";
     let site = site().await;
-    let url = format!("{}/missing", site.uri());
     let soft = |mode| CrawlConfig {
         soft_http_errors: true,
         ..config(BrowserBackend::Chromiumoxide, mode)
     };
     let http = create_engine(Some(soft(BrowserMode::Never))).expect("engine must build");
-    let expected = scrape(&http, &url).await.expect("a soft 404 is a page");
     let browser = create_engine(Some(soft(BrowserMode::Always))).expect("engine must build");
-    let result = match scrape(&browser, &url).await {
-        Ok(result) => result,
-        Err(error) if chrome_missing(test_name, &error) => return,
-        Err(error) => panic!("{test_name}: a soft 404 is a page: {error:?}"),
-    };
-    assert_eq!(
-        (result.status_code, result.html.as_str()),
-        (expected.status_code, expected.html.as_str())
-    );
+    for (route, status) in [("/missing", 404), ("/waf", 403)] {
+        let url = format!("{}{route}", site.uri());
+        let expected = scrape(&http, &url)
+            .await
+            .unwrap_or_else(|error| panic!("{test_name}: HTTP mode reports a soft {route} as a page: {error:?}"));
+        assert_eq!(expected.status_code, status, "{test_name}: HTTP mode for {route}");
+        let result = match scrape(&browser, &url).await {
+            Ok(result) => result,
+            Err(error) if chrome_missing(test_name, &error) => return,
+            Err(error) => panic!("{test_name}: a soft {route} is a page: {error:?}"),
+        };
+        assert_eq!(
+            (result.status_code, result.html.as_str()),
+            (expected.status_code, expected.html.as_str()),
+            "{test_name}: browser mode for {route}"
+        );
+    }
 }
 
 /// A crawl in browser mode keeps the pages, with the statuses, that HTTP mode keeps.
@@ -200,13 +217,13 @@ async fn chromiumoxide_crawl_keeps_the_pages_http_mode_keeps() {
 }
 
 /// Scrape `route` of a site whose routes answer `(route, status, body)` in browser mode, with
-/// `extra_wait`, or `None` when Chrome is missing.
+/// `extra_wait`. Returns the result and the site, or `None` when Chrome is missing.
 async fn browser_scrape(
     test_name: &str,
     routes: &[(&str, u16, &str)],
     route: &str,
     extra_wait: Option<Duration>,
-) -> Option<Result<crawlberg::ScrapeResult, CrawlError>> {
+) -> Option<(Result<crawlberg::ScrapeResult, CrawlError>, MockServer)> {
     let site = MockServer::start().await;
     for (path_, status, body) in routes {
         Mock::given(method("GET"))
@@ -217,6 +234,18 @@ async fn browser_scrape(
     }
     let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
     config.browser.extra_wait = extra_wait;
+    browser_scrape_with(test_name, config, &site, route)
+        .await
+        .map(|result| (result, site))
+}
+
+/// Scrape `route` of `site` with `config`, or `None` when Chrome is missing.
+async fn browser_scrape_with(
+    test_name: &str,
+    config: CrawlConfig,
+    site: &MockServer,
+    route: &str,
+) -> Option<Result<crawlberg::ScrapeResult, CrawlError>> {
     let engine = create_engine(Some(config)).expect("engine must build");
     let result = scrape(&engine, &format!("{}{route}", site.uri())).await;
     if let Err(error) = &result
@@ -240,7 +269,8 @@ async fn chromiumoxide_reports_the_status_of_the_document_it_returns() {
         ),
         ("/solved", 200, "<p>solved-marker</p>"),
     ];
-    let Some(result) = browser_scrape(test_name, &routes, "/challenge", Some(Duration::from_secs(3))).await else {
+    let Some((result, _site)) = browser_scrape(test_name, &routes, "/challenge", Some(Duration::from_secs(3))).await
+    else {
         return;
     };
     let page = result.unwrap_or_else(|error| panic!("{test_name}: the solved page is a page: {error:?}"));
@@ -262,10 +292,237 @@ async fn chromiumoxide_reports_the_main_document_status_not_a_frame_or_image_sta
         ("/frame", 500, "<p>frame trouble</p>"),
         ("/missing.png", 404, ""),
     ];
-    let Some(result) = browser_scrape(test_name, &routes, "/", None).await else {
+    let Some((result, site)) = browser_scrape(test_name, &routes, "/", None).await else {
         return;
     };
     let page = result.unwrap_or_else(|error| panic!("{test_name}: the 200 page is a page: {error:?}"));
+    let requested: Vec<String> = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    for subresource in ["/frame", "/missing.png"] {
+        assert!(
+            requested.iter().any(|path| path == subresource),
+            "{test_name}: the page must have requested {subresource}, or the test proves nothing: {requested:?}"
+        );
+    }
     assert_eq!(page.status_code, 200, "{test_name}");
     assert!(page.html.contains("main-marker"), "{test_name}: {}", page.html);
+}
+
+/// A page that navigates itself to an address the SSRF policy refuses, after its load, fails
+/// the fetch as a refused navigation does: the page Chrome then shows is its own error page.
+#[tokio::test]
+async fn chromiumoxide_refuses_a_page_that_navigates_to_a_denied_address_after_the_load() {
+    let test_name = "chromiumoxide_refuses_a_page_that_navigates_to_a_denied_address_after_the_load";
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        loopback_only(Some(Duration::from_secs(2))),
+        "<script>setTimeout(() => location.assign('http://169.254.169.254/latest/'), 300)</script>",
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    match result {
+        Err(CrawlError::SsrfPolicyViolation { url, .. }) => {
+            assert!(url.contains("169.254.169.254"), "{test_name}: {url}");
+        }
+        other => panic!("{test_name}: the refused navigation must fail the fetch: {other:?}"),
+    }
+}
+
+/// Browser mode with the default SSRF policy, except that loopback is allowed so the mock site
+/// loads. The metadata address stays denied.
+fn loopback_only(extra_wait: Option<Duration>) -> CrawlConfig {
+    let mut config = CrawlConfig {
+        ssrf: crawlberg::SsrfPolicy {
+            allowlist: vec![crawlberg::HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid")],
+            ..crawlberg::SsrfPolicy::default()
+        },
+        ..config(BrowserBackend::Chromiumoxide, BrowserMode::Always)
+    };
+    config.browser.extra_wait = extra_wait;
+    config
+}
+
+/// Scrape `/` of a site whose start page runs `script` and where each of `routes` answers its
+/// response. Returns the result and the site, or `None` when Chrome is missing.
+async fn scrape_start_page(
+    test_name: &str,
+    config: CrawlConfig,
+    script: &str,
+    routes: Vec<(&str, ResponseTemplate)>,
+) -> Option<(Result<crawlberg::ScrapeResult, CrawlError>, MockServer)> {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(page(START_STATUS, &format!("<p>start-marker</p>{script}")))
+        .mount(&site)
+        .await;
+    for (route, response) in routes {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(response)
+            .mount(&site)
+            .await;
+    }
+    browser_scrape_with(test_name, config, &site, "/")
+        .await
+        .map(|result| (result, site))
+}
+
+/// The status of the start page. It is not 200, so the status reported when no response was
+/// recorded cannot pass for it.
+const START_STATUS: u16 = 203;
+
+/// Require that the start page came back as a page with its own status.
+fn assert_start_page(test_name: &str, result: Result<crawlberg::ScrapeResult, CrawlError>) {
+    let page = result.unwrap_or_else(|error| panic!("{test_name}: the start page is a page: {error:?}"));
+    assert_eq!(page.status_code, START_STATUS, "{test_name}");
+    assert!(page.html.contains("start-marker"), "{test_name}: {}", page.html);
+}
+
+/// Require that `site` received a request for `route`, or the test observed nothing.
+async fn assert_requested(test_name: &str, site: &MockServer, route: &str) {
+    let requested = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .any(|request| request.url.path() == route);
+    assert!(
+        requested,
+        "{test_name}: the page must have requested {route}, or the test proves nothing"
+    );
+}
+
+/// A navigation Chrome does not commit leaves the start page in place, so the start page's
+/// status stays: a 204 during the extra wait is not the page's status.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_status_when_a_late_navigation_commits_no_document() {
+    let test_name = "chromiumoxide_keeps_the_status_when_a_late_navigation_commits_no_document";
+    let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    config.browser.extra_wait = Some(Duration::from_secs(2));
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        config,
+        "<script>setTimeout(() => location.assign('/nocontent'), 300)</script>",
+        vec![("/nocontent", ResponseTemplate::new(204))],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/nocontent").await;
+    assert_start_page(test_name, result);
+}
+
+/// A document an iframe commits is not the page's: after an iframe loads during the extra wait,
+/// a main-frame navigation that commits nothing leaves the start page and its status in place.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_status_when_an_iframe_commits_before_a_late_navigation() {
+    let test_name = "chromiumoxide_keeps_the_status_when_an_iframe_commits_before_a_late_navigation";
+    let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    config.browser.extra_wait = Some(Duration::from_secs(2));
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        config,
+        "<script>setTimeout(() => { const frame = document.createElement('iframe'); \
+         frame.onload = () => location.assign('/nocontent'); frame.src = '/frame'; \
+         document.body.appendChild(frame); }, 300)</script>",
+        vec![
+            ("/frame", page(200, "<p>frame-marker</p>")),
+            ("/nocontent", ResponseTemplate::new(204)),
+        ],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/frame").await;
+    assert_requested(test_name, &site, "/nocontent").await;
+    assert_start_page(test_name, result);
+}
+
+/// A download is not a document either: a 202 download during the extra wait leaves the start
+/// page and its status in place.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_page_when_a_late_navigation_is_a_download() {
+    let test_name = "chromiumoxide_keeps_the_page_when_a_late_navigation_is_a_download";
+    let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    config.browser.extra_wait = Some(Duration::from_secs(2));
+    let download = ResponseTemplate::new(202)
+        .set_body_raw("bin", "application/octet-stream")
+        .append_header("content-disposition", "attachment; filename=x.bin");
+    let Some((result, site)) = scrape_start_page(
+        test_name,
+        config,
+        "<script>setTimeout(() => location.assign('/download'), 300)</script>",
+        vec![("/download", download)],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_requested(test_name, &site, "/download").await;
+    assert_start_page(test_name, result);
+}
+
+/// An image to a denied address during the load is failed, and the page stays a page.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_page_when_an_image_is_refused_during_the_load() {
+    let test_name = "chromiumoxide_keeps_the_page_when_an_image_is_refused_during_the_load";
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        loopback_only(None),
+        r#"<img src="http://169.254.169.254/x.png">"#,
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_start_page(test_name, result);
+}
+
+/// An image to a denied address after the load is failed, and the page stays a page.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_page_when_an_image_is_refused_after_the_load() {
+    let test_name = "chromiumoxide_keeps_the_page_when_an_image_is_refused_after_the_load";
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        loopback_only(Some(Duration::from_secs(2))),
+        "<script>setTimeout(() => { const image = new Image(); image.src = 'http://169.254.169.254/x.png'; \
+         document.body.appendChild(image); }, 300)</script>",
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_start_page(test_name, result);
+}
+
+/// An iframe navigated to a denied address after the load is failed, and the page stays a page:
+/// only a main-frame navigation replaces the page.
+#[tokio::test]
+async fn chromiumoxide_keeps_the_page_when_an_iframe_is_refused_after_the_load() {
+    let test_name = "chromiumoxide_keeps_the_page_when_an_iframe_is_refused_after_the_load";
+    let Some((result, _site)) = scrape_start_page(
+        test_name,
+        loopback_only(Some(Duration::from_secs(2))),
+        "<script>setTimeout(() => { const frame = document.createElement('iframe'); \
+         frame.src = 'http://169.254.169.254/'; document.body.appendChild(frame); }, 300)</script>",
+        vec![],
+    )
+    .await
+    else {
+        return;
+    };
+    assert_start_page(test_name, result);
 }

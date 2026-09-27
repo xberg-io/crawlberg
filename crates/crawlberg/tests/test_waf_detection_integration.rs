@@ -295,3 +295,89 @@ async fn test_plain_403_is_not_waf() {
         result
     );
 }
+
+/// A 403 identified by a response header other than `server` must name its vendor.
+///
+/// The Tower fetch service used to classify with the full header map but then re-derive the
+/// vendor from the `server` header alone, so a header-stamped block came back as "unknown".
+/// Both call sites now share one classifier (crawlberg#169).
+#[tokio::test]
+async fn test_403_identified_by_a_non_server_header_names_its_vendor() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_string("<html><body>Access denied.</body></html>")
+                .append_header("content-type", "text/html")
+                .append_header("x-datadome", "blocked"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(no_browser_config()))
+        .expect("create_engine with no-browser config should succeed in integration test");
+    let result = scrape(&handle, &mock.uri()).await;
+    let Err(CrawlError::WafBlocked { vendor, .. }) = result else {
+        unreachable!("expected WafBlocked, got: {result:?}");
+    };
+    assert_eq!(
+        vendor, "datadome",
+        "the header that identified the block must name the vendor"
+    );
+}
+
+/// A challenge served with 503 is a WAF block on the engine's default path too, not only in
+/// the standalone `http_fetch` used by `map()` (crawlberg#169).
+#[tokio::test]
+async fn test_503_cloudflare_challenge_is_waf_blocked() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .set_body_string(
+                    "<html><head><title>Just a moment...</title></head><body>\
+                     <script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1\"></script>\
+                     </body></html>",
+                )
+                .append_header("content-type", "text/html")
+                .append_header("server", "cloudflare"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(no_browser_config()))
+        .expect("create_engine with no-browser config should succeed in integration test");
+    let result = scrape(&handle, &mock.uri()).await;
+    let Err(CrawlError::WafBlocked { vendor, .. }) = result else {
+        unreachable!("a 503 Cloudflare challenge must be WafBlocked, got: {result:?}");
+    };
+    assert_eq!(vendor, "cloudflare", "expected the cloudflare vendor, got {vendor}");
+}
+
+/// Guard: a 503 with no WAF fingerprint must stay a plain server error on this path too.
+///
+/// ~keep This passes with and without the challenge-status change; it exists to fail if the
+/// change ever widens to every 503.
+#[tokio::test]
+async fn test_plain_503_is_not_waf() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .set_body_string("<html><body><h1>Service Unavailable</h1></body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(no_browser_config()))
+        .expect("create_engine with no-browser config should succeed in integration test");
+    let result = scrape(&handle, &mock.uri()).await;
+    assert!(
+        matches!(result, Err(CrawlError::ServerError { .. })),
+        "plain 503 should be ServerError, not WafBlocked: {result:?}"
+    );
+}

@@ -1,8 +1,15 @@
 name: Validate Issues
 
 on:
-  issues:
-    types: [opened, edited]
+  # ~keep TEMPORARY: this fired once per issue edit and a bulk triage pass (assigning and
+  # ~keep labelling ~200 issues) queued 80 runs of it on a starved free-tier runner pool,
+  # crowding out main's CI. workflow_dispatch keeps the file a valid workflow while the
+  # ~keep `issues` trigger is off; restore the block below once the backlog is triaged.
+  workflow_dispatch:
+
+# ~keep TEMPORARY, see above.
+#  issues:
+#    types: [opened, edited]
 
 jobs:
   validate:
