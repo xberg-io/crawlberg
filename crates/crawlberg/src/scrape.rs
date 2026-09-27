@@ -680,13 +680,26 @@ mod tests {
                     <body><p><a href="leaf.html">leaf</a><img src="logo.png"></p></body></html>"#
                 ),
             );
-            let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
-                .await
-                .expect("scrape should succeed");
+            let result =
+                scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+                    .await
+                    .expect("scrape should succeed");
 
-            assert_eq!(urls(&result.links, |l| &l.url), [format!("{dir}leaf.html")], "for {base:?}");
-            assert_eq!(urls(&result.images, |i| &i.url), [format!("{dir}logo.png")], "for {base:?}");
-            assert_eq!(urls(&result.feeds, |f| &f.url), [format!("{dir}feed.xml")], "for {base:?}");
+            assert_eq!(
+                urls(&result.links, |l| &l.url),
+                [format!("{dir}leaf.html")],
+                "for {base:?}"
+            );
+            assert_eq!(
+                urls(&result.images, |i| &i.url),
+                [format!("{dir}logo.png")],
+                "for {base:?}"
+            );
+            assert_eq!(
+                urls(&result.feeds, |f| &f.url),
+                [format!("{dir}feed.xml")],
+                "for {base:?}"
+            );
             let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
             assert_eq!(urls(favicons, |f| &f.url), [format!("{dir}fav.ico")], "for {base:?}");
             assert_eq!(
