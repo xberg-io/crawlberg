@@ -120,6 +120,66 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
     builder
 }
 
+/// How often, and for how long, a dropped [`ScratchProfileDir`] checks that its directory stays gone.
+const PROFILE_REMOVAL_INTERVAL: Duration = Duration::from_millis(200);
+const PROFILE_REMOVAL_CHECKS: u32 = 25;
+/// Consecutive checks the directory must be absent for before the watch ends.
+const PROFILE_REMOVAL_QUIET_CHECKS: u32 = 3;
+
+/// A Chrome `--user-data-dir` in the system temp directory, removed when dropped.
+///
+/// ~keep Not a bare `tempfile::TempDir`, whose drop makes one removal attempt. Chrome's helper
+/// ~keep processes (the network service, the GPU process) outlive the browser process for a moment
+/// ~keep and keep writing into the directory: they make a removal fail part-way with `ENOTEMPTY`, or
+/// ~keep recreate `Default/...` right after a removal succeeded. Either left a profile behind in 6 of
+/// ~keep 20 drops on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
+/// ~keep process group with no hook to change that, so the helpers cannot be killed as a group; a
+/// ~keep thread instead removes the directory again until it has stayed gone.
+pub(crate) struct ScratchProfileDir(std::path::PathBuf);
+
+impl ScratchProfileDir {
+    /// Create a fresh directory. The random suffix avoids Chrome `SingletonLock` collisions.
+    pub(crate) fn create(prefix: &str) -> Result<Self, CrawlError> {
+        tempfile::Builder::new()
+            .prefix(prefix)
+            .tempdir()
+            .map(|dir| Self(dir.keep()))
+            .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+/// Remove `path` until it has been absent for [`PROFILE_REMOVAL_QUIET_CHECKS`] checks in a row.
+fn remove_profile_dir_until_quiet(path: &std::path::Path) {
+    let mut quiet = 0;
+    for _ in 0..PROFILE_REMOVAL_CHECKS {
+        if path.exists() {
+            quiet = 0;
+            let _ = std::fs::remove_dir_all(path);
+        } else {
+            quiet += 1;
+            if quiet >= PROFILE_REMOVAL_QUIET_CHECKS {
+                return;
+            }
+        }
+        std::thread::sleep(PROFILE_REMOVAL_INTERVAL);
+    }
+    if path.exists() {
+        tracing::warn!(dir = %path.display(), "failed to remove the Chrome profile directory");
+    }
+}
+
+impl Drop for ScratchProfileDir {
+    fn drop(&mut self) {
+        let path = std::mem::take(&mut self.0);
+        let _ = std::fs::remove_dir_all(&path);
+        std::thread::spawn(move || remove_profile_dir_until_quiet(&path));
+    }
+}
+
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
 /// `browser_endpoint` connect branch).
 ///
@@ -190,7 +250,9 @@ pub(crate) struct ExternalTabCleanup {
 struct BrowserState {
     browser: Browser,
     handler_handle: JoinHandle<()>,
-    user_data_dir: Option<std::path::PathBuf>,
+    /// ~keep Declared after `browser` so a pool dropped without `shutdown` kills Chrome before
+    /// ~keep the directory goes (xberg-io/crawlberg#415).
+    user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
 }
 
@@ -339,18 +401,12 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
     BrowserCloseOutcome::Exited
 }
 
-/// Remove a Chrome profile directory, logging rather than ignoring a failure.
+/// Remove a Chrome profile directory on a blocking thread.
 ///
-/// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
-/// ~keep while the pool's state mutex was held, stalling every waiting `acquire_page`.
-async fn remove_profile_dir(dir: std::path::PathBuf) {
-    if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
-        tracing::warn!(
-            dir = %dir.display(),
-            %error,
-            "failed to remove the Chrome profile directory"
-        );
-    }
+/// ~keep Not on the executor thread: a recursive delete there ran while the pool's state mutex
+/// ~keep was held, stalling every waiting `acquire_page`.
+async fn remove_profile_dir(dir: ScratchProfileDir) {
+    let _ = tokio::task::spawn_blocking(move || drop(dir)).await;
 }
 
 /// A pool that keeps a single Chrome browser alive and hands out pages (tabs),
@@ -479,6 +535,7 @@ impl BrowserPool {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
                 old.handler_handle.abort();
+                drop(old.browser);
                 if let Some(dir) = old.user_data_dir {
                     remove_profile_dir(dir).await;
                 }
@@ -535,14 +592,9 @@ impl BrowserPool {
                 .map_err(|e| CrawlError::browser_error(format!("failed to connect to browser: {e}")))?;
             (browser, handler, None)
         } else {
-            use std::sync::atomic::AtomicU64;
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            let user_data_dir = std::env::temp_dir().join(format!(
-                "crawlberg-chrome-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed),
-            ));
-            let builder = build_pool_launch_builder(&user_data_dir, &self.config.chrome_args);
+            // ~keep Dropped, and so removed, on every early return below, including a launch timeout.
+            let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-")?;
+            let builder = build_pool_launch_builder(user_data_dir.path(), &self.config.chrome_args);
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -687,4 +739,4 @@ pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder)
 
 #[cfg(test)]
 #[path = "browser_pool_tests.rs"]
-mod tests;
+pub(crate) mod tests;

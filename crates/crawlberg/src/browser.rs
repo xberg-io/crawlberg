@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
-use self::launch::launch_or_connect;
+use self::launch::{UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
 use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
@@ -309,7 +309,7 @@ struct OneShotSession {
     /// caller's Chrome even when the fetch never reaches its own cleanup.
     open_tab: Option<TargetId>,
     handler_handle: Option<JoinHandle<()>>,
-    data_dir: Option<std::path::PathBuf>,
+    data_dir: Option<UserDataDir>,
     shutdown_timeout: Duration,
 }
 
@@ -344,10 +344,12 @@ impl Drop for OneShotSession {
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
+                // ~keep The task owns `data_dir`, so a runtime that shuts down before the task
+                // ~keep finishes still removes a scratch directory when it drops the task.
                 handle.spawn(async move {
                     release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
                     if let Some(dir) = data_dir {
-                        let _ = tokio::fs::remove_dir_all(&dir).await;
+                        let _ = tokio::task::spawn_blocking(move || drop(dir)).await;
                     }
                 });
             }
@@ -356,6 +358,9 @@ impl Drop for OneShotSession {
                     "dropping a one-shot browser session outside a Tokio runtime; its Chrome \
                      teardown is left to the process"
                 );
+                // ~keep Chrome first: dropping the handle kills it, then the directory goes.
+                drop(browser);
+                drop(data_dir);
             }
         }
     }

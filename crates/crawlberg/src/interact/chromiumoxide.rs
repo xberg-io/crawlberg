@@ -30,9 +30,7 @@ pub(super) async fn run(
         config.browser.shutdown_timeout,
     )
     .await;
-    if let Some(dir) = data_dir {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    drop(data_dir);
 
     result
 }
@@ -433,20 +431,15 @@ fn action_type(action: &PageAction) -> &'static str {
     }
 }
 
-async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
+async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<crate::browser_pool::ScratchProfileDir>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         let (browser, handler) = Browser::connect(endpoint)
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
         Ok((browser, handler, None))
     } else {
-        use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-        static LAUNCH_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let user_data_dir = std::env::temp_dir().join(format!(
-            "crawlberg-interact-{}-{}",
-            std::process::id(),
-            LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
-        ));
+        // ~keep Removed on drop, so a failed or cancelled launch or run removes it too.
+        let user_data_dir = crate::browser_pool::ScratchProfileDir::create("crawlberg-interact-")?;
 
         let proxy_url = config
             .browser
@@ -454,17 +447,14 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             .as_ref()
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
-        let builder = build_interact_launch_builder(&user_data_dir, proxy_url);
+        let builder = build_interact_launch_builder(user_data_dir.path(), proxy_url);
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
             Ok((browser, handler)) => Ok((browser, handler, Some(user_data_dir))),
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&user_data_dir);
-                Err(CrawlError::browser_error(format!("failed to launch browser: {e}")))
-            }
+            Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
         }
     }
 }

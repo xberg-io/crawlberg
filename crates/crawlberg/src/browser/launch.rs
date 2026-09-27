@@ -10,57 +10,30 @@
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig, BrowserConfigBuilder};
 
+use crate::browser_pool::ScratchProfileDir;
 use crate::error::CrawlError;
 use crate::types::CrawlConfig;
 
-/// The Chrome `--user-data-dir` to launch with, and what to do with it once the
-/// browser session ends.
-struct UserDataDir {
-    path: std::path::PathBuf,
-    /// When `true`, the directory is deleted after the session (ephemeral launch,
-    /// or a scratch copy of a named profile whose changes should not be saved).
-    /// When `false`, the directory is left in place so its contents persist
-    /// (a named profile launched with `save_browser_profile: true`).
-    cleanup_on_exit: bool,
-    /// Set by [`UserDataDir::hand_over`] once the launched session owns the directory, so this
-    /// value's `Drop` leaves it alone.
-    handed_over: bool,
+/// The Chrome `--user-data-dir` a one-shot launch uses.
+///
+/// ~keep A scratch directory is removed when this value drops, on every
+/// ~keep exit path: a failed launch, a cancelled launch or fetch (xberg-io/crawlberg#131), and a
+/// ~keep teardown task that the runtime drops before it finishes, which is how every one-shot
+/// ~keep fetch at the end of a `#[tokio::test]` leaked its directory (xberg-io/crawlberg#415).
+pub(super) enum UserDataDir {
+    /// A named profile launched with `save_browser_profile: true`, used in place and kept.
+    Persistent(std::path::PathBuf),
+    /// An ephemeral directory, or a scratch copy of a named profile, removed on drop.
+    Scratch(ScratchProfileDir),
 }
 
 impl UserDataDir {
-    /// Pass ownership of the directory to a launched session, yielding the path that session
-    /// must delete when it ends, or `None` when the directory is meant to persist.
-    fn hand_over(mut self) -> Option<std::path::PathBuf> {
-        self.handed_over = true;
-        self.cleanup_on_exit.then(|| self.path.clone())
-    }
-}
-
-impl Drop for UserDataDir {
-    /// ~keep Covers every way the launch can fail to hand the directory on, including the one
-    /// ~keep straight-line cleanup cannot reach: the launch future being dropped because the
-    /// ~keep caller cancelled the fetch. The directory is created before Chrome starts, so it
-    /// ~keep exists for the whole of `Browser::launch` with nothing else owning it, and a
-    /// ~keep cancellation there used to leave tens of megabytes in the temp directory for good
-    /// ~keep (xberg-io/crawlberg#131). `std::fs`, not `tokio::fs`: `Drop` cannot await.
-    fn drop(&mut self) {
-        if self.handed_over || !self.cleanup_on_exit {
-            return;
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Self::Persistent(path) => path,
+            Self::Scratch(dir) => dir.path(),
         }
-        let _ = std::fs::remove_dir_all(&self.path);
     }
-}
-
-/// Unique-per-launch temp directory name, avoiding Chrome `SingletonLock` collisions
-/// when multiple browsers launch concurrently or a previous instance crashed uncleanly.
-fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-    static LAUNCH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
-    ))
 }
 
 /// Resolve the `--user-data-dir` for a one-shot Chrome launch from `config`.
@@ -74,11 +47,7 @@ fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
 ///   the session are discarded rather than written back.
 fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError> {
     let Some(name) = config.browser_profile.as_deref() else {
-        return Ok(UserDataDir {
-            path: unique_temp_dir("crawlberg-browser"),
-            cleanup_on_exit: true,
-            handed_over: false,
-        });
+        return Ok(UserDataDir::Scratch(ScratchProfileDir::create("crawlberg-browser-")?));
     };
 
     let profile = crate::browser_profile::BrowserProfile::new(name)?;
@@ -87,19 +56,11 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
     }
 
     if config.save_browser_profile {
-        Ok(UserDataDir {
-            path: profile.user_data_dir,
-            cleanup_on_exit: false,
-            handed_over: false,
-        })
+        Ok(UserDataDir::Persistent(profile.user_data_dir))
     } else {
-        let scratch = unique_temp_dir(&format!("crawlberg-profile-{name}"));
-        copy_dir_recursive(&profile.user_data_dir, &scratch)?;
-        Ok(UserDataDir {
-            path: scratch,
-            cleanup_on_exit: true,
-            handed_over: false,
-        })
+        let scratch = ScratchProfileDir::create(&format!("crawlberg-profile-{name}-"))?;
+        copy_dir_recursive(&profile.user_data_dir, scratch.path())?;
+        Ok(UserDataDir::Scratch(scratch))
     }
 }
 
@@ -129,7 +90,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 /// Launch a new managed browser or connect to an external CDP endpoint.
 pub(super) async fn launch_or_connect(
     config: &CrawlConfig,
-) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
+) -> Result<(Browser, Handler, Option<UserDataDir>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         if config.browser_profile.is_some() {
             tracing::warn!(
@@ -145,14 +106,14 @@ pub(super) async fn launch_or_connect(
     } else {
         let user_data = resolve_user_data_dir(config)?;
 
-        let builder = build_one_shot_launch_builder(&user_data.path);
+        let builder = build_one_shot_launch_builder(user_data.path());
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over())),
-            // ~keep `user_data`'s `Drop` removes the directory on this path and on cancellation.
+            Ok((browser, handler)) => Ok((browser, handler, Some(user_data))),
+            // ~keep Dropping `user_data` removes a scratch directory on this path and on cancellation.
             Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
         }
     }
@@ -220,7 +181,7 @@ mod user_data_dir_tests {
         let config = CrawlConfig::default();
         let resolved = resolve_user_data_dir(&config).expect("resolve must succeed without a profile configured");
         assert!(
-            resolved.cleanup_on_exit,
+            matches!(resolved, UserDataDir::Scratch(_)),
             "ephemeral (no browser_profile) launches must be cleaned up after the session"
         );
     }
@@ -244,11 +205,12 @@ mod user_data_dir_tests {
             "resolve_user_data_dir must create the named profile directory when missing"
         );
         assert_eq!(
-            resolved.path, profile.user_data_dir,
+            resolved.path(),
+            profile.user_data_dir,
             "save_browser_profile: true must launch directly against the profile's own directory"
         );
         assert!(
-            !resolved.cleanup_on_exit,
+            matches!(resolved, UserDataDir::Persistent(_)),
             "save_browser_profile: true must not mark the profile directory for cleanup"
         );
     }
@@ -269,20 +231,21 @@ mod user_data_dir_tests {
         let resolved = resolve_user_data_dir(&config).expect("resolve must succeed");
 
         assert_ne!(
-            resolved.path, profile.user_data_dir,
+            resolved.path(),
+            profile.user_data_dir,
             "save_browser_profile: false must launch from a scratch copy, never the profile dir itself"
         );
         assert!(
-            resolved.cleanup_on_exit,
+            matches!(resolved, UserDataDir::Scratch(_)),
             "the scratch copy must be marked for cleanup after the session"
         );
         assert_eq!(
-            std::fs::read(resolved.path.join("marker.txt")).expect("scratch copy must contain the marker file"),
+            std::fs::read(resolved.path().join("marker.txt")).expect("scratch copy must contain the marker file"),
             b"original",
             "the scratch copy must start from the existing profile state"
         );
 
-        std::fs::write(resolved.path.join("marker.txt"), b"mutated-in-session")
+        std::fs::write(resolved.path().join("marker.txt"), b"mutated-in-session")
             .expect("writing into the scratch copy must succeed");
         assert_eq!(
             std::fs::read(profile.user_data_dir.join("marker.txt")).expect("original marker file must still exist"),
@@ -290,7 +253,9 @@ mod user_data_dir_tests {
             "writes into the scratch copy must never be reflected back into the saved profile"
         );
 
-        let _ = std::fs::remove_dir_all(&resolved.path);
+        let scratch = resolved.path().to_path_buf();
+        drop(resolved);
+        assert!(!scratch.exists(), "the scratch copy must be removed when it is dropped");
     }
 
     #[test]
@@ -335,71 +300,77 @@ mod tests {
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
     }
 
-    /// A profile directory nobody took ownership of is removed when its guard drops.
+    /// A scratch profile directory that never reaches a launched Chrome is removed when it drops.
     ///
-    /// ~keep This is the cancellation case stated as a unit: the launch future being dropped
-    /// ~keep drops `user_data` without `hand_over` ever running, which is indistinguishable here
-    /// ~keep from `Browser::launch` returning an error. Proven at this level rather than through
-    /// ~keep a real Chrome because an integration test cannot reliably choose which window a
-    /// ~keep cancellation lands in -- see xberg-io/crawlberg#198.
+    /// ~keep This is the failed-launch and cancelled-launch case stated as a unit: `launch_or_connect`
+    /// ~keep drops `user_data` without returning it, exactly as here. Proven at this level rather than
+    /// ~keep through a real Chrome because an integration test cannot reliably choose which window a
+    /// ~keep cancellation lands in, or make a present Chrome fail to start -- see xberg-io/crawlberg#198.
     #[test]
-    fn an_unclaimed_ephemeral_profile_directory_is_removed_when_its_guard_drops() {
-        let path = unique_temp_dir("crawlberg-launch-guard-test");
-        std::fs::create_dir_all(&path).expect("the directory must be creatable");
-        assert!(path.exists(), "the directory must exist before the guard drops");
+    fn an_unclaimed_scratch_profile_directory_is_removed_when_it_drops() {
+        let resolved = resolve_user_data_dir(&CrawlConfig::default()).expect("resolve must succeed");
+        let path = resolved.path().to_path_buf();
+        assert!(path.is_dir(), "the scratch directory must exist before it drops");
 
-        drop(UserDataDir {
-            path: path.clone(),
-            cleanup_on_exit: true,
-            handed_over: false,
-        });
+        drop(resolved);
 
-        assert!(
-            !path.exists(),
-            "an unclaimed ephemeral profile directory must be removed"
-        );
+        assert!(!path.exists(), "an unclaimed scratch profile directory must be removed");
     }
 
-    /// `hand_over` passes the path on and stops the guard from removing it.
-    #[test]
-    fn handing_an_ephemeral_profile_directory_over_leaves_it_for_the_session_to_remove() {
-        let path = unique_temp_dir("crawlberg-launch-guard-test");
-        std::fs::create_dir_all(&path).expect("the directory must be creatable");
-
-        let handed = UserDataDir {
-            path: path.clone(),
-            cleanup_on_exit: true,
-            handed_over: false,
-        }
-        .hand_over();
-
-        assert_eq!(
-            handed.as_deref(),
-            Some(path.as_path()),
-            "the session must be given the path"
-        );
-        assert!(path.exists(), "the guard must not remove a directory it handed over");
-        std::fs::remove_dir_all(&path).expect("test cleanup");
-    }
-
-    /// A saved named profile is never removed, handed over or not.
+    /// A saved named profile is never removed when its value drops.
     #[test]
     fn a_persistent_profile_directory_is_never_removed() {
-        let path = unique_temp_dir("crawlberg-launch-guard-test");
-        std::fs::create_dir_all(&path).expect("the directory must be creatable");
+        let dir = tempfile::tempdir().expect("the directory must be creatable");
 
-        let handed = UserDataDir {
-            path: path.clone(),
-            cleanup_on_exit: false,
-            handed_over: false,
-        }
-        .hand_over();
+        drop(UserDataDir::Persistent(dir.path().to_path_buf()));
 
+        assert!(dir.path().is_dir(), "a persistent profile directory must survive its value");
+    }
+
+    /// A one-shot session dropped just before its runtime stops still removes its profile directory.
+    ///
+    /// ~keep The session's `Drop` spawns its teardown, and a runtime that stops right after, as every
+    /// ~keep `#[tokio::test]` ending on a one-shot fetch does, drops that task unfinished. That left one
+    /// ~keep `crawlberg-browser-*` directory per fetch in the temp directory (xberg-io/crawlberg#415).
+    #[test]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    fn a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory() {
+        use tokio_stream::StreamExt;
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime must build");
+        let path = runtime.block_on(async {
+            let (browser, mut handler, data_dir) = match launch_or_connect(&CrawlConfig::default()).await {
+                Ok(launched) => launched,
+                Err(error) => {
+                    eprintln!("skipping: no usable Chrome: {error}");
+                    return None;
+                }
+            };
+            let path = data_dir
+                .as_ref()
+                .map(|dir| dir.path().to_path_buf())
+                .expect("a launched Chrome must have a profile directory");
+            let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+            drop(super::super::OneShotSession {
+                browser: Some(browser),
+                open_tab: None,
+                handler_handle: Some(handler_handle),
+                data_dir,
+                shutdown_timeout: std::time::Duration::from_secs(5),
+            });
+            Some(path)
+        });
+        drop(runtime);
+        let Some(path) = path else {
+            return;
+        };
         assert!(
-            handed.is_none(),
-            "a persistent profile must not be handed over for removal"
+            crate::browser_pool::tests::wait_until_removed(&path),
+            "a one-shot session's profile directory must not outlive its runtime: {}",
+            path.display()
         );
-        assert!(path.exists(), "a persistent profile directory must survive its guard");
-        std::fs::remove_dir_all(&path).expect("test cleanup");
     }
 }

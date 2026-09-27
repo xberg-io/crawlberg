@@ -38,6 +38,90 @@ async fn test_acquire_after_shutdown_fails() {
     assert!(result.is_err());
 }
 
+/// Wait up to twenty seconds for `path` to disappear, then confirm it stays gone for three.
+pub(crate) fn wait_until_removed(path: &std::path::Path) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while path.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    std::thread::sleep(Duration::from_secs(3));
+    !path.exists()
+}
+
+/// A profile directory that something keeps writing into while it drops, and writes into again
+/// after a pause, is still removed once the writing stops.
+///
+/// ~keep Stands in for Chrome's helper processes, which write into the profile for a moment after
+/// ~keep the browser process dies: during a removal, which then fails part-way, and after a removal
+/// ~keep that succeeded, which recreates `Default/...`.
+#[test]
+fn a_profile_directory_written_to_while_it_drops_is_removed_once_writing_stops() {
+    let dir = ScratchProfileDir::create("crawlberg-removal-race-test-").expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    let sub = path.join("Default");
+    std::fs::create_dir_all(&sub).expect("the subdirectory must be creatable");
+    let writing = std::sync::Arc::new(AtomicBool::new(true));
+    let writer = {
+        let writing = std::sync::Arc::clone(&writing);
+        let sub = sub.clone();
+        std::thread::spawn(move || {
+            let mut n = 0u64;
+            while writing.load(Ordering::Relaxed) {
+                let _ = std::fs::create_dir_all(&sub);
+                let _ = std::fs::write(sub.join(format!("state-{n}")), b"x");
+                n += 1;
+            }
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+
+    drop(dir);
+    std::thread::sleep(Duration::from_millis(300));
+    writing.store(false, Ordering::Relaxed);
+    writer.join().expect("the writer thread must not panic");
+    std::thread::sleep(Duration::from_millis(300));
+    std::fs::create_dir_all(&sub).expect("a late writer must be able to recreate the tree");
+    std::fs::write(sub.join("late-state"), b"x").expect("a late writer must be able to write");
+
+    assert!(
+        wait_until_removed(&path),
+        "a profile directory must be removed once nothing writes into it: {}",
+        path.display()
+    );
+}
+
+/// A pool dropped without `shutdown` removes the profile directory of the Chrome it launched.
+///
+/// ~keep Tests and embedders drop pools without shutting them down, and each such drop left one
+/// ~keep `crawlberg-chrome-*` directory in the temp directory (xberg-io/crawlberg#415).
+#[tokio::test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if let Err(error) = pool.warm().await {
+        eprintln!("skipping a_pool_dropped_without_shutdown_leaves_no_profile_directory: no usable Chrome: {error}");
+        return;
+    }
+    let path = pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .and_then(|state| state.user_data_dir.as_ref())
+        .map(|dir| dir.path().to_path_buf())
+        .expect("a launched pool must own a profile directory");
+    assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
+
+    drop(pool);
+
+    assert!(
+        tokio::task::spawn_blocking(move || wait_until_removed(&path))
+            .await
+            .expect("the wait must not panic"),
+        "a pool dropped without shutdown must remove its profile directory"
+    );
+}
+
 /// `close_browser_within` must return near its configured `shutdown_timeout`, and the
 /// process must actually be dead afterward, even when `Browser::close`/`wait` cannot make
 /// progress -- the reported case was a Chrome process blocked behind an OS dialog
@@ -62,8 +146,8 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
         return;
     }
 
-    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-shutdown-timeout-test-{}", std::process::id()));
-    let browser_config = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let user_data_dir = tempfile::tempdir().expect("a temp profile directory must be created");
+    let browser_config = match build_pool_launch_builder(user_data_dir.path(), &[]).build() {
         Ok(config) => config,
         Err(error) => {
             eprintln!(
@@ -158,8 +242,8 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
         eprintln!("skipping {TEST_NAME}: not unix");
         return;
     }
-    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-stopped-test-{}", std::process::id()));
-    let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let user_data_dir = tempfile::tempdir().expect("a temp profile directory must be created");
+    let launched = match build_pool_launch_builder(user_data_dir.path(), &[]).build() {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
@@ -214,7 +298,6 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
     let _ = std::process::Command::new("kill")
         .args(["-KILL", &pid.to_string()])
         .status();
-    let _ = std::fs::remove_dir_all(&user_data_dir);
 
     // ~keep The kill lands one `shutdown_timeout` after the release starts. A tab close run
     // ~keep ahead of the close-and-kill would add a second timeout before it.
@@ -239,8 +322,8 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
 )]
 async fn release_browser_disconnects_from_a_connected_browser_without_closing_it() {
-    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-release-connected-test-{}", std::process::id()));
-    let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+    let user_data_dir = tempfile::tempdir().expect("a temp profile directory must be created");
+    let launched = match build_pool_launch_builder(user_data_dir.path(), &[]).build() {
         Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
         Err(error) => Err(error),
     };
@@ -275,7 +358,6 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
 
     let _ = owner.kill().await;
     owner_task.abort();
-    let _ = std::fs::remove_dir_all(&user_data_dir);
 
     assert!(
         disconnected,
