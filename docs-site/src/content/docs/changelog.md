@@ -9,14 +9,15 @@ title: "Changelog"
 - **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
   of such a page returned the rendered HTML with status 200. It now returns the same error that
   HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
-  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
+  503 and 504. A 403, 429 or 503 page is a WAF error when its headers or its body name a WAF,
+  as in HTTP mode, so it escalates instead of being retried. A page with another status, such as 501,
   505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
   scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
   mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
   that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
   response headers of the document the page shows, so a WAF block is found from the headers of a
-  403 page as well as from its body. When Chrome shows its own error page in place of a 403
-  response, such as a 403 download, only the headers are checked, because Chrome never rendered
+  403, 429 or 503 page as well as from its body. When Chrome shows its own error page in place of
+  such a response, such as a download or an empty body, only the headers are checked, because Chrome never rendered
   the body. (#143)
 
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and

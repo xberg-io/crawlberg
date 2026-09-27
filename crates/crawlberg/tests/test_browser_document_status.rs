@@ -181,7 +181,9 @@ async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_do
 }
 
 /// A crawl in browser mode with `backend` keeps the pages, with the statuses, that HTTP mode
-/// keeps.
+/// keeps. The crawl follows the redirect from `/moved` itself before the browser fetch, so this
+/// does not test how a backend reports a redirect; the unit tests in `browser.rs` and
+/// `browser/navigation.rs` do.
 async fn assert_crawl_matches_http_mode(test_name: &str, backend: BrowserBackend) {
     let site = site().await;
     let seed = format!("{}/", site.uri());
@@ -351,6 +353,57 @@ async fn chromiumoxide_refuses_a_page_that_navigates_to_a_denied_address_after_t
                 assert!(url.contains("169.254.169.254"), "{test_name}: {delay_ms} ms: {url}");
             }
             other => panic!("{test_name}: {delay_ms} ms: the refused navigation must fail the fetch: {other:?}"),
+        }
+    }
+}
+
+/// A challenge status (429, 503) whose headers name a WAF is a WAF block in both modes, so it
+/// escalates instead of being retried: from Chrome's error page for an empty body, and from a
+/// page Chrome renders.
+#[tokio::test]
+async fn chromiumoxide_reports_a_waf_challenge_status_as_http_mode_does() {
+    let test_name = "chromiumoxide_reports_a_waf_challenge_status_as_http_mode_does";
+    let site = MockServer::start().await;
+    for status in [429_u16, 503] {
+        let empty = ResponseTemplate::new(status)
+            .append_header("content-length", "0")
+            .append_header("x-datadome", "blocked");
+        let rendered = page(status, "<p>challenge-marker</p>").append_header("x-datadome", "blocked");
+        for (route, response) in [
+            (format!("/empty-{status}"), empty),
+            (format!("/page-{status}"), rendered),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(response)
+                .mount(&site)
+                .await;
+        }
+    }
+    let http =
+        create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Never))).expect("engine must build");
+    let browser =
+        create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Always))).expect("engine must build");
+    for status in [429_u16, 503] {
+        for kind in ["empty", "page"] {
+            let url = format!("{}/{kind}-{status}", site.uri());
+            let expected = scrape_outcome(scrape(&http, &url).await);
+            assert_eq!(
+                expected,
+                Err("WafBlocked".to_owned()),
+                "{test_name}: HTTP mode for the {kind} {status}"
+            );
+            let result = scrape(&browser, &url).await;
+            if let Err(error) = &result
+                && chrome_missing(test_name, error)
+            {
+                return;
+            }
+            assert_eq!(
+                scrape_outcome(result),
+                expected,
+                "{test_name}: browser mode for the {kind} {status}"
+            );
         }
     }
 }

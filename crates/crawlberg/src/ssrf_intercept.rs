@@ -60,7 +60,8 @@ pub(crate) struct InterceptOutcome {
     /// The loader id of the document the main frame committed last, from `Page.frameNavigated`.
     committed_loader: Option<String>,
     /// The network request id of the main-frame navigation whose redirects are being counted,
-    /// and how many it has followed. A response of another navigation replaces it.
+    /// and how many it has followed. A redirect of another navigation replaces it, and any
+    /// document response clears it.
     pending_redirects: Option<(String, usize)>,
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
