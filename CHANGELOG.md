@@ -5,26 +5,6 @@ All notable changes to crawlberg are documented here.
 ## [Unreleased]
 
 ### Upgrading
-- **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
-  `nofollow_detected` are always serialised, and `CrawlPageResult` carries
-  `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
-  every older crawlberg** — even when both values are `false`. The break is one-directional: an
-  older result still loads here, because both fields default to `false`.
-
-  What this affects:
-
-  - A cross-version pipeline that serialises a crawl result on one crawlberg and reads it on
-    another. Upgrade the readers before, or with, the writers.
-  - A persisted `CrawlCache`: entries written by this version cannot be read back by an older
-    build, so a rollback must treat the cache as cold rather than reuse it.
-  - Any binding that round-trips a page result through JSON across the FFI boundary
-    (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
-    versions.
-
-- **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
-  constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
-  Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
-  and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
 - **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
   the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
@@ -40,186 +20,6 @@ All notable changes to crawlberg are documented here.
   remove that step. (#126)
 
 ### Fixed
-- **The vendored C header gate failed for lag rather than for a defect.** It required each
-  prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
-  header, but a vendored copy ships beside a dylib from the last release, so it legitimately
-  lacks whatever the canonical header has gained since — adding two `CrawlPageResult` getters
-  for #135 turned `main` red for that reason alone. The comparison is now one-directional: a
-  declaration the vendored copy has and the canonical header does not still fails, because that
-  means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
-  copy is merely missing are reported as lag. (#162)
-
-- **A whitespace-only favicon `href` or image `src` reported the page as its own favicon or image.**
-  The guard was `is_empty()`, which is false for `"  "`, and resolving a whitespace-only reference
-  against a base yields the base itself, so `<link rel="icon" href="  ">`, `<img src="  ">` and a
-  blank `og:image`/`twitter:image` `content` all listed the page URL. Such an address is now
-  skipped, via a shared `is_blank_address` helper. Only ASCII whitespace counts as blank, because
-  HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
-  percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
-  they do not resolve at all. (#220)
-
-- **A browser fetch reported no response headers at all on the crawl path.**
-  `browser_http_to_crawl` built an empty header map, so every header a browser backend had
-  collected was discarded before the crawl or the escalation path could read it — `ETag`,
-  `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF classifier, however faithfully the
-  backend reported them. This is why a `nofollow` sent only as an `X-Robots-Tag` header had no effect
-  in browser mode even after the crawl learned to honour it. Headers are now carried through. The
-  chromiumoxide backend still hardcodes its own status, content type and headers, so this reaches
-  callers today on the native backend only; #166 covers the rest. (#148)
-
-- **Dropping a one-shot browser fetch ran no teardown at all.** Teardown was straight-line code
-  after the fetch, reached only once the fetch had finished, so a caller that dropped the future
-  while it ran — a cancelled request, a `select!` that lost, a deadline above crawlberg — got none
-  of it. Against a `browser.endpoint` Chrome that left crawlberg's CDP websocket open, and the tab
-  it had opened open with it: a connected `chromiumoxide::Browser` owns no child process, so
-  dropping it does nothing, and its handler loop never ends by itself. Against a launched Chrome
-  the process went with the dropped handle, but its `--user-data-dir` stayed on disk. Teardown now
-  belongs to a value whose `Drop` runs it, so a dropped fetch and a finished one take the same
-  path, and the profile directory is owned by a guard from the moment it is created rather than
-  from the moment the launch succeeds — a fetch cancelled mid-launch never had a session to tear
-  down. One window remains open: the Chrome process that `Browser::launch` is still building
-  cannot be reaped from outside it, so a fetch cancelled during the launch can leave that process
-  behind, and it recreates the directory it was just removed from (#198). (#131)
-
-- **Teardown waited five seconds for the CDP handler after killing a hung Chrome.** Killing the
-  process does not end the task that runs its CDP handler: chromiumoxide's handler loop returns
-  only when a `Browser.close` response reaches it, and a closed websocket merely parks the loop, so
-  the wait could never do anything but expire in full and abort the task anyway — about five
-  seconds added to every teardown that had to kill a Chrome that had stopped responding. The close
-  now reports whether the process exited or had to be killed, and the handler is aborted at once in
-  the killed case. A browser that closed cleanly is unchanged, still given the same grace period to
-  wind its handler down. (#146)
-
-- **A pooled browser fetch that hit its overall deadline leaked its page.** `overall_timeout`
-  wrapped the whole pooled fetch, so expiry dropped that future before it could release the page it
-  had borrowed from the shared browser — and `chromiumoxide::Page` has no closing `Drop`, so the CDP
-  target stayed open for the rest of the process's life, still running scripts. The deadline now
-  bounds page acquisition and navigation individually and the release runs on every path, the
-  deadline one included. That release is bounded by `shutdown_timeout` rather than by the overall
-  deadline, so a browser too wedged to close a page cannot hold a fetch open, and an
-  already-computed result is no longer replaced by a timeout error because teardown was slow.
-  Closing a timed-out page's popups is not covered here. (#179)
-
-- **A refused URL's credentials reached the error text.** The browser navigation path and interact
-  mode built the SSRF violation error with a struct literal instead of the redacting constructor, so
-  a request Chrome was refused at a redirect — `https://user:secret@10.0.0.1/` — carried its
-  `user:pass@` userinfo into the error message, and from there into API error bodies, MCP error
-  payloads and tracing fields. Both sites now build the error through `CrawlError::ssrf_violation`,
-  which redacts the userinfo before it is stored. The pre-navigation seed check and the HTTP
-  redirect path already used the redacting path and are unchanged. (#180)
-
-- **Some inline and script addresses still reached the images and links lists.** A
-  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
-  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
-  whose content was a `data:` address, in any case, was reported as an image too. Both are now
-  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
-  links in any case, as it skips `javascript:`. (#200)
-
-- **Four CI gates passed without examining anything.** The vendored-C-header check compared only
-  `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
-  canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every
-  tracked `crawlberg.h` from the repository index, byte-compares the generator's own outputs,
-  compares the vendored bundles as a normalised declaration stream, and fails on any copy it does
-  not classify. The e2e fixture-drift check excluded `python`, `php`, `ruby` and `c` for formatter
-  skew; measuring each formatter against alef 0.96.4 showed only `python` had any, so `ruff` is now
-  pinned and asserted and all four languages are gated. A pull request stacked on another pull
-  request's branch matched no CI workflow's `branches: [main]` base filter and ran none of them
-  while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
-  hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
-  it is resynced and gated. (#162, #127)
-
-- **A WAF challenge served with 503 or 429 was retried instead of escalated.** WAF detection ran
-  only for a 403 and for a 2xx, so a Cloudflare or Akamai interstitial served with 503 became a
-  plain server error — and a challenge served with 429 a plain rate limit — before anything looked
-  at the response. It was then retried by the same JavaScript-less client that provoked it and
-  never reached the browser or bypass tier. A 403, 429 or 503 is now fingerprinted before it is
-  turned into an error: a detected challenge is a WAF block and escalates, while a 429 or 503 with
-  no WAF signal is unchanged — same error, same message, its status still attached, and still
-  retried exactly as `retry_codes` says. Escalation is chosen over retry for a detected challenge
-  because re-issuing the identical request only reproduces it. Response headers are checked first,
-  so a challenge named by a header costs no body read; only a 429 or 503 whose headers say nothing
-  now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
-  was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
-
-- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
-  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
-  element handling and parses the contents of these elements as markup, so
-  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
-  `<base href>` inside title text changed the base for the whole page. In the other direction a
-  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
-  every tag up to the next `-->`: real links after the script were missing from the links list
-  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
-  masked in the source before it is parsed — the point at which a browser stops reading markup —
-  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
-  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
-  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
-  `math` are left alone, because a browser parses those as markup too. (#124, #125)
-
-- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
-  and the page result kept the URL that was asked for, so relative links on the landed page
-  resolved against the wrong path and `final_url` named a page that never served the content. The
-  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
-  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
-  landed URL is refused is dropped. (#75)
-
-- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
-  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
-  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
-  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
-  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
-  requests start after the stream is closed; a later change to the binding generator fixes that.
-  (#77)
-
-- **A dropped batch stream still reported every seed it had not started.** The batch went on
-  starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
-  and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
-  is dropped, and a seed it never started reports nothing. (#91)
-
-- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
-  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
-  statuses; only a status that raised no error of its own was checked against the list. A non-empty
-  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
-  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
-  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
-  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
-  empty list they retry these failures up to `retry_count` instead of never. (#76)
-
-  This narrows retries for any configuration that already sets `retry_codes`, including a list
-  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
-  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
-  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
-  0, so a configuration that never raised it sends one request either way and is unaffected.
-
-- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
-  whether or not a response caused it, so a transport timeout was retried under
-  `retry_codes = [408]`. An error raised for a response status now carries that status, and
-  `retry_codes` matches only that. (#92)
-
-- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
-  success on these paths, while `map()` already reported it as a server error, so an empty
-  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
-  path now maps a status to the same error, so a 504 is a server error everywhere and is
-  retried like a 503. The messages of these errors on `map()` now match the other paths:
-  `timeout`, `service unavailable` and `gateway timeout`. (#76)
-
-- **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
-  now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
-  `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
-  it is a hint and not a robots directive. A `noindex` page is still crawled and its links
-  followed. Each page result now reports both directives in `noindex_detected` and
-  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
-  **Upgrading** above for the wire-format consequence of the two new fields. (#135)
-
-- **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
-  `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
-  Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
-
-- **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
-  matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
-  reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
-  common case, since RFC 4193 randomises the unique-local global id. Both prefixes are now matched
-  as ranges. These addresses were refused before and are refused now; only the reason string in the
-  error and the log field changes. (#205)
 
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
@@ -296,6 +96,13 @@ All notable changes to crawlberg are documented here.
 - **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
   browser does, and a target of only control characters is no redirect.
 
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
 - **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
   rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
   crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
@@ -309,7 +116,57 @@ All notable changes to crawlberg are documented here.
   `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
   fail with an SSRF policy error. (#206, #208)
 
+## [1.8.0] - 2026-09-27
+
+Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
+defects a green e2e suite could not see: the fixtures covering the affected behaviours passed with
+the bugs fully present, and the assertion vocabulary cannot express request counts or elapsed time
+at all, so the whole "how many requests did we send, and how long did we wait" class was invisible
+by construction.
+
+### Upgrading
+
+- **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
+  `nofollow_detected` are always serialised, and `CrawlPageResult` carries
+  `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
+  every older crawlberg** — even when both values are `false`. The break is one-directional: an
+  older result still loads here, because both fields default to `false`.
+
+  What this affects:
+
+  - A cross-version pipeline that serialises a crawl result on one crawlberg and reads it on
+    another. Upgrade the readers before, or with, the writers.
+  - A persisted `CrawlCache`: entries written by this version cannot be read back by an older
+    build, so a rollback must treat the cache as cold rather than reuse it.
+  - Any binding that round-trips a page result through JSON across the FFI boundary
+    (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
+    versions.
+
+- **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
+  constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
+  Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
+  and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
+
+
+Four changes can affect an existing setup:
+
+- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
+  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
+  relied on reaching a loopback or private address through `interact()` must now opt in
+  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
+
+- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
+  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
+  encrypted with a keychain-backed key and the mock keychain uses a different one.
+- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
+  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
+  versions. Older configurations still load unchanged.
+- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
+  originally discovered one, so it keys on where the content actually came from. This also feeds
+  `CrawlResult::unique_normalized_urls()`.
+
 ### Added
+
 - `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
   the response bytes rather than the declared MIME type alone. The predicate receives the
   normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
@@ -334,54 +191,10 @@ All notable changes to crawlberg are documented here.
   `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
   `fit_content` can now drop a line of relative links that it kept before, the same way it
   already treated absolute links. (#63)
-
 - **The markdown front matter showed the base address as written.** A page with
   `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
   the same address that relative links resolve against. (#94)
 
-### Internal
-- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
-  conversion option that resolves relative addresses the same way the pre-pass above does, and the
-  caret requirement admits it on a routine `cargo update` with nothing to compile against and
-  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
-  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
-  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
-  pre-pass does. (#190)
-
-- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
-  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
-  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
-  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
-  closed as before. (#73)
-
-## [1.8.0] - 2026-09-25
-
-Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
-green e2e suite could not see: the fixtures covering the affected behaviours passed with the bugs
-fully present, and the assertion vocabulary cannot express request counts or elapsed time at all,
-so the whole "how many requests did we send, and how long did we wait" class was invisible by
-construction.
-
-### Upgrading
-
-Four changes can affect an existing setup:
-
-- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
-  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
-  relied on reaching a loopback or private address through `interact()` must now opt in
-  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
-
-- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
-  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
-  encrypted with a keychain-backed key and the mock keychain uses a different one.
-- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
-  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
-  versions. Older configurations still load unchanged.
-- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
-  originally discovered one, so it keys on where the content actually came from. This also feeds
-  `CrawlResult::unique_normalized_urls()`.
-
-### Added
 
 - `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
   to `false`. The head values remain available on `PageMetadata`, which is populated independently
@@ -403,6 +216,176 @@ Four changes can affect an existing setup:
   (#57)
 
 ### Fixed
+
+- **The vendored C header gate failed for lag rather than for a defect.** It required each
+  prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
+  header, but a vendored copy ships beside a dylib from the last release, so it legitimately
+  lacks whatever the canonical header has gained since — adding two `CrawlPageResult` getters
+  for #135 turned `main` red for that reason alone. The comparison is now one-directional: a
+  declaration the vendored copy has and the canonical header does not still fails, because that
+  means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
+  copy is merely missing are reported as lag. (#162)
+
+- **A whitespace-only favicon `href` or image `src` reported the page as its own favicon or image.**
+  The guard was `is_empty()`, which is false for `"  "`, and resolving a whitespace-only reference
+  against a base yields the base itself, so `<link rel="icon" href="  ">`, `<img src="  ">` and a
+  blank `og:image`/`twitter:image` `content` all listed the page URL. Such an address is now
+  skipped, via a shared `is_blank_address` helper. Only ASCII whitespace counts as blank, because
+  HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
+  percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
+  they do not resolve at all. (#220)
+
+- **A browser fetch reported no response headers at all on the crawl path.**
+  `browser_http_to_crawl` built an empty header map, so every header a browser backend had
+  collected was discarded before the crawl or the escalation path could read it — `ETag`,
+  `Cache-Control` and `X-Robots-Tag` reached no caller and no WAF classifier, however faithfully the
+  backend reported them. This is why a `nofollow` sent only as an `X-Robots-Tag` header had no effect
+  in browser mode even after the crawl learned to honour it. Headers are now carried through. The
+  chromiumoxide backend still hardcodes its own status, content type and headers, so this reaches
+  callers today on the native backend only; #166 covers the rest. (#148)
+
+- **Dropping a one-shot browser fetch ran no teardown at all.** Teardown was straight-line code
+  after the fetch, reached only once the fetch had finished, so a caller that dropped the future
+  while it ran — a cancelled request, a `select!` that lost, a deadline above crawlberg — got none
+  of it. Against a `browser.endpoint` Chrome that left crawlberg's CDP websocket open, and the tab
+  it had opened open with it: a connected `chromiumoxide::Browser` owns no child process, so
+  dropping it does nothing, and its handler loop never ends by itself. Against a launched Chrome
+  the process went with the dropped handle, but its `--user-data-dir` stayed on disk. Teardown now
+  belongs to a value whose `Drop` runs it, so a dropped fetch and a finished one take the same
+  path, and the profile directory is owned by a guard from the moment it is created rather than
+  from the moment the launch succeeds — a fetch cancelled mid-launch never had a session to tear
+  down. One window remains open: the Chrome process that `Browser::launch` is still building
+  cannot be reaped from outside it, so a fetch cancelled during the launch can leave that process
+  behind, and it recreates the directory it was just removed from (#198). (#131)
+
+- **Teardown waited five seconds for the CDP handler after killing a hung Chrome.** Killing the
+  process does not end the task that runs its CDP handler: chromiumoxide's handler loop returns
+  only when a `Browser.close` response reaches it, and a closed websocket merely parks the loop, so
+  the wait could never do anything but expire in full and abort the task anyway — about five
+  seconds added to every teardown that had to kill a Chrome that had stopped responding. The close
+  now reports whether the process exited or had to be killed, and the handler is aborted at once in
+  the killed case. A browser that closed cleanly is unchanged, still given the same grace period to
+  wind its handler down. (#146)
+
+- **A pooled browser fetch that hit its overall deadline leaked its page.** `overall_timeout`
+  wrapped the whole pooled fetch, so expiry dropped that future before it could release the page it
+  had borrowed from the shared browser — and `chromiumoxide::Page` has no closing `Drop`, so the CDP
+  target stayed open for the rest of the process's life, still running scripts. The deadline now
+  bounds page acquisition and navigation individually and the release runs on every path, the
+  deadline one included. That release is bounded by `shutdown_timeout` rather than by the overall
+  deadline, so a browser too wedged to close a page cannot hold a fetch open, and an
+  already-computed result is no longer replaced by a timeout error because teardown was slow.
+  Closing a timed-out page's popups is not covered here. (#179)
+
+- **A refused URL's credentials reached the error text.** The browser navigation path and interact
+  mode built the SSRF violation error with a struct literal instead of the redacting constructor, so
+  a request Chrome was refused at a redirect — `https://user:secret@10.0.0.1/` — carried its
+  `user:pass@` userinfo into the error message, and from there into API error bodies, MCP error
+  payloads and tracing fields. Both sites now build the error through `CrawlError::ssrf_violation`,
+  which redacts the userinfo before it is stored. The pre-navigation seed check and the HTTP
+  redirect path already used the redacting path and are unchanged. (#180)
+
+- **Four CI gates passed without examining anything.** The vendored-C-header check compared only
+  `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the
+  canonical file, leaving the three prebuilt-native copies unchecked; it now discovers every
+  tracked `crawlberg.h` from the repository index, byte-compares the generator's own outputs,
+  compares the vendored bundles as a normalised declaration stream, and fails on any copy it does
+  not classify. The e2e fixture-drift check excluded `python`, `php`, `ruby` and `c` for formatter
+  skew; measuring each formatter against alef 0.96.4 showed only `python` had any, so `ruff` is now
+  pinned and asserted and all four languages are gated. A pull request stacked on another pull
+  request's branch matched no CI workflow's `branches: [main]` base filter and ran none of them
+  while showing green checks, so a base-branch guard now fails such a pull request explicitly. The
+  hand-maintained docs-site changelog mirror had no check and had lost two `[Unreleased]` entries;
+  it is resynced and gated. (#162, #127)
+
+- **A WAF challenge served with 503 or 429 was retried instead of escalated.** WAF detection ran
+  only for a 403 and for a 2xx, so a Cloudflare or Akamai interstitial served with 503 became a
+  plain server error — and a challenge served with 429 a plain rate limit — before anything looked
+  at the response. It was then retried by the same JavaScript-less client that provoked it and
+  never reached the browser or bypass tier. A 403, 429 or 503 is now fingerprinted before it is
+  turned into an error: a detected challenge is a WAF block and escalates, while a 429 or 503 with
+  no WAF signal is unchanged — same error, same message, its status still attached, and still
+  retried exactly as `retry_codes` says. Escalation is chosen over retry for a detected challenge
+  because re-issuing the identical request only reproduces it. Response headers are checked first,
+  so a challenge named by a header costs no body read; only a 429 or 503 whose headers say nothing
+  now reads a body that was previously discarded, under the usual `max_body_size` cap. Browser mode
+  was never affected: CDP reports its own 200 for a navigation, so it cannot observe a 503. (#169)
+
+- **Links, images and the base address were read from `script`, `style`, `title` and `textarea`
+  text, and a comment opener in that text hid the real markup after it.** `tl` has no raw-text
+  element handling and parses the contents of these elements as markup, so
+  `<script>document.write('<a href="/x">')</script>` added `/x` to the links list and a
+  `<base href>` inside title text changed the base for the whole page. In the other direction a
+  `<!--` anywhere in script or style text started a comment for the parser, which then swallowed
+  every tag up to the next `-->`: real links after the script were missing from the links list
+  altogether, not merely mis-resolved. The `<` characters inside raw-text element content are now
+  masked in the source before it is parsed — the point at which a browser stops reading markup —
+  so link, image, feed, favicon, heading, meta-tag, base-address and `<meta http-equiv="refresh">`
+  extraction all see the document a browser sees. Title text and JSON-LD payloads are unchanged
+  unless they contain a literal `<`, which valid HTML writes as `&lt;`. Contents of `svg` and
+  `math` are left alone, because a browser parses those as markup too. (#124, #125)
+
+- **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
+  and the page result kept the URL that was asked for, so relative links on the landed page
+  resolved against the wrong path and `final_url` named a page that never served the content. The
+  browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
+  check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
+  landed URL is refused is dropped. (#75)
+
+- **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
+  receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
+  flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
+  the receiver goes away: in-flight fetches are aborted, and no later seed of a batch stream is
+  fetched. This fixes the Rust stream. The Python binding's generated stream still lets one or two
+  requests start after the stream is closed; a later change to the binding generator fixes that.
+  (#77)
+- **A dropped batch stream still reported every seed it had not started.** The batch went on
+  starting each remaining seed, and each one sent a `Complete` with zero pages to the event emitter
+  and the event sink for a crawl that never ran. The batch now stops starting seeds when the stream
+  is dropped, and a seed it never started reports nothing. (#91)
+
+- **`retry_codes` did not gate error retries.** A 408, 429, 500, 502, 503 or 504 response, and a
+  transport timeout, were each retried the full `retry_count` even when `retry_codes` listed other
+  statuses; only a status that raised no error of its own was checked against the list. A non-empty
+  `retry_codes` is now an allowlist over exactly those failures: one is retried only when the status
+  it was raised for is listed, and a timeout that never saw a response carries no status, so it is
+  not retried at all. An empty list is unchanged and still retries every rate limit, server error,
+  bad gateway and timeout. `map()` and the wasm scrape path now follow the same rule, so with an
+  empty list they retry these failures up to `retry_count` instead of never. (#76)
+
+  This narrows retries for any configuration that already sets `retry_codes`, including a list
+  written to *add* a status: `retry_codes = [503]`, meaning "also retry 503", now excludes the other
+  five, so against a rate-limiting origin its 429 responses are no longer retried. List every status
+  you want retried, or leave `retry_codes` empty to retry all of them. The default `retry_count` is
+  0, so a configuration that never raised it sends one request either way and is unaffected.
+
+- **A 408 was told apart from other timeouts by guesswork.** Every timeout counted as a 408,
+  whether or not a response caused it, so a transport timeout was retried under
+  `retry_codes = [408]`. An error raised for a response status now carries that status, and
+  `retry_codes` matches only that. (#92)
+- **`crawl()` and `scrape()` returned a 504 as a page.** The HTTP fetch treated a 504 as a
+  success on these paths, while `map()` already reported it as a server error, so an empty
+  `retry_codes` did not retry it and a gateway timeout page reached callers as content. Every
+  path now maps a status to the same error, so a 504 is a server error everywhere and is
+  retried like a 503. The messages of these errors on `map()` now match the other paths:
+  `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
+  now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
+  `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
+  it is a hint and not a robots directive. A `noindex` page is still crawled and its links
+  followed. Each page result now reports both directives in `noindex_detected` and
+  `nofollow_detected`. With `respect_robots_txt` off, nothing changes. See
+  **Upgrading** above for the wire-format consequence of the two new fields. (#135)
+- **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
+  `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
+  Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
+  matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
+  reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
+  common case, since RFC 4193 randomises the unique-local global id. Both prefixes are now matched
+  as ranges. These addresses were refused before and are refused now; only the reason string in the
+  error and the log field changes. (#205)
+
 
 - **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
   host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
@@ -471,6 +454,22 @@ Four changes can affect an existing setup:
   entries are config or log files, one is generated, and the remaining two are the same defect in
   poly's parameter counting, which counts an attribute on a parameter as a parameter. Reported as
   Goldziher/poly#28.
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
+- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
+  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
+  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
+  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
+  closed as before. (#73)
 
 ## [1.7.2] - 2026-09-24
 
