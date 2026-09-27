@@ -49,7 +49,7 @@ pub(crate) fn extract_page_data(
     let mut metadata = extract_metadata(dom, body, base_url);
 
     if include_extended {
-        let hreflangs = extract_hreflangs(dom);
+        let hreflangs = extract_hreflangs(dom, base_url);
         if !hreflangs.is_empty() {
             metadata.hreflangs = Some(hreflangs);
         }

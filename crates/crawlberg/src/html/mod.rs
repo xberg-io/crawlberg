@@ -21,15 +21,6 @@ use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Token
 use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
-/// Whether an address attribute is blank, meaning it carries no reference at all.
-pub(crate) fn is_blank_address(value: &str) -> bool {
-    // ~keep Only ASCII whitespace counts. HTML strips nothing else from a URL attribute, so U+00A0
-    // and U+2000-200A belong to the value and are percent-encoded: an NBSP-only reference is real,
-    // if useless, and must not be treated as blank (#191). A blank reference must be skipped rather
-    // than resolved, because joining one to a base yields the base itself (#187, #220).
-    value.bytes().all(|byte| byte.is_ascii_whitespace())
-}
-
 /// Resolve `src` against `base_url`, keeping it as written when it does not parse. An empty
 /// `src` stays empty.
 pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
@@ -75,13 +66,56 @@ pub(crate) fn get_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a
         .map(decode_attr_value)
 }
 
-/// Whether the tag's `attr` value equals `expected` in any ASCII case.
+/// Get a URL attribute value such as `href` or `src`, decoded and cleaned by [`clean_url`].
+pub(crate) fn get_url_attr<'a>(tag: &'a HTMLTag<'_>, attr: &'a str) -> Option<Cow<'a, str>> {
+    get_attr(tag, attr).and_then(clean_url)
+}
+
+/// Remove what the WHATWG URL parser removes from a URL string: the C0 controls and spaces
+/// (U+0000 to U+0020) at either end, and every tab, LF and CR inside.
+///
+/// Returns `None` when nothing is left: a blank URL points at the page itself. Other Unicode
+/// spaces, such as U+00A0, stay, as they do in a browser.
+pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
+    let is_tab_or_newline = |c: char| matches!(c, '\t' | '\n' | '\r');
+    let trimmed = value.trim_matches(|c: char| c <= ' ');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains(is_tab_or_newline) {
+        return Some(Cow::Owned(trimmed.replace(is_tab_or_newline, "")));
+    }
+    if trimmed.len() == value.len() {
+        return Some(value);
+    }
+    Some(Cow::Owned(trimmed.to_owned()))
+}
+
+/// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
+/// around the value.
 ///
 /// ~keep HTML compares values such as `name`, `http-equiv` and `type` without case, but tl's
 /// ~keep attribute selectors compare them byte for byte and cannot parse the CSS `i` flag. Select
-/// ~keep the tag and compare the value here instead.
+/// ~keep the tag and compare the value here instead. HTML does not trim these values, so a browser
+/// ~keep ignores `http-equiv=" refresh "`; the trim is a leniency for pages that add the spaces.
 pub(crate) fn attr_eq(tag: &HTMLTag<'_>, attr: &str, expected: &str) -> bool {
-    get_attr(tag, attr).is_some_and(|value| value.eq_ignore_ascii_case(expected))
+    get_attr(tag, attr).is_some_and(|value| value.trim_ascii().eq_ignore_ascii_case(expected))
+}
+
+/// The essence of the tag's `type` value, a MIME type, in lowercase: the part before any `;`
+/// parameters, without the ASCII whitespace around it.
+///
+/// ~keep HTML strips ASCII whitespace, form feed included, from a `<script type>` before it reads
+/// ~keep the type; the MIME parser alone would keep a form feed and reject the type. `<link type>`
+/// ~keep has no such rule and gets the same trim as a leniency, so both `type` attributes read alike.
+/// ~keep The trim runs on the essence after the `;` split, not on the whole value, so whitespace
+/// ~keep just before `;` is stripped too, which neither HTML nor the MIME rule does. That is more
+/// ~keep leniency, in the same spirit as the attribute trim above.
+pub(crate) fn mime_essence(tag: &HTMLTag<'_>) -> Option<String> {
+    get_attr(tag, "type").map(|value| {
+        let essence = value.split(';').next().unwrap_or_default();
+        essence.trim_ascii().to_ascii_lowercase()
+    })
 }
 
 /// Whether the tag's `rel` value, a space-separated list of tokens, holds `token` in any ASCII case.
@@ -102,16 +136,39 @@ fn rel_holds(tag: &HTMLTag<'_>, token: &str, is_separator: fn(char) -> bool) -> 
     get_attr(tag, "rel").is_some_and(|rel| rel.split(is_separator).any(|t| t.eq_ignore_ascii_case(token)))
 }
 
-/// Decode the character references in a raw attribute value (`&amp;`, `&#x2F;`), as an HTML
-/// parser does before it uses the value.
+/// Decode the character references in a raw attribute value (`&amp;`, `&#x2F;`) and turn each
+/// CR or CRLF into LF and each NUL into U+FFFD, as an HTML parser does before it uses the value.
 ///
-/// ~keep html5ever's tokenizer does the decoding, because it follows the WHATWG rules a browser
-/// ~keep does, including the Windows-1252 table for `&#128;`-`&#159;`. The value is wrapped in a
-/// ~keep double-quoted attribute; each `"` in it becomes `&quot;`, which decodes back to `"`.
+/// ~keep html5ever's tokenizer decodes a value that has a `&`, because it follows the WHATWG rules
+/// ~keep a browser does, including the Windows-1252 table for `&#128;`-`&#159;`. For a value
+/// ~keep without one, the tokenizer only rewrites CR and NUL, so that is done here directly and
+/// ~keep the tokenizer, the slow part of reading a value, is not started.
 pub(crate) fn decode_attr_value(raw: &str) -> Cow<'_, str> {
-    if !raw.contains('&') {
+    let Some(first) = raw.bytes().position(|b| matches!(b, b'&' | b'\r' | b'\0')) else {
         return Cow::Borrowed(raw);
+    };
+    if raw.contains('&') {
+        return decode_with_tokenizer(raw);
     }
+    let mut out = String::with_capacity(raw.len() + 2);
+    out.push_str(&raw[..first]);
+    let mut chars = raw[first..].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                out.push('\n');
+                chars.next_if_eq(&'\n');
+            }
+            '\0' => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Decode `raw` with html5ever's tokenizer. The value is wrapped in a double-quoted attribute;
+/// each `"` in it becomes `&quot;`, which decodes back to `"`.
+fn decode_with_tokenizer(raw: &str) -> Cow<'_, str> {
     let input = BufferQueue::default();
     input.push_back(StrTendril::from(format!("<a v=\"{}\">", raw.replace('"', "&quot;"))));
     let tokenizer = Tokenizer::new(FirstAttrValue::default(), TokenizerOpts::default());
@@ -170,3 +227,50 @@ pub(crate) use links::{effective_base_url, extract_links};
 pub(crate) use metadata::detect_meta_refresh;
 pub(crate) use metadata::{detect_nofollow, detect_noindex};
 pub(crate) use raw_text::mask_raw_text_markup;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoding_normalizes_newlines_and_nul_as_an_html_parser_does() {
+        assert_eq!(decode_attr_value("a\r\nb\rc\nd\0e"), "a\nb\nc\nd\u{FFFD}e");
+        assert_eq!(decode_attr_value("a&amp;\r\nb\0"), "a&\nb\u{FFFD}");
+        assert_eq!(decode_attr_value("a\r&amp;"), "a\n&");
+        assert_eq!(decode_attr_value("a\0&amp;"), "a\u{FFFD}&");
+        assert_eq!(decode_attr_value("a\0b"), "a\u{FFFD}b");
+        assert_eq!(decode_attr_value("a\rb"), "a\nb");
+        assert!(matches!(decode_attr_value("plain value"), Cow::Borrowed("plain value")));
+    }
+
+    #[test]
+    fn cleaning_an_address_with_nothing_to_remove_borrows_it() {
+        assert!(matches!(
+            clean_url(Cow::Borrowed("a.html")),
+            Some(Cow::Borrowed("a.html"))
+        ));
+        assert!(matches!(clean_url(Cow::Borrowed(" a.html")), Some(Cow::Owned(ref s)) if s == "a.html"));
+        assert_eq!(clean_url(Cow::Borrowed("a\t.html\n")).as_deref(), Some("a.html"));
+        assert_eq!(clean_url(Cow::Borrowed("\u{1} \u{C}")), None);
+    }
+
+    #[test]
+    fn values_without_an_ampersand_decode_as_the_tokenizer_decodes_them() {
+        // ~keep Every value of up to five characters over the characters the tokenizer treats
+        // ~keep specially inside a double-quoted value, and a few it does not.
+        const ALPHABET: [char; 8] = ['a', '\r', '\n', '\0', '"', '<', '\'', '\u{e9}'];
+        let mut values = vec![String::new()];
+        let mut checked = 0;
+        for _ in 0..5 {
+            values = values
+                .iter()
+                .flat_map(|v| ALPHABET.iter().map(move |c| format!("{v}{c}")))
+                .collect();
+            for value in &values {
+                assert_eq!(decode_attr_value(value), decode_with_tokenizer(value), "for {value:?}");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, (1..=5).map(|n| 8_usize.pow(n)).sum::<usize>());
+    }
+}
