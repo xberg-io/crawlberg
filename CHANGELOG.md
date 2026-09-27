@@ -14,6 +14,10 @@ All notable changes to crawlberg are documented here.
   remove the userinfo from your input first. A URL that carries userinfo is now a configuration
   error when `auth` is also set; use one of the two.
 
+- **`auth` and `custom_headers` now go only to the seed URL's host.** A subdomain, a linked
+  document on another host or a redirect target on another host gets neither. If a crawl needs a
+  header on another host, start a separate call with that host as its seed.
+
 ### Fixed
 
 - **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
@@ -33,9 +37,10 @@ All notable changes to crawlberg are documented here.
   chromiumoxide backend refuses such a request too. A URL that does not parse is reported
   without its text. (#347, #357, #382)
 
-- **Custom headers reached every host a browser page loaded from.** Both browser backends sent
-  `custom_headers` to third-party subresources and cross-host redirect targets. They now go only
-  to requests on the seed's host, the same as the credentials. (#393)
+- **Custom headers reached every host a crawl touched.** Plain HTTP requests and both browser
+  backends sent `custom_headers` to other hosts: linked documents, third-party subresources and
+  cross-host redirect targets. They now go only to requests on the seed's host, the same as the
+  credentials. (#393)
 
 - **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
   module import to the seed's host now carries the credentials and the custom headers, as it does

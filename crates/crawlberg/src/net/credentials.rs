@@ -1,7 +1,7 @@
 //! Credential scope: which host receives the caller's credentials, and which header carries them.
 //!
 //! The engine fixes the scope once, when it admits the seed URL, and every fetch asks
-//! [`credential_header`] for the header to send. Only a request to the seed's host gets one.
+//! [`seed_host_headers`] for the headers to send. Only a request to the seed's host gets any.
 
 use base64::Engine as _;
 use url::Url;
@@ -82,10 +82,9 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
     }
 }
 
-/// The headers a browser adds to a request for `url`: the custom headers, then the
-/// credential header, which replaces a custom header of the same name. Empty unless `url`
-/// is on the seed's host.
-#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+/// The headers a request for `url` carries: the custom headers, then the credential
+/// header, which replaces a custom header of the same name. Empty unless `url` is on the
+/// seed's host.
 pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String, String)> {
     if !config.credential_scope.as_ref().is_some_and(|scope| scope.covers(url)) {
         return Vec::new();

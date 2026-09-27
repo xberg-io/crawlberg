@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::net::credentials::credential_header;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
@@ -310,10 +310,11 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
     }
 
-    req = apply_auth(req, context, current_url);
-
-    for (k, v) in &context.config.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+    // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
+    // ~keep strip-credentials-on-cross-host behaviour never runs; asking per hop for the
+    // ~keep seed-host headers replaces it, for the custom headers as well as the credential.
+    for (name, value) in seed_host_headers(context.config, current_url) {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     for (k, v) in context.extra_headers {
@@ -321,22 +322,6 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
     }
 
     req.send().await.map_err(classify_reqwest_error)
-}
-
-/// Attach the credential header when the hop is on the seed's host.
-///
-/// ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
-/// ~keep strip-credentials-on-cross-host behaviour never runs; the per-hop host check in
-/// ~keep `credential_header` replaces it.
-fn apply_auth(
-    req: reqwest::RequestBuilder,
-    context: &FetchContext<'_>,
-    current_url: &url::Url,
-) -> reqwest::RequestBuilder {
-    match credential_header(context.config, current_url) {
-        Some((name, value)) => req.header(name.as_str(), value.as_str()),
-        None => req,
-    }
 }
 
 /// Resolve a 3xx response's `Location` header against the URL that served it.

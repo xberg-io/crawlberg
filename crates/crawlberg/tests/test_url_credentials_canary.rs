@@ -7,7 +7,7 @@
 //! - every URL the `Frontier`, `CrawlStore`, `CrawlCache`, `EventEmitter` and `EventSink`
 //!   receive has no userinfo;
 //! - the seed host received the header on pages, robots.txt and the sitemap, and the other
-//!   host never did.
+//!   host never did; the configured custom headers follow the same host rule.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -515,6 +515,104 @@ async fn a_redirect_to_another_host_drops_the_credentials() {
     assert_eq!(result.final_url, site.other("/elsewhere"));
     assert_authenticated(&site, "/to-other").await;
     assert_other_host_unauthenticated(&site).await;
+}
+
+// ---- custom headers ---------------------------------------------------------------------
+
+const CUSTOM_HEADER: &str = "x-scope-canary";
+const CUSTOM_VALUE: &str = "seed-host-only";
+
+/// The canary config plus a custom header and a custom `Authorization` the URL credential replaces.
+fn config_with_custom_headers() -> CrawlConfig {
+    CrawlConfig {
+        custom_headers: HashMap::from([
+            (CUSTOM_HEADER.to_owned(), CUSTOM_VALUE.to_owned()),
+            ("authorization".to_owned(), "Bearer custom-header-token".to_owned()),
+        ]),
+        ..config()
+    }
+}
+
+/// Every request for `at` on the seed host carried the custom header once, and exactly one
+/// `Authorization` value: the caller's Basic credential, not the custom one.
+async fn assert_custom_headers_on_seed(site: &Site, at: &str) {
+    let requests: Vec<_> = site
+        .seed_host
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .into_iter()
+        .filter(|request| request.url.path() == at)
+        .collect();
+    assert!(!requests.is_empty(), "{at} on the seed host must have been requested");
+    for request in requests {
+        let custom: Vec<_> = request.headers.get_all(CUSTOM_HEADER).iter().collect();
+        assert_eq!(custom, [CUSTOM_VALUE], "{at} on the seed host must carry the custom header once");
+        let authorization: Vec<_> = request
+            .headers
+            .get_all("authorization")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect();
+        assert_eq!(
+            authorization,
+            [basic_header().as_str()],
+            "{at} on the seed host must carry only the caller's Basic credential"
+        );
+    }
+}
+
+/// The other host was requested, and never with a custom header.
+async fn assert_other_host_without_custom_headers(site: &Site) {
+    let requests = site
+        .other_host
+        .received_requests()
+        .await
+        .expect("request recording is on");
+    assert!(!requests.is_empty(), "the call must have reached the other host");
+    for request in requests {
+        assert!(
+            request.headers.get(CUSTOM_HEADER).is_none() && request.headers.get("authorization").is_none(),
+            "the other host must never receive the custom headers, got {:?} on {}",
+            request.headers,
+            request.url
+        );
+    }
+}
+
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_crawl_sends_the_custom_headers_to_the_seed_host_only() {
+    let site = site().await;
+    let harness = harness(config_with_custom_headers());
+
+    harness
+        .engine
+        .crawl(&site.credentialed("/"))
+        .await
+        .expect("crawl must succeed");
+
+    for at in ["/", "/robots.txt", "/relative", "/landed", "/image.png"] {
+        assert_custom_headers_on_seed(&site, at).await;
+    }
+    assert_other_host_without_custom_headers(&site).await;
+}
+
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_redirect_to_another_host_drops_the_custom_headers() {
+    let site = site().await;
+    let harness = harness(config_with_custom_headers());
+
+    let result = harness
+        .engine
+        .scrape(&site.credentialed("/to-other"))
+        .await
+        .expect("scrape must succeed");
+
+    assert_eq!(result.final_url, site.other("/elsewhere"));
+    assert_custom_headers_on_seed(&site, "/to-other").await;
+    assert_other_host_without_custom_headers(&site).await;
 }
 
 #[tokio::test]

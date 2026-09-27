@@ -10,7 +10,7 @@ use tower::Service;
 
 use super::types::{CrawlRequest, CrawlResponse};
 use crate::error::{CrawlError, classify_reqwest_error};
-use crate::net::credentials::credential_header;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
@@ -48,12 +48,8 @@ fn apply_headers(
         }
     }
 
-    if let Some((name, value)) = credential_header(config, url) {
+    for (name, value) in seed_host_headers(config, url) {
         req = req.header(name.as_str(), value.as_str());
-    }
-
-    for (k, v) in &config.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
     }
 
     for (k, v) in &crawl_req.headers {
