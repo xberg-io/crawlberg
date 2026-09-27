@@ -62,6 +62,12 @@ All notable changes to crawlberg are documented here.
   search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
   longer matches. (#323)
 
+- **A sitemap-index child differing only by a URL fragment was fetched twice.** The
+  fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
+  `rewrite_url_host` kept the fragment on a same-host child address before it was fetched
+  and used as the duplicate key. The fragment is now dropped there, so both addresses fetch
+  and dedupe as one document. (#324)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

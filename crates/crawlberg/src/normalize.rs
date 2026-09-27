@@ -149,13 +149,17 @@ pub(crate) fn strip_fragment(url: &str) -> String {
 /// Rewrite `url_str` onto `base`'s host when the two differ, keeping only `url_str`'s path
 /// and query. Returns the URL parser's normalized form of `url_str` when the host already
 /// matches `base`'s, not the raw input: a caller using the return value as a fetch target or
-/// a dedup key must not see two spellings of the same address.
+/// a dedup key must not see two spellings of the same address. The fragment is always
+/// dropped for the same reason: it never reaches the server, so two addresses differing only
+/// by fragment are one fetch target and one dedup key, not two.
 pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    let Ok(parsed) = Url::parse(url_str) else {
+    let Ok(mut parsed) = Url::parse(url_str) else {
         return url_str.to_owned();
     };
+    parsed.set_fragment(None);
     if parsed.host_str() != base.host_str() {
         let mut resolved = base.clone();
+        resolved.set_fragment(None);
         resolved.set_path(parsed.path());
         resolved.set_query(parsed.query());
         return resolved.to_string();
@@ -192,6 +196,27 @@ mod tests {
             rewritten, "https://example.com/ab",
             "a same-host input must come back in the parser's normalized form (lower-case \
              scheme, default port dropped, embedded tab stripped), not raw, got {rewritten:?}"
+        );
+    }
+
+    #[test]
+    fn rewrite_url_host_drops_the_fragment_on_a_same_host_input() {
+        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
+        let rewritten = rewrite_url_host("https://example.com/a.xml#x", &base);
+        assert_eq!(
+            rewritten, "https://example.com/a.xml",
+            "a same-host input's fragment must be dropped before it is fetched and used as \
+             a dedup key, got {rewritten:?}"
+        );
+    }
+
+    #[test]
+    fn rewrite_url_host_drops_a_fragment_carried_by_base_on_a_different_host_rewrite() {
+        let base = Url::parse("https://example.com/index.xml#ignored").expect("valid URL");
+        let rewritten = rewrite_url_host("https://other.example/a/b?x=1", &base);
+        assert_eq!(
+            rewritten, "https://example.com/a/b?x=1",
+            "a different-host rewrite must not carry over a fragment from base, got {rewritten:?}"
         );
     }
 

@@ -778,6 +778,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_sitemap_tree_dedupes_children_differing_only_by_fragment() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        // ~keep Same absolute address, same host as the index, differing only by fragment:
+        // ~keep the fragment never reaches the server, so this is one document, not two.
+        mount_xml(
+            &mock,
+            "/root.xml",
+            sitemap_index_xml(&[&format!("{base}/a.xml"), &format!("{base}/a.xml#x")]),
+        )
+        .await;
+        mount_xml(&mock, "/a.xml", urlset(1)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/root.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            urls.len(),
+            1,
+            "two sitemap-index children differing only by a fragment must dedupe to one \
+             fetch, got {urls:?}"
+        );
+
+        let requests = mock.received_requests().await.expect("wiremock records requests");
+        let a_xml_hits = requests.iter().filter(|req| req.url.path() == "/a.xml").count();
+        assert_eq!(
+            a_xml_hits, 1,
+            "expected exactly one GET /a.xml, got {a_xml_hits} across {requests:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn fetch_sitemap_tree_terminates_on_self_referential_cycle() {
         let mock = MockServer::start().await;
         let base = mock.uri();
