@@ -408,6 +408,52 @@ async fn chromiumoxide_reports_a_waf_challenge_status_as_http_mode_does() {
     }
 }
 
+/// A challenge status (403, 429, 503) whose page only its body names as a WAF is a WAF block in
+/// both modes: browser mode checks the body Chrome rendered, as HTTP mode checks the body it read.
+/// `server: cloudflare` alone does not name a WAF, so only the Cloudflare challenge body decides.
+#[tokio::test]
+async fn chromiumoxide_reports_a_challenge_page_only_its_body_names_as_http_mode_does() {
+    let test_name = "chromiumoxide_reports_a_challenge_page_only_its_body_names_as_http_mode_does";
+    let body = "<html><head><title>Just a moment...</title></head><body>\
+                <script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1\"></script></body></html>";
+    let site = MockServer::start().await;
+    for status in [403_u16, 429, 503] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{status}")))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .append_header("server", "cloudflare")
+                    .set_body_raw(body, "text/html"),
+            )
+            .mount(&site)
+            .await;
+    }
+    let http =
+        create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Never))).expect("engine must build");
+    let browser =
+        create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Always))).expect("engine must build");
+    for status in [403_u16, 429, 503] {
+        let url = format!("{}/{status}", site.uri());
+        let expected = scrape_outcome(scrape(&http, &url).await);
+        assert_eq!(
+            expected,
+            Err("WafBlocked".to_owned()),
+            "{test_name}: HTTP mode for the {status}"
+        );
+        let result = scrape(&browser, &url).await;
+        if let Err(error) = &result
+            && chrome_missing(test_name, error)
+        {
+            return;
+        }
+        assert_eq!(
+            scrape_outcome(result),
+            expected,
+            "{test_name}: browser mode for the {status}"
+        );
+    }
+}
+
 /// Browser mode with the default SSRF policy, except that loopback is allowed so the mock site
 /// loads. The metadata address stays denied.
 fn loopback_only(extra_wait: Option<Duration>) -> CrawlConfig {
