@@ -99,15 +99,10 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
 
 /// Resolve the proxy URL string handed to the native browser worker.
 ///
-/// Credentials are embedded via `url::Url::set_username`/`set_password`,
-/// which percent-encodes the userinfo component — the previous
-/// `format!("{scheme}://{user}:{pass}@{rest}")` splice let a `:`, `@`, or
-/// `/` in a credential corrupt the authority (e.g. terminate it early and
-/// smuggle a different host in, or misdirect the connection to an
-/// unintended proxy). `Url::set_username`/`set_password` work for any
-/// scheme with an authority component (http, https, socks5, socks5h), so
-/// this also fixes SOCKS5 credentials being silently dropped by the old
-/// code's `http://`/`https://`-only prefix check.
+/// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds
+/// credentials via percent-encoded userinfo rather than a naive string
+/// splice, and refuses to parse a scheme out of a credential when the URL
+/// has no explicit `scheme://` prefix.
 fn resolved_proxy(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
     let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
         return Ok(None);
@@ -116,29 +111,7 @@ fn resolved_proxy(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
 }
 
 fn apply_proxy_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
-    if proxy.username.is_none() && proxy.password.is_none() {
-        return Ok(proxy.url.clone());
-    }
-
-    let mut parsed =
-        url::Url::parse(&proxy.url).map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
-
-    parsed
-        .set_username(proxy.username.as_deref().unwrap_or(""))
-        .map_err(|()| {
-            CrawlError::invalid_config(format!(
-                "proxy scheme {:?} does not support embedded credentials",
-                parsed.scheme()
-            ))
-        })?;
-    parsed.set_password(proxy.password.as_deref()).map_err(|()| {
-        CrawlError::invalid_config(format!(
-            "proxy scheme {:?} does not support embedded credentials",
-            parsed.scheme()
-        ))
-    })?;
-
-    Ok(parsed.to_string())
+    crate::proxy::proxy_url_with_credentials(proxy)
 }
 
 fn post_navigation_wait(config: &CrawlConfig) -> Option<Duration> {
@@ -296,6 +269,25 @@ mod proxy_credential_tests {
         assert!(
             matches!(result, Err(crate::error::CrawlError::InvalidConfig { .. })),
             "malformed proxy URL with credentials must return InvalidConfig, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn scheme_less_url_error_does_not_print_the_username_as_the_scheme() {
+        // ~keep `alice` sits where a scheme would be read from by a naive `url::Url::parse` on a
+        // scheme-less string; the regression this guards is that misread leaking into the
+        // "does not support embedded credentials" error.
+        let result = apply_proxy_credentials(&proxy("alice:s3cr3t@proxy.test:8080", Some("alice"), Some("s3cr3t")));
+        let error = result
+            .expect_err("a scheme-less proxy URL must be rejected")
+            .to_string();
+        assert!(
+            !error.contains("alice"),
+            "error must not name the embedded username, got: {error}"
+        );
+        assert!(
+            !error.contains("s3cr3t"),
+            "error must not leak the embedded password, got: {error}"
         );
     }
 
