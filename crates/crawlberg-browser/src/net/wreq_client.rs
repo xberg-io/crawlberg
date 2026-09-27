@@ -17,7 +17,7 @@ use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
 use crate::net::cookies::CookieJar;
 #[cfg(feature = "stealth")]
-use crate::net::credential::{OriginCredential, refuse_userinfo, without_userinfo};
+use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
@@ -33,7 +33,7 @@ pub struct StealthHttpClient {
     pub cookie_jar: Arc<CookieJar>,
     pub extra_headers: RwLock<HashMap<String, String>>,
     /// The credential header the embedder scoped to one host; sent only to that host.
-    pub origin_credential: RwLock<Option<OriginCredential>>,
+    pub origin_headers: RwLock<Option<OriginHeaders>>,
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
 }
 
@@ -78,7 +78,7 @@ impl StealthHttpClient {
             ssrf,
             cookie_jar,
             extra_headers: RwLock::new(HashMap::new()),
-            origin_credential: RwLock::new(None),
+            origin_headers: RwLock::new(None),
             in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
@@ -102,10 +102,10 @@ impl StealthHttpClient {
                 req = req.header(k.as_str(), v.as_str());
             }
 
-            if let Some(credential) = self.origin_credential.read().await.as_ref()
-                && let Some((name, value)) = credential.header_for(&current_url)
-            {
-                req = req.header(name, value);
+            if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
+                for (name, value) in origin_headers.headers_for(&current_url) {
+                    req = req.header(name.as_str(), value.as_str());
+                }
             }
 
             self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_origin_credential_reaches_its_host_and_a_redirect_loses_its_userinfo() {
+    async fn the_origin_headers_reach_their_host_and_a_redirect_loses_its_userinfo() {
         let (other, other_requests) =
             recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
         let redirect = format!(
@@ -259,10 +259,9 @@ mod tests {
         );
         let (start, start_requests) = recording_server(redirect).await;
         let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
-        *client.origin_credential.write().await = Some(OriginCredential {
+        *client.origin_headers.write().await = Some(OriginHeaders {
             host: "127.0.0.1".to_owned(),
-            name: "Authorization".to_owned(),
-            value: "Basic b3JpZ2luOmNyZWQ=".to_owned(),
+            headers: vec![("Authorization".to_owned(), "Basic b3JpZ2luOmNyZWQ=".to_owned())],
         });
 
         client

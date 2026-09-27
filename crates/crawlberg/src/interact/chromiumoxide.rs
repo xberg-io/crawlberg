@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
@@ -152,17 +151,6 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
         page.set_user_agent(ua)
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
-    }
-
-    let mut extra_headers = serde_json::Map::new();
-    for (key, value) in &config.custom_headers {
-        extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
     }
 
     Ok(())

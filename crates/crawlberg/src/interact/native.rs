@@ -61,8 +61,6 @@ pub(super) async fn run(
 }
 
 fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, CrawlError> {
-    let extra_headers = config.custom_headers.clone();
-
     let wait_until = match config.browser.wait {
         BrowserWait::NetworkIdle => NativeBrowserWait::NetworkIdle,
         BrowserWait::Selector => NativeBrowserWait::Selector,
@@ -73,7 +71,7 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
         user_agent: config.user_agent.clone(),
         timeout: config.browser.timeout,
         wait_until,
-        extra_headers,
+        extra_headers: std::collections::HashMap::new(),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy_url: resolved_proxy(config)?,
@@ -85,7 +83,7 @@ fn build_native_config(config: &CrawlConfig) -> Result<NativeBrowserConfig, Craw
         capture_network_events: config.browser.capture_network_events,
         ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
         allow_file_access: false,
-        origin_credential: crate::net::credentials::origin_credential(config),
+        origin_headers: crate::net::credentials::origin_headers(config),
     })
 }
 
@@ -401,12 +399,13 @@ mod credential_scope_tests {
     use crate::types::{AuthConfig, CrawlConfig};
 
     #[test]
-    fn a_bearer_token_is_scoped_to_the_seed_host_and_kept_out_of_extra_headers() {
+    fn a_bearer_token_and_the_custom_headers_are_scoped_to_the_seed_host() {
         let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
         let config = CrawlConfig {
             auth: Some(AuthConfig::Bearer {
                 token: "secret-token".to_owned(),
             }),
+            custom_headers: std::collections::HashMap::from([("x-custom".to_owned(), "value".to_owned())]),
             credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
             ..CrawlConfig::default()
         };
@@ -414,16 +413,20 @@ mod credential_scope_tests {
         let native = build_native_config(&config).expect("an admitted config must build");
 
         assert!(
-            !native.extra_headers.contains_key("Authorization"),
-            "every host receives extra_headers, so the token must not be there"
+            native.extra_headers.is_empty(),
+            "every host receives extra_headers, so nothing may be there: {:?}",
+            native.extra_headers
         );
-        let credential = native
-            .origin_credential
+        let scoped = native
+            .origin_headers
             .expect("the token must be scoped to the seed host");
-        assert_eq!(credential.host, "example.com");
+        assert_eq!(scoped.host, "example.com");
         assert_eq!(
-            (credential.name.as_str(), credential.value.as_str()),
-            ("Authorization", "Bearer secret-token")
+            scoped.headers,
+            [
+                ("x-custom".to_owned(), "value".to_owned()),
+                ("Authorization".to_owned(), "Bearer secret-token".to_owned()),
+            ]
         );
     }
 }

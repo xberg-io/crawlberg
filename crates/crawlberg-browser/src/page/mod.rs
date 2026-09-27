@@ -72,11 +72,11 @@ impl Page {
                 context.proxy_url.as_deref(),
                 http_client.ssrf.clone(),
             );
-            // ~keep The credential is set on the context's client before any page exists,
-            // ~keep so it is already there to copy; the stealth client must scope it the same way.
+            // ~keep The scoped headers are set on the context's client before any page exists,
+            // ~keep so they are already there to copy; the stealth client must scope them the same way.
             if let (Ok(source), Ok(mut target)) = (
-                http_client.origin_credential.try_read(),
-                stealth.origin_credential.try_write(),
+                http_client.origin_headers.try_read(),
+                stealth.origin_headers.try_write(),
             ) {
                 target.clone_from(&source);
             }

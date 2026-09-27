@@ -82,18 +82,40 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
     }
 }
 
-/// The credential header for the native browser, scoped to the seed's host.
+/// The headers a browser adds to a request for `url`: the custom headers, then the
+/// credential header, which replaces a custom header of the same name. Empty unless `url`
+/// is on the seed's host.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String, String)> {
+    if !config.credential_scope.as_ref().is_some_and(|scope| scope.covers(url)) {
+        return Vec::new();
+    }
+    let credential = credential_header(config, url);
+    let mut headers: Vec<(String, String)> = config
+        .custom_headers
+        .iter()
+        .filter(|(name, _)| {
+            credential
+                .as_ref()
+                .is_none_or(|(own, _)| !own.eq_ignore_ascii_case(name))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    headers.extend(credential);
+    headers
+}
+
+/// The seed-host headers for the native browser, scoped to the seed's host.
 ///
-/// ~keep The native clients add it per request after checking the host, the same rule as
-/// ~keep `credential_header`; `extra_headers` would send it to every host the page loads from.
+/// ~keep The native clients add them per request after checking the host, the same rule as
+/// ~keep `seed_host_headers`; `extra_headers` would send them to every host the page loads from.
 #[cfg(feature = "browser-native")]
-pub(crate) fn origin_credential(config: &CrawlConfig) -> Option<crawlberg_browser::adapter::OriginCredential> {
+pub(crate) fn origin_headers(config: &CrawlConfig) -> Option<crawlberg_browser::adapter::OriginHeaders> {
     let scope = config.credential_scope.as_ref()?;
-    let (name, value) = credential_header(config, &scope.seed)?;
-    Some(crawlberg_browser::adapter::OriginCredential {
+    let headers = seed_host_headers(config, &scope.seed);
+    (!headers.is_empty()).then(|| crawlberg_browser::adapter::OriginHeaders {
         host: scope.host().to_owned(),
-        name,
-        value,
+        headers,
     })
 }
 
@@ -207,6 +229,37 @@ mod tests {
         assert!(!is_credentialed(&config, &url("http://other.test/a")));
         let bare = config_with(CredentialScope::for_seed(&url("http://example.com/"), None), None);
         assert!(!is_credentialed(&bare, &url("http://example.com/a")));
+    }
+
+    #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+    #[test]
+    fn the_custom_headers_go_to_the_seed_host_only_and_the_credential_replaces_one_of_its_name() {
+        let config = CrawlConfig {
+            custom_headers: std::collections::HashMap::from([
+                ("authorization".to_owned(), "custom".to_owned()),
+                ("x-custom".to_owned(), "value".to_owned()),
+            ]),
+            ..config_with(url_scope(), None)
+        };
+
+        let mut seed_host = seed_host_headers(&config, &url("https://example.com:8443/a"));
+        seed_host.sort();
+        assert_eq!(
+            seed_host,
+            [
+                ("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned()),
+                ("x-custom".to_owned(), "value".to_owned()),
+            ]
+        );
+        assert!(seed_host_headers(&config, &url("http://other.test/a")).is_empty());
+        let unadmitted = CrawlConfig {
+            credential_scope: None,
+            ..config
+        };
+        assert!(
+            seed_host_headers(&unadmitted, &url("http://example.com/a")).is_empty(),
+            "no scope means no headers"
+        );
     }
 
     #[test]

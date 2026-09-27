@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use crate::net::cookies::CookieJar;
-use crate::net::credential::{OriginCredential, refuse_userinfo, without_userinfo};
+use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
@@ -198,7 +198,7 @@ pub struct HttpClient {
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
     /// The credential header the embedder scoped to one host; sent only to that host.
-    pub origin_credential: RwLock<Option<OriginCredential>>,
+    pub origin_headers: RwLock<Option<OriginHeaders>>,
     pub interceptor: RwLock<Option<Box<dyn RequestInterceptor + Send + Sync>>>,
     pub on_request: RwLock<Vec<RequestCallback>>,
     pub on_response: RwLock<Vec<ResponseCallback>>,
@@ -237,7 +237,7 @@ impl HttpClient {
             cookie_jar,
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
-            origin_credential: RwLock::new(None),
+            origin_headers: RwLock::new(None),
             interceptor: RwLock::new(None),
             on_request: RwLock::new(Vec::new()),
             on_response: RwLock::new(Vec::new()),
@@ -431,11 +431,12 @@ impl HttpClient {
             }
         }
 
-        if let Some(credential) = self.origin_credential.read().await.as_ref()
-            && let Some((name, value)) = credential.header_for(url)
-            && let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value))
-        {
-            headers.insert(name, value);
+        if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
+            for (name, value) in origin_headers.headers_for(url) {
+                if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+                    headers.insert(name, value);
+                }
+            }
         }
 
         headers
@@ -478,9 +479,9 @@ impl HttpClient {
         *self.extra_headers.write().await = headers;
     }
 
-    /// Scope a credential header to one host. See [`OriginCredential`].
-    pub async fn set_origin_credential(&self, credential: Option<OriginCredential>) {
-        *self.origin_credential.write().await = credential;
+    /// Scope headers, such as a credential, to one host. See [`OriginHeaders`].
+    pub async fn set_origin_headers(&self, origin_headers: Option<OriginHeaders>) {
+        *self.origin_headers.write().await = origin_headers;
     }
 
     pub fn active_requests(&self) -> u32 {
@@ -1038,7 +1039,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_origin_credential_reaches_its_host_and_no_other() {
+    async fn the_origin_headers_reach_their_host_and_no_other() {
         let (other, other_requests) =
             spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
         let other_port = other.rsplit(':').next().expect("port").to_owned();
@@ -1049,10 +1050,9 @@ mod tests {
         let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
         let client = client_with(Arc::new(RecordingValidator::default()));
         client
-            .set_origin_credential(Some(OriginCredential {
+            .set_origin_headers(Some(OriginHeaders {
                 host: "127.0.0.1".to_owned(),
-                name: "Authorization".to_owned(),
-                value: "Basic dXNlcjpwdw==".to_owned(),
+                headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
             }))
             .await;
 

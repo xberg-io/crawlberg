@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use crate::net::OriginCredential;
+pub use crate::net::OriginHeaders;
 pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
 pub use crate::page::PageError;
 
@@ -77,11 +77,12 @@ pub struct NativeBrowserConfig {
     /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
     /// not be able to point the browser at local files.
     pub allow_file_access: bool,
-    /// A credential header sent only to one host, on every request and redirect hop there.
+    /// Headers sent only to one host, such as a credential, on every request and redirect
+    /// hop there, including a page script's `fetch()` and module imports.
     ///
-    /// Unlike `extra_headers`, which every host receives, this never reaches a third-party
+    /// Unlike `extra_headers`, which every host receives, these never reach a third-party
     /// subresource or a cross-host redirect target.
-    pub origin_credential: Option<OriginCredential>,
+    pub origin_headers: Option<OriginHeaders>,
 }
 
 impl Default for NativeBrowserConfig {
@@ -102,7 +103,7 @@ impl Default for NativeBrowserConfig {
             capture_network_events: false,
             ssrf: None,
             allow_file_access: false,
-            origin_credential: None,
+            origin_headers: None,
         }
     }
 }
@@ -342,7 +343,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         .await;
     context
         .http_client
-        .set_origin_credential(config.origin_credential.clone())
+        .set_origin_headers(config.origin_headers.clone())
         .await;
 
     for cookie in &config.prior_cookies {

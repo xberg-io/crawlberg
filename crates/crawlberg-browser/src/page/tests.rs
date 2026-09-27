@@ -888,15 +888,11 @@ async fn a_fetch_redirect_whose_location_has_userinfo_is_followed_without_it() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_stealth_page_scopes_the_context_credential_like_the_plain_client() {
     let context = BrowserContext::with_ssrf("test".to_string(), None, true, None, Arc::new(AllowAll), false);
-    let credential = crate::net::OriginCredential {
+    let credential = crate::net::OriginHeaders {
         host: "example.com".to_owned(),
-        name: "Authorization".to_owned(),
-        value: "Basic dXNlcjpwdw==".to_owned(),
+        headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
     };
-    context
-        .http_client
-        .set_origin_credential(Some(credential.clone()))
-        .await;
+    context.http_client.set_origin_headers(Some(credential.clone())).await;
 
     let page = Page::new("page-1".to_string(), Arc::new(context));
 
@@ -904,5 +900,162 @@ async fn a_stealth_page_scopes_the_context_credential_like_the_plain_client() {
         .stealth_client
         .as_ref()
         .expect("a stealth context gives the page a stealth client");
-    assert_eq!(stealth.origin_credential.read().await.as_ref(), Some(&credential));
+    assert_eq!(stealth.origin_headers.read().await.as_ref(), Some(&credential));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_fetches_and_module_imports_carry_the_credential_only_on_its_host() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let other = format!("http://localhost:{}", addr.port());
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 0;\
+         fetch('/data', {{headers: {{'X-Api-Key': 'page-value'}}}}).finally(() => globalThis.fetched++);\
+         fetch('{other}/elsewhere').finally(() => globalThis.fetched++);</script>\
+         <script type=\"module\">import '/near.js'; import '/hop.js';</script></body></html>"
+    );
+    // ~keep A cross-host module redirect: reqwest keeps a custom-named header across hosts,
+    // ~keep so only the loader's own per-hop check keeps it off the other host. The Location's
+    // ~keep userinfo must not become a Basic header either.
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://user:s3cret@localhost:{}/far.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        addr.port()
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", &html)),
+            ("/data", &ok_response("application/json", "{}")),
+            ("/elsewhere", &ok_response("application/json", "{}")),
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/hop.js", &redirect),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ]),
+    );
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    context
+        .http_client
+        .set_origin_headers(Some(crate::net::OriginHeaders {
+            host: "127.0.0.1".to_owned(),
+            headers: vec![("X-Api-Key".to_owned(), "k3y".to_owned())],
+        }))
+        .await;
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    assert_eq!(
+        global(
+            &mut page,
+            "JSON.stringify([globalThis.fetched, !!globalThis.near, !!globalThis.far])"
+        ),
+        serde_json::json!("[2,true,true]"),
+        "both fetches must settle and both modules must run"
+    );
+    let requests = requests.lock().expect("lock");
+    let request_for = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .to_lowercase()
+    };
+    for path in ["/data", "/near.js", "/hop.js"] {
+        assert_eq!(
+            request_for(path).matches("x-api-key:").collect::<Vec<_>>().len(),
+            1,
+            "{path} carries the header once: {}",
+            request_for(path)
+        );
+        assert!(
+            request_for(path).contains("x-api-key: k3y"),
+            "{path} is on the credential's host and must carry it: {}",
+            request_for(path)
+        );
+    }
+    for path in ["/elsewhere", "/far.js"] {
+        assert!(
+            !request_for(path).contains("x-api-key") && !request_for(path).contains("authorization:"),
+            "{path} is on another host and must carry no credential: {}",
+            request_for(path)
+        );
+    }
+}
+
+/// Refuses every URL on one host.
+#[derive(Debug)]
+struct RefuseHost(&'static str);
+
+#[async_trait::async_trait]
+impl SsrfValidator for RefuseHost {
+    async fn validate(&self, url: &Url) -> Result<(), String> {
+        if url.host_str() == Some(self.0) {
+            return Err(format!("{} is refused", self.0));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_is_checked_against_the_ssrf_policy() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let html = "<html><body><script type=\"module\">import '/near.js'; import '/hop.js';</script></body></html>";
+    let redirect = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/far.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        addr.port()
+    );
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("/", &ok_response("text/html", html)),
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/hop.js", &redirect),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ]),
+    );
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RefuseHost("localhost")),
+        false,
+    );
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.iter().any(|request| request.starts_with("GET /hop.js ")),
+        "the redirecting module must have been requested: {requests:?}"
+    );
+    assert!(
+        !requests.iter().any(|request| request.starts_with("GET /far.js ")),
+        "a module redirect to a refused host must never reach the network: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_loop_stops_after_ten_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let html = "<html><body><script type=\"module\">import '/loop.js';</script></body></html>";
+    let redirect = "HTTP/1.1 302 Found\r\nLocation: /loop.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[("/", &ok_response("text/html", html)), ("/loop.js", redirect)]),
+    );
+    let mut page = test_page();
+
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+
+    let loops = requests
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter(|request| request.starts_with("GET /loop.js "))
+        .count();
+    assert_eq!(loops, 11, "the first request and ten redirects, then the load stops");
 }

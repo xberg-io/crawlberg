@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
+use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
@@ -47,7 +47,6 @@ pub(super) async fn page_fetch(
     }
 
     apply_prior_cookies(page, prior_cookies).await;
-    apply_extra_headers(page, config).await?;
 
     let timeout = config.browser.timeout;
 
@@ -138,25 +137,6 @@ async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&
             let _ = page.execute(params).await;
         }
     }
-}
-
-/// Install the configured custom headers on the page.
-///
-/// ~keep Credentials are not among them: the request interception adds them per request,
-/// ~keep on the seed's host only, so a third-party subresource never receives them.
-async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
-    let mut extra_headers = serde_json::Map::new();
-    for (k, v) in &config.custom_headers {
-        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    if extra_headers.is_empty() {
-        return Ok(());
-    }
-    let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-    page.execute(params)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))
-        .map(|_| ())
 }
 
 /// Turn the navigation result and the interceptor's verdict into one error.

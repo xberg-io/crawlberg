@@ -24,7 +24,7 @@ use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers};
 use tokio_stream::StreamExt;
 
 use crate::error::CrawlError;
-use crate::net::credentials::credential_header;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::net::userinfo;
 use crate::types::CrawlConfig;
@@ -74,22 +74,26 @@ async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<url::Url
     Ok(parsed)
 }
 
-/// The request's own headers plus the credential header `url` gets, if it gets one.
+/// The request's own headers plus the seed-host headers `url` gets, if it gets any: the
+/// custom headers and the credential.
 ///
-/// ~keep The header goes on this one request only, never through
-/// ~keep `Network.setExtraHTTPHeaders`, which would give it to every host the page loads
-/// ~keep from. A redirect hop is paused again and gets its own decision.
-fn headers_with_credentials(config: &CrawlConfig, url: &url::Url, headers: &Headers) -> Option<Vec<HeaderEntry>> {
-    let (name, value) = credential_header(config, url)?;
+/// ~keep They go on this one request only, never through `Network.setExtraHTTPHeaders`,
+/// ~keep which would give them to every host the page loads from. A redirect hop is paused
+/// ~keep again and gets its own decision.
+fn headers_with_seed_host_headers(config: &CrawlConfig, url: &url::Url, headers: &Headers) -> Option<Vec<HeaderEntry>> {
+    let added = seed_host_headers(config, url);
+    if added.is_empty() {
+        return None;
+    }
     let mut entries: Vec<HeaderEntry> = headers
         .inner()
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(existing, _)| !existing.eq_ignore_ascii_case(&name))
+        .filter(|(existing, _)| !added.iter().any(|(name, _)| existing.eq_ignore_ascii_case(name)))
         .filter_map(|(existing, value)| value.as_str().map(|value| HeaderEntry::new(existing.clone(), value)))
         .collect();
-    entries.push(HeaderEntry::new(name, value));
+    entries.extend(added.into_iter().map(|(name, value)| HeaderEntry::new(name, value)));
     Some(entries)
 }
 
@@ -98,7 +102,8 @@ fn headers_with_credentials(config: &CrawlConfig, url: &url::Url, headers: &Head
 /// addresses (loopback, RFC1918, link-local, cloud metadata, non-http(s)
 /// schemes) or carrying userinfo are failed with `BlockedByClient` and the first one is
 /// recorded so the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
-/// A request to the seed's host is continued with the caller's credential header.
+/// A request to the seed's host is continued with the custom headers and the caller's
+/// credential header.
 pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
     config: &CrawlConfig,
@@ -125,7 +130,7 @@ pub(crate) async fn start_ssrf_interception(
             match ssrf_verdict(&request_url, &listener_config.ssrf).await {
                 Ok(parsed) => {
                     let mut params = ContinueRequestParams::new(request_id);
-                    params.headers = headers_with_credentials(&listener_config, &parsed, &event.request.headers);
+                    params.headers = headers_with_seed_host_headers(&listener_config, &parsed, &event.request.headers);
                     let _ = listener_page.execute(params).await;
                 }
                 Err((recorded_url, reason)) => {
@@ -221,10 +226,10 @@ mod tests {
     }
 
     #[test]
-    fn the_credential_replaces_a_page_header_of_the_same_name_and_keeps_the_rest() {
+    fn the_seed_host_headers_replace_page_headers_of_the_same_name_and_keep_the_rest() {
         use chromiumoxide::cdp::browser_protocol::network::Headers;
 
-        use super::headers_with_credentials;
+        use super::headers_with_seed_host_headers;
         use crate::types::{AuthConfig, CrawlConfig};
 
         let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
@@ -232,12 +237,15 @@ mod tests {
             auth: Some(AuthConfig::Bearer {
                 token: "tok".to_owned(),
             }),
+            custom_headers: std::collections::HashMap::from([("X-Custom".to_owned(), "configured".to_owned())]),
             credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
             ..CrawlConfig::default()
         };
-        let headers = Headers::new(serde_json::json!({"Cookie": "a=b", "authorization": "page-value"}));
+        let headers = Headers::new(serde_json::json!({
+            "Cookie": "a=b", "authorization": "page-value", "x-custom": "page-value"
+        }));
 
-        let entries = headers_with_credentials(&config, &seed, &headers).expect("the seed host gets the credential");
+        let entries = headers_with_seed_host_headers(&config, &seed, &headers).expect("the seed host gets the headers");
         let pairs: Vec<(&str, &str)> = entries
             .iter()
             .map(|entry| (entry.name.as_str(), entry.value.as_str()))
@@ -251,8 +259,13 @@ mod tests {
             .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
             .collect();
         assert_eq!(authorization, vec![&("Authorization", "Bearer tok")], "{pairs:?}");
+        let custom: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("x-custom"))
+            .collect();
+        assert_eq!(custom, vec![&("X-Custom", "configured")], "{pairs:?}");
 
         let other = url::Url::parse("http://other.test/").expect("test URL must parse");
-        assert!(headers_with_credentials(&config, &other, &headers).is_none());
+        assert!(headers_with_seed_host_headers(&config, &other, &headers).is_none());
     }
 }

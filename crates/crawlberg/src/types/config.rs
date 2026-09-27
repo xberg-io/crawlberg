@@ -150,7 +150,7 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request.
+    /// Custom HTTP headers to send with each request. A browser sends them only to the seed URL's host.
     #[serde(default)]
     pub custom_headers: HashMap<String, String>,
     /// Timeout for individual HTTP requests (in milliseconds when serialized).

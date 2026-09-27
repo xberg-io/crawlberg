@@ -33,6 +33,18 @@ title: "Changelog"
   chromiumoxide backend refuses such a request too. A URL that does not parse is reported
   without its text. (#347, #357, #382)
 
+- **Custom headers reached every host a browser page loaded from.** Both browser backends sent
+  `custom_headers` to third-party subresources and cross-host redirect targets. They now go only
+  to requests on the seed's host, the same as the credentials. (#393)
+
+- **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
+  module import to the seed's host now carries the credentials and the custom headers, as it does
+  in Chrome. A module redirect to another host drops them, and every module redirect is now
+  checked against the SSRF policy. (#409)
+
+- **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
+  of the page's links instead of appearing with its unresolved text as its URL. (#394)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were

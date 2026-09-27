@@ -228,9 +228,9 @@ async fn mount_seed_and_third_party(seed: &MockServer, other: &MockServer) {
     mount(other, "/third.png", png()).await;
 }
 
-/// The seed host got `expected` as its `Authorization` on the page and its image, and the
-/// third-party image was requested without one.
-async fn assert_scoped_authorization(seed: &MockServer, other: &MockServer, expected: &str) {
+/// The seed host got `expected` as its `Authorization`, and the configured custom header, on
+/// the page and its image, and the third-party image was requested without either.
+async fn assert_scoped_headers(seed: &MockServer, other: &MockServer, expected: &str) {
     for at in ["/", "/seed.png"] {
         let requests = requests_for(seed, at).await;
         assert!(!requests.is_empty(), "{at} on the seed host must have been requested");
@@ -239,6 +239,11 @@ async fn assert_scoped_authorization(seed: &MockServer, other: &MockServer, expe
                 header(headers, "authorization"),
                 Some(expected),
                 "{at} on the seed host carries the configured credential: {headers:?}"
+            );
+            assert_eq!(
+                header(headers, CUSTOM_HEADER),
+                Some(CUSTOM_VALUE),
+                "{at} on the seed host carries the custom header: {headers:?}"
             );
         }
     }
@@ -253,14 +258,23 @@ async fn assert_scoped_authorization(seed: &MockServer, other: &MockServer, expe
             None,
             "a third-party request never gets the credential: {headers:?}"
         );
+        assert_eq!(
+            header(headers, CUSTOM_HEADER),
+            None,
+            "a third-party request never gets the custom header: {headers:?}"
+        );
     }
 }
+
+const CUSTOM_HEADER: &str = "x-canary-header";
+const CUSTOM_VALUE: &str = "custom-canary";
 
 fn bearer_config() -> CrawlConfig {
     CrawlConfig {
         auth: Some(AuthConfig::Bearer {
             token: BEARER.to_owned(),
         }),
+        custom_headers: std::collections::HashMap::from([(CUSTOM_HEADER.to_owned(), CUSTOM_VALUE.to_owned())]),
         ..browser_config()
     }
 }
@@ -268,13 +282,13 @@ fn bearer_config() -> CrawlConfig {
 const BEARER: &str = "bearer-canary";
 
 #[tokio::test]
-async fn configured_bearer_auth_goes_to_seed_host_requests_only() {
+async fn configured_bearer_auth_and_custom_headers_go_to_seed_host_requests_only() {
     let seed = MockServer::start().await;
     let other = MockServer::start().await;
     mount_seed_and_third_party(&seed, &other).await;
 
     let Some(outcome) = scrape_in_browser_with(
-        "configured_bearer_auth_goes_to_seed_host_requests_only",
+        "configured_bearer_auth_and_custom_headers_go_to_seed_host_requests_only",
         bearer_config(),
         &format!("{}/", seed.uri()),
     )
@@ -284,12 +298,12 @@ async fn configured_bearer_auth_goes_to_seed_host_requests_only() {
     };
     outcome.expect("scrape must succeed");
 
-    assert_scoped_authorization(&seed, &other, &format!("Bearer {BEARER}")).await;
+    assert_scoped_headers(&seed, &other, &format!("Bearer {BEARER}")).await;
 }
 
 #[cfg(feature = "interact")]
 #[tokio::test]
-async fn configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_only() {
+async fn configured_bearer_auth_and_custom_headers_in_an_interaction_go_to_seed_host_requests_only() {
     let seed = MockServer::start().await;
     let other = MockServer::start().await;
     mount_seed_and_third_party(&seed, &other).await;
@@ -298,7 +312,7 @@ async fn configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_onl
     match crawlberg::interact(&engine, &format!("{}/", seed.uri()), Vec::new()).await {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(
-                "configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_only",
+                "configured_bearer_auth_and_custom_headers_in_an_interaction_go_to_seed_host_requests_only",
                 &message,
             );
             return;
@@ -308,5 +322,5 @@ async fn configured_bearer_auth_in_an_interaction_goes_to_seed_host_requests_onl
         }
     }
 
-    assert_scoped_authorization(&seed, &other, &format!("Bearer {BEARER}")).await;
+    assert_scoped_headers(&seed, &other, &format!("Bearer {BEARER}")).await;
 }

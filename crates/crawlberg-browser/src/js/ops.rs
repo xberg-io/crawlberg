@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
-use crate::net::credential::{has_userinfo, without_userinfo};
+use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -74,6 +74,14 @@ impl JsOpState {
             intercept_counter: 0,
             intercept_enabled: false,
         }
+    }
+
+    /// The page client's headers scoped to one host, such as its credential. See [`OriginHeaders`].
+    pub(crate) fn origin_headers(&self) -> Option<OriginHeaders> {
+        let client = self.http_client.as_ref()?;
+        // ~keep The credential is written once, when the context is built, before any page
+        // ~keep runs script, so a busy lock here cannot hide one.
+        client.origin_headers.try_read().ok()?.clone()
     }
 }
 
@@ -508,6 +516,7 @@ struct FetchContext {
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
     proxy_url: Option<String>,
+    origin_headers: Option<OriginHeaders>,
 }
 
 /// `None` when `url` matches one of the page's blocked-URL patterns.
@@ -544,6 +553,7 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
             .http_client
             .as_ref()
             .and_then(|c| c.proxy_url().map(|s| s.to_string())),
+        origin_headers: gs.origin_headers(),
     })
 }
 
@@ -799,8 +809,20 @@ async fn send_one_hop(
         }
     }
 
+    // ~keep Checked per hop, so a redirect to another host never carries the scoped headers.
+    let origin_headers = context
+        .origin_headers
+        .as_ref()
+        .zip(url::Url::parse(current_url).ok())
+        .map(|(origin_headers, url)| origin_headers.headers_for(&url))
+        .unwrap_or_default();
     for (k, v) in &cors.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+        if !origin_headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(k)) {
+            req = req.header(k.as_str(), v.as_str());
+        }
+    }
+    for (name, value) in origin_headers {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     if !body.is_empty() {
