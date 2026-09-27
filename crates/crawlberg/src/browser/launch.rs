@@ -324,7 +324,10 @@ mod tests {
 
         drop(UserDataDir::Persistent(dir.path().to_path_buf()));
 
-        assert!(dir.path().is_dir(), "a persistent profile directory must survive its value");
+        assert!(
+            dir.path().is_dir(),
+            "a persistent profile directory must survive its value"
+        );
     }
 
     /// A one-shot session dropped just before its runtime stops still removes its profile directory.
@@ -367,10 +370,6 @@ mod tests {
         let Some(path) = path else {
             return;
         };
-        assert!(
-            crate::browser_pool::tests::wait_until_removed(&path),
-            "a one-shot session's profile directory must not outlive its runtime: {}",
-            path.display()
-        );
+        crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path);
     }
 }

@@ -22,7 +22,7 @@ default = ["native-runtime"]
 # ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
-browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:tempfile", "native-runtime"]
+browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:sysinfo", "dep:tempfile", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 # ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
 # ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
@@ -90,6 +90,7 @@ schemars = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+sysinfo = { workspace = true, optional = true, features = ["system"] }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tl = { workspace = true }

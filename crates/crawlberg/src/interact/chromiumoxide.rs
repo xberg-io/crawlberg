@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, release_browser};
+use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser, remove_profile_dir};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -18,7 +18,17 @@ pub(super) async fn run(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let (browser, mut handler, data_dir) = launch_or_connect(config).await?;
+    run_launched(launch_or_connect(config).await?, url, actions, config).await
+}
+
+/// Run `actions` in a browser [`launch_or_connect`] returned, then tear the browser down and
+/// remove its profile directory.
+async fn run_launched(
+    (browser, mut handler, data_dir): Launched,
+    url: &str,
+    actions: &[PageAction],
+    config: &CrawlConfig,
+) -> Result<InteractionResult, CrawlError> {
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let result = run_with_browser(&browser, url, actions, config).await;
@@ -30,7 +40,9 @@ pub(super) async fn run(
         config.browser.shutdown_timeout,
     )
     .await;
-    drop(data_dir);
+    if let Some(dir) = data_dir {
+        remove_profile_dir(dir).await;
+    }
 
     result
 }
@@ -431,7 +443,10 @@ fn action_type(action: &PageAction) -> &'static str {
     }
 }
 
-async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<crate::browser_pool::ScratchProfileDir>), CrawlError> {
+/// A launched or connected browser, its CDP handler, and the profile directory of a launched one.
+type Launched = (Browser, Handler, Option<ScratchProfileDir>);
+
+async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         let (browser, handler) = Browser::connect(endpoint)
             .await
@@ -439,7 +454,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
         Ok((browser, handler, None))
     } else {
         // ~keep Removed on drop, so a failed or cancelled launch or run removes it too.
-        let user_data_dir = crate::browser_pool::ScratchProfileDir::create("crawlberg-interact-")?;
+        let user_data_dir = ScratchProfileDir::create("crawlberg-interact-")?;
 
         let proxy_url = config
             .browser
@@ -485,6 +500,35 @@ fn build_interact_launch_builder(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An interact run removes the profile directory of the Chrome it launched, with no Chrome
+    /// process left using it.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it() {
+        let config = CrawlConfig::default();
+        let launched = match launch_or_connect(&config).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let path = launched
+            .2
+            .as_ref()
+            .map(|dir| dir.path().to_path_buf())
+            .expect("a launched Chrome must have a profile directory");
+        assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
+
+        let _ = run_launched(launched, "about:blank", &[], &config).await;
+
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path)
+        })
+        .await
+        .expect("an interact run must stop its Chrome and remove its profile directory");
+    }
 
     #[test]
     fn the_interact_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {

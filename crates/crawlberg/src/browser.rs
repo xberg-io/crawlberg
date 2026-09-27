@@ -358,9 +358,6 @@ impl Drop for OneShotSession {
                     "dropping a one-shot browser session outside a Tokio runtime; its Chrome \
                      teardown is left to the process"
                 );
-                // ~keep Chrome first: dropping the handle kills it, then the directory goes.
-                drop(browser);
-                drop(data_dir);
             }
         }
     }

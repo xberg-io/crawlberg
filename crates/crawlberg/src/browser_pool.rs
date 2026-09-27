@@ -120,30 +120,35 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
     builder
 }
 
-/// How often, and for how long, a dropped [`ScratchProfileDir`] checks that its directory stays gone.
-const PROFILE_REMOVAL_INTERVAL: Duration = Duration::from_millis(200);
-const PROFILE_REMOVAL_CHECKS: u32 = 25;
-/// Consecutive checks the directory must be absent for before the watch ends.
-const PROFILE_REMOVAL_QUIET_CHECKS: u32 = 3;
+/// How long a dropped [`ScratchProfileDir`] waits for the processes it killed to exit.
+const PROFILE_USERS_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// A Chrome `--user-data-dir` in the system temp directory, removed when dropped.
 ///
-/// ~keep Not a bare `tempfile::TempDir`, whose drop makes one removal attempt. Chrome's helper
-/// ~keep processes (the network service, the GPU process) outlive the browser process for a moment
-/// ~keep and keep writing into the directory: they make a removal fail part-way with `ENOTEMPTY`, or
-/// ~keep recreate `Default/...` right after a removal succeeded. Either left a profile behind in 6 of
-/// ~keep 20 drops on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
-/// ~keep process group with no hook to change that, so the helpers cannot be killed as a group; a
-/// ~keep thread instead removes the directory again until it has stayed gone.
+/// ~keep The drop kills every process still using the directory before it removes it. Chrome's
+/// ~keep helper processes (renderers, the GPU process, the network and storage services) outlive
+/// ~keep the browser process for a moment and keep writing into the directory, so a removal made
+/// ~keep while they run fails part-way or is undone, which left a profile behind in 6 of 20 drops
+/// ~keep on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
+/// ~keep process group and kills only the browser process, which orphans the helpers. They are
+/// ~keep found by the `--user-data-dir` flag that Chrome passes to each of them, which still names
+/// ~keep them after the browser process is gone.
 pub(crate) struct ScratchProfileDir(std::path::PathBuf);
 
 impl ScratchProfileDir {
     /// Create a fresh directory. The random suffix avoids Chrome `SingletonLock` collisions.
+    ///
+    /// ~keep The path is canonical, so the flag Chrome passes to its helpers equals the one
+    /// ~keep `stop_processes_using` looks for even when the temp directory is behind a symlink.
     pub(crate) fn create(prefix: &str) -> Result<Self, CrawlError> {
         tempfile::Builder::new()
             .prefix(prefix)
             .tempdir()
-            .map(|dir| Self(dir.keep()))
+            .map(|dir| {
+                let path = dir.keep();
+                Self(std::fs::canonicalize(&path).unwrap_or(path))
+            })
             .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
     }
 
@@ -152,31 +157,56 @@ impl ScratchProfileDir {
     }
 }
 
-/// Remove `path` until it has been absent for [`PROFILE_REMOVAL_QUIET_CHECKS`] checks in a row.
-fn remove_profile_dir_until_quiet(path: &std::path::Path) {
-    let mut quiet = 0;
-    for _ in 0..PROFILE_REMOVAL_CHECKS {
-        if path.exists() {
-            quiet = 0;
-            let _ = std::fs::remove_dir_all(path);
-        } else {
-            quiet += 1;
-            if quiet >= PROFILE_REMOVAL_QUIET_CHECKS {
-                return;
-            }
+/// The flag a Chrome process using `dir` as its profile carries on its command line.
+///
+/// ~keep Formatted as chromiumoxide formats it for the browser process, which Chrome copies to
+/// ~keep every helper unchanged.
+pub(crate) fn user_data_dir_flag(dir: &std::path::Path) -> String {
+    format!("--user-data-dir={}", dir.display())
+}
+
+/// Kill every process whose command line names `dir` as its profile, and wait until none is left.
+///
+/// ~keep A killed process that has not been reaped yet has an empty command line, so it drops out
+/// ~keep of the scan as soon as it can no longer write.
+fn stop_processes_using(dir: &std::path::Path) {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    let flag = std::ffi::OsString::from(user_data_dir_flag(dir));
+    let refresh = ProcessRefreshKind::nothing()
+        .without_tasks()
+        .with_cmd(UpdateKind::Always);
+    let deadline = std::time::Instant::now() + PROFILE_USERS_EXIT_TIMEOUT;
+    let mut system = System::new();
+    loop {
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
+        let mut users = system
+            .processes()
+            .values()
+            .filter(|process| process.cmd().contains(&flag))
+            .peekable();
+        if users.peek().is_none() {
+            return;
         }
-        std::thread::sleep(PROFILE_REMOVAL_INTERVAL);
-    }
-    if path.exists() {
-        tracing::warn!(dir = %path.display(), "failed to remove the Chrome profile directory");
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
+            return;
+        }
+        for process in users {
+            process.kill();
+        }
+        std::thread::sleep(PROFILE_USERS_POLL_INTERVAL);
     }
 }
 
 impl Drop for ScratchProfileDir {
     fn drop(&mut self) {
-        let path = std::mem::take(&mut self.0);
-        let _ = std::fs::remove_dir_all(&path);
-        std::thread::spawn(move || remove_profile_dir_until_quiet(&path));
+        stop_processes_using(&self.0);
+        if let Err(error) = std::fs::remove_dir_all(&self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(dir = %self.0.display(), %error, "failed to remove the Chrome profile directory");
+        }
     }
 }
 
@@ -250,8 +280,6 @@ pub(crate) struct ExternalTabCleanup {
 struct BrowserState {
     browser: Browser,
     handler_handle: JoinHandle<()>,
-    /// ~keep Declared after `browser` so a pool dropped without `shutdown` kills Chrome before
-    /// ~keep the directory goes (xberg-io/crawlberg#415).
     user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
 }
@@ -401,11 +429,11 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
     BrowserCloseOutcome::Exited
 }
 
-/// Remove a Chrome profile directory on a blocking thread.
+/// Stop the Chrome processes using a profile directory and remove it, on a blocking thread.
 ///
 /// ~keep Not on the executor thread: a recursive delete there ran while the pool's state mutex
 /// ~keep was held, stalling every waiting `acquire_page`.
-async fn remove_profile_dir(dir: ScratchProfileDir) {
+pub(crate) async fn remove_profile_dir(dir: ScratchProfileDir) {
     let _ = tokio::task::spawn_blocking(move || drop(dir)).await;
 }
 
@@ -535,7 +563,6 @@ impl BrowserPool {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
                 old.handler_handle.abort();
-                drop(old.browser);
                 if let Some(dir) = old.user_data_dir {
                     remove_profile_dir(dir).await;
                 }
