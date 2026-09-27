@@ -502,6 +502,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_tag_with_128k_attributes_after_a_bogus_cdata_opener_converts_in_under_ten_seconds() {
+        // ~keep Measured before the fix: 6.7 s in a release build after `<svg><!<![CDATA[>`, as
+        // ~keep the bound took the bogus comment for a CDATA section and stayed off.
+        let wide: String = (0..128_000).map(|i| format!(" a{i}")).collect();
+        for prefix in ["<!", "<!-", "<![CDA"] {
+            let html = format!("<p>before</p><svg>{prefix}<![CDATA[><g{wide}></g></svg><p>after</p>");
+            let started = std::time::Instant::now();
+            let md = markdown_at(&html, "https://example.com/").await;
+            let elapsed = started.elapsed();
+            assert!(md.contains("after"), "the page is converted: {md}");
+            assert!(
+                elapsed < std::time::Duration::from_secs(10),
+                "after {prefix:?}: took {elapsed:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_tag_with_128k_attributes_converts_in_under_ten_seconds() {
         // ~keep Measured at base: 5.3 s in a release build, and quadratic. With the limit the
         // ~keep conversion takes well under a second in a debug build; the bound leaves room

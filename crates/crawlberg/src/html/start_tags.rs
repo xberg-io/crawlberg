@@ -103,7 +103,7 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         open: Cell::new(None),
         raw_text: RefCell::new(Vec::new()),
         tokens: Cell::new(0),
-        cdata_asked: Cell::new(false),
+        cdata_at: Cell::new(None),
     };
     let tokenizer = Tokenizer::new(sink, TokenizerOpts::default());
     let input = BufferQueue::default();
@@ -113,8 +113,8 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         while from < piece.end {
             let tokens = tokenizer.sink.tokens.get();
             let mut text = tokenizer.sink.text.borrow_mut();
-            let cdata_asked = tokenizer.sink.cdata_asked.take();
-            let until = bound.follow(source, from..piece.end, tokens, cdata_asked, &mut text);
+            let cdata_at = tokenizer.sink.cdata_at.take();
+            let until = bound.follow(source, from..piece.end, tokens, cdata_at, &mut text);
             input.push_back(StrTendril::from(&text[from..until]));
             drop(text);
             tokenizer.sink.piece.set(from..until);
@@ -221,8 +221,9 @@ struct TagRun {
 /// ~keep token, or after an empty end tag `</>`, which emits none. In the data state every other
 /// ~keep `<` emits a token, and inside a comment, a doctype or a tag the `<` that opened it came
 /// ~keep first. A CDATA section in SVG or MathML emits a token at a NUL and stays open, and the
-/// ~keep `<` after it opens nothing and emits nothing, so no run starts inside one: html5ever
-/// ~keep says when it opens one, and it ends at the first `]]>`. From a tag's `<` to its `>`
+/// ~keep `<` after it opens nothing and emits nothing, so no run starts inside one: see
+/// ~keep [`Recorder::cdata_at`] for where one opens, and it ends at the first `]]>`. From a
+/// ~keep tag's `<` to its `>`
 /// ~keep html5ever emits only parse errors, so a token emitted since shows that the `<` opened
 /// ~keep no tag, as in raw text, and the run is dropped. The overwrite starts only once
 /// ~keep html5ever has read every byte before it without a token, and it ends at the `>` where
@@ -238,16 +239,14 @@ struct AttributeBound {
     after_lt: bool,
     /// How many tokens html5ever had emitted after it consumed the last `<`, `None` after `</>`.
     tokens_at_lt: Option<usize>,
-    /// Where the last `<` is.
-    lt_at: usize,
     /// Where the CDATA section html5ever is in ends, just past its `]]>`.
     cdata_end: Option<usize>,
 }
 
 impl AttributeBound {
     /// Follow `range` of `source` before it is fed, when html5ever has emitted `tokens` tokens
-    /// and, with `cdata_asked`, has asked whether a CDATA section may open, and overwrite in
-    /// `text` what is past the limit. Returns where the part to feed now ends: the end of
+    /// and, with `cdata_at`, has opened a CDATA section whose content starts there, and
+    /// overwrite in `text` what is past the limit. Returns where the part to feed now ends: the end of
     /// `range`, or the start of an overwrite, which waits until html5ever has read the bytes
     /// before it. A `<` is always a range of its own.
     fn follow(
@@ -255,12 +254,11 @@ impl AttributeBound {
         source: &str,
         range: Range<usize>,
         tokens: usize,
-        cdata_asked: bool,
+        cdata_at: Option<usize>,
         text: &mut Cow<'_, str>,
     ) -> usize {
         let bytes = source.as_bytes();
-        if cdata_asked && bytes[self.lt_at..].starts_with(b"<![CDATA[") {
-            let content = self.lt_at + b"<![CDATA[".len();
+        if let Some(content) = cdata_at {
             self.cdata_end = Some(
                 memmem::find(&bytes[content..], b"]]>").map_or(bytes.len(), |offset| content + offset + b"]]>".len()),
             );
@@ -316,42 +314,29 @@ impl AttributeBound {
                     continue;
                 }
             }
-            if self.overwriting {
-                if matches!(
+            let self_closing_slash = bytes[at] == b'/'
+                && matches!(
                     self.run,
                     Some(TagRun {
                         state: TagState::SelfClosing,
                         ..
                     })
-                ) && bytes[at] == b'/'
-                {
-                    if let Some(overwritten) = overwritten.take() {
-                        overwrite(text, overwritten);
-                    }
-                } else {
-                    overwritten.get_or_insert(at..at).end = at + 1;
-                }
+                );
+            if self.overwriting && !self_closing_slash {
+                overwritten.get_or_insert(at..at).end = at + 1;
             }
             at += 1;
         }
+        // ~keep An overwrite starts where an attribute starts, after an ASCII space, `/`, `=` or
+        // ~keep quote, or at a range's start, and ends at a `/`, a `>` or a range's end, so it is
+        // ~keep on character boundaries.
         if let Some(overwritten) = overwritten {
-            overwrite(text, overwritten);
+            text.to_mut()
+                .replace_range(overwritten.clone(), &" ".repeat(overwritten.len()));
         }
-        if &bytes[range.clone()] == b"<" {
-            self.after_lt = true;
-            self.lt_at = range.start;
-        }
+        self.after_lt = &bytes[range.clone()] == b"<";
         range.end
     }
-}
-
-/// Overwrite `range` of `text` with spaces.
-///
-/// ~keep An overwrite starts where an attribute starts, after an ASCII space, `/`, `=` or quote,
-/// ~keep or at a range's start, and ends at a `/`, a `>` or a range's end, so it is on character
-/// ~keep boundaries.
-fn overwrite(text: &mut Cow<'_, str>, range: Range<usize>) {
-    text.to_mut().replace_range(range.clone(), &" ".repeat(range.len()));
 }
 
 /// How many leading bytes of `rest` keep a tag in `state` with no attribute started.
@@ -414,8 +399,15 @@ struct Recorder<'h> {
     raw_text: RefCell<Vec<Range<usize>>>,
     /// How many tokens but parse errors the tokenizer has emitted.
     tokens: Cell<usize>,
-    /// Whether the tokenizer asked if a CDATA section may open here, and the answer was yes.
-    cdata_asked: Cell<bool>,
+    /// Where the content of a CDATA section the tokenizer opens starts.
+    ///
+    /// ~keep The tokenizer asks whether one may open from its markup declaration state, just past
+    /// ~keep a `<!`, and opens one when the answer is yes and `[CDATA[` follows that `<!`. A piece
+    /// ~keep starting with `![CDATA[` holds the whole marker, so the tokenizer asks while reading
+    /// ~keep it. When the piece after a `<!` is too short to tell, it asks again while reading the
+    /// ~keep next piece, which starts with `<`: that `<!` is not followed by `[CDATA[`, and no
+    /// ~keep section opens, whatever the next piece holds.
+    cdata_at: Cell<Option<usize>>,
 }
 
 impl Recorder<'_> {
@@ -552,7 +544,13 @@ impl TokenSink for Recorder<'_> {
     fn adjusted_current_node_present_but_not_in_html_namespace(&self) -> bool {
         let foreign = self.tree.adjusted_current_node_present_but_not_in_html_namespace();
         if foreign {
-            self.cdata_asked.set(true);
+            let piece = self.piece.take();
+            let text = self.text.borrow();
+            let bytes = text.as_bytes();
+            if piece.start > 0 && bytes[piece.start - 1] == b'<' && bytes[piece.start..].starts_with(b"![CDATA[") {
+                self.cdata_at.set(Some(piece.start + b"![CDATA[".len()));
+            }
+            self.piece.set(piece);
         }
         foreign
     }
@@ -1001,6 +999,27 @@ mod tests {
                 tags,
                 [("g".to_owned(), ATTRIBUTE_LIMIT), ("a".to_owned(), 1)],
                 "after {cdata:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn should_bound_a_wide_tag_after_a_bogus_comment_that_reads_like_cdata() {
+        // ~keep The tokenizer asks whether a CDATA section may open about the first `<!`, while
+        // ~keep it reads the second `<`, then reads a bogus comment to the `>`. No section opens.
+        let wide = attributes(3 * ATTRIBUTE_LIMIT, "");
+        for prefix in ["<!", "<!-", "<![CDA", "<!DOCTY"] {
+            let html = format!("<svg>{prefix}<![CDATA[><g{wide}><a href=y>");
+            let read = scan(&html, true, |name| name == "g" || name == "a");
+            let tags: Vec<_> = read
+                .tags
+                .iter()
+                .map(|tag| (tag.name.to_owned(), tag.attrs.len()))
+                .collect();
+            assert_eq!(
+                tags,
+                [("g".to_owned(), ATTRIBUTE_LIMIT), ("a".to_owned(), 1)],
+                "after {prefix:?}"
             );
         }
     }
