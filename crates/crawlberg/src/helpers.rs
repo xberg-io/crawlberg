@@ -240,7 +240,7 @@ pub(crate) async fn fetch_robots_outcome(
 ) -> RobotsOutcome {
     let Ok(parsed) = Url::parse(url) else {
         return RobotsOutcome::DisallowAll {
-            reason: format!("invalid URL: {url}"),
+            reason: format!("invalid URL: {}", crate::net::redact_url_credentials(url)),
             denial: RobotsDenial::Sustained,
         };
     };
@@ -265,6 +265,18 @@ mod tests {
 
     fn is_allow_all(outcome: &RobotsOutcome) -> bool {
         matches!(outcome, RobotsOutcome::AllowAll)
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_robots_address_is_named_through_the_redactor() {
+        let config = CrawlConfig::builder().allow_private_networks(false).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+        let outcome = fetch_robots_outcome("alice@example.com", &config, &client, "ua").await;
+        assert_eq!(
+            outcome.disallow_all_reason(),
+            Some("invalid URL: [address hidden: it may carry credentials]"),
+            "an address that does not parse must be refused without showing its credential"
+        );
     }
 
     #[test]

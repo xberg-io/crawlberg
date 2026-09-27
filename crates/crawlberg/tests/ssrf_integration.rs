@@ -16,7 +16,13 @@
 //! for SSRF enforcement; `scrape` goes through the Tower stack which delegates
 //! policy checking to `validate_url` inside `http_fetch`.
 
-use crawlberg::{CrawlConfig, CrawlError, HostMatcher, SsrfError, SsrfPolicy, create_engine, scrape, validate_url};
+use std::sync::{Arc, Mutex};
+
+use crawlberg::traits::{CompleteEvent, ErrorEvent, EventEmitter, PageEvent};
+use crawlberg::{
+    CrawlConfig, CrawlEngine, CrawlError, CrawlEvent, EventSink, HostMatcher, SsrfError, SsrfPolicy, create_engine,
+    scrape, validate_url,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -426,4 +432,205 @@ async fn too_many_redirects_refused() {
             panic!("expected SsrfPolicyViolation(too many redirects) or Ok(302), got: {other:?}");
         }
     }
+}
+
+/// The placeholder the credential redactor puts in place of an address it cannot read as one URL.
+const HIDDEN: &str = "[address hidden: it may carry credentials]";
+
+/// Credential-bearing addresses a caller can pass: `(address, secrets, url field, reason)`.
+/// The url field and reason are what a scrape's SSRF refusal must carry.
+const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
+    // Opaque: parses as scheme `user` with no host.
+    ("user:token@host", &["token"], HIDDEN, "disallowed scheme: unrecognized"),
+    ("KEY:@h:1", &["key"], HIDDEN, "disallowed scheme: unrecognized"),
+    // Real userinfo under a scheme the policy does not recognise.
+    (
+        "foo://alice:hunter2@example.com/",
+        &["alice", "hunter2"],
+        "foo://***:***@example.com/",
+        "disallowed scheme: unrecognized",
+    ),
+    // No scheme at all: the address fails to parse.
+    (
+        "alice@example.com",
+        &["alice"],
+        HIDDEN,
+        "invalid URL: relative URL without a base",
+    ),
+    // A percent-encoded `@` inside the password.
+    (
+        "user:hunt%40er2@host",
+        &["hunt", "er2"],
+        HIDDEN,
+        "disallowed scheme: unrecognized",
+    ),
+    (
+        "foo://alice:hunt%40er2@example.com/",
+        &["alice", "hunt", "er2"],
+        "foo://***:***@example.com/",
+        "disallowed scheme: unrecognized",
+    ),
+];
+
+/// ~keep Set explicitly rather than read from `CRAWLBERG_ALLOW_PRIVATE_NETWORK`: see the module
+/// doc. Every row is refused before the private-network check, so the value does not decide
+/// the outcome, but reading the environment would still race the serial env tests.
+fn credential_config() -> CrawlConfig {
+    CrawlConfig::builder().allow_private_networks(false).build()
+}
+
+/// The secrets from `secrets` that `text` shows, compared case-insensitively.
+fn shown_secrets<'a>(text: &str, secrets: &[&'a str]) -> Vec<&'a str> {
+    let lowered = text.to_lowercase();
+    secrets.iter().copied().filter(|s| lowered.contains(s)).collect()
+}
+
+/// A scrape builds its SSRF refusal in the tower fetch, not in `http_fetch`, so the whole
+/// rendered error is checked through the public `scrape` call.
+#[tokio::test]
+async fn scrape_refusal_hides_the_credential_in_the_whole_error() {
+    let engine = engine(credential_config());
+    let mut failures = Vec::new();
+    for (target, secrets, expected_url, expected_reason) in CREDENTIAL_ROWS {
+        let err = match scrape(&engine, target).await {
+            Err(err) => err,
+            Ok(_) => panic!("{target} must be refused, got Ok"),
+        };
+        let rendered = format!("{err}\n{err:?}");
+        let shown = shown_secrets(&rendered, secrets);
+        if !shown.is_empty() {
+            failures.push(format!("{target}: shows {shown:?} in {rendered}"));
+        }
+        match &err {
+            CrawlError::SsrfPolicyViolation { url, reason, .. } if url == expected_url && reason == expected_reason => {
+            }
+            other => failures.push(format!(
+                "{target}: expected url {expected_url:?} and reason {expected_reason:?}, got {other:?}"
+            )),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "scrape credential rows failed:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// Every error message the engine reported, by the channel that carried it.
+#[derive(Clone, Default)]
+struct ErrorRecorder {
+    messages: Arc<Mutex<Vec<(&'static str, String)>>>,
+}
+
+impl ErrorRecorder {
+    fn push(&self, channel: &'static str, message: String) {
+        self.messages
+            .lock()
+            .expect("recorder must not be poisoned")
+            .push((channel, message));
+    }
+
+    fn take(&self) -> Vec<(&'static str, String)> {
+        std::mem::take(&mut *self.messages.lock().expect("recorder must not be poisoned"))
+    }
+}
+
+#[async_trait::async_trait]
+impl EventSink for ErrorRecorder {
+    async fn emit(&self, event: CrawlEvent) {
+        if let CrawlEvent::Error { error, .. } = event {
+            self.push("event", error);
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl EventEmitter for ErrorRecorder {
+    async fn on_page(&self, _event: &PageEvent) {}
+
+    async fn on_error(&self, event: &ErrorEvent) {
+        self.push("hook", event.error.clone());
+    }
+
+    async fn on_complete(&self, _event: &CompleteEvent) {}
+
+    async fn on_discovered(&self, _url: &str, _depth: usize) {}
+}
+
+/// What a crawl of each [`CREDENTIAL_ROWS`] address reports: `(address, secrets, message,
+/// reported)`. A hostless seed is refused by the crawl's robots check, a seed with a host by
+/// the SSRF check, and a seed that does not parse is refused before the crawl starts, with no
+/// event or hook. `reported` is whether the message also reaches the error event and hook.
+const CRAWL_ROWS: [(&str, &[&str], &str, bool); 6] = [
+    ("user:token@host", &["token"], NO_HOST, true),
+    ("KEY:@h:1", &["key"], NO_HOST, true),
+    (
+        "foo://alice:hunter2@example.com/",
+        &["alice", "hunter2"],
+        "ssrf_policy_violation: foo://***:***@example.com/ - disallowed scheme: unrecognized",
+        true,
+    ),
+    (
+        "alice@example.com",
+        &["alice"],
+        "other: invalid URL: relative URL without a base",
+        false,
+    ),
+    ("user:hunt%40er2@host", &["hunt", "er2"], NO_HOST, true),
+    (
+        "foo://alice:hunt%40er2@example.com/",
+        &["alice", "hunt", "er2"],
+        "ssrf_policy_violation: foo://***:***@example.com/ - disallowed scheme: unrecognized",
+        true,
+    ),
+];
+
+/// The crawl's robots refusal for a seed without a host.
+const NO_HOST: &str =
+    "robots_unreachable: [address hidden: it may carry credentials] has no host to read robots.txt from";
+
+/// The crawl's refusal reaches the result, the error event and the error hook, so the
+/// credential must be absent from all three.
+#[tokio::test]
+async fn crawl_refusal_hides_the_credential_in_the_error_event_and_hook() {
+    let mut failures = Vec::new();
+    for (target, secrets, expected, reported) in CRAWL_ROWS {
+        let recorder = ErrorRecorder::default();
+        let engine = CrawlEngine::builder()
+            .config(credential_config())
+            .event_sink(recorder.clone())
+            .event_emitter(recorder.clone())
+            .build()
+            .expect("engine builds");
+        let (message, rendered) = match engine.crawl(target).await {
+            Ok(result) => {
+                let message = result.error.unwrap_or_default();
+                (message.clone(), message)
+            }
+            Err(err) => (err.to_string(), format!("{err}\n{err:?}")),
+        };
+        let events = recorder.take();
+        let expected_events: Vec<(&str, String)> = if reported {
+            vec![("event", expected.to_owned()), ("hook", expected.to_owned())]
+        } else {
+            Vec::new()
+        };
+        if message != expected || events != expected_events {
+            failures.push(format!(
+                "{target}: expected {expected:?} (reported: {reported}), got {message:?} and {events:?}"
+            ));
+        }
+        let everything = std::iter::once(("result", rendered)).chain(events);
+        for (channel, text) in everything {
+            let shown = shown_secrets(&text, secrets);
+            if !shown.is_empty() {
+                failures.push(format!("{target}: {channel} shows {shown:?} in {text}"));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "crawl credential rows failed:\n{}",
+        failures.join("\n")
+    );
 }

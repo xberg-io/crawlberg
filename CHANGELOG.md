@@ -26,6 +26,11 @@ All notable changes to crawlberg are documented here.
   check says the scheme is forbidden without showing it. The address in the same error goes
   through the credential redactor, which hides such an address whole. (#329)
 
+- **A crawl of an address without a host printed its credential.** A crawl refuses a seed such
+  as `user:token@host` before any request, because the seed has no host to read robots.txt from.
+  The reason named the seed as written, so `token` reached the crawl result, the error event and
+  the error hook. The reason now names the address through the credential redactor. (#427)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
