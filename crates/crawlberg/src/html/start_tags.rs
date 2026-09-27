@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::states::RawKind;
@@ -27,7 +27,7 @@ pub(super) struct Scan<'h> {
     pub(super) tags: RealTags,
     /// The byte ranges of raw-text content, in document order.
     pub(super) raw_text: Vec<Range<usize>>,
-    /// The decoded `href` of the first `<base>` in the document that has one.
+    /// The decoded `href` of the first `<base>` in the document, in tree order, that has one.
     pub(super) base_href: Option<String>,
 }
 
@@ -91,7 +91,7 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         ..TreeBuilderOpts::default()
     };
     let sink = Recorder {
-        tree: TreeBuilder::new(Names::default(), options),
+        tree: TreeBuilder::new(Tree::default(), options),
         text: RefCell::new(Cow::Borrowed(source)),
         piece: Cell::new(0..0),
         next_start: Cell::new(0),
@@ -139,7 +139,7 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         text: sink.text.into_inner(),
         tags: sink.found.into_inner(),
         raw_text: sink.raw_text.into_inner(),
-        base_href: sink.tree.sink.base_href.into_inner(),
+        base_href: sink.tree.sink.base_href(),
     }
 }
 
@@ -378,7 +378,7 @@ enum RawTextEnd {
 /// Forwards every token to the tree builder, which steers the tokenizer, and records each start
 /// tag with a kept attribute and each run of raw-text content.
 struct Recorder<'h> {
-    tree: TreeBuilder<Rc<Node>, Names>,
+    tree: TreeBuilder<Rc<Node>, Tree>,
     /// The document as it is fed: the source, with what [`AttributeBound`] overwrote.
     text: RefCell<Cow<'h, str>>,
     /// The piece of the source being fed.
@@ -556,65 +556,87 @@ impl TokenSink for Recorder<'_> {
     }
 }
 
-/// A node of the tree the builder keeps: only what it asks about, the element name and whether
+/// A node of the tree the builder builds: only what it asks about, the element name and whether
 /// a MathML `annotation-xml` is an HTML integration point, and what the base address needs.
 struct Node {
     name: QualName,
     annotation_xml_integration_point: bool,
     /// The `href` of an HTML `<base>`.
     base_href: Option<String>,
-    /// Whether the node sits inside template contents, which are not part of the document.
-    inert: Cell<bool>,
+    parent: RefCell<Weak<Node>>,
+    children: RefCell<Vec<Rc<Node>>>,
+    /// The contents of a `<template>`: a fragment that is not part of the document.
+    template_contents: RefCell<Option<Rc<Node>>>,
 }
 
 impl Node {
-    /// A document or comment node, which the builder never asks the name of.
-    fn unnamed() -> Rc<Self> {
+    fn new(name: QualName, annotation_xml_integration_point: bool, base_href: Option<String>) -> Rc<Self> {
         Rc::new(Self {
-            name: QualName::new(None, ns!(), LocalName::from("")),
-            annotation_xml_integration_point: false,
-            base_href: None,
-            inert: Cell::new(false),
+            name,
+            annotation_xml_integration_point,
+            base_href,
+            parent: RefCell::new(Weak::new()),
+            children: RefCell::new(Vec::new()),
+            template_contents: RefCell::new(None),
         })
+    }
+
+    /// A document, fragment or comment node, which the builder never asks the name of.
+    fn unnamed() -> Rc<Self> {
+        Self::new(QualName::new(None, ns!(), LocalName::from("")), false, None)
+    }
+
+    /// The `href` of the first HTML `<base>` with one below `self`, in tree order.
+    fn first_base_href(self: &Rc<Self>) -> Option<String> {
+        let mut pending = vec![Rc::clone(self)];
+        while let Some(node) = pending.pop() {
+            if node.base_href.is_some() {
+                return node.base_href.clone();
+            }
+            pending.extend(node.children.borrow().iter().rev().cloned());
+        }
+        None
     }
 }
 
-/// A tree sink that keeps no tree: the builder needs element names to track the open elements,
-/// and the first `<base href>` placed in the document is recorded.
-struct Names {
-    document: Rc<Node>,
-    base_href: RefCell<Option<String>>,
+impl Drop for Node {
+    /// Drop the subtree one node at a time, so a deeply nested document cannot overflow the stack.
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(self.children.get_mut());
+        pending.extend(self.template_contents.get_mut().take());
+        while let Some(node) = pending.pop() {
+            pending.append(&mut node.children.take());
+            pending.extend(node.template_contents.take());
+        }
+    }
 }
 
-impl Default for Names {
+/// A tree sink that builds only the element tree: the builder needs element names to track the
+/// open elements, and the base address is read from the finished tree.
+struct Tree {
+    document: Rc<Node>,
+}
+
+impl Default for Tree {
     fn default() -> Self {
         Self {
             document: Node::unnamed(),
-            base_href: RefCell::new(None),
         }
     }
 }
 
-impl Names {
-    /// Place `child` under a parent that is `inert` or not.
+impl Tree {
+    /// The `href` of the first HTML `<base>` with one in the document, in tree order.
     ///
-    /// ~keep A `<base>` counts once it is placed in the document, not when it is created: the
-    /// ~keep builder creates the elements of a `<template>` too, and puts them in its contents.
-    fn place(&self, inert: bool, child: &NodeOrText<Rc<Node>>) {
-        let NodeOrText::AppendNode(child) = child else {
-            return;
-        };
-        if inert {
-            child.inert.set(true);
-        } else if let Some(href) = &child.base_href
-            && self.base_href.borrow().is_none()
-        {
-            *self.base_href.borrow_mut() = Some(href.clone());
-        }
+    /// ~keep Read from the finished tree, not as elements are placed: the builder places a
+    /// ~keep `<base>` in front of a table after one inside it, and removes the body, with any
+    /// ~keep `<base>` in it, when a `<frameset>` replaces it.
+    fn base_href(&self) -> Option<String> {
+        self.document.first_base_href()
     }
 }
 
-impl TreeSink for Names {
+impl TreeSink for Tree {
     type Handle = Rc<Node>;
     type Output = ();
     type ElemName<'a> = &'a QualName;
@@ -636,12 +658,11 @@ impl TreeSink for Names {
             .then(|| attrs.into_iter().find(|attr| attr.name.local == local_name!("href")))
             .flatten()
             .map(|attr| attr.value.to_string());
-        Rc::new(Node {
-            name,
-            annotation_xml_integration_point: flags.mathml_annotation_xml_integration_point,
-            base_href,
-            inert: Cell::new(false),
-        })
+        let node = Node::new(name, flags.mathml_annotation_xml_integration_point, base_href);
+        if flags.template {
+            *node.template_contents.borrow_mut() = Some(Node::unnamed());
+        }
+        node
     }
 
     fn create_comment(&self, _text: StrTendril) -> Rc<Node> {
@@ -653,19 +674,25 @@ impl TreeSink for Names {
     }
 
     fn append(&self, parent: &Rc<Node>, child: NodeOrText<Rc<Node>>) {
-        self.place(parent.inert.get(), &child);
+        let NodeOrText::AppendNode(child) = child else {
+            return;
+        };
+        *child.parent.borrow_mut() = Rc::downgrade(parent);
+        parent.children.borrow_mut().push(child);
     }
 
     fn append_based_on_parent_node(&self, element: &Rc<Node>, prev_element: &Rc<Node>, child: NodeOrText<Rc<Node>>) {
-        self.place(element.inert.get() || prev_element.inert.get(), &child);
+        if element.parent.borrow().strong_count() > 0 {
+            self.append_before_sibling(element, child);
+        } else {
+            self.append(prev_element, child);
+        }
     }
 
     fn append_doctype_to_document(&self, _name: StrTendril, _public_id: StrTendril, _system_id: StrTendril) {}
 
-    fn get_template_contents(&self, _target: &Rc<Node>) -> Rc<Node> {
-        let contents = Node::unnamed();
-        contents.inert.set(true);
-        contents
+    fn get_template_contents(&self, target: &Rc<Node>) -> Rc<Node> {
+        target.template_contents.borrow().clone().unwrap_or_else(Node::unnamed)
     }
 
     fn same_node(&self, x: &Rc<Node>, y: &Rc<Node>) -> bool {
@@ -674,12 +701,37 @@ impl TreeSink for Names {
 
     fn set_quirks_mode(&self, _mode: QuirksMode) {}
 
-    fn append_before_sibling(&self, _sibling: &Rc<Node>, _new_node: NodeOrText<Rc<Node>>) {}
+    fn append_before_sibling(&self, sibling: &Rc<Node>, new_node: NodeOrText<Rc<Node>>) {
+        let NodeOrText::AppendNode(child) = new_node else {
+            return;
+        };
+        let Some(parent) = sibling.parent.borrow().upgrade() else {
+            return;
+        };
+        let mut children = parent.children.borrow_mut();
+        let at = children
+            .iter()
+            .rposition(|node| Rc::ptr_eq(node, sibling))
+            .unwrap_or(children.len());
+        *child.parent.borrow_mut() = Rc::downgrade(&parent);
+        children.insert(at, child);
+    }
 
     fn add_attrs_if_missing(&self, _target: &Rc<Node>, _attrs: Vec<Attribute>) {}
 
-    fn remove_from_parent(&self, _target: &Rc<Node>) {}
+    fn remove_from_parent(&self, target: &Rc<Node>) {
+        let Some(parent) = target.parent.take().upgrade() else {
+            return;
+        };
+        let mut children = parent.children.borrow_mut();
+        if let Some(at) = children.iter().rposition(|child| Rc::ptr_eq(child, target)) {
+            children.remove(at);
+        }
+    }
 
+    /// ~keep Leaves the children in place. The builder then appends `new_parent`, a formatting
+    /// ~keep element that is never moved later, as the last child of `node`, so no `<base>`
+    /// ~keep changes its place in tree order.
     fn reparent_children(&self, _node: &Rc<Node>, _new_parent: &Rc<Node>) {}
 
     fn is_mathml_annotation_xml_integration_point(&self, handle: &Rc<Node>) -> bool {
@@ -1100,5 +1152,88 @@ mod tests {
             None,
             "moved in front of a table inside template contents, it stays out of the document"
         );
+    }
+
+    #[test]
+    fn should_take_the_first_base_href_in_tree_order_as_chrome_does() {
+        // ~keep Each answer is `document.baseURI` in headless Chrome 154, scripting off
+        // ~keep (`DOMParser`) and on (`document.write`); `None` is the document's own address.
+        let cases: [(&str, Option<&str>, Option<&str>); 12] = [
+            (
+                r#"<table><tr><td><base href="/1/"></td><base href="/2/"></tr></table>"#,
+                Some("/2/"),
+                Some("/2/"),
+            ),
+            (
+                r#"<table><caption><base href="/1/"></caption><base href="/2/"></table>"#,
+                Some("/2/"),
+                Some("/2/"),
+            ),
+            (
+                r#"<table><tr><td><table><tr><td><base href="/1/"></td><base href="/2/"></tr></table></td><base href="/3/"></tr></table>"#,
+                Some("/3/"),
+                Some("/3/"),
+            ),
+            (
+                r#"<b><table><tr><td><base href="/1/"></b></td><base href="/2/"></tr></table>"#,
+                Some("/2/"),
+                Some("/2/"),
+            ),
+            (
+                r#"<div><base href="/1/"></div><frameset></frameset><base href="/2/">"#,
+                None,
+                None,
+            ),
+            (
+                r#"<tbody><base href="/1/"></body></title><frameset><frame><ul><frame><td>"#,
+                None,
+                None,
+            ),
+            (
+                r#"</noscript><div><div></template></title><base href="/1/"></frameset><div><noscript><tbody><frameset><ul>"#,
+                None,
+                Some("/1/"),
+            ),
+            (
+                r#"<head><base href="/1/"></head><frameset></frameset>"#,
+                Some("/1/"),
+                Some("/1/"),
+            ),
+            (
+                r#"<table><tr><td><template><base href="/1/"></template><base href="/2/"></td></tr></table>"#,
+                Some("/2/"),
+                Some("/2/"),
+            ),
+            (
+                r#"<b><p><base href="/1/"></b><base href="/2/">"#,
+                Some("/1/"),
+                Some("/1/"),
+            ),
+            (
+                r#"<noscript><base href="/1/"></noscript><base href="/2/">"#,
+                Some("/1/"),
+                Some("/2/"),
+            ),
+            (
+                r#"<svg><base href="/1/"></svg><base href="/2/">"#,
+                Some("/2/"),
+                Some("/2/"),
+            ),
+        ];
+        let wrong: Vec<_> = cases
+            .iter()
+            .filter(|(html, off, on)| {
+                scan(html, false, |_| false).base_href.as_deref() != *off
+                    || scan(html, true, |_| false).base_href.as_deref() != *on
+            })
+            .map(|(html, ..)| html)
+            .collect();
+        assert!(wrong.is_empty(), "not the base Chrome picks: {wrong:?}");
+    }
+
+    #[test]
+    fn should_scan_and_drop_a_deeply_nested_document() {
+        let html = format!("{}<base href=\"/deep/\">", "<span>".repeat(100_000));
+        assert_eq!(base_href(&html).as_deref(), Some("/deep/"));
     }
 }

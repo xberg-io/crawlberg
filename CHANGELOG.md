@@ -142,6 +142,14 @@ All notable changes to crawlberg are documented here.
   converter and link extraction read that same text, so they see the tag as the parser saw it.
   The same tag now takes 0.02 s, and a page with no tag past the limit is read unchanged. (#269)
 
+- **The base address could come from a `<base>` that is not first in the document.** The first
+  `<base href>` the parser read was taken, not the first in the finished document. A browser moves
+  a `<base>` written loose inside a table to a place in front of the table, so for
+  `<table><tr><td><base href="/1/"></td><base href="/2/"></tr></table>` a browser uses `/2/` and
+  crawlberg used `/1/`. A `<base>` in a body that a `<frameset>` replaces also still counted. Link
+  extraction and the markdown now take the first `<base href>` in the finished document, the one
+  Chrome uses. (#287)
+
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page
   resolved against the wrong path and `final_url` named a page that never served the content. The

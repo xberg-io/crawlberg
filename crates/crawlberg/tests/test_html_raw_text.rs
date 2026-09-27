@@ -271,3 +271,45 @@ async fn should_honour_a_base_href_inside_noscript() {
         "link extraction reads `<noscript>` as markup"
     );
 }
+
+/// Scrape `html` and return the page address, the link URLs and the markdown.
+async fn links_and_markdown(html: &str) -> (String, Vec<String>, String) {
+    let (base, result) = scrape_html(html).await;
+    let markdown = result.markdown.expect("markdown should be present").content;
+    (base, result.links.into_iter().map(|l| l.url).collect(), markdown)
+}
+
+#[tokio::test]
+async fn should_take_the_base_href_in_front_of_a_table_before_one_inside_it() {
+    // ~keep A browser moves the second `<base>` in front of the table, so it comes first in the
+    // ~keep document even though the parser reads it second.
+    let html = r#"<html><body><table><tr><td><base href="/1/"></td><base href="/2/"></tr></table>
+        <a href="leaf">leaf</a></body></html>"#;
+    let (base, urls, markdown) = links_and_markdown(html).await;
+    let expected = format!("{base}/2/leaf");
+    assert_eq!(
+        urls,
+        vec![expected.clone()],
+        "link extraction takes the first base in tree order"
+    );
+    assert!(
+        markdown.contains(&format!("[leaf]({expected})")),
+        "the markdown takes the first base in tree order, got {markdown:?}"
+    );
+}
+
+#[tokio::test]
+async fn should_ignore_a_base_href_in_a_body_that_a_frameset_replaces() {
+    let html = r#"<div><base href="/1/"></div><frameset></frameset><a href="leaf">leaf</a>"#;
+    let (base, urls, markdown) = links_and_markdown(html).await;
+    let expected = format!("{base}/leaf");
+    assert_eq!(
+        urls,
+        vec![expected.clone()],
+        "the frameset removes the body and its base"
+    );
+    assert!(
+        markdown.contains(&format!("[leaf]({expected})")),
+        "the markdown resolves against the page address, got {markdown:?}"
+    );
+}
