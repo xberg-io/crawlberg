@@ -16,6 +16,7 @@ use url::Url;
 use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
 use crate::net::cookies::CookieJar;
+#[cfg(feature = "stealth")]
 use crate::net::credential::{OriginCredential, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
@@ -177,7 +178,7 @@ impl StealthHttpClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "stealth"))]
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
@@ -212,5 +213,72 @@ mod tests {
         );
         assert!(!accepted.is_finished(), "nothing may reach the network");
         accepted.abort();
+    }
+
+    struct AllowAll;
+
+    #[async_trait::async_trait]
+    impl SsrfValidator for AllowAll {
+        async fn validate(&self, _url: &Url) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Serves `response` to every connection on a fresh loopback port, recording each request head.
+    async fn recording_server(response: String) -> (std::net::SocketAddr, Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let read = socket.read(&mut buf).await.unwrap_or(0);
+                log.lock()
+                    .expect("lock")
+                    .push(String::from_utf8_lossy(&buf[..read]).to_lowercase());
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+            }
+        });
+        (addr, requests)
+    }
+
+    #[tokio::test]
+    async fn the_origin_credential_reaches_its_host_and_a_redirect_loses_its_userinfo() {
+        let (other, other_requests) =
+            recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
+        let redirect = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://user:s3cret@localhost:{}/away\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            other.port()
+        );
+        let (start, start_requests) = recording_server(redirect).await;
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        *client.origin_credential.write().await = Some(OriginCredential {
+            host: "127.0.0.1".to_owned(),
+            name: "Authorization".to_owned(),
+            value: "Basic b3JpZ2luOmNyZWQ=".to_owned(),
+        });
+
+        client
+            .fetch(&format!("http://{start}/").parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        let start_requests = start_requests.lock().expect("lock");
+        assert!(
+            start_requests[0].contains("authorization: basic b3jpz2luomnyzwq="),
+            "the scoped host gets the header: {start_requests:?}"
+        );
+        let other_requests = other_requests.lock().expect("lock");
+        assert_eq!(other_requests.len(), 1, "the cross-host redirect must be followed");
+        assert!(
+            !other_requests[0].contains("authorization:"),
+            "neither the credential nor the Location's userinfo reaches the other host: {other_requests:?}"
+        );
     }
 }
