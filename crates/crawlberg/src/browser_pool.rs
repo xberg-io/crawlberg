@@ -12,7 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
-use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
+use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
+use chromiumoxide::cdp::browser_protocol::target::{
+    CloseTargetParams, CreateBrowserContextParams, CreateTargetParams, TargetId,
+};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -120,6 +123,20 @@ pub(crate) fn apply_default_args(mut builder: BrowserConfigBuilder) -> BrowserCo
     builder
 }
 
+/// Route `builder`'s Chrome through `proxy`, when there is one. Every launch path calls this,
+/// so the flag is written once; the credentials are answered by the request interception.
+pub(crate) fn apply_proxy(
+    builder: BrowserConfigBuilder,
+    proxy: Option<&crate::proxy::ChromeProxy>,
+) -> BrowserConfigBuilder {
+    match proxy {
+        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
+        // ~keep `----proxy-server=...` and the proxy was silently never applied.
+        Some(proxy) => builder.arg(format!("proxy-server={}", proxy.server)),
+        None => builder,
+    }
+}
+
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
 /// `browser_endpoint` connect branch).
 ///
@@ -141,6 +158,48 @@ fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[Str
         builder = builder.arg(chrome_arg_key(arg.as_str()));
     }
     builder
+}
+
+/// The browser context of `bs` whose requests go through `server`, made on first use.
+///
+/// ~keep `disposeOnDetach`: on a Chrome the pool only connected to, the context goes away with
+/// ~keep the connection instead of being left in the caller's browser.
+async fn proxy_context(bs: &mut BrowserState, server: &str) -> Result<BrowserContextId, CrawlError> {
+    if let Some(id) = bs.proxy_contexts.get(server) {
+        return Ok(id.clone());
+    }
+    let id = create_proxy_context(&bs.browser, server).await?;
+    bs.proxy_contexts.insert(server.to_owned(), id.clone());
+    Ok(id)
+}
+
+/// A new browser context of `browser` whose requests go through `server`.
+async fn create_proxy_context(browser: &Browser, server: &str) -> Result<BrowserContextId, CrawlError> {
+    let params = CreateBrowserContextParams {
+        dispose_on_detach: Some(true),
+        proxy_server: Some(server.to_owned()),
+        ..CreateBrowserContextParams::default()
+    };
+    tokio::time::timeout(PAGE_OPEN_TIMEOUT, browser.create_browser_context(params))
+        .await
+        .map_err(|_| CrawlError::browser_error("timeout creating the proxy's browser context"))?
+        .map_err(|e| CrawlError::browser_error(format!("failed to create the proxy's browser context: {e}")))
+}
+
+/// Open a blank page for `config` in a Chrome crawlberg did not launch, so `--proxy-server`
+/// never reached it: with a proxy, the page opens in a browser context made with it.
+pub(crate) async fn open_connected_page(
+    browser: &Browser,
+    config: &crate::types::CrawlConfig,
+) -> Result<chromiumoxide::Page, CrawlError> {
+    let mut target = CreateTargetParams::new("about:blank");
+    if let Some(proxy) = crate::proxy::chrome_proxy_for(config)? {
+        target.browser_context_id = Some(create_proxy_context(browser, &proxy.server).await?);
+    }
+    browser
+        .new_page(target)
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))
 }
 
 /// Configuration for a [`BrowserPool`].
@@ -192,6 +251,9 @@ struct BrowserState {
     handler_handle: JoinHandle<()>,
     user_data_dir: Option<std::path::PathBuf>,
     pending_closes: PendingCloses,
+    /// One browser context per proxy address, so pages of crawls with different proxies share
+    /// this Chrome but not a proxy. They end with the process, or with the connection.
+    proxy_contexts: std::collections::HashMap<String, BrowserContextId>,
 }
 
 /// How a browser left [`close_browser_within`]: under its own steam, or killed.
@@ -402,6 +464,15 @@ impl BrowserPool {
     /// should be closed via [`PooledPage::close`] when done; if dropped
     /// without calling `close`, a best-effort async cleanup is spawned.
     pub async fn acquire_page(&self) -> Result<PooledPage, CrawlError> {
+        self.acquire_page_through(None).await
+    }
+
+    /// Acquire a new blank page whose requests go through `proxy`: the page opens in a browser
+    /// context made with that proxy, shared by every page of the pool that names the same one.
+    pub(crate) async fn acquire_page_through(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+    ) -> Result<PooledPage, CrawlError> {
         if self.shutdown.load(Ordering::SeqCst) {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
@@ -417,7 +488,7 @@ impl BrowserPool {
             return Err(CrawlError::browser_error("pool is shut down"));
         }
 
-        match self.try_new_page().await {
+        match self.try_new_page(proxy).await {
             Ok((page, pending_closes)) => Ok(PooledPage {
                 page: Some(page),
                 _permit: Some(permit),
@@ -425,7 +496,7 @@ impl BrowserPool {
             }),
             Err(first_err) => {
                 self.relaunch_browser().await?;
-                let (page, pending_closes) = self.try_new_page().await.map_err(|e| {
+                let (page, pending_closes) = self.try_new_page(proxy).await.map_err(|e| {
                     CrawlError::browser_error(format!(
                         "failed to open page after relaunch: {e} (original: {first_err})"
                     ))
@@ -472,7 +543,10 @@ impl BrowserPool {
     ///
     /// Returns the page together with the current browser's pending-close registry, so the
     /// [`PooledPage`] built around it can record a close its `Drop` spawns.
-    async fn try_new_page(&self) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
+    async fn try_new_page(
+        &self,
+        proxy: Option<&crate::proxy::ChromeProxy>,
+    ) -> Result<(chromiumoxide::Page, PendingCloses), CrawlError> {
         let mut guard = self.state.lock().await;
 
         if guard.is_none() || guard.as_ref().is_some_and(|bs| bs.handler_handle.is_finished()) {
@@ -488,8 +562,12 @@ impl BrowserPool {
             self.healthy.store(true, Ordering::Release);
         }
 
-        let bs = guard.as_ref().expect("browser state was just set above");
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
+        let bs = guard.as_mut().expect("browser state was just set above");
+        let mut target = CreateTargetParams::new("about:blank");
+        if let Some(proxy) = proxy {
+            target.browser_context_id = Some(proxy_context(bs, &proxy.server).await?);
+        }
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page(target))
             .await
             .map_err(|_| CrawlError::browser_error("timeout opening page"))?
             .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))?;
@@ -561,6 +639,7 @@ impl BrowserPool {
             handler_handle,
             user_data_dir: data_dir,
             pending_closes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            proxy_contexts: std::collections::HashMap::new(),
         })
     }
 }

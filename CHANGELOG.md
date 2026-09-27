@@ -6,12 +6,14 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
-- **The config check refuses a SOCKS proxy.** A `socks5://` or `socks5h://` address in `proxy`
-  or `browser.proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not supported",
-  whatever the browser backend. Crawlberg's HTTP clients are built without SOCKS support, so
-  every HTTP fetch through such a proxy failed at connect time. Use an `http` or `https` proxy.
-- **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the clients
-  cannot use, such as `gopher://`, now fails the config check instead of the render.
+- **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
+  `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
+  supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
+  through such a proxy failed at connect time. The same holds for `browser.proxy` with the native
+  backend. Chrome speaks SOCKS, so with the Chrome backend `browser.proxy` still takes `socks4://`
+  and `socks5://`. Chrome has no `socks5h` scheme. Use an `http` or `https` proxy everywhere else.
+- **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the browser
+  cannot use, such as `gopher://`, now fails the config check instead of the render. (#249)
 
 ### Fixed
 
@@ -28,6 +30,19 @@ All notable changes to crawlberg are documented here.
   proxy, exactly as the HTTP client reads it. The config check refused it for `proxy` (#420),
   the native backend refused it in `browser.proxy` once a username or password was set (#421),
   and the stealth mode ignored it and connected directly.
+- **Chrome renders ignored the proxy and connected directly.** With the Chrome backend, a render
+  launched Chrome without the proxy, so a caller who relied on `browser.proxy` or `proxy` for
+  egress control got direct connections with no error. Only the interact path passed it. Every
+  Chrome launch now takes the proxy, read the same way as the HTTP client reads it. A shared
+  browser pool, or a Chrome reached through `browser.endpoint`, opens each page in a browser
+  context made with that crawl's proxy, so crawls with different proxies share one Chrome and
+  each goes through its own proxy. (#434)
+- **A Chrome proxy with credentials never connected.** Chrome takes the proxy address as a
+  launch flag and ignores credentials in it, so a render through `user:pass@proxy:3128` or a
+  proxy with `username` and `password` made no connection and failed without saying why. The
+  Chrome backend now refuses a proxy with credentials, with an error that says so and does not
+  show them. Chrome gets the address as the HTTP client reads it, so `127.0.0.1:3128` and
+  `http:proxy:3128` now work. (#435)
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and

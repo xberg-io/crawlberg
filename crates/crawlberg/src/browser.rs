@@ -187,11 +187,9 @@ async fn acquire_pooled_page(
     config: &CrawlConfig,
     pool: &BrowserPool,
 ) -> Result<(chromiumoxide::Page, Option<OwnedSemaphorePermit>), CrawlError> {
+    let proxy = crate::proxy::chrome_proxy_for(config)?;
     if config.browser.session_affinity {
-        let session_key = crate::browser_session_pool::SessionKey::from_url(
-            url,
-            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-        )?;
+        let session_key = session_key(url, proxy.as_ref())?;
         let session_pool = config
             .browser_session_pool
             .as_deref()
@@ -202,7 +200,18 @@ async fn acquire_pooled_page(
         }
     }
 
-    Ok(pool.acquire_page().await?.into_parts())
+    Ok(pool.acquire_page_through(proxy.as_ref()).await?.into_parts())
+}
+
+/// The session-affinity key of a page for `url` opened through `proxy`.
+///
+/// ~keep Keyed on the proxy the page's browser context uses, so a parked page is never handed
+/// ~keep to a crawl with a different proxy.
+fn session_key(
+    url: &str,
+    proxy: Option<&crate::proxy::ChromeProxy>,
+) -> Result<crate::browser_session_pool::SessionKey, CrawlError> {
+    crate::browser_session_pool::SessionKey::from_url(url, proxy.map(|p| p.server.as_str()))
 }
 
 /// Park `page` for reuse when session affinity wants it and the fetch succeeded, otherwise
@@ -221,10 +230,8 @@ async fn release_pooled_page(
 ) {
     if config.browser.session_affinity
         && reusable
-        && let Ok(session_key) = crate::browser_session_pool::SessionKey::from_url(
-            url,
-            config.browser.proxy.as_ref().map(|p| p.url.as_str()),
-        )
+        && let Ok(proxy) = crate::proxy::chrome_proxy_for(config)
+        && let Ok(session_key) = session_key(url, proxy.as_ref())
         && let Some(session_pool) = config.browser_session_pool.as_deref()
     {
         tracing::debug!("parking a pooled browser page for session reuse");
@@ -280,7 +287,7 @@ async fn one_shot_fetch(
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     let fetch_outcome = tokio::time::timeout(remaining, async {
-        let page = session.open_page().await?;
+        let page = session.open_page(config).await?;
         page_fetch(url, config, &page, prior_cookies, want_screenshot).await
     })
     .await;
@@ -315,12 +322,16 @@ struct OneShotSession {
 
 impl OneShotSession {
     /// Open this fetch's tab, recording it for teardown, and hand back a handle to it.
-    async fn open_page(&mut self) -> Result<chromiumoxide::Page, CrawlError> {
+    async fn open_page(&mut self, config: &CrawlConfig) -> Result<chromiumoxide::Page, CrawlError> {
         let browser = self.browser.as_ref().expect("browser is taken only by Drop");
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        let page = if config.browser.endpoint.is_some() {
+            crate::browser_pool::open_connected_page(browser, config).await?
+        } else {
+            browser
+                .new_page("about:blank")
+                .await
+                .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?
+        };
         self.open_tab = Some(page.target_id().clone());
         Ok(page)
     }

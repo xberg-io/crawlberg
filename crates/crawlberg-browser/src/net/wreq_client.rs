@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unparseable_or_scheme_less_proxy_url_refuses_the_client_without_echoing_it() {
+    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
         for proxy in crate::net::proxy::credential_urls::URLS {
             let Err(err) = proxied_client(proxy) else {
                 panic!("{proxy} must refuse the client, not build one that connects directly");

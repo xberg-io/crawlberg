@@ -370,3 +370,75 @@ async fn interact_leaves_the_external_chrome_running() {
 
     chrome.assert_still_serving(Duration::from_secs(1), pages_before).await;
 }
+
+/// The browser contexts in `chrome` that another connection can see.
+async fn browser_context_count(ws_url: &str) -> usize {
+    use chromiumoxide::cdp::browser_protocol::target::GetBrowserContextsParams;
+    use futures::StreamExt as _;
+    let (browser, mut handler) = chromiumoxide::Browser::connect(ws_url)
+        .await
+        .expect("a second connection to the external Chrome must open");
+    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let contexts = browser
+        .execute(GetBrowserContextsParams::default())
+        .await
+        .expect("the external Chrome must list its browser contexts")
+        .result
+        .browser_context_ids
+        .len();
+    handler.abort();
+    contexts
+}
+
+/// A proxied render through a pool connected by `browser_endpoint` leaves no browser context
+/// behind in the caller's Chrome once the pool disconnects.
+#[tokio::test]
+#[serial_test::serial(external_chrome)]
+async fn a_proxied_render_leaves_no_browser_context_in_the_external_chrome() {
+    let Some(chrome) = ExternalChrome::start("a_proxied_render_leaves_no_browser_context_in_the_external_chrome")
+    else {
+        return;
+    };
+    let before = browser_context_count(&chrome.ws_url).await;
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some(chrome.ws_url.clone()),
+        ..BrowserPoolConfig::default()
+    });
+    let mut config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Chromiumoxide,
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(5),
+            session_affinity: false,
+            proxy: Some(crawlberg::ProxyConfig {
+                url: "http://127.0.0.1:9".into(),
+                ..Default::default()
+            }),
+            ..BrowserConfig::default()
+        },
+        browser_pool: Some(std::sync::Arc::clone(&pool)),
+        ..CrawlConfig::default()
+    };
+    config
+        .ssrf
+        .allowlist
+        .push(crawlberg::HostMatcher::exact("render-target.test"));
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let _ = crawlberg::scrape(&engine, "http://render-target.test/").await;
+    assert_eq!(
+        browser_context_count(&chrome.ws_url).await,
+        before + 1,
+        "the proxied render must open its page in a browser context of its own"
+    );
+    pool.shutdown().await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut after = browser_context_count(&chrome.ws_url).await;
+    while after != before && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        after = browser_context_count(&chrome.ws_url).await;
+    }
+    assert_eq!(
+        after, before,
+        "the proxy's browser context must go away with the pool's connection"
+    );
+}

@@ -143,9 +143,10 @@ pub(super) async fn launch_or_connect(
             .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
         Ok((browser, handler, None))
     } else {
+        let proxy = crate::proxy::chrome_proxy_for(config)?;
         let user_data = resolve_user_data_dir(config)?;
 
-        let builder = build_one_shot_launch_builder(&user_data.path);
+        let builder = build_one_shot_launch_builder(&user_data.path, proxy.as_ref());
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -163,7 +164,10 @@ pub(super) async fn launch_or_connect(
 ///
 /// ~keep Split out from `launch_or_connect` so a test can assert on the flags this
 /// ~keep path actually passes without spawning a real Chrome process.
-fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> BrowserConfigBuilder {
+fn build_one_shot_launch_builder(
+    user_data_dir: &std::path::Path,
+    proxy: Option<&crate::proxy::ChromeProxy>,
+) -> BrowserConfigBuilder {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
@@ -173,7 +177,8 @@ fn build_one_shot_launch_builder(user_data_dir: &std::path::Path) -> BrowserConf
     builder = builder
         .env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
         .env("OS_ACTIVITY_MODE", "disable");
-    crate::browser_pool::apply_default_args(builder)
+    let builder = crate::browser_pool::apply_default_args(builder);
+    crate::browser_pool::apply_proxy(builder, proxy)
 }
 
 /// Returns a modern Chrome user-agent string suitable for the runtime environment.
@@ -331,8 +336,31 @@ mod tests {
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` (even behind a comment claiming it still does) fails
         // ~keep here because the returned flags actually change.
-        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"));
+        let builder = build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), None);
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn the_one_shot_launch_routes_chrome_through_the_configured_proxy() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                proxy: Some(crate::types::ProxyConfig {
+                    url: "127.0.0.1:3128".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let proxy = crate::proxy::chrome_proxy_for(&config).expect("a usable proxy");
+        let debug = format!(
+            "{:?}",
+            build_one_shot_launch_builder(std::path::Path::new("/tmp/browser-rs-test-profile"), proxy.as_ref())
+        );
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:3128\""),
+            "the render's Chrome must be launched through the proxy: {debug}"
+        );
     }
 
     /// A profile directory nobody took ownership of is removed when its guard drops.

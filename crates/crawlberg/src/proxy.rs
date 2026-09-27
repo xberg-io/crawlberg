@@ -9,9 +9,9 @@
 //! rotator. Cloud impls (e.g. `BrightDataProxyProvider`) plug in via
 //! [`crate::CrawlEngineBuilder::with_proxy_provider`].
 //!
-//! Browser-backend proxies (`config.browser.proxy`) are still configured at
-//! launch time via the static `ProxyConfig` value on `CrawlConfig`; the
-//! provider only routes the reqwest HTTP path. Mixing both is supported.
+//! Browser-backend proxies (`config.browser.proxy`) still come from the static
+//! `ProxyConfig` value on `CrawlConfig`; the provider only routes the reqwest
+//! HTTP path. Mixing both is supported.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -91,6 +91,59 @@ pub(crate) fn ensure_supported_scheme(url: &ProxyUrl) -> Result<(), CrawlError> 
     Err(CrawlError::invalid_config(format!(
         "invalid proxy URL scheme '{scheme}': {reason}"
     )))
+}
+
+/// Proxy URL schemes Chrome accepts in `--proxy-server`: the HTTP ones plus its own SOCKS ones.
+const CHROME_SCHEMES: [&str; 4] = ["http", "https", "socks4", "socks5"];
+
+/// The proxy a Chrome browser uses, read by [`chrome_proxy`]: `browser.proxy`, else the
+/// crawl-wide `proxy`.
+#[cfg(feature = "browser-chromiumoxide")]
+pub(crate) fn chrome_proxy_for(config: &crate::types::CrawlConfig) -> Result<Option<ChromeProxy>, CrawlError> {
+    config
+        .browser
+        .proxy
+        .as_ref()
+        .or(config.proxy.as_ref())
+        .map(chrome_proxy)
+        .transpose()
+}
+
+/// A proxy as Chrome takes it.
+#[derive(Debug)]
+#[cfg_attr(not(feature = "browser-chromiumoxide"), allow(dead_code))]
+pub(crate) struct ChromeProxy {
+    /// `scheme://host:port`, the value of `--proxy-server`.
+    pub(crate) server: String,
+}
+
+/// Reads `proxy` for Chrome, with [`parse_proxy_url`], so Chrome gets the same address as
+/// every HTTP client.
+///
+/// ~keep A proxy with credentials is refused: Chrome ignores credentials in `--proxy-server`,
+/// ~keep and chromiumoxide answers every proxy authentication challenge itself before a caller
+/// ~keep can (`handler/network.rs` `on_fetch_auth_required`), so no credentials can reach it.
+pub(crate) fn chrome_proxy(proxy: &ProxyConfig) -> Result<ChromeProxy, CrawlError> {
+    let parsed = parse_proxy_url(&proxy.url)?;
+    let url = parsed.as_url();
+    let scheme = url.scheme();
+    if !CHROME_SCHEMES.contains(&scheme) {
+        return Err(CrawlError::invalid_config(format!(
+            "invalid proxy URL scheme '{scheme}': Chrome takes http, https, socks4 or socks5"
+        )));
+    }
+    if proxy.username.is_some() || proxy.password.is_some() || !url.username().is_empty() || url.password().is_some() {
+        return Err(CrawlError::invalid_config(
+            "the Chrome backend cannot use a proxy with a username or password; \
+             use a proxy that needs no credentials, or the native backend",
+        ));
+    }
+    Ok(ChromeProxy {
+        server: format!(
+            "{scheme}://{}",
+            &url[url::Position::BeforeHost..url::Position::AfterPort]
+        ),
+    })
 }
 
 /// Embeds `proxy`'s username/password into its URL as percent-encoded userinfo, for
@@ -374,6 +427,50 @@ mod tests {
                 .expect_err("no client speaks SOCKS")
                 .to_string();
             assert!(err.contains("SOCKS proxies are not supported"), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn chrome_gets_the_scheme_host_and_port() {
+        for (raw, server) in [
+            ("127.0.0.1:3128", "http://127.0.0.1:3128"),
+            ("http:proxy.test:8080", "http://proxy.test:8080"),
+            ("[::1]:3128", "http://[::1]:3128"),
+            ("https://proxy.test", "https://proxy.test"),
+            ("http://proxy.test:8080/path", "http://proxy.test:8080"),
+            ("socks5://proxy.test:1080", "socks5://proxy.test:1080"),
+            ("socks4://proxy.test:1080", "socks4://proxy.test:1080"),
+        ] {
+            let proxy = chrome_proxy(&proxy(raw)).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(proxy.server, server, "{raw}");
+        }
+    }
+
+    #[test]
+    fn chrome_refuses_a_proxy_with_credentials_without_showing_them() {
+        let with_fields = ProxyConfig {
+            url: "http://proxy.test:8080".into(),
+            username: Some("operator".into()),
+            password: Some("s3cr3t".into()),
+        };
+        let password_only = ProxyConfig {
+            url: "http://proxy.test:8080".into(),
+            username: None,
+            password: Some("s3cr3t".into()),
+        };
+        for config in [
+            proxy("operator:s3cr3t@proxy.test:8080"),
+            proxy("http://operator:s3cr3t@proxy.test:8080"),
+            proxy("http://operator@proxy.test:8080"),
+            proxy("socks5://operator:s3cr3t@proxy.test:1080"),
+            with_fields,
+            password_only,
+        ] {
+            let err = chrome_proxy(&config)
+                .expect_err("Chrome cannot use credentials")
+                .to_string();
+            assert!(err.contains("username or password"), "{err}");
+            assert!(!err.contains("s3cr3t") && !err.contains("operator"), "{err}");
         }
     }
 

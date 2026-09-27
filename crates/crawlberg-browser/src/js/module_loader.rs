@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_scheme_less_or_unparseable_proxy_refuses_the_module_fetch_without_echoing_it() {
+    async fn an_unusable_proxy_url_refuses_the_module_fetch_without_showing_it() {
         for proxy in crate::net::proxy::credential_urls::URLS {
             crate::net::proxy::credential_urls::assert_not_shown(proxy, &module_fetch_error(proxy).await);
         }

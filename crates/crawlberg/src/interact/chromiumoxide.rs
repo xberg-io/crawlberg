@@ -99,10 +99,14 @@ async fn run_with_browser(
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+    let page = if config.browser.endpoint.is_some() {
+        crate::browser_pool::open_connected_page(browser, config).await?
+    } else {
+        browser
+            .new_page("about:blank")
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?
+    };
 
     let result = async {
         prepare_page(&page, config).await?;
@@ -448,13 +452,8 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             LAUNCH_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
         ));
 
-        let proxy_url = config
-            .browser
-            .proxy
-            .as_ref()
-            .or(config.proxy.as_ref())
-            .map(|p| p.url.as_str());
-        let builder = build_interact_launch_builder(&user_data_dir, proxy_url);
+        let proxy = crate::proxy::chrome_proxy_for(config)?;
+        let builder = build_interact_launch_builder(&user_data_dir, proxy.as_ref());
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -476,20 +475,15 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
 /// ~keep path actually passes without spawning a real Chrome process.
 fn build_interact_launch_builder(
     user_data_dir: &std::path::Path,
-    proxy_url: Option<&str>,
+    proxy: Option<&crate::proxy::ChromeProxy>,
 ) -> chromiumoxide::browser::BrowserConfigBuilder {
-    let mut builder = ChromeBrowserConfig::builder()
+    let builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
         .disable_default_args();
-    builder = crate::browser_pool::apply_default_args(builder);
-    if let Some(proxy) = proxy_url {
-        // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
-        // ~keep `----proxy-server=...` and the proxy was silently never applied.
-        builder = builder.arg(format!("proxy-server={proxy}"));
-    }
-    builder
+    let builder = crate::browser_pool::apply_default_args(builder);
+    crate::browser_pool::apply_proxy(builder, proxy)
 }
 
 #[cfg(test)]
@@ -507,15 +501,41 @@ mod tests {
 
     #[test]
     fn the_interact_launch_builder_still_normalizes_the_proxy_server_flag() {
-        let builder = build_interact_launch_builder(
-            std::path::Path::new("/tmp/interact-test-profile"),
-            Some("http://127.0.0.1:9"),
-        );
+        let proxy = crate::proxy::chrome_proxy(&crate::types::ProxyConfig {
+            url: "http://127.0.0.1:9".into(),
+            ..Default::default()
+        })
+        .expect("an http proxy is a Chrome proxy");
+        let builder = build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), Some(&proxy));
         let debug = format!("{builder:?}");
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
             "proxy-server flag missing or mis-normalized: {debug}"
         );
+    }
+
+    #[test]
+    fn the_interact_launch_takes_the_proxy_as_chrome_can_read_it() {
+        for (raw, server) in [
+            ("127.0.0.1:3128", "http://127.0.0.1:3128"),
+            ("http:proxy.test:1", "http://proxy.test:1"),
+        ] {
+            let config = CrawlConfig {
+                proxy: Some(crate::types::ProxyConfig {
+                    url: raw.into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let proxy = crate::proxy::chrome_proxy_for(&config).expect("a usable proxy");
+            let builder =
+                build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), proxy.as_ref());
+            let debug = format!("{builder:?}");
+            assert!(
+                debug.contains(&format!("key: \"proxy-server={server}\"")),
+                "{raw}: Chrome must get {server}, got {debug}"
+            );
+        }
     }
 
     /// A refused redirect target that carries `user:pass@` userinfo must be reported with its

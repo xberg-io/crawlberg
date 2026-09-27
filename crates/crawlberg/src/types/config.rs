@@ -498,8 +498,17 @@ impl CrawlConfig {
     }
 
     fn validate_proxy(&self) -> Result<(), CrawlError> {
-        for proxy in [self.proxy.as_ref(), self.browser.proxy.as_ref()].into_iter().flatten() {
-            crate::proxy::ensure_supported_scheme(&crate::proxy::parse_proxy_url(&proxy.url)?)?;
+        use crate::proxy::{chrome_proxy, ensure_supported_scheme, parse_proxy_url};
+        if let Some(proxy) = &self.proxy {
+            ensure_supported_scheme(&parse_proxy_url(&proxy.url)?)?;
+        }
+        if let Some(proxy) = &self.browser.proxy {
+            match self.browser.backend {
+                BrowserBackend::Native => ensure_supported_scheme(&parse_proxy_url(&proxy.url)?)?,
+                BrowserBackend::Chromiumoxide => {
+                    chrome_proxy(proxy)?;
+                }
+            }
         }
         Ok(())
     }
@@ -968,20 +977,63 @@ mod tests {
     }
 
     #[test]
-    fn socks_is_refused_for_every_backend_and_both_proxy_fields() {
+    fn socks_is_refused_in_the_crawl_wide_proxy_for_every_backend() {
         for backend in [BrowserBackend::Chromiumoxide, BrowserBackend::Native] {
             for url in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
-                for config in [
-                    proxied_config(Some(url), None, backend.clone()),
-                    proxied_config(None, Some(url), backend.clone()),
-                ] {
-                    let err = config.validate().expect_err("no client speaks SOCKS").to_string();
-                    assert!(
-                        err.contains("SOCKS proxies are not supported"),
-                        "{url} {backend:?}: the error must say SOCKS is not supported, got {err}"
-                    );
-                }
+                let err = proxied_config(Some(url), None, backend.clone())
+                    .validate()
+                    .expect_err("the HTTP clients cannot use a SOCKS proxy")
+                    .to_string();
+                assert!(
+                    err.contains("SOCKS proxies are not supported"),
+                    "{url} {backend:?}: the error must say SOCKS is not supported, got {err}"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn socks_is_refused_in_the_browser_proxy_of_the_native_backend() {
+        for url in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
+            let err = proxied_config(Some("http://proxy.test:8080"), Some(url), BrowserBackend::Native)
+                .validate()
+                .expect_err("the native browser's clients cannot use a SOCKS proxy")
+                .to_string();
+            assert!(err.contains("SOCKS proxies are not supported"), "{url}: got {err}");
+        }
+    }
+
+    #[test]
+    fn chrome_takes_a_socks_or_scheme_less_browser_proxy_beside_an_http_crawl_proxy() {
+        for url in [
+            "socks5://proxy.test:1080",
+            "socks4://proxy.test:1080",
+            "127.0.0.1:3128",
+            "localhost:3128",
+        ] {
+            let result =
+                proxied_config(Some("http://proxy.test:8080"), Some(url), BrowserBackend::Chromiumoxide).validate();
+            assert!(result.is_ok(), "{url}: Chrome can use this proxy, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_chrome_proxy_chrome_cannot_use_is_refused() {
+        for (url, expected) in [
+            ("socks5h://proxy.test:1080", "'socks5h'"),
+            ("gopher://proxy.test:70", "'gopher'"),
+            ("operator:s3cr3t@proxy.test:8080", "username or password"),
+            ("socks5://operator:s3cr3t@proxy.test:1080", "username or password"),
+        ] {
+            let err = proxied_config(None, Some(url), BrowserBackend::Chromiumoxide)
+                .validate()
+                .expect_err("Chrome cannot use this proxy")
+                .to_string();
+            assert!(err.contains(expected), "{url}: got {err}");
+            assert!(
+                !err.contains("s3cr3t"),
+                "{url}: the password must not be shown, got {err}"
+            );
         }
     }
 

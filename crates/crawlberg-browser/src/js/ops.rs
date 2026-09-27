@@ -919,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scheme_less_or_unparseable_proxy_refuses_the_client_without_echoing_it() {
+    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
         for proxy in crate::net::proxy::credential_urls::URLS {
             let err = build_request_client(Some(proxy)).expect_err("the proxy must not build a direct client");
             crate::net::proxy::credential_urls::assert_not_shown(proxy, &err);

@@ -262,7 +262,7 @@ When `respect_robots_txt` is on, a crawl does not follow the links of a page mar
 | `wait`                   | `BrowserWait`      | `NetworkIdle` | Wait strategy after navigation: `NetworkIdle`, `Selector`, or `Fixed`. |
 | `wait_selector`          | `Option<String>`   | `None`        | CSS selector to wait for (required when `wait` is `Selector`).         |
 | `extra_wait`             | `Option<Duration>` | `None`        | Additional wait time after the wait condition is met.                  |
-| `proxy`                  | `Option<ProxyConfig>` | `None`     | Browser-level HTTP/HTTPS proxy; native backend does not support SOCKS5. |
+| `proxy`                  | `Option<ProxyConfig>` | `None`     | Browser-level proxy. The native backend takes http/https only; Chrome also takes socks4/socks5, and no proxy with credentials. The crawl-wide `proxy` never takes SOCKS. |
 | `block_url_patterns`     | `Vec<String>`      | `[]`          | Native-backend URL block patterns.                                     |
 | `eval_script`            | `Option<String>`   | `None`        | Script evaluated after navigation; native scrape stores the result.    |
 | `robots_user_agent`      | `Option<String>`   | `None`        | Native backend user-agent for robots.txt fetches.                      |

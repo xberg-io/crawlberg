@@ -150,9 +150,8 @@ fn build_extra_headers(config: &CrawlConfig) -> std::collections::HashMap<String
 ///
 /// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds credentials via
 /// percent-encoded userinfo rather than a naive string splice — a `:`, `@`, or `/` in a
-/// credential can no longer corrupt the authority — and supports any scheme with an
-/// authority component (http, https, socks5, socks5h), not just an `http://`/`https://`
-/// prefix.
+/// credential can no longer corrupt the authority. The config check has already refused
+/// every scheme but http and https for this backend.
 fn resolve_proxy_url(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
     let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
         return Ok(None);
