@@ -222,9 +222,9 @@ fn resolve_navigation_outcome(
     };
     if let Some((blocked_url, reason)) = blocked {
         // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
-        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
-        // ~keep refused request had. xberg-io/crawlberg#180.
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `ssrf_intercept` records a URL
+        // ~keep with userinfo without it, and `ssrf_violation` redacts again as the last guard.
+        // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
