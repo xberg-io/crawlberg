@@ -3,15 +3,12 @@
 use std::borrow::Cow;
 
 use tl::VDom;
+use url::Url;
 
 use crate::types::{ArticleMetadata, PageMetadata};
 
-#[cfg(not(target_arch = "wasm32"))]
-use super::selectors::SEL_META_REFRESH;
-use super::selectors::{
-    META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_CANONICAL, SEL_HTML, SEL_META, SEL_ROBOTS_META, SEL_TITLE,
-};
-use super::{decode_attr_value, get_attr};
+use super::selectors::{META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE};
+use super::{attr_eq, decode_attr_value, get_attr, has_rel, resolve_url};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -137,7 +134,9 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 }
 
 /// Extract metadata from a parsed HTML document, with regex fallback for malformed content.
-pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
+///
+/// The canonical URL resolves against `base_url`, the document's base URL.
+pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
     let parser = dom.parser();
 
     let title = dom.query_selector(SEL_TITLE).and_then(|mut iter| {
@@ -146,11 +145,10 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
             .map(|node| node.inner_text(parser).to_string())
     });
 
-    let canonical_url = dom.query_selector(SEL_CANONICAL).and_then(|mut iter| {
-        iter.next()
-            .and_then(|h| h.get(parser))
-            .and_then(|node| node.as_tag())
-            .and_then(|tag| get_attr(tag, "href").map(Cow::into_owned))
+    let canonical_url = dom.query_selector(SEL_LINK_REL).and_then(|iter| {
+        iter.filter_map(|h| h.get(parser).and_then(|node| node.as_tag()))
+            .find(|tag| has_rel(tag, "canonical"))
+            .and_then(|tag| get_attr(tag, "href").map(|href| resolve_url(&href, base_url)))
     });
 
     let mut md = PageMetadata {
@@ -187,9 +185,10 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str) -> PageMetadata {
 /// Check whether a meta robots directive contains the given keyword.
 fn has_robots_directive(dom: &VDom<'_>, directive: &str) -> bool {
     let parser = dom.parser();
-    if let Some(iter) = dom.query_selector(SEL_ROBOTS_META) {
+    if let Some(iter) = dom.query_selector(SEL_META) {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
+                && attr_eq(tag, "name", "robots")
                 && let Some(content) = get_attr(tag, "content")
                 && content.to_lowercase().contains(directive)
             {
@@ -233,11 +232,14 @@ fn meta_refresh_target_offset(content: &str) -> Option<usize> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
     let parser = dom.parser();
-    let iter = dom.query_selector(SEL_META_REFRESH)?;
+    let iter = dom.query_selector(SEL_META)?;
     for handle in iter {
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
         };
+        if !attr_eq(tag, "http-equiv", "refresh") {
+            continue;
+        }
         let Some(content) = get_attr(tag, "content") else {
             continue;
         };
@@ -256,9 +258,13 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn document_url() -> Url {
+        Url::parse("https://example.com/dir/page.html").expect("valid URL")
+    }
+
     fn parse(html: &str) -> PageMetadata {
         let dom = crate::html::parse_html(html).expect("valid HTML");
-        extract_metadata(&dom, "")
+        extract_metadata(&dom, "", &document_url())
     }
 
     #[test]
@@ -271,6 +277,15 @@ mod tests {
         assert_eq!(md.canonical_url.as_deref(), Some("https://example.com/x"));
         assert_eq!(md.html_lang.as_deref(), Some("en-GB"));
         assert_eq!(md.html_dir.as_deref(), Some("rtl"));
+    }
+
+    #[test]
+    fn canonical_is_the_first_link_with_the_canonical_token_resolved_against_the_base() {
+        let md = parse(
+            r#"<link rel="stylesheet" href="s.css"><link rel="Canonical" href="c.html">
+               <link rel="canonical" href="second.html">"#,
+        );
+        assert_eq!(md.canonical_url.as_deref(), Some("https://example.com/dir/c.html"));
     }
 
     #[test]
@@ -391,7 +406,7 @@ mod tests {
             r#"<meta name="twitter:description" content="rtd">"#,
             r#"<meta name="keywords" content="rk">"#,
         );
-        let md = extract_metadata(&dom, raw);
+        let md = extract_metadata(&dom, raw, &document_url());
         assert_eq!(md.description.as_deref(), Some("rd"));
         assert_eq!(
             md.og_title.as_deref(),
@@ -407,10 +422,10 @@ mod tests {
     #[test]
     fn meta_content_is_decoded_on_both_the_dom_and_the_raw_path() {
         let html = r#"<meta name="description" content="Tom &amp; Jerry">"#;
-        let from_dom = extract_metadata(&crate::html::parse_html(html).expect("valid HTML"), "");
+        let from_dom = extract_metadata(&crate::html::parse_html(html).expect("valid HTML"), "", &document_url());
         assert_eq!(from_dom.description.as_deref(), Some("Tom & Jerry"));
 
-        let from_raw = extract_metadata(&crate::html::parse_html("").expect("valid HTML"), html);
+        let from_raw = extract_metadata(&crate::html::parse_html("").expect("valid HTML"), html, &document_url());
         assert_eq!(from_raw.description.as_deref(), Some("Tom & Jerry"));
     }
 
@@ -418,7 +433,7 @@ mod tests {
     fn raw_body_fallback_does_not_override_a_value_found_in_the_dom() {
         let html = r#"<meta name="description" content="from-dom">"#;
         let dom = crate::html::parse_html(html).expect("valid HTML");
-        let md = extract_metadata(&dom, r#"<meta name="description" content="from-raw">"#);
+        let md = extract_metadata(&dom, r#"<meta name="description" content="from-raw">"#, &document_url());
         assert_eq!(md.description.as_deref(), Some("from-dom"));
     }
 
@@ -431,6 +446,29 @@ mod tests {
         let plain = crate::html::parse_html(r#"<meta name="robots" content="all">"#).expect("valid HTML");
         assert!(!detect_noindex(&plain));
         assert!(!detect_nofollow(&plain));
+    }
+
+    #[test]
+    fn robots_and_refresh_names_match_in_any_case() {
+        let dom = crate::html::parse_html(r#"<meta name="Robots" content="noindex, nofollow">"#).expect("valid HTML");
+        assert!(detect_noindex(&dom));
+        assert!(detect_nofollow(&dom));
+        assert_eq!(
+            meta_refresh(r#"<META HTTP-EQUIV="Refresh" CONTENT="0; url=/next">"#),
+            Some("/next".to_owned())
+        );
+    }
+
+    #[test]
+    fn raw_body_fallback_reads_meta_tags_in_any_case() {
+        let dom = crate::html::parse_html("").expect("valid HTML");
+        let md = extract_metadata(
+            &dom,
+            r#"<META NAME="Description" CONTENT="rd"><Meta Content="rt" Name="OG:Title">"#,
+            &document_url(),
+        );
+        assert_eq!(md.description.as_deref(), Some("rd"));
+        assert_eq!(md.og_title.as_deref(), Some("rt"));
     }
 
     fn meta_refresh(html: &str) -> Option<String> {

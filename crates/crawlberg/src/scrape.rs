@@ -549,7 +549,10 @@ mod tests {
         assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/dir/u.png"]);
         assert_eq!(result.metadata.title.as_deref(), Some("Upper"));
         assert_eq!(result.metadata.html_lang.as_deref(), Some("en"));
-        assert_eq!(result.metadata.canonical_url.as_deref(), Some("/canon"));
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/canon")
+        );
         assert!(result.noindex_detected, "an uppercase robots meta tag must be read");
     }
 
@@ -576,6 +579,86 @@ mod tests {
                 "https://example.com/assets/wide.png",
                 "https://example.com/assets/og.png"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_matches_attribute_values_in_any_case() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><META NAME="ROBOTS" CONTENT="noindex, nofollow">
+            <link rel="Canonical" href="https://example.com/canon">
+            <link rel="Alternate" type="application/RSS+xml" href="https://example.com/feed.xml">
+            <link rel="ALTERNATE" hreflang="de" href="https://example.com/de/">
+            <link rel="Shortcut Icon" href="https://example.com/a.ico"><link rel="ICON" href="https://example.com/b.ico">
+            <meta property="OG:IMAGE" content="https://example.com/og.png">
+            <meta name="Twitter:Image" content="https://example.com/tw.png">
+            <script type="application/LD+JSON">{"@type":"Thing","name":"t"}</script></head>
+            <body><a href="https://other.example/" rel="External NoFollow">x</a></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "an uppercase robots name must be read");
+        assert!(result.nofollow_detected, "an uppercase robots name must be read");
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/canon")
+        );
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/de/"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["https://example.com/a.ico", "https://example.com/b.ico"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/og.png", "https://example.com/tw.png"]
+        );
+        assert_eq!(result.json_ld.len(), 1, "got {:?}", result.json_ld);
+        assert!(result.links[0].nofollow, "rel is a token list compared in any case");
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_nofollow_from_a_comma_separated_rel() {
+        let resp = response(
+            "text/html",
+            r#"<html><body><a href="/a" rel="ugc,nofollow">a</a><a href="/b" rel="nofollow,ugc">b</a>
+            <a href="/c" rel="UGC , NoFollow">c</a><a href="/d" rel="ugc,sponsored">d</a></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        let nofollow: Vec<(&str, bool)> = result.links.iter().map(|l| (l.text.as_str(), l.nofollow)).collect();
+        assert_eq!(
+            nofollow,
+            [("a", true), ("b", true), ("c", true), ("d", false)],
+            "a comma separates the link qualifiers"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_head_links_against_the_base_href() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><base href="/other/">
+            <link rel="alternate" type="application/rss+xml" href="feed.xml">
+            <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/other/feed.xml"]);
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/other/fav.ico"]);
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/other/c.html")
         );
     }
 
