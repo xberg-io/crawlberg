@@ -108,15 +108,12 @@ All notable changes to crawlberg are documented here.
   which redacts the userinfo before it is stored. The pre-navigation seed check and the HTTP
   redirect path already used the redacting path and are unchanged. (#180)
 
-- **An address whose scheme was written in upper or mixed case was reported as a real address.**
-  The images list, the links list and asset discovery skipped `data:` addresses with a
-  case-sensitive check, so `<img src="DATA:image/png;base64,...">` or `<a href="Data:...">` came
-  back as an entry. The links list skipped `javascript:`, `mailto:` and `tel:` links the same way,
-  so `JAVASCRIPT:alert(1)` or `Mailto:...` stayed in it. URL schemes are case-insensitive, and
-  these checks now read the scheme the way the URL parser does, as the markdown pass already did.
-  An `og:image` or `twitter:image` whose content is a `data:` address is now skipped too, as an
-  `<img>` with one is. The links list now skips `vbscript:` links too, a script address like
-  `javascript:`. (#200)
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
 
 - **Four CI gates passed without examining anything.** The vendored-C-header check compared only
   `packages/go/include/crawlberg.h`, the one copy the header generator writes alongside the

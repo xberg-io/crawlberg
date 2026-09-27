@@ -91,16 +91,10 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(trimmed.to_owned()))
 }
 
-/// Whether `address`, already cleaned by [`clean_url`], has the URL scheme `scheme` (given in lower
-/// case, without the colon). The scheme matches in any ASCII case, as the URL parser reads it.
-///
-/// ~keep A prefix test rather than `Url::parse(..).scheme()`: both give the same answer on a
-/// ~keep cleaned value, and the prefix test does not parse every kept address a second time.
+/// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
+/// lower case, without the colon). An address that does not parse has no scheme.
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
-    address.as_bytes().get(scheme.len()) == Some(&b':')
-        && address
-            .get(..scheme.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+    Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
 }
 
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
@@ -288,43 +282,33 @@ mod tests {
 
     #[test]
     fn a_scheme_is_recognised_as_the_url_parser_reads_it() {
-        let addresses = [
-            "data:",
-            "data:image/png;base64,AA",
-            "DATA:image/png;base64,AA",
-            "Data:text/plain,x",
-            "dAtA:,",
-            "data:text/html,<b>\u{e9}</b>",
-            "",
-            "dat",
-            "data",
-            "data/x.png",
-            "database.png",
-            "data%3Ax",
-            "data :x",
-            "d\u{e4}ta:x",
-            "x-data:y",
-            "javascript:x",
-            "JAVASCRIPT:alert(1)",
-            "Mailto:x@example.com",
-            "mailto:",
-            "TEL:+1",
-            "tel",
-            "telx:1",
-            "VBScript:msgbox(1)",
-            "vbscript:",
-            "vbscriptx:1",
-            "https://example.com/data:x",
-            "https://example.com/tel:1",
+        let cases = [
+            ("data", "data:", true),
+            ("data", "DATA:image/png;base64,AA", true),
+            ("data", "Data:text/plain,x", true),
+            ("data", "dAtA:,", true),
+            ("data", "data://host/x", true),
+            ("data", "data://[x", false),
+            ("data", "DATA://h:99999", false),
+            ("data", "", false),
+            ("data", "data", false),
+            ("data", "data/x.png", false),
+            ("data", "database.png", false),
+            ("data", "data%3Ax", false),
+            ("data", "data :x", false),
+            ("data", "d\u{e4}ta:x", false),
+            ("data", "x-data:y", false),
+            ("data", "https://example.com/data:x", false),
+            ("javascript", "JAVASCRIPT:alert(1)", true),
+            ("mailto", "Mailto:x@example.com", true),
+            ("tel", "TEL:+1", true),
+            ("tel", "tel://a b", false),
+            ("tel", "telx:1", false),
+            ("vbscript", "VBScript:msgbox(1)", true),
+            ("vbscript", "vbscriptx:1", false),
         ];
-        let mut matches = 0;
-        for scheme in ["data", "javascript", "mailto", "tel", "vbscript"] {
-            for address in addresses {
-                let parsed = Url::parse(address).is_ok_and(|url| url.scheme() == scheme);
-                assert_eq!(has_scheme(address, scheme), parsed, "for {scheme:?} in {address:?}");
-                matches += usize::from(parsed);
-            }
+        for (scheme, address, expected) in cases {
+            assert_eq!(has_scheme(address, scheme), expected, "for {scheme:?} in {address:?}");
         }
-        assert_eq!(matches, 13);
     }
 }

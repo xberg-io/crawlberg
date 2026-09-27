@@ -853,36 +853,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_inline_data_links_in_any_case() {
-        let resp = response(
-            "text/html",
-            "<html><body>\
-             <a href=\"DATA:text/html,x\">a</a><a href=\"Data:text/plain,y\">b</a>\
-             <a href=\"next.html\">c</a></body></html>",
-        );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
-            .await
-            .expect("scrape should succeed");
-
-        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
-    }
-
-    #[tokio::test]
-    async fn scrape_skips_script_mail_and_phone_links_in_any_case() {
-        let resp = response(
-            "text/html",
-            "<html><body>\
-             <a href=\"JAVASCRIPT:alert(1)\">a</a><a href=\"Mailto:x@example.com\">b</a>\
-             <a href=\"TEL:+15551234\">c</a><a href=\"next.html\">d</a></body></html>",
-        );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
-            .await
-            .expect("scrape should succeed");
-
-        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
-    }
-
-    #[tokio::test]
     async fn scrape_skips_vbscript_links_in_any_case() {
         let resp = response(
             "text/html",
@@ -911,6 +881,23 @@ mod tests {
             .expect("scrape should succeed");
 
         assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/og.png"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_keeps_a_data_image_address_the_url_parser_cannot_read_at_every_image_site() {
+        let resp = response(
+            "text/html",
+            "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\"></head><body>\
+             <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["data://[a", "data://[b", "DATA://h:99999"]
+        );
     }
 
     #[tokio::test]

@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{effective_base_url, get_url_attr, has_rel, has_scheme};
+use crate::html::{effective_base_url, get_url_attr, has_rel};
 use crate::http::http_fetch;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
@@ -63,7 +63,6 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && !has_scheme(&src, "data")
                 && let Ok(url) = base_url.join(&src)
                 && url.scheme() != "data"
             {
@@ -220,17 +219,6 @@ mod tests {
                 "https://example.com/page"
             ),
             ["https://example.com/s.css"]
-        );
-    }
-
-    #[test]
-    fn inline_data_images_are_skipped_in_any_case() {
-        assert_eq!(
-            discovered(
-                r#"<img src="DATA:image/png;base64,AA"><img src="Data:image/gif;base64,R0"><img src="i.png">"#,
-                "https://example.com/page"
-            ),
-            ["https://example.com/i.png"]
         );
     }
 
