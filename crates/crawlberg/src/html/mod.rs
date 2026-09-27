@@ -234,7 +234,7 @@ pub(crate) use extract::extract_page_data;
 pub(crate) use link_targets::resolve_link_targets;
 pub(crate) use links::{effective_base_url, extract_links};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use metadata::detect_meta_refresh;
+pub(crate) use metadata::{detect_meta_refresh, refresh_target};
 pub(crate) use metadata::{detect_nofollow, detect_noindex};
 pub(crate) use raw_text::mask_raw_text_markup;
 
