@@ -33,9 +33,10 @@ use crate::types::CrawlConfig;
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
 
 /// Active CDP Fetch-domain interception that re-validates every browser-issued
-/// request against the SSRF policy. Held alive across a navigation; consuming it
-/// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
-/// and reports the first request that was blocked.
+/// request against the SSRF policy and adds the seed-host headers. Held alive for as
+/// long as the page is in use; [`SsrfInterceptGuard::take_blocked`] reports the first
+/// blocked request so far, and [`SsrfInterceptGuard::finish`] disables interception
+/// and stops the listener when the page is released.
 pub(crate) struct SsrfInterceptGuard {
     page: chromiumoxide::Page,
     listener: tokio::task::JoinHandle<()>,
@@ -43,15 +44,19 @@ pub(crate) struct SsrfInterceptGuard {
 }
 
 impl SsrfInterceptGuard {
-    /// Disable interception, stop the listener, and return the first blocked
-    /// `(url, reason)` observed during the navigation, if any.
-    pub(crate) async fn finish(self) -> Option<(String, String)> {
-        let _ = self.page.execute(FetchDisableParams::default()).await;
-        self.listener.abort();
+    /// Take the first blocked `(url, reason)` observed so far, if any. Interception
+    /// stays on.
+    pub(crate) fn take_blocked(&self) -> Option<(String, String)> {
         match self.blocked.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         }
+    }
+
+    /// Disable interception and stop the listener, once the page is no longer used.
+    pub(crate) async fn finish(self) {
+        let _ = self.page.execute(FetchDisableParams::default()).await;
+        self.listener.abort();
     }
 }
 

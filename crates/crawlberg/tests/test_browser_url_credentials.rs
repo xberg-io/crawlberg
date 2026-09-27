@@ -1,5 +1,6 @@
-//! The chromiumoxide backend sends a caller's URL credentials to the seed host only, and
-//! refuses a URL with userinfo that a page asks the browser to load.
+//! The chromiumoxide backend sends a caller's URL credentials, `auth` and custom headers to
+//! the seed host only, for the page's whole life, and refuses a URL with userinfo that a page
+//! asks the browser to load.
 //!
 //! Requires a real Chrome binary (chromiumoxide auto-detects it) and is gated behind the
 //! `browser` feature; skipped (not failed) when Chrome is unavailable, matching the other
@@ -323,4 +324,186 @@ async fn configured_bearer_auth_and_custom_headers_in_an_interaction_go_to_seed_
     }
 
     assert_scoped_headers(&seed, &other, &format!("Bearer {BEARER}")).await;
+}
+
+/// Scrape `url` in Chrome with the Bearer and custom-header config, or `None` without Chrome.
+async fn scrape_with_bearer(test_name: &str, url: &str) -> Option<Result<ScrapeResult, CrawlError>> {
+    scrape_in_browser_with(test_name, bearer_config(), url).await
+}
+
+/// Every recorded request for `at` on `mock` carries the Bearer credential and the custom
+/// header, and there is at least one.
+async fn assert_seed_headers_on(mock: &MockServer, at: &str, what: &str) {
+    let requests = requests_for(mock, at).await;
+    assert!(!requests.is_empty(), "{what}: {at} must have been requested");
+    for headers in &requests {
+        assert_eq!(
+            header(headers, "authorization"),
+            Some(format!("Bearer {BEARER}").as_str()),
+            "{what}: {at} on the seed host carries the credential: {headers:?}"
+        );
+        assert_eq!(
+            header(headers, CUSTOM_HEADER),
+            Some(CUSTOM_VALUE),
+            "{what}: {at} on the seed host carries the custom header: {headers:?}"
+        );
+    }
+}
+
+/// Every recorded request for `at` on `mock` carries neither the credential nor the custom
+/// header, and there is at least one.
+async fn assert_no_seed_headers_on(mock: &MockServer, at: &str, what: &str) {
+    let requests = requests_for(mock, at).await;
+    assert!(
+        !requests.is_empty(),
+        "{what}: {at} on the other host must have been requested"
+    );
+    for headers in &requests {
+        assert_eq!(
+            header(headers, "authorization"),
+            None,
+            "{what}: the other host got the credential: {headers:?}"
+        );
+        assert_eq!(
+            header(headers, CUSTOM_HEADER),
+            None,
+            "{what}: the other host got the custom header: {headers:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_document_redirect_to_another_host_gets_no_seed_host_headers() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    let other_port = other.address().port();
+    mount(
+        &seed,
+        "/",
+        ResponseTemplate::new(302).insert_header("location", format!("http://localhost:{other_port}/landed").as_str()),
+    )
+    .await;
+    mount(
+        &other,
+        "/landed",
+        ResponseTemplate::new(200).set_body_raw("<html><body><p>landed</p></body></html>", "text/html"),
+    )
+    .await;
+
+    let Some(_outcome) = scrape_with_bearer(
+        "a_document_redirect_to_another_host_gets_no_seed_host_headers",
+        &format!("{}/", seed.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+
+    assert_seed_headers_on(&seed, "/", "document redirect").await;
+    assert_no_seed_headers_on(&other, "/landed", "document redirect").await;
+}
+
+#[tokio::test]
+async fn a_subresource_redirect_to_another_host_gets_no_seed_host_headers() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    let other_port = other.address().port();
+    mount(
+        &seed,
+        "/",
+        ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><p>seed</p><img src="/hop.png"></body></html>"#,
+            "text/html",
+        ),
+    )
+    .await;
+    mount(
+        &seed,
+        "/hop.png",
+        ResponseTemplate::new(302)
+            .insert_header("location", format!("http://localhost:{other_port}/third.png").as_str()),
+    )
+    .await;
+    mount(&other, "/third.png", png()).await;
+
+    let Some(_outcome) = scrape_with_bearer(
+        "a_subresource_redirect_to_another_host_gets_no_seed_host_headers",
+        &format!("{}/", seed.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+
+    assert_seed_headers_on(&seed, "/hop.png", "subresource redirect").await;
+    assert_no_seed_headers_on(&other, "/third.png", "subresource redirect").await;
+}
+
+#[tokio::test]
+async fn a_seed_host_request_during_the_extra_wait_keeps_the_seed_host_headers() {
+    let seed = MockServer::start().await;
+    mount(
+        &seed,
+        "/",
+        ResponseTemplate::new(200).set_body_raw(
+            r#"<html><body><p>seed</p><script>setTimeout(function () { fetch('/late'); }, 700);</script></body></html>"#,
+            "text/html",
+        ),
+    )
+    .await;
+    mount(&seed, "/late", ResponseTemplate::new(200).set_body_string("ok")).await;
+
+    let Some(outcome) = scrape_with_bearer(
+        "a_seed_host_request_during_the_extra_wait_keeps_the_seed_host_headers",
+        &format!("{}/", seed.uri()),
+    )
+    .await
+    else {
+        return;
+    };
+    outcome.expect("scrape must succeed");
+
+    assert_seed_headers_on(&seed, "/late", "request after the load").await;
+}
+
+#[cfg(feature = "interact")]
+#[tokio::test]
+async fn a_seed_host_request_an_action_sends_keeps_the_seed_host_headers() {
+    use crawlberg::PageAction;
+
+    let seed = MockServer::start().await;
+    mount(
+        &seed,
+        "/",
+        ResponseTemplate::new(200).set_body_raw("<html><body><p>seed</p></body></html>", "text/html"),
+    )
+    .await;
+    mount(&seed, "/api", ResponseTemplate::new(200).set_body_string("ok")).await;
+
+    let mut config = bearer_config();
+    config.browser.extra_wait = None;
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let actions = vec![
+        PageAction::ExecuteJs {
+            script: "fetch('/api'); 1".to_owned(),
+        },
+        PageAction::Wait {
+            milliseconds: Some(1500),
+            selector: None,
+        },
+    ];
+    match crawlberg::interact(&engine, &format!("{}/", seed.uri()), actions).await {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(
+                "a_seed_host_request_an_action_sends_keeps_the_seed_host_headers",
+                &message,
+            );
+            return;
+        }
+        outcome => {
+            outcome.expect("the interaction must succeed");
+        }
+    }
+
+    assert_seed_headers_on(&seed, "/api", "request from an action").await;
 }

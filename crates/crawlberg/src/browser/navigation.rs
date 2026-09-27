@@ -12,7 +12,7 @@ use chromiumoxide::page::ScreenshotParams;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::start_ssrf_interception;
+use crate::ssrf_intercept::{SsrfInterceptGuard, start_ssrf_interception};
 use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -48,10 +48,23 @@ pub(super) async fn page_fetch(
 
     apply_prior_cookies(page, prior_cookies).await;
 
-    let timeout = config.browser.timeout;
-
     let interceptor = start_ssrf_interception(page, config).await?;
+    // ~keep The interception stays on until the page is released: it adds the seed-host
+    // ~keep headers and the SSRF check to requests made during the extra wait too.
+    let outcome = render(url, config, page, want_screenshot, &interceptor).await;
+    interceptor.finish().await;
+    outcome
+}
 
+/// Navigate, wait, and read the page, under the caller's interception.
+async fn render(
+    url: &str,
+    config: &CrawlConfig,
+    page: &chromiumoxide::Page,
+    want_screenshot: bool,
+    interceptor: &SsrfInterceptGuard,
+) -> Result<HttpResponse, CrawlError> {
+    let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
             .await
@@ -65,8 +78,7 @@ pub(super) async fn page_fetch(
     })
     .await;
 
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    resolve_navigation_outcome(navigation, interceptor.take_blocked(), timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
