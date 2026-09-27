@@ -14,7 +14,7 @@ use tracing::Instrument as _;
 
 use self::launch::{UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
+use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser, remove_profile_dir};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
@@ -348,8 +348,8 @@ impl Drop for OneShotSession {
                 // ~keep finishes still removes a scratch directory when it drops the task.
                 handle.spawn(async move {
                     release_browser(browser, handler_handle, cleanup, shutdown_timeout).await;
-                    if let Some(dir) = data_dir {
-                        let _ = tokio::task::spawn_blocking(move || drop(dir)).await;
+                    if let Some(UserDataDir::Scratch(dir)) = data_dir {
+                        remove_profile_dir(dir).await;
                     }
                 });
             }

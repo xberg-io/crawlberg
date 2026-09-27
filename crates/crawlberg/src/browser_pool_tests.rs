@@ -41,21 +41,9 @@ async fn test_acquire_after_shutdown_fails() {
 /// Assert that no process uses the profile directory at `path` and that the directory is gone,
 /// and still gone a second later, when a helper that outlived its browser would have written again.
 pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-
-    let flag = std::ffi::OsString::from(user_data_dir_flag(path));
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing()
-            .without_tasks()
-            .with_cmd(UpdateKind::Always),
-    );
-    let users: Vec<_> = system
-        .processes()
-        .values()
-        .filter(|process| process.cmd().contains(&flag))
+    let mut system = sysinfo::System::new();
+    let users: Vec<_> = processes_naming(&mut system, &user_data_dir_flag(path))
+        .iter()
         .map(|process| process.pid())
         .collect();
     assert!(users.is_empty(), "processes {users:?} still use {}", path.display());
@@ -77,7 +65,9 @@ pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) 
 /// ~keep The stand-in carries `--user-data-dir=<dir>` on its command line, as each of Chrome's
 /// ~keep helper processes does, and rewrites a file in the directory in a loop, as the helpers do
 /// ~keep for a moment after the browser process dies. It is a shell builtin loop, so no child of
-/// ~keep it without the flag can write into the directory after the kill.
+/// ~keep it without the flag can write into the directory after the kill. It is a child of this
+/// ~keep process that nothing reaps before the drop returns, as the browser process can be, so the
+/// ~keep drop must finish well inside its deadline instead of waiting on the zombie.
 #[cfg(unix)]
 #[test]
 fn dropping_a_profile_directory_kills_the_process_using_it_and_removes_it() {
@@ -98,7 +88,9 @@ fn dropping_a_profile_directory_kills_the_process_using_it_and_removes_it() {
         "the stand-in must write into the directory"
     );
 
+    let started = std::time::Instant::now();
     drop(dir);
+    let elapsed = started.elapsed();
 
     let exited = helper.try_wait().expect("the stand-in's status must be readable");
     if exited.is_none() {
@@ -109,7 +101,109 @@ fn dropping_a_profile_directory_kills_the_process_using_it_and_removes_it() {
         exited.is_some(),
         "dropping the directory must kill the process using it"
     );
+    assert!(
+        elapsed < PROFILE_USERS_EXIT_TIMEOUT / 2,
+        "the drop must not wait on a killed child nobody has reaped yet: took {elapsed:?}"
+    );
     assert_profile_directory_is_gone_for_good(&path);
+}
+
+/// Start `sh` blocked on its stdin with `argument` on its command line, and wait until a scan
+/// of the process table sees it there.
+#[cfg(unix)]
+pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
+    let child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("read _")
+        .arg(argument)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("sh must start");
+    let mut system = sysinfo::System::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while processes_naming(&mut system, argument).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !processes_naming(&mut system, argument).is_empty(),
+        "the bystander must show {argument:?} on its command line"
+    );
+    child
+}
+
+/// Dropping a profile directory leaves alone a process whose command line only resembles the flag.
+///
+/// ~keep Each bystander names something other than this directory as a whole token: a sibling
+/// ~keep directory whose name starts with this one, a directory inside it, and the bare path.
+#[cfg(unix)]
+#[test]
+fn dropping_a_profile_directory_leaves_processes_naming_other_paths_running() {
+    let dir = ScratchProfileDir::create("crawlberg-profile-bystander-test-").expect("the directory must be creatable");
+    let flag = user_data_dir_flag(dir.path());
+    let arguments = [
+        format!("{flag}-other"),
+        format!("{flag}/Default"),
+        dir.path().display().to_string(),
+    ];
+    let mut bystanders: Vec<_> = arguments.iter().map(|argument| spawn_bystander(argument)).collect();
+
+    drop(dir);
+
+    let running: Vec<_> = bystanders
+        .iter_mut()
+        .map(|child| child.try_wait().expect("the status must be readable").is_none())
+        .collect();
+    for child in &mut bystanders {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert_eq!(
+        running,
+        vec![true; arguments.len()],
+        "only a process naming this exact directory may be killed: {arguments:?}"
+    );
+}
+
+/// Removing the profile directory of a Chrome that is still running stops that Chrome first.
+///
+/// ~keep A real Chrome, because Chrome rewrites the command line of each of its processes into
+/// ~keep one space-joined string, which a stand-in started with separate arguments does not do. The
+/// ~keep browser's exit is read from its own handle, not from the process scan under test.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
+    let dir = ScratchProfileDir::create("crawlberg-running-chrome-test-").expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    let config = match build_pool_launch_builder(&path, &[]).build() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("skipping: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let (mut browser, mut handler) = match Browser::launch(config).await {
+        Ok(launched) => launched,
+        Err(error) => {
+            eprintln!("skipping: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+    remove_profile_dir(dir).await;
+
+    let exited = browser.try_wait().expect("the browser's status must be readable");
+    if exited.is_none() {
+        let _ = browser.kill().await;
+    }
+    handler_handle.abort();
+    assert!(
+        exited.is_some(),
+        "removing the profile directory must stop the Chrome still using it"
+    );
+    tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&path))
+        .await
+        .expect("no Chrome may use or recreate the profile directory after it is removed");
 }
 
 /// A pool dropped without `shutdown` removes the profile directory of the Chrome it launched.

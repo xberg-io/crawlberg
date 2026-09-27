@@ -138,17 +138,11 @@ pub(crate) struct ScratchProfileDir(std::path::PathBuf);
 
 impl ScratchProfileDir {
     /// Create a fresh directory. The random suffix avoids Chrome `SingletonLock` collisions.
-    ///
-    /// ~keep The path is canonical, so the flag Chrome passes to its helpers equals the one
-    /// ~keep `stop_processes_using` looks for even when the temp directory is behind a symlink.
     pub(crate) fn create(prefix: &str) -> Result<Self, CrawlError> {
         tempfile::Builder::new()
             .prefix(prefix)
             .tempdir()
-            .map(|dir| {
-                let path = dir.keep();
-                Self(std::fs::canonicalize(&path).unwrap_or(path))
-            })
+            .map(|dir| Self(dir.keep()))
             .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
     }
 
@@ -165,27 +159,56 @@ pub(crate) fn user_data_dir_flag(dir: &std::path::Path) -> String {
     format!("--user-data-dir={}", dir.display())
 }
 
-/// Kill every process whose command line names `dir` as its profile, and wait until none is left.
+/// Refresh `system` and return the live processes whose command line holds `token` as a whole,
+/// space-delimited token.
 ///
-/// ~keep A killed process that has not been reaped yet has an empty command line, so it drops out
-/// ~keep of the scan as soon as it can no longer write.
-fn stop_processes_using(dir: &std::path::Path) {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+/// ~keep Chrome on Linux rewrites the command line of each of its processes into one string with
+/// ~keep the arguments joined by spaces (its process title), so the flag is never an argument of
+/// ~keep its own there. The arguments are joined the same way and the token must be bounded by a
+/// ~keep space or an end on both sides, so a process naming a different directory that starts with
+/// ~keep this path, or naming a file inside it, never matches. A zombie is skipped: it can no longer
+/// ~keep write, and it keeps its command line until its parent reaps it, which for the browser
+/// ~keep process is this process, possibly not before the drop returns.
+pub(crate) fn processes_naming<'s>(system: &'s mut sysinfo::System, token: &str) -> Vec<&'s sysinfo::Process> {
+    use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, UpdateKind};
 
-    let flag = std::ffi::OsString::from(user_data_dir_flag(dir));
     let refresh = ProcessRefreshKind::nothing()
         .without_tasks()
         .with_cmd(UpdateKind::Always);
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
+    system
+        .processes()
+        .values()
+        .filter(|process| process.status() != ProcessStatus::Zombie && command_line_names(process.cmd(), token))
+        .collect()
+}
+
+/// Whether the arguments in `cmd`, joined by spaces, hold `token` bounded by a space or an end.
+fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
+    let line = cmd
+        .iter()
+        .map(|argument| argument.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let bytes = line.as_bytes();
+    line.match_indices(token).any(|(start, _)| {
+        let end = start + token.len();
+        (start == 0 || bytes[start - 1] == b' ') && (end == bytes.len() || bytes[end] == b' ')
+    })
+}
+
+/// Kill every process whose command line names `dir` as its profile, and wait until none is left.
+///
+/// ~keep `dir` is always a directory a [`ScratchProfileDir`] created under a random name, so only a
+/// ~keep Chrome that crawlberg launched on it can carry the flag. A saved profile the caller named
+/// ~keep is never a `ScratchProfileDir`, so its Chrome is never killed here and it is never removed.
+fn stop_processes_using(dir: &std::path::Path) {
+    let flag = user_data_dir_flag(dir);
     let deadline = std::time::Instant::now() + PROFILE_USERS_EXIT_TIMEOUT;
-    let mut system = System::new();
+    let mut system = sysinfo::System::new();
     loop {
-        system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
-        let mut users = system
-            .processes()
-            .values()
-            .filter(|process| process.cmd().contains(&flag))
-            .peekable();
-        if users.peek().is_none() {
+        let users = processes_naming(&mut system, &flag);
+        if users.is_empty() {
             return;
         }
         if std::time::Instant::now() >= deadline {

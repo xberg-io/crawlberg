@@ -330,6 +330,26 @@ mod tests {
         );
     }
 
+    /// Dropping a saved named profile neither removes it nor stops a Chrome still using it.
+    #[cfg(unix)]
+    #[test]
+    fn a_persistent_profile_in_use_is_neither_removed_nor_its_user_killed() {
+        let dir = tempfile::tempdir().expect("the directory must be creatable");
+        let flag = crate::browser_pool::user_data_dir_flag(dir.path());
+        let mut user = crate::browser_pool::tests::spawn_bystander(&flag);
+
+        drop(UserDataDir::Persistent(dir.path().to_path_buf()));
+
+        let running = user.try_wait().expect("the status must be readable").is_none();
+        let _ = user.kill();
+        let _ = user.wait();
+        assert!(
+            running,
+            "a Chrome using a saved profile must not be killed when its value drops"
+        );
+        assert!(dir.path().is_dir(), "a saved profile directory must survive its value");
+    }
+
     /// A one-shot session dropped just before its runtime stops still removes its profile directory.
     ///
     /// ~keep The session's `Drop` spawns its teardown, and a runtime that stops right after, as every
