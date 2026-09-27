@@ -376,20 +376,34 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
 /// Resolve one child `<loc>` of a sitemap index against the index's own URL. `None` when
 /// `child_url` cannot be resolved against `sitemap_url` at all, which the caller treats the
 /// same as a child it could not fetch.
+///
+/// ~keep Every path parses `child_url` before it is fetched or used as a dedup key. When
+/// ~keep `sitemap_url` itself failed to parse (`base` is `None`), `resolve_redirect` still
+/// ~keep parses `child_url` on its own and refuses it if that fails too, instead of handing
+/// ~keep back unparsed text.
 fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> Option<String> {
-    let Some(base_parsed) = base else {
-        return Some(child_url.to_owned());
-    };
-    if Url::parse(child_url).is_ok() {
+    if let Some(base_parsed) = base
+        && Url::parse(child_url).is_ok()
+    {
         return Some(rewrite_url_host(child_url, base_parsed));
     }
     let resolved = resolve_redirect(sitemap_url, child_url);
     if resolved.is_none() {
-        tracing::debug!(
-            sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
-            target_len = child_url.len(),
-            "sitemap-index child <loc> failed to parse; skipping it"
-        );
+        // ~keep `redact_url_credentials` returns an address that does not parse unchanged,
+        // ~keep so a `sitemap_url` without a `base` is logged by length only.
+        if base.is_some() {
+            tracing::debug!(
+                sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
+                target_len = child_url.len(),
+                "sitemap-index child <loc> failed to parse; skipping it"
+            );
+        } else {
+            tracing::debug!(
+                sitemap_url_len = sitemap_url.len(),
+                target_len = child_url.len(),
+                "sitemap-index child <loc> failed to parse; skipping it"
+            );
+        }
     }
     resolved.map(String::from)
 }
@@ -587,6 +601,84 @@ mod tests {
             "an unparseable sitemap-index child <loc> must not be followed"
         );
         assert_logged_without_secret(&fields, "hunter2", sitemap_url);
+    }
+
+    #[test]
+    fn same_host_child_loc_with_stray_whitespace_normalizes_instead_of_round_tripping_raw() {
+        let sitemap_url = "https://example.com/sitemap-index.xml";
+        let base = Url::parse(sitemap_url).expect("valid URL");
+
+        let resolved = resolve_child_sitemap_url(Some(&base), sitemap_url, "HTTPS://example.com:443/a\tb.xml");
+
+        assert_eq!(
+            resolved,
+            Some("https://example.com/ab.xml".to_owned()),
+            "a same-host child <loc> must be fetched and deduped on its normalized form, not \
+             the raw text, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn no_base_child_loc_with_stray_whitespace_normalizes_instead_of_round_tripping_raw() {
+        // ~keep `sitemap_url` fails to parse, matching how the caller derives `base = None`
+        // ~keep from `Url::parse(document.url).ok()`.
+        let resolved = resolve_child_sitemap_url(None, "not a url", "HTTPS://example.com:443/a\tb.xml");
+
+        assert_eq!(
+            resolved,
+            Some("https://example.com/ab.xml".to_owned()),
+            "a child <loc> must be parsed and normalized even when the index URL itself has \
+             no usable base, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn no_base_unparseable_child_loc_is_refused_not_returned_raw() {
+        let resolved = resolve_child_sitemap_url(None, "not a url", "https://ex ample.com/bad.xml");
+
+        assert!(
+            resolved.is_none(),
+            "a child <loc> that fails to parse must be refused even when the index URL has no \
+             usable base, not returned as raw text, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn no_base_unparseable_child_loc_with_credentials_is_never_logged() {
+        let (resolved, fields) = capture_events(|| {
+            resolve_child_sitemap_url(None, "not a url", "https://user:hunter2@ex ample.com/bad.xml")
+        });
+
+        assert!(
+            resolved.is_none(),
+            "an unparseable child <loc> must not be followed even with no usable base"
+        );
+        assert_logged_without_secret(&fields, "hunter2", &"not a url".len().to_string());
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn no_base_index_url_with_credentials_is_never_logged() {
+        // ~keep The index URL itself fails to parse, so the credential redactor cannot
+        // ~keep hide its userinfo; the reviewer's own example.
+        let sitemap_url = "https://user:hunter2@ba d.com/index.xml";
+
+        let (resolved, fields) =
+            capture_events(|| resolve_child_sitemap_url(None, sitemap_url, "https://ex ample.com/bad.xml"));
+
+        assert!(
+            resolved.is_none(),
+            "an unparseable child <loc> must not be followed even with no usable base"
+        );
+        assert_logged_without_secret(&fields, "hunter2", &sitemap_url.len().to_string());
+        assert!(
+            fields
+                .iter()
+                .any(|(name, value)| name == "sitemap_url_len" && *value == sitemap_url.len().to_string()),
+            "the index URL must be logged by length, got {fields:?}"
+        );
     }
 
     async fn mount_xml(mock: &MockServer, route: &str, body: String) {
