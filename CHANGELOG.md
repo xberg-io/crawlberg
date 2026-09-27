@@ -15,7 +15,9 @@ All notable changes to crawlberg are documented here.
   mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
   that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
   response headers of the document the page shows, so a WAF block is found from the headers of a
-  403 page as well as from its body. (#143)
+  403 page as well as from its body. When Chrome shows its own error page in place of a 403
+  response, such as a 403 download, only the headers are checked, because Chrome never rendered
+  the body. (#143)
 
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
   `nofollow_detected` are always serialised, and `CrawlPageResult` carries
@@ -186,11 +188,13 @@ All notable changes to crawlberg are documented here.
   or iframe keeps the page. (#143)
 - **Browser mode returned Chrome's error page as the page.** When the main frame ended on
   Chrome's own error page, the Chromiumoxide backend returned that page's HTML as content. This
-  happened for a download with a status such as 501, 505 or 599, and for a navigation that failed
-  at the network. Now such a fetch fails with a browser error that names the URL, and the status
-  when the server answered.
-  A status that HTTP mode reports as an error, such as 404 or 500, gives that error, as before.
-  A page the server itself sends with a 501 is still a page. (#317, #319)
+  happened for a download with a status such as 501, 505 or 599, for an error status with an
+  empty body, and for a navigation that failed at the network. When the server answered, the fetch
+  now reports its status, headers and URL with no body, and handles the status as HTTP mode does:
+  a 404 or 500 is the same error, and a 400 or 501 is a page. When the server did not answer,
+  the fetch fails with a browser error that names the URL. After a page navigates itself, only
+  the redirects of that navigation make a 404 a page, not the redirects of the requested URL.
+  (#317, #319)
 - **An error could show the password of a URL.** When the SSRF policy refused a navigation in
   browser mode, the error kept the credentials of the refused URL. A 404 error kept them too, in
   HTTP mode and in browser mode. These errors now show the URL with its credentials redacted.

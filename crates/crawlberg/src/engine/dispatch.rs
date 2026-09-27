@@ -313,7 +313,11 @@ mod tests {
             screenshot: None,
         };
 
-        let page = crate::browser::BrowserPage { response, redirects: 0 };
+        let page = crate::browser::BrowserPage {
+            response,
+            redirects: 0,
+            redirected: false,
+        };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
         let etag = crawl.headers.get("etag").expect("a browser fetch must report its ETag");

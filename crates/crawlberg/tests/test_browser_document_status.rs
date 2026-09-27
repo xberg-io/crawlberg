@@ -34,8 +34,8 @@ fn page(status: u16, body: &str) -> ResponseTemplate {
     ResponseTemplate::new(status).set_body_raw(format!("<html><body>{body}</body></html>"), "text/html")
 }
 
-/// `/` links to `/ok`, `/missing` and `/broken`, which answer 200, 404 and 500 with a page.
-/// `/moved` redirects to `/missing`. `/waf` is a 403 page that only its headers fingerprint as
+/// `/` links to `/ok`, `/missing` and `/broken`, which answer 200, 404 and 500 with a page, and
+/// to `/moved`, which redirects to `/missing`. `/waf` is a 403 page that only its headers fingerprint as
 /// a WAF block.
 async fn site() -> MockServer {
     let site = MockServer::start().await;
@@ -43,7 +43,7 @@ async fn site() -> MockServer {
         (
             "/",
             200,
-            r#"<a href="/ok">ok</a><a href="/missing">missing</a><a href="/broken">broken</a>"#,
+            r#"<a href="/ok">ok</a><a href="/missing">missing</a><a href="/broken">broken</a><a href="/moved">moved</a>"#,
         ),
         ("/ok", 200, "<p>fine</p>"),
         ("/missing", 404, "<p>no such page</p>"),
@@ -180,10 +180,9 @@ async fn chromiumoxide_soft_http_errors_report_a_404_or_403_page_as_http_mode_do
     }
 }
 
-/// A crawl in browser mode keeps the pages, with the statuses, that HTTP mode keeps.
-#[tokio::test]
-async fn chromiumoxide_crawl_keeps_the_pages_http_mode_keeps() {
-    let test_name = "chromiumoxide_crawl_keeps_the_pages_http_mode_keeps";
+/// A crawl in browser mode with `backend` keeps the pages, with the statuses, that HTTP mode
+/// keeps.
+async fn assert_crawl_matches_http_mode(test_name: &str, backend: BrowserBackend) {
     let site = site().await;
     let seed = format!("{}/", site.uri());
     let pages = |result: crawlberg::CrawlResult| {
@@ -195,13 +194,13 @@ async fn chromiumoxide_crawl_keeps_the_pages_http_mode_keeps() {
         pages.sort();
         pages
     };
-    let http = create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Never))).expect("engine");
+    let http = create_engine(Some(config(backend.clone(), BrowserMode::Never))).expect("engine");
     let expected = pages(crawl(&http, &seed).await.expect("HTTP mode needs no Chrome"));
     assert!(
         expected.contains(&("/ok".to_owned(), 200)),
         "HTTP mode keeps the 200 page: {expected:?}"
     );
-    let browser = create_engine(Some(config(BrowserBackend::Chromiumoxide, BrowserMode::Always))).expect("engine");
+    let browser = create_engine(Some(config(backend, BrowserMode::Always))).expect("engine");
     let result = match crawl(&browser, &seed).await {
         Ok(result) => result,
         Err(error) if chrome_missing(test_name, &error) => return,
@@ -214,6 +213,21 @@ async fn chromiumoxide_crawl_keeps_the_pages_http_mode_keeps() {
         return;
     }
     assert_eq!(pages(result), expected, "{test_name}");
+}
+
+#[tokio::test]
+async fn chromiumoxide_crawl_keeps_the_pages_http_mode_keeps() {
+    assert_crawl_matches_http_mode(
+        "chromiumoxide_crawl_keeps_the_pages_http_mode_keeps",
+        BrowserBackend::Chromiumoxide,
+    )
+    .await;
+}
+
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_crawl_keeps_the_pages_http_mode_keeps() {
+    assert_crawl_matches_http_mode("native_crawl_keeps_the_pages_http_mode_keeps", BrowserBackend::Native).await;
 }
 
 /// Scrape `route` of a site whose routes answer `(route, status, body)` in browser mode, with
@@ -315,24 +329,29 @@ async fn chromiumoxide_reports_the_main_document_status_not_a_frame_or_image_sta
 
 /// A page that navigates itself to an address the SSRF policy refuses, after its load, fails
 /// the fetch as a refused navigation does: the page Chrome then shows is its own error page.
+/// This holds during `extra_wait` and, with no extra wait, for a navigation 50 ms after the load.
 #[tokio::test]
 async fn chromiumoxide_refuses_a_page_that_navigates_to_a_denied_address_after_the_load() {
     let test_name = "chromiumoxide_refuses_a_page_that_navigates_to_a_denied_address_after_the_load";
-    let Some((result, _site)) = scrape_start_page(
-        test_name,
-        loopback_only(Some(Duration::from_secs(2))),
-        "<script>setTimeout(() => location.assign('http://169.254.169.254/latest/'), 300)</script>",
-        vec![],
-    )
-    .await
-    else {
-        return;
-    };
-    match result {
-        Err(CrawlError::SsrfPolicyViolation { url, .. }) => {
-            assert!(url.contains("169.254.169.254"), "{test_name}: {url}");
+    for (delay_ms, extra_wait) in [(300, Some(Duration::from_secs(2))), (50, None)] {
+        let Some((result, _site)) = scrape_start_page(
+            test_name,
+            loopback_only(extra_wait),
+            &format!(
+                "<script>setTimeout(() => location.assign('http://169.254.169.254/latest/'), {delay_ms})</script>"
+            ),
+            vec![],
+        )
+        .await
+        else {
+            return;
+        };
+        match result {
+            Err(CrawlError::SsrfPolicyViolation { url, .. }) => {
+                assert!(url.contains("169.254.169.254"), "{test_name}: {delay_ms} ms: {url}");
+            }
+            other => panic!("{test_name}: {delay_ms} ms: the refused navigation must fail the fetch: {other:?}"),
         }
-        other => panic!("{test_name}: the refused navigation must fail the fetch: {other:?}"),
     }
 }
 
@@ -530,7 +549,11 @@ async fn chromiumoxide_keeps_the_page_when_an_iframe_is_refused_after_the_load()
 /// Browser mode with a two-second extra wait, so a navigation the start page starts late lands
 /// before the HTML is read.
 fn late_navigation_config() -> CrawlConfig {
-    let mut config = config(BrowserBackend::Chromiumoxide, BrowserMode::Always);
+    late_navigation_config_with(BrowserMode::Always)
+}
+
+fn late_navigation_config_with(mode: BrowserMode) -> CrawlConfig {
+    let mut config = config(BrowserBackend::Chromiumoxide, mode);
     config.browser.extra_wait = Some(Duration::from_secs(2));
     config
 }
@@ -545,10 +568,11 @@ fn download(status: u16) -> ResponseTemplate {
 const LATE_DOWNLOAD: &str = "<script>setTimeout(() => location.assign('/dl'), 300)</script>";
 
 /// A download whose status is not an error in HTTP mode makes Chrome show its own error page.
-/// That page is not the server's content, so the fetch fails and names the status.
+/// That page is not the server's content, so the fetch is a page with the status, the headers and
+/// the URL of the download and no body.
 #[tokio::test]
-async fn chromiumoxide_fails_when_a_late_download_leaves_chrome_s_error_page() {
-    let test_name = "chromiumoxide_fails_when_a_late_download_leaves_chrome_s_error_page";
+async fn chromiumoxide_reports_a_late_download_chrome_does_not_render_as_a_page_without_a_body() {
+    let test_name = "chromiumoxide_reports_a_late_download_chrome_does_not_render_as_a_page_without_a_body";
     for status in [501, 505, 599] {
         let Some((result, site)) = scrape_start_page(
             test_name,
@@ -561,15 +585,52 @@ async fn chromiumoxide_fails_when_a_late_download_leaves_chrome_s_error_page() {
             return;
         };
         assert_requested(test_name, &site, "/dl").await;
-        match result {
-            Err(CrawlError::BrowserError { message, .. }) => {
-                assert!(
-                    message.contains("/dl") && message.contains(&format!("HTTP {status}")),
-                    "{test_name}: {status}: {message}"
-                );
-            }
-            other => panic!("{test_name}: {status}: Chrome's error page must fail the fetch: {other:?}"),
-        }
+        let page = result.unwrap_or_else(|error| panic!("{test_name}: {status}: the download is a page: {error:?}"));
+        assert_eq!((page.status_code, page.html.as_str()), (status, ""), "{test_name}");
+        assert!(
+            page.final_url.ends_with("/dl"),
+            "{test_name}: {status}: {}",
+            page.final_url
+        );
+    }
+}
+
+/// A seed that answers an error status with an empty body makes Chrome show its own error page.
+/// The scrape still reports what HTTP mode reports: a page with that status and no body.
+#[tokio::test]
+async fn chromiumoxide_reports_an_empty_error_response_as_http_mode_does() {
+    let test_name = "chromiumoxide_reports_an_empty_error_response_as_http_mode_does";
+    let site = MockServer::start().await;
+    let statuses = [400_u16, 405, 409, 422, 451, 501];
+    for status in statuses {
+        Mock::given(method("GET"))
+            .and(path(format!("/{status}")))
+            .respond_with(ResponseTemplate::new(status).append_header("content-length", "0"))
+            .mount(&site)
+            .await;
+    }
+    let http = create_engine(Some(late_navigation_config_with(BrowserMode::Never))).expect("engine must build");
+    let browser = create_engine(Some(late_navigation_config_with(BrowserMode::Always))).expect("engine must build");
+    for status in statuses {
+        let url = format!("{}/{status}", site.uri());
+        let expected = scrape(&http, &url)
+            .await
+            .unwrap_or_else(|error| panic!("{test_name}: HTTP mode reports {status} as a page: {error:?}"));
+        assert_eq!(
+            (expected.status_code, expected.html.as_str()),
+            (status, ""),
+            "{test_name}: HTTP mode"
+        );
+        let page = match scrape(&browser, &url).await {
+            Ok(page) => page,
+            Err(error) if chrome_missing(test_name, &error) => return,
+            Err(error) => panic!("{test_name}: {status} is a page in HTTP mode: {error:?}"),
+        };
+        assert_eq!(
+            (page.status_code, page.html.as_str()),
+            (expected.status_code, expected.html.as_str()),
+            "{test_name}: browser mode"
+        );
     }
 }
 
@@ -646,39 +707,71 @@ async fn chromiumoxide_fails_when_a_late_navigation_fails_at_the_network() {
     }
 }
 
-/// A seed that redirects to a page whose late download answers 404 is a page with status 404,
-/// as a 404 at the end of a redirect is in HTTP mode: the redirect the seed took counts.
-#[tokio::test]
-async fn chromiumoxide_keeps_the_seed_redirect_when_a_late_download_answers_404() {
-    let test_name = "chromiumoxide_keeps_the_seed_redirect_when_a_late_download_answers_404";
+/// A site whose `/` starts a late navigation to `target`. `/seed` redirects to `/`, `/dl` is a
+/// 404 download, `/gone` a 404 page, and `/to-dl` and `/to-gone` redirect to them.
+async fn late_404_site(target: &str) -> MockServer {
     let site = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/seed"))
-        .respond_with(ResponseTemplate::new(302).append_header("location", "/"))
-        .mount(&site)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/"))
-        .respond_with(page(START_STATUS, &format!("<p>start-marker</p>{LATE_DOWNLOAD}")))
-        .mount(&site)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/dl"))
-        .respond_with(download(404))
-        .mount(&site)
-        .await;
-    let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/seed").await else {
-        return;
-    };
-    assert_requested(test_name, &site, "/").await;
-    assert_requested(test_name, &site, "/dl").await;
-    let page = result.unwrap_or_else(|error| panic!("{test_name}: a 404 after a redirect is a page: {error:?}"));
-    assert_eq!((page.status_code, page.html.as_str()), (404, ""), "{test_name}");
-    assert!(page.final_url.ends_with("/dl"), "{test_name}: {}", page.final_url);
+    let late = format!("<script>setTimeout(() => location.assign('{target}'), 300)</script>");
+    let routes = [
+        ("/seed", ResponseTemplate::new(302).append_header("location", "/")),
+        ("/", page(START_STATUS, &format!("<p>start-marker</p>{late}"))),
+        ("/dl", download(404)),
+        ("/gone", page(404, "<p>gone-marker</p>")),
+        ("/to-dl", ResponseTemplate::new(302).append_header("location", "/dl")),
+        (
+            "/to-gone",
+            ResponseTemplate::new(302).append_header("location", "/gone"),
+        ),
+    ];
+    for (route, response) in routes {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(response)
+            .mount(&site)
+            .await;
+    }
+    site
+}
+
+/// A 404 at the end of a redirect is a page in HTTP mode, and only the redirects of the late
+/// navigation count: the seed's redirect does not make a late 404 a page, and a late navigation
+/// that redirects to a 404 is one.
+#[tokio::test]
+async fn chromiumoxide_counts_only_the_late_navigation_s_redirects_for_a_404() {
+    let test_name = "chromiumoxide_counts_only_the_late_navigation_s_redirects_for_a_404";
+    for (seed, target, reached) in [("/seed", "/dl", "/dl"), ("/seed", "/gone", "/gone")] {
+        let site = late_404_site(target).await;
+        let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, seed).await else {
+            return;
+        };
+        assert_requested(test_name, &site, "/").await;
+        assert_requested(test_name, &site, reached).await;
+        assert_eq!(
+            scrape_outcome(result),
+            Err("NotFound".to_owned()),
+            "{test_name}: the seed redirected, then a late navigation to {target} answered 404"
+        );
+    }
+    for (target, reached) in [("/to-dl", "/dl"), ("/to-gone", "/gone")] {
+        let site = late_404_site(target).await;
+        let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/").await else {
+            return;
+        };
+        assert_requested(test_name, &site, reached).await;
+        let page = result.unwrap_or_else(|error| {
+            panic!("{test_name}: a late navigation that redirected to a 404 is a page: {error:?}")
+        });
+        assert_eq!(
+            (page.status_code, page.html.as_str()),
+            (404, ""),
+            "{test_name}: {target}"
+        );
+        assert!(page.final_url.ends_with(reached), "{test_name}: {}", page.final_url);
+    }
 }
 
 /// The password in a navigation's URL never reaches the error: not when a late navigation's
-/// connection fails, not when the server answers a download Chrome refuses, and not when the SSRF
+/// connection fails, not when a download Chrome refuses answers 404, and not when the SSRF
 /// policy refuses a late navigation or a seed's redirect.
 #[tokio::test]
 async fn chromiumoxide_hides_the_credentials_of_a_late_navigation_in_its_error() {
@@ -698,28 +791,26 @@ async fn chromiumoxide_hides_the_credentials_of_a_late_navigation_in_its_error()
         return;
     };
     outcomes.push(("closed port", format!("127.0.0.1:{closed_port}/gone"), result));
-    for (status, case) in [(501, "501 download"), (404, "404 download")] {
-        let site = MockServer::start().await;
-        let start = page(
-            START_STATUS,
-            &format!("<p>start-marker</p>{}", late_assign(&with_credentials(&site, "/dl"))),
-        );
-        Mock::given(method("GET"))
-            .and(path("/"))
-            .respond_with(start)
-            .mount(&site)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/dl"))
-            .respond_with(download(status))
-            .mount(&site)
-            .await;
-        let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/").await else {
-            return;
-        };
-        assert_requested(test_name, &site, "/dl").await;
-        outcomes.push((case, "/dl".to_owned(), result));
-    }
+    let site = MockServer::start().await;
+    let start = page(
+        START_STATUS,
+        &format!("<p>start-marker</p>{}", late_assign(&with_credentials(&site, "/dl"))),
+    );
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(start)
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/dl"))
+        .respond_with(download(404))
+        .mount(&site)
+        .await;
+    let Some(result) = browser_scrape_with(test_name, late_navigation_config(), &site, "/").await else {
+        return;
+    };
+    assert_requested(test_name, &site, "/dl").await;
+    outcomes.push(("404 download", "/dl".to_owned(), result));
     let Some((result, _site)) = scrape_start_page(
         test_name,
         loopback_only(Some(Duration::from_secs(2))),

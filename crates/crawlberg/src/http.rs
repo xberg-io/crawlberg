@@ -391,6 +391,7 @@ async fn unresolvable_redirect_response(
 }
 
 /// The error for a 403 body: a WAF block when the body fingerprints, a plain forbidden otherwise.
+#[cfg(any(feature = "browser", feature = "browser-native"))]
 fn forbidden_body_error(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> CrawlError {
     match waf::waf_vendor_from_body(status, body, headers_map) {
         Some(vendor) => CrawlError::WafBlocked {

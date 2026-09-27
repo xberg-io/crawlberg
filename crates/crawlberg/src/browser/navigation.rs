@@ -13,7 +13,7 @@ use chromiumoxide::page::ScreenshotParams;
 use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
-use crate::http::{HttpResponse, status_error};
+use crate::http::HttpResponse;
 use crate::ssrf_intercept::{DocumentResponse, SsrfInterceptGuard, StoppedResponse, start_ssrf_interception};
 use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
 
@@ -106,9 +106,17 @@ async fn render(
         return Ok(BrowserPage {
             response: stopped_response(stop),
             redirects: intercepted.redirects_followed,
+            redirected: intercepted.redirects_followed > 0,
         });
     }
-    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
+    if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
+        if matches!(error, CrawlError::BrowserError { .. })
+            && let Some(outcome) = answered_error_page(page, interceptor, intercepted.redirects_followed).await
+        {
+            return outcome;
+        }
+        return Err(error);
+    }
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -123,9 +131,9 @@ async fn render(
     if let Some(failed_url) = frame.unreachable_url {
         return error_page_outcome(failed_url, document, intercepted.redirects_followed);
     }
-    let (status, headers) = document.map_or_else(
-        || (RENDERED_PAGE_STATUS, HashMap::new()),
-        |doc| (doc.status, doc.headers),
+    let (status, headers, redirected) = document.map_or_else(
+        || (RENDERED_PAGE_STATUS, HashMap::new(), false),
+        |doc| (doc.status, doc.headers, doc.redirects > 0),
     );
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
@@ -147,6 +155,7 @@ async fn render(
             screenshot,
         },
         redirects: intercepted.redirects_followed,
+        redirected,
     })
 }
 
@@ -158,14 +167,31 @@ async fn committed_frame(page: &chromiumoxide::Page) -> Result<Frame, CrawlError
         .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
 }
 
-/// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
-/// response, if one arrived, is `document`.
+/// The outcome of a navigation that failed on Chrome's error page for a response the server
+/// sent, or `None` when the main frame shows no error page or no response was recorded for it.
 ///
-/// ~keep The error page is Chrome's, never the server's content. A status HTTP mode raises as an
-/// ~keep error (404, 500, 403, ...) is reported with no body, so it raises the same error, and a
-/// ~keep soft 404 or 403 is the same bodiless page HTTP mode reports. For any other status HTTP
-/// ~keep mode returns the server's body, which Chrome never rendered, so the fetch fails as a
-/// ~keep seed that Chrome answers with its error page fails: with a browser error.
+/// ~keep Chrome fails `goto` with `ERR_HTTP_RESPONSE_CODE_FAILURE` when the seed answers an error
+/// ~keep status with an empty body, and commits its error page. The server did answer, so the
+/// ~keep response decides the outcome as it does for a late navigation that ends on the error page.
+async fn answered_error_page(
+    page: &chromiumoxide::Page,
+    interceptor: &SsrfInterceptGuard,
+    redirects: usize,
+) -> Option<Result<BrowserPage, CrawlError>> {
+    let frame = committed_frame(page).await.ok()?;
+    let failed_url = frame.unreachable_url?;
+    let document = interceptor.document(frame.loader_id.as_ref())?;
+    Some(error_page_outcome(failed_url, Some(document), redirects))
+}
+
+/// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
+/// response, if one arrived, is `document`. `redirects` are the HTTP redirects of the seed.
+///
+/// ~keep The error page is Chrome's, never the server's content. When the server answered, the
+/// ~keep response is reported with its status and headers and no body, and HTTP mode's status
+/// ~keep handling decides on it: a 404 or 500 raises the same error, and a 400 or 501 is a page.
+/// ~keep A late navigation's own redirects decide whether a 404 is a page, not the seed's. A
+/// ~keep navigation that got no response fails with a browser error.
 fn error_page_outcome(
     failed_url: String,
     document: Option<DocumentResponse>,
@@ -177,12 +203,6 @@ fn error_page_outcome(
             "Chrome could not load {shown_url} and showed its own error page"
         )));
     };
-    if document.status != 403 && status_error(document.status, &failed_url).is_none() {
-        return Err(CrawlError::browser_error(format!(
-            "{shown_url} answered HTTP {}, and Chrome showed its own error page instead of a document",
-            document.status
-        )));
-    }
     Ok(BrowserPage {
         response: stopped_response(StoppedResponse {
             url: failed_url,
@@ -190,6 +210,7 @@ fn error_page_outcome(
             headers: document.headers,
         }),
         redirects,
+        redirected: document.redirects > 0,
     })
 }
 
@@ -520,6 +541,72 @@ mod tests {
         assert!(
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
+        );
+    }
+
+    fn error_page(status: u16, redirects: usize) -> Result<HttpResponse, CrawlError> {
+        let document = DocumentResponse {
+            status,
+            headers: HashMap::from([("content-type".to_owned(), vec!["text/plain".to_owned()])]),
+            redirects,
+        };
+        let page = error_page_outcome("https://example.com/dl".to_owned(), Some(document), 0)
+            .expect("a response the server sent is reported");
+        crate::http::rendered_status_outcome(page.response, page.redirected, &CrawlConfig::default())
+    }
+
+    #[test]
+    fn an_error_page_with_a_response_is_handled_as_http_mode_handles_its_status() {
+        let url = "https://example.com/dl";
+        for status in [400_u16, 405, 409, 413, 422, 451, 501, 505, 511, 599] {
+            let page = error_page(status, 0).unwrap_or_else(|error| panic!("{status} is a page: {error:?}"));
+            assert_eq!(
+                (
+                    page.status,
+                    page.body.as_str(),
+                    page.final_url.as_str(),
+                    page.content_type.as_str()
+                ),
+                (status, "", url, "text/plain"),
+                "{status}"
+            );
+        }
+        for status in [401_u16, 404, 408, 410, 429, 500, 502, 503, 504] {
+            let Err(error) = error_page(status, 0) else {
+                panic!("HTTP mode raises {status} as an error");
+            };
+            let expected = crate::http::status_error(status, url).expect("an error status");
+            assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{status}");
+        }
+        for status in [408_u16, 429, 500, 502, 503, 504] {
+            let Err(error) = error_page(status, 0) else {
+                panic!("HTTP mode raises {status} as an error");
+            };
+            assert!(
+                crate::http::should_retry_error(&error, &[status]),
+                "retry_codes [{status}] must see the status of {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_error_page_404_is_a_page_only_when_its_own_navigation_redirected() {
+        assert!(matches!(error_page(404, 0), Err(CrawlError::NotFound { .. })));
+        let page = error_page(404, 1).expect("a 404 at the end of a redirect is a page");
+        assert_eq!((page.status, page.body.as_str()), (404, ""));
+    }
+
+    #[test]
+    fn an_error_page_without_a_response_is_a_browser_error() {
+        let error = error_page_outcome("https://user:s3cretpw@example.com/gone".to_owned(), None, 0)
+            .err()
+            .expect("no response arrived");
+        let CrawlError::BrowserError { message, .. } = &error else {
+            panic!("got {error:?}");
+        };
+        assert!(
+            message.contains("example.com/gone") && !message.contains("s3cretpw"),
+            "{message}"
         );
     }
 }

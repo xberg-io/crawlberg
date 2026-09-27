@@ -59,6 +59,9 @@ pub(crate) struct InterceptOutcome {
     pub(crate) documents: HashMap<String, DocumentResponse>,
     /// The loader id of the document the main frame committed last, from `Page.frameNavigated`.
     committed_loader: Option<String>,
+    /// The network request id of the main-frame navigation whose redirects are being counted,
+    /// and how many it has followed. A response of another navigation replaces it.
+    pending_redirects: Option<(String, usize)>,
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
     first_document_arrived: bool,
@@ -85,6 +88,8 @@ pub(crate) struct DocumentResponse {
     pub(crate) status: u16,
     /// Response headers, keyed by lowercase name.
     pub(crate) headers: HashMap<String, Vec<String>>,
+    /// HTTP redirects the navigation that received this response followed before it.
+    pub(crate) redirects: usize,
 }
 
 impl SsrfInterceptGuard {
@@ -324,23 +329,10 @@ fn main_frame_verdict(
     let status = event.response_status_code.and_then(|code| u16::try_from(code).ok());
     let is_redirect = status.is_some_and(|code| REDIRECT_STATUSES.contains(&code))
         && headers.iter().any(|h| h.name.eq_ignore_ascii_case("location"));
-    if !is_redirect
-        && let Some(status) = status
+    if let Some(status) = status
         && let Some(network_id) = &event.network_id
     {
-        // ~keep A newer main-frame response cancels a navigation that has not committed, so only
-        // ~keep the committed document and this response can still be the one the page shows.
-        // ~keep Without the pruning a page that keeps navigating to a 204 grows the map.
-        if let Some(committed) = state.committed_loader.clone() {
-            state.documents.retain(|id, _| *id == committed);
-        }
-        state.documents.insert(
-            network_id.as_ref().to_owned(),
-            DocumentResponse {
-                status,
-                headers: header_map(headers),
-            },
-        );
+        record_main_frame_response(&mut state, network_id.as_ref(), status, is_redirect, headers);
     }
     if state.first_document_arrived {
         return true;
@@ -361,6 +353,42 @@ fn main_frame_verdict(
         headers: header_map(headers),
     });
     false
+}
+
+/// Record a main-frame response of the navigation `network_id`: a redirect adds to that
+/// navigation's count, and any other response is recorded as a document with the count.
+///
+/// ~keep Chrome keeps one network request id across the redirects of a navigation, so the count
+/// ~keep is the navigation's own. A late navigation does not inherit the redirects of the seed.
+/// ~keep A newer main-frame response cancels a navigation that has not committed, so only the
+/// ~keep committed document and this response can still be the one the page shows. Without the
+/// ~keep pruning a page that keeps navigating to a 204 grows the map.
+fn record_main_frame_response(
+    state: &mut InterceptOutcome,
+    network_id: &str,
+    status: u16,
+    is_redirect: bool,
+    headers: &[HeaderEntry],
+) {
+    let redirects = match state.pending_redirects.take() {
+        Some((pending, count)) if pending == network_id => count,
+        _ => 0,
+    };
+    if is_redirect {
+        state.pending_redirects = Some((network_id.to_owned(), redirects + 1));
+        return;
+    }
+    if let Some(committed) = state.committed_loader.clone() {
+        state.documents.retain(|id, _| *id == committed);
+    }
+    state.documents.insert(
+        network_id.to_owned(),
+        DocumentResponse {
+            status,
+            headers: header_map(headers),
+            redirects,
+        },
+    );
 }
 
 /// CDP response headers keyed by lowercase name, as the HTTP fetch path keys them.
@@ -501,5 +529,42 @@ mod tests {
             Some(&vec!["A".to_owned()]),
             "headers are recorded with the status, keyed by lowercase name"
         );
+    }
+
+    /// A paused main-frame redirect from the navigation `network_id` to `location`.
+    fn main_frame_redirect(network_id: &str, location: &str) -> EventRequestPaused {
+        let mut event = main_frame_response(network_id, 302);
+        event.response_headers = Some(vec![super::HeaderEntry {
+            name: "Location".to_owned(),
+            value: location.to_owned(),
+        }]);
+        event
+    }
+
+    #[test]
+    fn a_document_carries_the_redirects_of_its_own_navigation() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        let events = [
+            main_frame_redirect("SEED", "/start"),
+            main_frame_response("SEED", 200),
+            main_frame_redirect("LATE", "/next"),
+            main_frame_redirect("LATE", "/dl"),
+            main_frame_response("LATE", 404),
+            main_frame_redirect("CANCELLED", "/elsewhere"),
+            main_frame_response("PLAIN", 404),
+        ];
+        for event in &events {
+            state.lock().expect("state lock").committed_loader = None;
+            assert!(main_frame_verdict(event, &main_frame, 5, &state));
+        }
+        let state = state.into_inner().expect("state lock");
+        let redirects = |id: &str| state.documents[id].redirects;
+        assert_eq!(
+            (redirects("SEED"), redirects("LATE"), redirects("PLAIN")),
+            (1, 2, 0),
+            "each document counts only the redirects of its own navigation"
+        );
+        assert_eq!(state.redirects_followed, 1, "the seed's redirects are counted apart");
     }
 }
