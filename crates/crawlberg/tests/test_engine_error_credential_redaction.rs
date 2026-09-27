@@ -168,6 +168,22 @@ async fn a_not_found_page_does_not_print_the_password() {
     assert_redacted(&text, REDACTED_HOST);
 }
 
+/// A transport error names the address without the password: the request URL never held it.
+#[tokio::test]
+async fn a_transport_error_does_not_print_the_password() {
+    let closed_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        listener.local_addr().expect("local address").port()
+    };
+    let handle = create_engine(Some(allow_private_config())).expect("engine build must not fail");
+
+    let err = crawlberg::scrape(&handle, &format!("http://user:{PASSWORD}@127.0.0.1:{closed_port}/down"))
+        .await
+        .expect_err("a closed port must fail the scrape");
+    let text = rendered(&err);
+    assert_redacted(&text, &format!("127.0.0.1:{closed_port}"));
+}
+
 /// A redirect to an address that does not parse is not followed, and the address is never printed.
 #[tokio::test]
 async fn a_refused_unparseable_redirect_target_does_not_print_the_password() {
