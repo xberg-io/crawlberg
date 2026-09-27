@@ -68,6 +68,12 @@ title: "Changelog"
   and used as the duplicate key. The fragment is now dropped there, so both addresses fetch
   and dedupe as one document. (#324)
 
+- **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
+  answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
+  `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
+  the sitemap's URL after redirects. An absolute index child is fetched from the host that served
+  the index, which after a redirect to another host is the redirect's target host. (#339)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately
