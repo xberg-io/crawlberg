@@ -176,3 +176,35 @@ impl StealthHttpClient {
         self.active_requests() == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let accepted = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 16];
+            let _ = socket.read(&mut buf).await;
+        });
+        let client = StealthHttpClient::new(Arc::new(CookieJar::new()));
+
+        let err = client
+            .fetch(&format!("http://user:s3cret@{addr}/").parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("a URL with userinfo must be refused");
+
+        let NetError::Blocked(message) = &err else {
+            panic!("expected NetError::Blocked, got {err:?}");
+        };
+        assert!(!message.contains("s3cret"), "the password must not be named, got '{message}'");
+        assert!(message.contains(&addr.to_string()), "the refusal names the clean URL, got '{message}'");
+        assert!(!accepted.is_finished(), "nothing may reach the network");
+        accepted.abort();
+    }
+}

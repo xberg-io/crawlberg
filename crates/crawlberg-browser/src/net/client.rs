@@ -971,4 +971,99 @@ mod tests {
             .expect("fetch must succeed");
         assert_eq!(client.active_requests(), 0);
     }
+
+    const URL_PASSWORD: &str = "s3cret";
+
+    /// `base` with `user:s3cret@` userinfo.
+    fn with_userinfo(base: &str) -> String {
+        base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1)
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let (base, requests) = spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let validator = Arc::new(RecordingValidator::default());
+        let client = client_with(validator.clone());
+
+        let err = client
+            .fetch(&with_userinfo(&base).parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("a URL with userinfo must be refused");
+
+        let NetError::Blocked(message) = &err else {
+            panic!("expected NetError::Blocked, got {err:?}");
+        };
+        assert!(!message.contains(URL_PASSWORD), "the password must not be named, got '{message}'");
+        // ~keep Positive twin: the refusal names the URL without its userinfo, so the test
+        // ~keep cannot pass on an empty message.
+        assert!(message.contains(&base), "the refusal must name the clean URL, got '{message}'");
+        assert!(requests.lock().expect("lock").is_empty(), "nothing may reach the network");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_location_with_userinfo_is_followed_without_it() {
+        let (target, target_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let redirect: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {}/next\r\nContent-Length: 0\r\n\r\n",
+                with_userinfo(&target)
+            )
+            .into_boxed_str(),
+        );
+        let (start, _) = spawn_recording_server(vec![redirect]).await;
+
+        let response = client_with(Arc::new(RecordingValidator::default()))
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        assert_eq!(response.url.as_str(), format!("{target}/next"));
+        let requests = target_requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the redirect target must be requested once");
+        assert_eq!(
+            header_line(&requests[0], "authorization"),
+            None,
+            "a page-supplied userinfo must never become a header"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_origin_credential_reaches_its_host_and_no_other() {
+        let (other, other_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let other_port = other.rsplit(':').next().expect("port").to_owned();
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://localhost:{other_port}/away\r\nContent-Length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
+        let client = client_with(Arc::new(RecordingValidator::default()));
+        client
+            .set_origin_credential(Some(OriginCredential {
+                host: "127.0.0.1".to_owned(),
+                name: "Authorization".to_owned(),
+                value: "Basic dXNlcjpwdw==".to_owned(),
+            }))
+            .await;
+
+        client
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        let start_requests = start_requests.lock().expect("lock");
+        assert_eq!(
+            header_line(&start_requests[0], "authorization").as_deref(),
+            Some("Basic dXNlcjpwdw=="),
+            "the scoped host gets the header"
+        );
+        let other_requests = other_requests.lock().expect("lock");
+        assert_eq!(other_requests.len(), 1, "the cross-host redirect must be followed");
+        assert_eq!(
+            header_line(&other_requests[0], "authorization"),
+            None,
+            "a cross-host redirect target never gets the header"
+        );
+    }
 }

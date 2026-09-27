@@ -147,8 +147,9 @@ fn rewrite_value(raw: &str, shape: Shape, base: &Url) -> Option<String> {
 /// Resolve `reference` against `base` when it is a relative reference.
 ///
 /// Returns `None` for anything a reader can already use as written: an absolute URL of any
-/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...), a fragment-only reference that
-/// points into the same document, and an empty value.
+/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...) without userinfo, a fragment-only
+/// reference that points into the same document, and an empty value. An absolute URL with
+/// userinfo is rewritten without it.
 fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
     let trimmed = reference.trim_matches(|c: char| c.is_ascii_whitespace());
     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -156,6 +157,10 @@ fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
     }
     match Url::parse(trimmed) {
         Err(url::ParseError::RelativeUrlWithoutBase) => crate::net::userinfo::resolve(base, trimmed).map(String::from),
+        Ok(mut absolute) if crate::net::userinfo::has_userinfo(&absolute) => {
+            crate::net::userinfo::strip(&mut absolute);
+            Some(absolute.into())
+        }
         _ => None,
     }
 }

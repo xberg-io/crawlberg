@@ -369,6 +369,37 @@ async fn robots_txt_disallow_blocks_the_navigation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_navigation_to_a_url_with_userinfo_is_refused_before_robots_txt_is_read() {
+    const URL_PASSWORD: &str = "s3cret";
+    let base = serve(routes(&[
+        ("/", "text/html", "<html><body>ok</body></html>"),
+        ("/robots.txt", "text/plain", "User-agent: *\nDisallow: /"),
+    ]))
+    .await;
+    let credentialed = base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1);
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    let context = BrowserContext {
+        obey_robots: true,
+        ..context
+    };
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let error = page.navigate(&credentialed).await.expect_err("a URL with userinfo must be refused");
+    let PageError::NetworkError(message) = &error else {
+        panic!("expected a network error, got {error:?}");
+    };
+    assert!(!message.contains(URL_PASSWORD), "the password must not be named, got '{message}'");
+    // ~keep Positive twin: the refusal, not the robots.txt block, stopped the navigation, and
+    // ~keep it names the URL without its userinfo.
+    assert!(
+        message.contains("credentials") && !message.contains("robots.txt"),
+        "the userinfo refusal must come first, got '{message}'"
+    );
+    assert!(page.url.is_none(), "a refused URL is never recorded as the page's own");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn robots_txt_allow_permits_the_navigation() {
     let base = serve(routes(&[
         (
