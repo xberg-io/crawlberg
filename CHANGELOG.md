@@ -18,6 +18,19 @@ All notable changes to crawlberg are documented here.
   document on another host or a redirect target on another host gets neither. If a crawl needs a
   header on another host, start a separate call with that host as its seed.
 
+- **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
+  the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
+  resolved against the page's base URL and normalized as the links list is, so it gives
+  `https://example.com/en/page`, and `https://Example.com` gives `https://example.com/`. If your
+  code joins a relative canonical URL to the page URL, remove that step. If it compares the value
+  with a literal, compare with the normalized form. (#101)
+
+- **`metadata.hreflangs[].url` is now an absolute URL.** It was each alternate-language link's
+  `href` as the page wrote it, so `<link rel="alternate" hreflang="de" href="/de/">` gave `/de/`.
+  It is now resolved against the page's base URL and normalized as the canonical URL is, so it
+  gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
+  remove that step. (#126)
+
 ### Fixed
 
 - **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
@@ -58,6 +71,108 @@ All notable changes to crawlberg are documented here.
   network event also carried the raw address. Every script and stylesheet address in the page
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
+
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. The `javascript:`, `mailto:`, `tel:` and `data:` addresses that the links list, the
+  images list and asset downloads skip are now recognised as the URL parser reads them, in any
+  letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
+  `javascript:`. (#86)
+
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. (#101)
+
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
+  without the parameters. A `type`, `name`, `property` or `http-equiv` value is also compared
+  without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
+  not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
+  spaces is a deliberate leniency for pages that add them. (#136)
+
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
+
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
+
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
 
 ## [1.8.0] - 2026-09-27
 
