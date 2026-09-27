@@ -75,6 +75,7 @@ futures = { workspace = true }
 html-escape = { workspace = true }
 html-to-markdown-rs = { workspace = true }
 html5ever = { workspace = true }
+idna = { workspace = true }
 ipnet = { workspace = true }
 liter-llm = { workspace = true, optional = true }
 memchr = { workspace = true }
@@ -82,6 +83,7 @@ minijinja = { workspace = true, optional = true }
 notify = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
+percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }

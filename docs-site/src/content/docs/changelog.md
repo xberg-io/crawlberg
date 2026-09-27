@@ -83,6 +83,13 @@ title: "Changelog"
   the sitemap's URL after redirects. An absolute index child is fetched from the host that served
   the index, which after a redirect to another host is the redirect's target host. (#339)
 
+- **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
+  returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
+  path and encodes a non-ASCII host as punycode, so a search for `café` never found
+  `https://example.com/caf%C3%A9` and a search for `bücher` never found the matching
+  `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
+  of the address, alongside the address text itself. (#338)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
