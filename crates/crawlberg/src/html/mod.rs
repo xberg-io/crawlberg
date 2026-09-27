@@ -21,6 +21,15 @@ use html5ever::tokenizer::{BufferQueue, Token, TokenSink, TokenSinkResult, Token
 use tl::{HTMLTag, Parser, VDom};
 use url::Url;
 
+/// Whether an address attribute is blank, meaning it carries no reference at all.
+pub(crate) fn is_blank_address(value: &str) -> bool {
+    // ~keep Only ASCII whitespace counts. HTML strips nothing else from a URL attribute, so U+00A0
+    // and U+2000-200A belong to the value and are percent-encoded: an NBSP-only reference is real,
+    // if useless, and must not be treated as blank (#191). A blank reference must be skipped rather
+    // than resolved, because joining one to a base yields the base itself (#187, #220).
+    value.bytes().all(|byte| byte.is_ascii_whitespace())
+}
+
 pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
     base_url
         .join(src)
