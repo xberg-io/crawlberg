@@ -18,6 +18,14 @@ All notable changes to crawlberg are documented here.
   index depth cap, and cycle detection) also logged their address without going through the
   redactor at all; they now do. (#236, #243, #261)
 
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. The address in the same error goes
+  through the credential redactor, which hides such an address whole. (#329)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
@@ -118,13 +126,6 @@ Four changes can affect an existing setup:
   (#57)
 
 ### Fixed
-
-- **The SSRF check could print a credential as the refused scheme.** An address written without
-  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
-  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
-  from the browser check. The refusal now names the scheme only when it is a known one, such as
-  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
-  check says the scheme is forbidden without showing it. (#329)
 
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical

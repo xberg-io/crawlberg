@@ -644,14 +644,77 @@ mod tests {
         );
     }
 
-    async fn http_fetch_refusal_reason(url: &str) -> String {
+    async fn http_fetch_refusal(url: &str) -> CrawlError {
         let config = CrawlConfig::default();
         let client = build_client(&config).expect("client must build");
         match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
-            Err(CrawlError::SsrfPolicyViolation { reason, .. }) => reason,
+            Err(err @ CrawlError::SsrfPolicyViolation { .. }) => err,
             Err(other) => panic!("{url} must be refused by the SSRF policy, got {other:?}"),
             Ok(_) => panic!("{url} must be refused by the SSRF policy, got Ok"),
         }
+    }
+
+    async fn http_fetch_refusal_reason(url: &str) -> String {
+        match http_fetch_refusal(url).await {
+            CrawlError::SsrfPolicyViolation { reason, .. } => reason,
+            other => unreachable!("http_fetch_refusal returns only SsrfPolicyViolation, got {other:?}"),
+        }
+    }
+
+    /// ~keep The refusal's `url` field carries the address as written, so the secret must be
+    /// absent from the whole rendered error, not only from `reason`. Each row is one class of
+    /// credential-bearing address the refusal sees; the expected `url` field is the positive
+    /// twin that proves the row reached the SSRF refusal at all.
+    #[tokio::test]
+    async fn http_fetch_ssrf_refusal_hides_the_credential_in_the_whole_error() {
+        const HIDDEN: &str = "[address hidden: it may carry credentials]";
+        let unrecognized = "disallowed scheme: unrecognized";
+        let rows = [
+            // Opaque: parses as scheme `user` with no host.
+            ("user:token@host", &["token"][..], HIDDEN, unrecognized),
+            ("KEY:@h:1", &["key"][..], HIDDEN, unrecognized),
+            // Real userinfo under a scheme the policy does not recognise.
+            (
+                "foo://alice:hunter2@example.com/",
+                &["alice", "hunter2"][..],
+                "foo://***:***@example.com/",
+                unrecognized,
+            ),
+            // No scheme at all: the address fails to parse.
+            (
+                "alice@example.com",
+                &["alice"][..],
+                HIDDEN,
+                "invalid URL: relative URL without a base",
+            ),
+            // A percent-encoded `@` inside the password.
+            ("user:hunt%40er2@host", &["hunt", "er2"][..], HIDDEN, unrecognized),
+            (
+                "foo://alice:hunt%40er2@example.com/",
+                &["alice", "hunt", "er2"][..],
+                "foo://***:***@example.com/",
+                unrecognized,
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (url, secrets, expected_url, expected_reason) in rows {
+            let err = http_fetch_refusal(url).await;
+            let rendered = format!("{err}\n{err:?}");
+            let lowered = rendered.to_lowercase();
+            let shown: Vec<&str> = secrets.iter().copied().filter(|s| lowered.contains(s)).collect();
+            if !shown.is_empty() {
+                failures.push(format!("{url}: shows {shown:?} in {rendered}"));
+            }
+            let CrawlError::SsrfPolicyViolation { url: field, reason, .. } = &err else {
+                unreachable!("http_fetch_refusal returns only SsrfPolicyViolation, got {err:?}");
+            };
+            if field != expected_url || reason != expected_reason {
+                failures.push(format!(
+                    "{url}: expected url {expected_url:?} and reason {expected_reason:?}, got {field:?} and {reason:?}"
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "credential rows failed:\n{}", failures.join("\n"));
     }
 
     #[tokio::test]
