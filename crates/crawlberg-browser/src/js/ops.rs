@@ -79,8 +79,8 @@ impl JsOpState {
     /// The page client's headers scoped to one host, such as its credential. See [`OriginHeaders`].
     pub(crate) fn origin_headers(&self) -> Option<OriginHeaders> {
         let client = self.http_client.as_ref()?;
-        // ~keep The credential is written once, when the context is built, before any page
-        // ~keep runs script, so a busy lock here cannot hide one.
+        // ~keep The scoped headers are written once, when the context is built, before any
+        // ~keep page runs script, so a busy lock here cannot hide them.
         client.origin_headers.try_read().ok()?.clone()
     }
 }
