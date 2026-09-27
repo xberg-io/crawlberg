@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -383,6 +384,15 @@ async fn op_fetch_url(
     #[string] origin: String,
     #[string] mode: String,
 ) -> Result<String, deno_error::JsErrorBox> {
+    // ~keep Refused before anything logs or fetches it, as the Fetch standard does.
+    if let Ok(parsed) = url::Url::parse(&url)
+        && has_userinfo(&parsed)
+    {
+        return Err(deno_error::JsErrorBox::type_error(format!(
+            "fetch refused a URL with credentials in it: {}",
+            without_userinfo(&parsed)
+        )));
+    }
     tracing::debug!("op_fetch_url called: {} {} (intercept check pending)", method, url);
 
     // ~keep Clone the validator out of the RefCell before awaiting; re-entrant page JS
@@ -829,7 +839,8 @@ fn redirect_target(current_url: &str, response: &reqwest::Response) -> Option<ur
         .headers()
         .get(reqwest::header::LOCATION)
         .and_then(|v| v.to_str().ok())?;
-    url::Url::parse(current_url).ok()?.join(location).ok()
+    let target = url::Url::parse(current_url).ok()?.join(location).ok()?;
+    Some(without_userinfo(&target))
 }
 
 fn glob_match(pattern: &str, url: &str) -> bool {

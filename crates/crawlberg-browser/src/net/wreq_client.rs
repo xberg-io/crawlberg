@@ -16,6 +16,7 @@ use url::Url;
 use super::client::{NetError, Response};
 #[cfg(feature = "stealth")]
 use crate::net::cookies::CookieJar;
+use crate::net::credential::{OriginCredential, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
@@ -30,6 +31,8 @@ pub struct StealthHttpClient {
     pub ssrf: Arc<dyn SsrfValidator>,
     pub cookie_jar: Arc<CookieJar>,
     pub extra_headers: RwLock<HashMap<String, String>>,
+    /// The credential header the embedder scoped to one host; sent only to that host.
+    pub origin_credential: RwLock<Option<OriginCredential>>,
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
 }
 
@@ -74,11 +77,13 @@ impl StealthHttpClient {
             ssrf,
             cookie_jar,
             extra_headers: RwLock::new(HashMap::new()),
+            origin_credential: RwLock::new(None),
             in_flight: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 
     pub async fn fetch(&self, url: &Url) -> Result<Response, NetError> {
+        refuse_userinfo(url)?;
         self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)?;
 
         let mut current_url = url.clone();
@@ -94,6 +99,12 @@ impl StealthHttpClient {
 
             for (k, v) in self.extra_headers.read().await.iter() {
                 req = req.header(k.as_str(), v.as_str());
+            }
+
+            if let Some(credential) = self.origin_credential.read().await.as_ref()
+                && let Some((name, value)) = credential.header_for(&current_url)
+            {
+                req = req.header(name, value);
             }
 
             self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -125,6 +136,7 @@ impl StealthHttpClient {
                     .map_err(|_| NetError::Network("Invalid redirect Location".into()))?;
                 let next_url = current_url
                     .join(location_str)
+                    .map(|next_url| without_userinfo(&next_url))
                     .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))?;
                 // ~keep Re-validate every hop: the first URL being permitted says
                 // nothing about where a redirect chain ends up.

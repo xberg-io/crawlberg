@@ -67,11 +67,19 @@ impl Page {
             // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
             // ~keep Share the plain client's SSRF policy: the stealth path is an
             // alternate transport, not an alternate policy.
-            Some(Arc::new(StealthHttpClient::with_ssrf(
+            let stealth = StealthHttpClient::with_ssrf(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
                 http_client.ssrf.clone(),
-            )))
+            );
+            // ~keep The credential is set on the context's client before any page exists,
+            // ~keep so it is already there to copy; the stealth client must scope it the same way.
+            if let (Ok(source), Ok(mut target)) =
+                (http_client.origin_credential.try_read(), stealth.origin_credential.try_write())
+            {
+                target.clone_from(&source);
+            }
+            Some(Arc::new(stealth))
         } else {
             None
         };

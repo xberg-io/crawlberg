@@ -11,7 +11,7 @@ use tokio_stream::StreamExt;
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -158,19 +158,6 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
     for (key, value) in &config.custom_headers {
         extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
     }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-
     if !extra_headers.is_empty() {
         let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
         page.execute(params)
@@ -187,7 +174,7 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 // ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
 async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf).await?;
+    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, config).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)

@@ -11,7 +11,7 @@ use crate::error::CrawlError;
 use crate::http::{BrowserExtras, HttpResponse};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
-use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig, ResponseMeta};
+use crate::types::{BrowserWait, CookieInfo, CrawlConfig, ResponseMeta};
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static NATIVE_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -129,21 +129,6 @@ const DEFAULT_CONTENT_TYPE: &str = "text/html";
 /// Status reported for a rendered page when the backend surfaces none.
 const DEFAULT_RENDERED_STATUS: u16 = 200;
 
-/// Request headers to send with the render: the configured custom headers, plus
-/// whatever `auth` translates into.
-fn build_extra_headers(config: &CrawlConfig) -> std::collections::HashMap<String, String> {
-    let mut extra_headers = config.custom_headers.clone();
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert("Authorization".to_owned(), format!("Bearer {token}"));
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), value.clone());
-        }
-        _ => {}
-    }
-    extra_headers
-}
 
 /// The proxy URL to render through: the browser-specific proxy if set, else the
 /// crawl-wide one, with any configured credentials inlined into the URL.
@@ -202,7 +187,7 @@ fn build_native_config(
         user_agent: config.user_agent.clone(),
         timeout: config.browser.timeout,
         wait_until: native_wait_until(&config.browser.wait),
-        extra_headers: build_extra_headers(config),
+        extra_headers: config.custom_headers.clone(),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy_url: resolve_proxy_url(config),
@@ -214,6 +199,7 @@ fn build_native_config(
         capture_network_events: config.browser.capture_network_events,
         ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
         allow_file_access: false,
+        origin_credential: crate::net::credentials::origin_credential(config),
     }
 }
 
@@ -243,6 +229,7 @@ fn cookie_info_from_native(cookie: NBCookie) -> CookieInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::AuthConfig;
     use crate::types::{BrowserConfig, ProxyConfig};
 
     fn proxy(url: &str, username: Option<&str>, password: Option<&str>) -> ProxyConfig {
@@ -253,42 +240,56 @@ mod tests {
         }
     }
 
-    #[test]
-    fn extra_headers_carry_custom_headers_and_a_bearer_token() {
-        let mut custom_headers = std::collections::HashMap::new();
-        custom_headers.insert("x-custom".to_owned(), "value".to_owned());
-        let config = CrawlConfig {
+    /// A config admitted for `http://example.com/`, carrying `auth`.
+    fn admitted_config(auth: AuthConfig, custom_headers: std::collections::HashMap<String, String>) -> CrawlConfig {
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        CrawlConfig {
             custom_headers,
-            auth: Some(AuthConfig::Bearer {
-                token: "secret-token".to_owned(),
-            }),
+            auth: Some(auth),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
             ..CrawlConfig::default()
-        };
+        }
+    }
 
-        let headers = build_extra_headers(&config);
+    #[test]
+    fn a_bearer_token_is_scoped_to_the_seed_host_and_kept_out_of_extra_headers() {
+        let custom_headers = std::collections::HashMap::from([("x-custom".to_owned(), "value".to_owned())]);
+        let config = admitted_config(
+            AuthConfig::Bearer {
+                token: "secret-token".to_owned(),
+            },
+            custom_headers,
+        );
 
-        assert_eq!(headers.get("x-custom").map(String::as_str), Some("value"));
+        let native = build_native_config(&config, None);
+
+        assert_eq!(native.extra_headers.get("x-custom").map(String::as_str), Some("value"));
+        assert!(
+            !native.extra_headers.contains_key("Authorization"),
+            "every host receives extra_headers, so the token must not be there"
+        );
+        let credential = native.origin_credential.expect("the token must be scoped to the seed host");
+        assert_eq!(credential.host, "example.com");
         assert_eq!(
-            headers.get("Authorization").map(String::as_str),
-            Some("Bearer secret-token"),
-            "a Bearer auth config must become an Authorization header"
+            (credential.name.as_str(), credential.value.as_str()),
+            ("Authorization", "Bearer secret-token")
         );
     }
 
     #[test]
-    fn extra_headers_carry_an_explicit_auth_header() {
-        let config = CrawlConfig {
-            auth: Some(AuthConfig::Header {
+    fn an_explicit_auth_header_keeps_its_name() {
+        let config = admitted_config(
+            AuthConfig::Header {
                 name: "X-Api-Key".to_owned(),
                 value: "k".to_owned(),
-            }),
-            ..CrawlConfig::default()
-        };
-
-        assert_eq!(
-            build_extra_headers(&config).get("X-Api-Key").map(String::as_str),
-            Some("k")
+            },
+            std::collections::HashMap::new(),
         );
+
+        let credential = build_native_config(&config, None)
+            .origin_credential
+            .expect("the header must be scoped to the seed host");
+        assert_eq!((credential.name.as_str(), credential.value.as_str()), ("X-Api-Key", "k"));
     }
 
     #[test]

@@ -188,7 +188,13 @@ impl<'a> RedirectPolicy<'a> {
         let origin = RobotsCacheKey::new(&parsed, user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
-            let outcome = if self.engine.config.respect_robots_txt {
+            // ~keep A robots.txt read with the caller's credentials is theirs alone: the
+            // ~keep shared cache would hand it to the next crawl of the same origin.
+            let outcome = if self.engine.config.respect_robots_txt
+                && crate::net::credentials::is_credentialed(&self.engine.config, &parsed)
+            {
+                Arc::new(fetch_robots_outcome(url, &self.engine.config, self.client, user_agent).await)
+            } else if self.engine.config.respect_robots_txt {
                 self.engine
                     .robots_cache
                     .get_or_fetch(origin.clone(), || {

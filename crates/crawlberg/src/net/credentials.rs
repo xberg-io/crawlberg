@@ -82,6 +82,21 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
     }
 }
 
+/// The credential header for the native browser, scoped to the seed's host.
+///
+/// ~keep The native clients add it per request after checking the host, the same rule as
+/// ~keep `credential_header`; `extra_headers` would send it to every host the page loads from.
+#[cfg(feature = "browser-native")]
+pub(crate) fn origin_credential(config: &CrawlConfig) -> Option<crawlberg_browser::adapter::OriginCredential> {
+    let scope = config.credential_scope.as_ref()?;
+    let (name, value) = credential_header(config, &scope.seed)?;
+    Some(crawlberg_browser::adapter::OriginCredential {
+        host: scope.host().to_owned(),
+        name,
+        value,
+    })
+}
+
 /// Whether a request to `url` carries credentials, which keeps it out of shared caches.
 pub(crate) fn is_credentialed(config: &CrawlConfig, url: &Url) -> bool {
     config

@@ -10,6 +10,7 @@ use deno_core::ModuleSourceCode;
 use deno_core::ModuleSpecifier;
 use deno_core::error::ModuleLoaderError;
 
+use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
@@ -58,7 +59,16 @@ impl ModuleLoader for BrowserModuleLoader {
             referrer
         };
 
-        deno_core::resolve_import(specifier, base).map_err(|e| deno_error::JsErrorBox::generic(e.to_string()))
+        let resolved =
+            deno_core::resolve_import(specifier, base).map_err(|e| deno_error::JsErrorBox::generic(e.to_string()))?;
+        // ~keep Refused here, before `load` fetches it or prints it in an error.
+        if has_userinfo(&resolved) {
+            return Err(io_err(format!(
+                "a module URL with credentials in it is refused: {}",
+                without_userinfo(&resolved)
+            )));
+        }
+        Ok(resolved)
     }
 
     fn load(

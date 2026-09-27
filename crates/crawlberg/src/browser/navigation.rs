@@ -13,7 +13,7 @@ use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::start_ssrf_interception;
-use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
+use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
 /// so the reported metrics are unremarkable.
@@ -51,7 +51,7 @@ pub(super) async fn page_fetch(
 
     let timeout = config.browser.timeout;
 
-    let interceptor = start_ssrf_interception(page, &config.ssrf).await?;
+    let interceptor = start_ssrf_interception(page, config).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -140,23 +140,14 @@ async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&
     }
 }
 
-/// Install the configured custom headers plus any `auth`-derived header on the page.
+/// Install the configured custom headers on the page.
+///
+/// ~keep Credentials are not among them: the request interception adds them per request,
+/// ~keep on the seed's host only, so a third-party subresource never receives them.
 async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
     let mut extra_headers = serde_json::Map::new();
     for (k, v) in &config.custom_headers {
         extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
     }
     if extra_headers.is_empty() {
         return Ok(());

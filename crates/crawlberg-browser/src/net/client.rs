@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use crate::net::cookies::CookieJar;
+use crate::net::credential::{OriginCredential, refuse_userinfo, without_userinfo};
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
@@ -140,6 +141,7 @@ fn resolve_redirect(current_url: &Url, location: &HeaderValue) -> Result<Url, Ne
         .map_err(|_| NetError::Network("Invalid redirect Location header".into()))?;
     current_url
         .join(location_str)
+        .map(|next_url| without_userinfo(&next_url))
         .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))
 }
 
@@ -195,6 +197,8 @@ pub struct HttpClient {
     pub cookie_jar: Arc<CookieJar>,
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
+    /// The credential header the embedder scoped to one host; sent only to that host.
+    pub origin_credential: RwLock<Option<OriginCredential>>,
     pub interceptor: RwLock<Option<Box<dyn RequestInterceptor + Send + Sync>>>,
     pub on_request: RwLock<Vec<RequestCallback>>,
     pub on_response: RwLock<Vec<ResponseCallback>>,
@@ -233,6 +237,7 @@ impl HttpClient {
             cookie_jar,
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
+            origin_credential: RwLock::new(None),
             interceptor: RwLock::new(None),
             on_request: RwLock::new(Vec::new()),
             on_response: RwLock::new(Vec::new()),
@@ -301,6 +306,7 @@ impl HttpClient {
         url: &Url,
         initial_body: Option<Vec<u8>>,
     ) -> Result<Response, NetError> {
+        refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
         if url.scheme() == "file" {
@@ -425,6 +431,13 @@ impl HttpClient {
             }
         }
 
+        if let Some(credential) = self.origin_credential.read().await.as_ref()
+            && let Some((name, value)) = credential.header_for(url)
+            && let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value))
+        {
+            headers.insert(name, value);
+        }
+
         headers
     }
 
@@ -463,6 +476,11 @@ impl HttpClient {
 
     pub async fn set_extra_headers(&self, headers: HashMap<String, String>) {
         *self.extra_headers.write().await = headers;
+    }
+
+    /// Scope a credential header to one host. See [`OriginCredential`].
+    pub async fn set_origin_credential(&self, credential: Option<OriginCredential>) {
+        *self.origin_credential.write().await = credential;
     }
 
     pub fn active_requests(&self) -> u32 {
