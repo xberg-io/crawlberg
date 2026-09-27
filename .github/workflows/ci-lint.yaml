@@ -6,12 +6,15 @@ name: CI Lint
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+  # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
+  # ~keep before merging any PR that needs its own CI.
+  # pull_request:
+  #   branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ci-lint-${{ github.ref }}
+  group: ci-lint-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
   cancel-in-progress: true
 
 permissions:
