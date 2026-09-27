@@ -219,7 +219,7 @@ mod tests {
                 panic!("{proxy} must refuse the client");
             };
             assert!(
-                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(s)) if s == scheme),
+                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref s)) if s == scheme),
                 "{proxy}: got {err:?}"
             );
         }

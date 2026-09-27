@@ -9,32 +9,38 @@ pub enum ProxyError {
     #[error("the proxy URL does not parse: {0}")]
     Unparseable(String),
 
+    /// The scheme shown is always a real one: an address whose first word the url crate
+    /// reads as a scheme has no host, so [`check_proxy_url`] reads it as `http://` instead.
     #[error("the proxy URL scheme '{0}' is not supported; use http or https")]
-    UnsupportedScheme(&'static str),
-
-    /// A scheme that is not on [`NAMED_SCHEMES`]. It is not shown: a proxy written without a
-    /// scheme, such as `KEY:@host:port`, parses with its user name as the scheme.
-    #[error("the proxy URL scheme is not supported; use http or https")]
-    UnnamedScheme,
+    UnsupportedScheme(String),
 }
 
-/// The only schemes a refusal shows by name.
-const NAMED_SCHEMES: [&str; 6] = ["socks4", "socks5", "socks5h", "ftp", "ws", "wss"];
+/// The proxy schemes both browser HTTP clients can use.
+pub const SUPPORTED_SCHEMES: [&str; 2] = ["http", "https"];
 
-/// Check that `proxy_url` is a proxy the browser HTTP clients can use.
+/// Check that `proxy_url` is a proxy the browser HTTP clients can use, and return the URL
+/// to hand them.
 ///
 /// `Proxy::all` in reqwest and wreq only parses the URL. Their proxy matchers later drop
-/// any scheme they cannot speak, and the request then goes direct with no error. A SOCKS
-/// URL is kept, but neither client is built with SOCKS support, so every request through
-/// it fails. So the scheme is checked here, before a client exists.
+/// any scheme they cannot speak, and the request then goes direct with no error. So the
+/// scheme is checked here, before a client exists.
 pub fn check_proxy_url(proxy_url: &str) -> Result<Url, ProxyError> {
-    let parsed = Url::parse(proxy_url).map_err(|e| ProxyError::Unparseable(e.to_string()))?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
-        other => Err(NAMED_SCHEMES
-            .into_iter()
-            .find(|named| *named == other)
-            .map_or(ProxyError::UnnamedScheme, ProxyError::UnsupportedScheme)),
+    let parsed = match Url::parse(proxy_url) {
+        Ok(url) if url.has_host() => url,
+        // ~keep reqwest's proxy parser retries `http://<input>` when the input has no scheme
+        // ~keep (`127.0.0.1:3128`) and when it parses without a host (`localhost:3128`,
+        // ~keep `user:pass@proxy:8080`, whose first word the url crate reads as a scheme).
+        // ~keep wreq has no retry, so it is given the URL returned here.
+        Ok(_) | Err(url::ParseError::RelativeUrlWithoutBase) => Url::parse(&format!("http://{proxy_url}"))
+            .ok()
+            .filter(Url::has_host)
+            .ok_or_else(|| ProxyError::Unparseable("expected an address such as http://proxy:8080".to_string()))?,
+        Err(e) => return Err(ProxyError::Unparseable(e.to_string())),
+    };
+    if SUPPORTED_SCHEMES.contains(&parsed.scheme()) {
+        Ok(parsed)
+    } else {
+        Err(ProxyError::UnsupportedScheme(parsed.scheme().to_string()))
     }
 }
 
@@ -47,27 +53,25 @@ pub fn reqwest_proxy(proxy_url: &str) -> Result<reqwest::Proxy, ProxyError> {
 /// Build the wreq proxy for `proxy_url`, refusing any URL [`check_proxy_url`] refuses.
 #[cfg(feature = "stealth")]
 pub fn wreq_proxy(proxy_url: &str) -> Result<wreq::Proxy, ProxyError> {
-    check_proxy_url(proxy_url)?;
-    wreq::Proxy::all(proxy_url).map_err(|e| ProxyError::Unparseable(e.to_string()))
+    let url = check_proxy_url(proxy_url)?;
+    wreq::Proxy::all(url.as_str()).map_err(|e| ProxyError::Unparseable(e.to_string()))
 }
 
-/// Proxy URLs that carry a credential, and a check that a refusal shows none of it.
+/// Proxy URLs that carry a credential and are refused, and a check that a refusal shows
+/// none of it.
 #[cfg(test)]
 pub(crate) mod credential_urls {
-    /// The last two have no scheme, so they parse with the user name as the scheme.
     pub(crate) const URLS: [&str; 3] = [
         "://operator:s3cr3t@proxy.test:8080",
-        "operator:s3cr3t@proxy:8080",
-        "KEY:@host:1",
+        "operator:s3cr3t@proxy:99999",
+        "gopher://operator:s3cr3t@proxy.test:70",
     ];
 
     /// Panic if `message`, the refusal of `url`, shows a user name or password from [`URLS`].
-    /// The url crate lowercases a scheme, so the check ignores case.
     pub(crate) fn assert_not_shown(url: &str, message: &str) {
-        let lowered = message.to_lowercase();
-        for credential in ["operator", "s3cr3t", "key"] {
+        for credential in ["operator", "s3cr3t"] {
             assert!(
-                !lowered.contains(credential),
+                !message.contains(credential),
                 "the refusal of {url} shows '{credential}': {message}"
             );
         }
@@ -85,19 +89,64 @@ mod tests {
     }
 
     #[test]
-    fn a_url_without_a_scheme_is_refused_without_echoing_it() {
+    fn proxy_addresses_are_read_exactly_as_reqwest_reads_them() {
+        for raw in [
+            "http://proxy.test:8080",
+            "https://u:p@proxy.test:8443",
+            "127.0.0.1:3128",
+            "[::1]:3128",
+            "localhost:3128",
+            "myproxy.corp:3128",
+            "operator:s3cr3t@proxy:8080",
+            "KEY:@host:1",
+            "user@127.0.0.1:3128",
+            "proxy.test",
+            "http:proxy.test:8080",
+            "://operator:s3cr3t@proxy.test:8080",
+            "operator:s3cr3t@proxy:99999",
+            "mailto:someone",
+            "",
+        ] {
+            match (reqwest::Proxy::all(raw), check_proxy_url(raw)) {
+                (Ok(theirs), Ok(ours)) => {
+                    let (theirs, ours) = (format!("{theirs:?}"), format!("{ours:?}"));
+                    assert!(
+                        theirs.contains(&ours),
+                        "{raw:?}: reqwest reads {theirs}, we read {ours}"
+                    );
+                }
+                (Err(_), Err(_)) => {}
+                (theirs, ours) => panic!(
+                    "{raw:?}: reqwest accepts it: {}, we accept it: {}",
+                    theirs.is_ok(),
+                    ours.is_ok()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn a_scheme_less_proxy_is_read_as_http() {
+        for (proxy, expected) in [
+            ("127.0.0.1:3128", "http://127.0.0.1:3128/"),
+            ("[::1]:3128", "http://[::1]:3128/"),
+            ("localhost:3128", "http://localhost:3128/"),
+            ("operator:s3cr3t@proxy:8080", "http://operator:s3cr3t@proxy:8080/"),
+        ] {
+            assert_eq!(
+                check_proxy_url(proxy).map(|url| url.to_string()),
+                Ok(expected.to_string()),
+                "{proxy} must be used as an HTTP proxy"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_proxy_is_not_shown() {
         for url in credential_urls::URLS {
-            let err = check_proxy_url(url).expect_err("no scheme must be refused");
+            let err = check_proxy_url(url).expect_err("the proxy must be refused");
             credential_urls::assert_not_shown(url, &err.to_string());
         }
-        assert!(matches!(
-            check_proxy_url("://operator:s3cr3t@proxy.test:8080"),
-            Err(ProxyError::Unparseable(_))
-        ));
-        assert_eq!(
-            check_proxy_url("operator:s3cr3t@proxy:8080"),
-            Err(ProxyError::UnnamedScheme)
-        );
     }
 
     #[test]
@@ -107,22 +156,11 @@ mod tests {
             ("socks5h://proxy.test:1080", "socks5h"),
             ("socks4://proxy.test:1080", "socks4"),
             ("ftp://proxy.test:21", "ftp"),
-            ("wss://proxy.test:443", "wss"),
+            ("gopher://proxy.test:70", "gopher"),
         ] {
             assert_eq!(
                 check_proxy_url(url),
-                Err(ProxyError::UnsupportedScheme(scheme)),
-                "{url} must be refused"
-            );
-        }
-    }
-
-    #[test]
-    fn an_unlisted_scheme_is_refused_without_its_name() {
-        for url in ["localhost:3128", "gopher://proxy.test:70"] {
-            assert_eq!(
-                check_proxy_url(url),
-                Err(ProxyError::UnnamedScheme),
+                Err(ProxyError::UnsupportedScheme(scheme.to_string())),
                 "{url} must be refused"
             );
         }

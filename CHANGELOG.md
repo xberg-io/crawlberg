@@ -6,13 +6,12 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
-- **The native browser backend refuses a proxy it cannot use.** A render whose proxy is not an
-  `http://` or `https://` URL now fails with a configuration error before any request is sent.
-  This affects a `socks5://` or `socks5h://` proxy, which never worked with this backend (the
-  render failed at connect time), and a `browser.proxy` written without a scheme, such as
-  `127.0.0.1:3128`. The default mode used such a proxy as an HTTP proxy, and the stealth mode
-  ignored it and connected directly. Write the scheme, or use the chromiumoxide backend for a
-  SOCKS proxy.
+- **The config check refuses a SOCKS proxy.** A `socks5://` or `socks5h://` address in `proxy`
+  or `browser.proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not supported",
+  whatever the browser backend. Crawlberg's HTTP clients are built without SOCKS support, so
+  every HTTP fetch through such a proxy failed at connect time. Use an `http` or `https` proxy.
+- **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the clients
+  cannot use, such as `gopher://`, now fails the config check instead of the render.
 
 ### Fixed
 
@@ -21,10 +20,14 @@ All notable changes to crawlberg are documented here.
   without an error, and every request of the render then went direct. A caller who relied on the
   proxy for egress control got neither the proxy nor a failure. The backend now checks the proxy
   URL when it builds its clients and fails the render with a configuration error that names the
-  reason. Only `http` and `https` are accepted; SOCKS is refused by name, because neither client
-  is built with SOCKS support. The error never contains the URL, so credentials in it cannot
-  leak. The same check covers page-initiated fetches and dynamic module imports, whose errors
-  printed the proxy URL, credentials included. (#237)
+  reason. The error never contains the URL, so credentials in it cannot leak. The same check
+  covers page-initiated fetches and dynamic module imports, whose errors printed the proxy URL,
+  credentials included. (#237)
+- **A proxy address without a scheme works everywhere the HTTP client takes it.** An address
+  such as `127.0.0.1:3128`, `localhost:3128` or `user:pass@proxy:3128` is read as an `http://`
+  proxy, exactly as the HTTP client reads it. The config check refused it for `proxy` (#420),
+  the native backend refused it in `browser.proxy` once a username or password was set (#421),
+  and the stealth mode ignored it and connected directly.
 
 ## [1.8.0] - 2026-09-27
 

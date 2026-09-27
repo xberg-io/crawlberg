@@ -498,11 +498,10 @@ impl CrawlConfig {
     }
 
     fn validate_proxy(&self) -> Result<(), CrawlError> {
-        let Some(ref proxy) = self.proxy else {
-            return Ok(());
-        };
-        let parsed = crate::proxy::parse_proxy_url(&proxy.url)?;
-        crate::proxy::ensure_supported_scheme(&parsed)
+        for proxy in [self.proxy.as_ref(), self.browser.proxy.as_ref()].into_iter().flatten() {
+            crate::proxy::ensure_supported_scheme(&crate::proxy::parse_proxy_url(&proxy.url)?)?;
+        }
+        Ok(())
     }
 
     fn validate_auth(&self) -> Result<(), CrawlError> {
@@ -870,17 +869,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_scheme_less_proxy_url_without_naming_the_embedded_username() {
+    fn validate_rejects_an_unusable_scheme_less_proxy_url_without_naming_the_embedded_username() {
         let config = CrawlConfig {
             proxy: Some(ProxyConfig {
-                url: "alice:s3cr3t@proxy.internal:8080".into(),
+                url: "alice:s3cr3t@proxy.internal:99999".into(),
                 ..Default::default()
             }),
             ..Default::default()
         };
         let error = config
             .validate()
-            .expect_err("a scheme-less proxy URL must be rejected")
+            .expect_err("a proxy address with an out-of-range port must be rejected")
             .to_string();
         assert!(
             !error.contains("alice"),
@@ -950,5 +949,67 @@ mod tests {
             rendered.contains("X-Api-Key"),
             "Debug output should still show the non-secret header name, got '{rendered}'"
         );
+    }
+
+    fn proxied_config(proxy: Option<&str>, browser_proxy: Option<&str>, backend: BrowserBackend) -> CrawlConfig {
+        let proxy_config = |url: &str| ProxyConfig {
+            url: url.into(),
+            ..Default::default()
+        };
+        CrawlConfig {
+            proxy: proxy.map(proxy_config),
+            browser: BrowserConfig {
+                backend,
+                proxy: browser_proxy.map(proxy_config),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn socks_is_refused_for_every_backend_and_both_proxy_fields() {
+        for backend in [BrowserBackend::Chromiumoxide, BrowserBackend::Native] {
+            for url in ["socks5://proxy.test:1080", "socks5h://proxy.test:1080"] {
+                for config in [
+                    proxied_config(Some(url), None, backend.clone()),
+                    proxied_config(None, Some(url), backend.clone()),
+                ] {
+                    let err = config.validate().expect_err("no client speaks SOCKS").to_string();
+                    assert!(
+                        err.contains("SOCKS proxies are not supported"),
+                        "{url} {backend:?}: the error must say SOCKS is not supported, got {err}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_scheme_less_proxy_is_accepted_in_either_field() {
+        for url in ["127.0.0.1:3128", "localhost:3128", "operator:s3cr3t@proxy:8080"] {
+            for config in [
+                proxied_config(Some(url), None, BrowserBackend::Native),
+                proxied_config(None, Some(url), BrowserBackend::Native),
+            ] {
+                assert!(
+                    config.validate().is_ok(),
+                    "{url}: reqwest uses this as an HTTP proxy, so the config check must accept it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_browser_proxy_is_checked_even_when_the_crawl_proxy_is_valid() {
+        let err = proxied_config(
+            Some("http://proxy.test:8080"),
+            Some("gopher://proxy.test:70"),
+            BrowserBackend::Native,
+        )
+        .validate()
+        .expect_err("the browser proxy is a proxy the browser uses")
+        .to_string();
+        assert!(err.contains("'gopher'"), "got {err}");
     }
 }

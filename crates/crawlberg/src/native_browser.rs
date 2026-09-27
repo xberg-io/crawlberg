@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn a_credential_free_proxy_is_passed_through_unchanged() {
+    fn a_credential_free_proxy_is_returned_as_parsed() {
         let plain = CrawlConfig {
             proxy: Some(proxy("http://proxy:8080", None, None)),
             ..CrawlConfig::default()
@@ -317,7 +317,7 @@ mod tests {
             resolve_proxy_url(&plain)
                 .expect("credential-free proxy must resolve")
                 .as_deref(),
-            Some("http://proxy:8080")
+            Some("http://proxy:8080/")
         );
 
         assert_eq!(
@@ -379,7 +379,7 @@ mod tests {
             resolve_proxy_url(&config)
                 .expect("browser proxy must resolve")
                 .as_deref(),
-            Some("http://browser-proxy:2")
+            Some("http://browser-proxy:2/")
         );
     }
 

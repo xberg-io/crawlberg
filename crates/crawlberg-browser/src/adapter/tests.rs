@@ -334,6 +334,53 @@ async fn render_refuses_a_proxy_the_clients_cannot_use_instead_of_connecting_dir
             }
         }
     }
+
+    let page = render_url(&server.base_url, &test_config())
+        .await
+        .expect("a render with no proxy must succeed");
+    assert!(page.html.contains("Native executor"));
+    assert!(
+        server.accepted.load(Ordering::SeqCst) > 0,
+        "a successful render must be counted, or the zero above proves nothing"
+    );
+}
+
+#[tokio::test]
+async fn render_uses_a_scheme_less_proxy_as_an_http_proxy() {
+    let proxy = TestServer::start().await;
+    let address = proxy
+        .base_url
+        .strip_prefix("http://")
+        .expect("the test server URL is http");
+    let port = address.rsplit(':').next().expect("the address has a port");
+    // ~keep reqwest reads each of these as an HTTP proxy; `localhost` and `operator` are read
+    // ~keep by the url crate as a scheme, so they also need the retry on a missing host.
+    for bare in [
+        address.to_string(),
+        format!("localhost:{port}"),
+        format!("operator:s3cr3t@{address}"),
+    ] {
+        for stealth in [false, true] {
+            let before = proxy.accepted.load(Ordering::SeqCst);
+            let config = NativeBrowserConfig {
+                proxy_url: Some(bare.clone()),
+                stealth,
+                ..test_config()
+            };
+            let page = tokio::time::timeout(Duration::from_secs(30), render_url("http://origin.test/", &config))
+                .await
+                .expect("the render must finish")
+                .unwrap_or_else(|e| panic!("stealth={stealth}: {bare} must work as an HTTP proxy, got {e:?}"));
+            assert!(
+                page.html.contains("Native executor"),
+                "{bare} stealth={stealth}: the page must come from the proxy"
+            );
+            assert!(
+                proxy.accepted.load(Ordering::SeqCst) > before,
+                "{bare} stealth={stealth}: the render must go through the proxy"
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -158,9 +158,8 @@ mod tests {
             assert!(
                 matches!(
                     result,
-                    Err(NetError::InvalidProxy(
-                        crate::net::proxy::ProxyError::UnsupportedScheme("socks5")
-                    ))
+                    Err(NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref scheme)))
+                        if scheme == "socks5"
                 ),
                 "stealth={stealth}: a socks5 proxy must refuse the context, not build one that connects directly"
             );

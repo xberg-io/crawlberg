@@ -156,7 +156,7 @@ AuthConfig::Header { name: "X-API-Key".into(), value: "key-value".into() }
 
 ```rust
 ProxyConfig {
-    url: "http://proxy:8080".to_string(), // or "socks5://proxy:1080"
+    url: "http://proxy:8080".to_string(),
     username: Some("user".to_string()),
     password: Some("pass".to_string()),
 }

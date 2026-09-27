@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use crate::net::proxy::{ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, check_proxy_url};
 pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
 pub use crate::page::PageError;
 
