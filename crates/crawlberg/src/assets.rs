@@ -31,7 +31,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(href) = get_attr(tag, "href")
-                && let Ok(url) = base_url.join(href)
+                && let Ok(url) = base_url.join(&href)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -46,7 +46,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
-                && let Ok(url) = base_url.join(src)
+                && let Ok(url) = base_url.join(&src)
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -61,8 +61,8 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, base_url: &Url) -> Vec<AssetRef> {
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_attr(tag, "src")
-                && !src.starts_with("data:")
-                && let Ok(url) = base_url.join(src)
+                && let Ok(url) = base_url.join(&src)
+                && url.scheme() != "data"
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -170,5 +170,19 @@ pub(crate) async fn download_assets(
             }
         }
         downloaded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_data_images_are_skipped_in_any_spelling() {
+        let html = r#"<img src="Data:image/png;base64,AA"><img src="&#100;ata&#9;:,x"><img src="i.png">"#;
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let base_url = Url::parse("https://example.com/page").expect("valid base URL");
+        let urls: Vec<String> = discover_assets(&dom, &base_url).into_iter().map(|a| a.url).collect();
+        assert_eq!(urls, ["https://example.com/i.png"]);
     }
 }

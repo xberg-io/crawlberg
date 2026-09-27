@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use tl::{ParserOptions, VDom};
+use tl::VDom;
 use url::Url;
 
 use super::decode_attr_value;
@@ -64,7 +64,7 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 /// Absolute URLs of any scheme, fragment-only references and empty values are left as written.
 /// Every byte outside a rewritten attribute value is kept.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
-    let Ok(dom) = tl::parse(html, ParserOptions::default()) else {
+    let Ok(dom) = super::parse_html(html) else {
         return Cow::Borrowed(html);
     };
     let base = effective_base_url(&dom, document_url);
@@ -99,7 +99,7 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
     };
     for tag in dom.nodes().iter().filter_map(|node| node.as_tag()) {
         let name = tag.name().as_bytes();
-        if name.eq_ignore_ascii_case(b"base") {
+        if name == b"base" {
             // ~keep Every `<base href>`, not only the first: the converter's front matter
             // ~keep keeps the last one it meets, and only the first one counts in HTML.
             if let Some(raw) = borrowed_attr(tag, "href")
@@ -109,10 +109,7 @@ fn collect_edits(dom: &VDom<'_>, html: &str, base: &Url) -> Vec<(Range<usize>, S
             }
             continue;
         }
-        let Some((_, attributes)) = TARGETS
-            .iter()
-            .find(|(element, _)| name.eq_ignore_ascii_case(element.as_bytes()))
-        else {
+        let Some((_, attributes)) = TARGETS.iter().find(|(element, _)| name == element.as_bytes()) else {
             continue;
         };
         for &(attr, shape) in *attributes {

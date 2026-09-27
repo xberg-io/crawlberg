@@ -1,6 +1,5 @@
 //! Single-page scrape operation.
 
-use tl::ParserOptions;
 use url::Url;
 
 use crate::assets;
@@ -126,8 +125,8 @@ fn extract_from_body(
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&decoded.body);
-    let doc = tl::parse(&parsed_html, ParserOptions::default())
-        .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
+    let doc =
+        crate::html::parse_html(&parsed_html).map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
     let page_robots = header_robots.with_meta_tags(&doc);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
@@ -506,6 +505,78 @@ mod tests {
 
         assert!(result.is_pdf, "a PDF content type must be recognised");
         assert!(result.was_skipped, "a PDF must be flagged as skipped for extraction");
+    }
+
+    fn urls<T>(items: &[T], url: impl Fn(&T) -> &str) -> Vec<String> {
+        items.iter().map(|item| url(item).to_owned()).collect()
+    }
+
+    #[tokio::test]
+    async fn scrape_decodes_character_references_in_addresses() {
+        let resp = response(
+            "text/html",
+            r#"<html><body><a href="list?a=1&amp;b=2">q</a> <a href="&#47;root.html">r</a>
+            <img src="i.png?a=1&amp;b=2" alt="Tom &amp; Jerry"></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            ["https://example.com/dir/list?a=1&b=2", "https://example.com/root.html"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            ["https://example.com/dir/i.png?a=1&b=2"]
+        );
+        assert_eq!(result.images[0].alt.as_deref(), Some("Tom & Jerry"));
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_markup_written_in_uppercase() {
+        let resp = response(
+            "text/html",
+            r#"<HTML LANG="en"><HEAD><TITLE>Upper</TITLE><META NAME="robots" CONTENT="noindex">
+            <LINK REL="canonical" HREF="/canon"></HEAD>
+            <BODY><A HREF="up.html">x</A><IMG SRC="u.png"></BODY></HTML>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/dir/up.html"]);
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/dir/u.png"]);
+        assert_eq!(result.metadata.title.as_deref(), Some("Upper"));
+        assert_eq!(result.metadata.html_lang.as_deref(), Some("en"));
+        assert_eq!(result.metadata.canonical_url.as_deref(), Some("/canon"));
+        assert!(result.noindex_detected, "an uppercase robots meta tag must be read");
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_images_against_the_base_href() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><base href="/assets/"><meta property="og:image" content="og.png"></head>
+            <body><a href="leaf.html">l</a><img src="logo.png">
+            <picture><source srcset="wide.png 2x"></picture></body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(
+            urls(&result.links, |l| &l.url),
+            ["https://example.com/assets/leaf.html"]
+        );
+        assert_eq!(
+            urls(&result.images, |i| &i.url),
+            [
+                "https://example.com/assets/logo.png",
+                "https://example.com/assets/wide.png",
+                "https://example.com/assets/og.png"
+            ]
+        );
     }
 
     #[tokio::test]
