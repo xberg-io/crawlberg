@@ -123,7 +123,9 @@ mod tests {
     #[test]
     fn reads_a_very_wide_link_as_the_html_parser_read_it() {
         let wide: String = (0..50_000).map(|i| format!(" a{i}")).collect();
-        let html = format!(r#"<a href="/first"{wide}>1</a><a{wide} href="/past">2</a><a href="/last">3</a>"#);
+        let html = format!(
+            r#"<a href="/first"{wide}>1</a><a{wide} href="/past">2</a><div{wide} title="><a href='/hidden'>h</a>"><a href="/last">3</a>"#
+        );
         let urls: Vec<_> = extract(&html, "https://example.com/")
             .into_iter()
             .map(|link| link.url)

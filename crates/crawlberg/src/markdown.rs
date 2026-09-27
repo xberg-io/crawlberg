@@ -453,9 +453,11 @@ mod tests {
             format!(r#"<p>before</p><img {data}{wide} alt="i"><p>after</p>"#),
             format!(r#"<p>before</p><img{wide} {data} alt="i"><p>after</p>"#),
             format!(r#"<p>before</p><div{wide}><img {data}></div><p>after</p>"#),
+            format!(r#"<p>before</p><img{wide} alt="x>" {data}><p>after</p>"#),
+            format!(r#"<p>before</p><div{wide} title="x>SPILL" {data}><p>after</p>"#),
         ] {
             let md = markdown_at(&html, "https://example.com/").await;
-            if md.contains(ICON_PAYLOAD) || !md.contains("before") || !md.contains("after") {
+            if md.contains(ICON_PAYLOAD) || md.contains("SPILL") || !md.contains("before") || !md.contains("after") {
                 wrong.push(md);
             }
         }
@@ -466,16 +468,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_wide_candidate_in_a_comment_leaks_no_payload() {
-        // ~keep The attributes past the limit are overwritten up to the next `>`, which here is
-        // ~keep the comment's end, so the comment runs on over the image. The converter must be
-        // ~keep given that same text: given the source, it would render the image the pass
-        // ~keep never read as a tag.
+    async fn a_wide_candidate_in_a_comment_keeps_the_page() {
         let wide: String = (0..5_000).map(|i| format!(" a{i}")).collect();
-        let html = format!(r#"<p>before</p><!-- <a{wide} --><img src="data:image/png;base64,{ICON_PAYLOAD}" alt="i">"#);
+        let html = format!(
+            r#"<p>before</p><!-- <a{wide} --><img src="data:image/png;base64,{ICON_PAYLOAD}" alt="i"><p>after</p>"#
+        );
         let md = markdown_at(&html, "https://example.com/").await;
-        assert!(md.contains("before"), "the page is converted: {md}");
+        assert!(
+            md.contains("before") && md.contains("after"),
+            "the page is converted: {md}"
+        );
         assert!(!md.contains(ICON_PAYLOAD), "the payload leaked: {md}");
+    }
+
+    #[tokio::test]
+    async fn the_markdown_is_written_from_the_text_the_parser_read() {
+        // ~keep The list's `start` is past the limit, so the parser never read it, and the
+        // ~keep converter must not read it either: with a link the pass rewrites (so it writes
+        // ~keep the page out) and without one (so it returns the page as read).
+        let wide: String = (0..2_000).map(|i| format!(" a{i}")).collect();
+        let list = format!(r#"<ol{wide} start="7"><li>item</li></ol>"#);
+        let mut wrong = Vec::new();
+        for html in [format!(r#"<p><a href="rel">r</a></p>{list}"#), list.clone()] {
+            let md = markdown_at(&html, "https://example.com/dir/").await;
+            if !md.contains("1. item") || (html.contains("rel") && !md.contains("https://example.com/dir/rel")) {
+                wrong.push(md);
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "the list must start at 1, as the parser read it: {wrong:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tag_with_128k_attributes_converts_in_under_ten_seconds() {
+        // ~keep Measured at base: 5.3 s in a release build, and quadratic. With the limit the
+        // ~keep conversion takes well under a second in a debug build; the bound leaves room
+        // ~keep for a loaded runner.
+        let wide: String = (0..128_000).map(|i| format!(" a{i}")).collect();
+        let html = format!("<p>before</p><div{wide}><p>after</p></div>");
+        let started = std::time::Instant::now();
+        let md = markdown_at(&html, "https://example.com/").await;
+        let elapsed = started.elapsed();
+        assert!(md.contains("after"), "the page is converted: {md}");
+        assert!(elapsed < std::time::Duration::from_secs(10), "took {elapsed:?}");
     }
 
     #[tokio::test]

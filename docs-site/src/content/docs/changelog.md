@@ -135,11 +135,12 @@ title: "Changelog"
 
 - **One tag with many distinct attributes made a page slow to read.** The HTML parser that finds
   raw text and link tags compares each new attribute name with every earlier one on the same
-  tag, so one tag with 128,000 distinct attributes took 5.3 s. Before the parser reads a page,
-  every attribute past the 1,024th of one tag is now overwritten with spaces, up to the next `>`.
-  The markdown converter and link extraction read that same text, so they see the tag as the
-  parser saw it. The same tag now takes 0.04 s, and a page with no tag past the limit is read
-  unchanged. (#269)
+  tag, so one tag with 128,000 distinct attributes took 5.3 s. Before the parser reads them,
+  every attribute past the 1,024th of one tag is now overwritten with spaces, up to the `>` that
+  ends the tag, so a `>` inside a quoted value does not end the overwrite. Comments and raw text
+  are left as written. The markdown converter and link extraction read that same text, so they
+  see the tag as the parser saw it. The same tag now takes 0.02 s, and a page with no tag past
+  the limit is read unchanged. (#269)
 
 - **A redirect in browser mode reported the requested URL.** Chrome follows a redirect itself,
   and the page result kept the URL that was asked for, so relative links on the landed page

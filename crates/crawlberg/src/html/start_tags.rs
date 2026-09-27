@@ -15,7 +15,7 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts};
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeBuilder, TreeBuilderOpts, TreeSink};
 use html5ever::{Attribute, LocalName, QualName, TokenizerResult, local_name, ns};
-use memchr::{memchr, memchr_iter, memchr2, memchr2_iter};
+use memchr::{memchr, memchr_iter, memchr2_iter};
 
 /// What an HTML parser reads in a document.
 pub(super) struct Scan<'h> {
@@ -102,25 +102,23 @@ pub(super) fn scan(source: &str, scripting: bool, keep: fn(&str) -> bool) -> Sca
         }),
         open: Cell::new(None),
         raw_text: RefCell::new(Vec::new()),
+        tokens: Cell::new(0),
     };
     let tokenizer = Tokenizer::new(sink, TokenizerOpts::default());
     let input = BufferQueue::default();
     let mut bound = AttributeBound::default();
     let mut feed = |piece: Range<usize>| {
-        if piece.is_empty() {
-            return;
+        let mut from = piece.start;
+        while from < piece.end {
+            let tokens = tokenizer.sink.tokens.get();
+            let mut text = tokenizer.sink.text.borrow_mut();
+            let until = bound.follow(source, from..piece.end, tokens, &mut text);
+            input.push_back(StrTendril::from(&text[from..until]));
+            drop(text);
+            tokenizer.sink.piece.set(from..until);
+            while let TokenizerResult::Script(_) = tokenizer.feed(&input) {}
+            from = until;
         }
-        let in_raw_text = tokenizer.sink.open.get().is_some();
-        let mut text = tokenizer.sink.text.borrow_mut();
-        input.push_back(StrTendril::from(bound.follow(
-            source,
-            piece.clone(),
-            in_raw_text,
-            &mut text,
-        )));
-        drop(text);
-        tokenizer.sink.piece.set(piece);
-        while let TokenizerResult::Script(_) = tokenizer.feed(&input) {}
     };
     let mut from = 0;
     for at in memchr2_iter(b'<', b'>', source.as_bytes()) {
@@ -168,24 +166,6 @@ enum TagState {
     SelfClosing,
 }
 
-const TAG_STATES: usize = 12;
-
-/// Every [`TagState`], each at its own index.
-const TAG_STATES_IN_ORDER: [TagState; TAG_STATES] = [
-    TagState::Open,
-    TagState::EndOpen,
-    TagState::Name,
-    TagState::BeforeAttributeName,
-    TagState::AttributeName,
-    TagState::AfterAttributeName,
-    TagState::BeforeAttributeValue,
-    TagState::DoubleQuoted,
-    TagState::SingleQuoted,
-    TagState::Unquoted,
-    TagState::AfterQuotedValue,
-    TagState::SelfClosing,
-];
-
 /// What one byte does to a tag in `state`: the next state and whether the byte starts an
 /// attribute, or `None` when the tag ends at it, or it is not a tag.
 fn tag_step(state: TagState, byte: u8) -> Option<(TagState, bool)> {
@@ -222,120 +202,121 @@ fn tag_step(state: TagState, byte: u8) -> Option<(TagState, bool)> {
     Some(next)
 }
 
-/// Follows every `<` that could open a tag through the attribute states, and overwrites with
-/// spaces, up to the next `>`, the attributes of any tag past the [`ATTRIBUTE_LIMIT`]th.
+/// The tag html5ever may be reading: its state, the attributes it has started, and how many
+/// tokens html5ever had emitted when it consumed the tag's `<`.
+#[derive(Clone, Copy)]
+struct TagRun {
+    state: TagState,
+    attributes: usize,
+    tokens: usize,
+}
+
+/// Overwrites with spaces the attributes of one tag past the [`ATTRIBUTE_LIMIT`]th, up to the
+/// `>` that ends the tag.
 ///
-/// ~keep The tokenizer does not report its state, so each `<` that could open a tag is followed,
-/// ~keep runs in the same state merged with the highest count, and the pass stays linear. Inside
-/// ~keep raw text, where the tokenizer reads a `<` as text, only a `</` is followed, as it can
-/// ~keep be the end tag. When a run is about to start one attribute too many, it is in a state
-/// ~keep where spaces keep it and `>` ends it, so whichever run is the real tag ends at that `>`
-/// ~keep with the limit reached. Spaces keep the byte length. Where the run was not a tag, the
-/// ~keep overwrite changes what the page says there, and every reader after this one reads the
-/// ~keep same changed text.
+/// ~keep html5ever does not report its state, so the tag is followed through its attribute
+/// ~keep states from the only `<` that can open one: the first `<` html5ever consumes after a
+/// ~keep token (or after an empty end tag `</>`, which emits none). In the data state every
+/// ~keep other `<` emits a token, and inside a comment, a doctype or a tag the `<` that opened it
+/// ~keep came first. From a tag's `<` to its `>` html5ever emits only parse errors, so a token
+/// ~keep emitted since shows that the `<` opened no tag, as in raw text, and the run is dropped.
+/// ~keep The overwrite starts only once html5ever has read every byte before it without a
+/// ~keep token, and it ends at the `>` where the run ends, which is the `>` where html5ever ends
+/// ~keep the tag, past any `>` inside a quoted value. Spaces keep the byte length.
 #[derive(Default)]
 struct AttributeBound {
-    /// The highest attribute count of the runs in each [`TagState`], `None` when none is.
-    runs: [Option<usize>; TAG_STATES],
-    /// Whether the bytes up to the next `>` are overwritten.
-    blanking: bool,
+    run: Option<TagRun>,
+    /// Whether the run is past the limit, so its bytes up to its `>` are overwritten.
+    overwriting: bool,
+    /// Whether the last piece was a `<` that may open a run once html5ever has consumed it.
+    after_lt: bool,
+    /// How many tokens html5ever had emitted after it consumed the last `<`, `None` after `</>`.
+    tokens_at_lt: Option<usize>,
 }
 
 impl AttributeBound {
-    /// Follow `piece` of `source`, the next piece to be fed, overwrite in `text` what is past the
-    /// limit, and return the piece as it is fed. A `<` is always a piece of its own, and
-    /// `in_raw_text` says whether the tokenizer reads it as text.
-    fn follow<'t>(
-        &mut self,
-        source: &str,
-        piece: Range<usize>,
-        in_raw_text: bool,
-        text: &'t mut Cow<'_, str>,
-    ) -> &'t str {
+    /// Follow `range` of `source` before it is fed, when html5ever has emitted `tokens` tokens,
+    /// and overwrite in `text` what is past the limit. Returns where the part to feed now ends:
+    /// the end of `range`, or the start of an overwrite, which waits until html5ever has read
+    /// the bytes before it. A `<` is always a range of its own.
+    fn follow(&mut self, source: &str, range: Range<usize>, tokens: usize, text: &mut Cow<'_, str>) -> usize {
+        if self.run.is_some_and(|run| run.tokens != tokens) {
+            debug_assert!(!self.overwriting, "html5ever emitted a token inside an overwritten tag");
+            self.run = None;
+            self.overwriting = false;
+        }
+        if std::mem::take(&mut self.after_lt) {
+            if self.run.is_none() && self.tokens_at_lt != Some(tokens) {
+                self.run = Some(TagRun {
+                    state: TagState::Open,
+                    attributes: 0,
+                    tokens,
+                });
+            }
+            self.tokens_at_lt = Some(tokens);
+        }
         let bytes = source.as_bytes();
-        let mut blanked: Option<Range<usize>> = None;
-        let mut at = piece.start;
-        while at < piece.end {
-            if !self.blanking {
-                at += self.unchanged_prefix(&bytes[at..piece.end]);
-                if at == piece.end {
+        let mut overwritten: Option<Range<usize>> = None;
+        let mut at = range.start;
+        while let Some(mut run) = self.run
+            && at < range.end
+        {
+            if !self.overwriting {
+                at += unchanged_prefix(run.state, &bytes[at..range.end]);
+                if at == range.end {
                     break;
                 }
             }
-            let byte = if self.blanking && bytes[at] != b'>' {
-                b' '
-            } else {
-                bytes[at]
-            };
-            let mut next = step_runs(&self.runs, byte);
-            if next.is_none() {
-                self.blanking = true;
-                next = step_runs(&self.runs, b' ');
+            match tag_step(run.state, bytes[at]) {
+                Some((state, starts_attribute)) => {
+                    if starts_attribute && !self.overwriting && run.attributes == ATTRIBUTE_LIMIT {
+                        if at > range.start {
+                            return at;
+                        }
+                        self.overwriting = true;
+                    }
+                    run.state = state;
+                    run.attributes += usize::from(starts_attribute);
+                    self.run = Some(run);
+                }
+                None => {
+                    if matches!(run.state, TagState::EndOpen) && bytes[at] == b'>' {
+                        self.tokens_at_lt = None;
+                    }
+                    self.run = None;
+                    self.overwriting = false;
+                    at += 1;
+                    continue;
+                }
             }
-            self.runs = next.unwrap_or([None; TAG_STATES]);
-            if self.blanking && bytes[at] != b'>' {
-                blanked.get_or_insert(at..at).end = at + 1;
-            }
-            if bytes[at] == b'>' {
-                self.blanking = false;
-            }
-            if byte == b'<' && (!in_raw_text || bytes.get(at + 1) == Some(&b'/')) {
-                let open = &mut self.runs[TagState::Open as usize];
-                *open = Some(open.unwrap_or(0));
+            if self.overwriting {
+                overwritten.get_or_insert(at..at).end = at + 1;
             }
             at += 1;
         }
-        // ~keep An overwrite starts at a character (the byte after an ASCII space, `/` or quote,
-        // ~keep or a piece's start) and ends at a `>` or a piece's end, so the range is on
+        // ~keep An overwrite starts where an attribute starts, after an ASCII space, `/`, `=` or
+        // ~keep quote, or at a range's start, and ends at a `>` or a range's end, so it is on
         // ~keep character boundaries.
-        if let Some(blanked) = blanked {
-            text.to_mut().replace_range(blanked.clone(), &" ".repeat(blanked.len()));
+        if let Some(overwritten) = overwritten {
+            text.to_mut()
+                .replace_range(overwritten.clone(), &" ".repeat(overwritten.len()));
         }
-        &text[piece]
-    }
-
-    /// How many leading bytes of `rest` change no run: the bytes up to the next `<` when there is
-    /// no run, and the bytes that keep a lone run in its state and start no attribute.
-    fn unchanged_prefix(&self, rest: &[u8]) -> usize {
-        let mut live = TAG_STATES_IN_ORDER
-            .iter()
-            .zip(self.runs)
-            .filter(|(_, count)| count.is_some());
-        let stops: &[u8] = match (live.next(), live.next()) {
-            (None, _) => b"<",
-            (Some((TagState::DoubleQuoted, _)), None) => b"<\"",
-            (Some((TagState::SingleQuoted, _)), None) => b"<'",
-            (Some((TagState::Name, _)), None) => b"<\t\n\x0C\r />",
-            (Some((TagState::AttributeName, _)), None) => b"<\t\n\x0C\r />=",
-            (Some((TagState::Unquoted, _)), None) => b"<\t\n\x0C\r >",
-            _ => return 0,
-        };
-        match stops {
-            [one] => memchr(*one, rest),
-            [one, two] => memchr2(*one, *two, rest),
-            _ => rest.iter().position(|byte| stops.contains(byte)),
-        }
-        .unwrap_or(rest.len())
+        self.after_lt = &bytes[range.clone()] == b"<";
+        range.end
     }
 }
 
-/// Step every run over `byte`, merging runs that land in the same state, or `None` when a run
-/// would start an attribute past [`ATTRIBUTE_LIMIT`].
-fn step_runs(runs: &[Option<usize>; TAG_STATES], byte: u8) -> Option<[Option<usize>; TAG_STATES]> {
-    let mut next = [None; TAG_STATES];
-    for (&state, count) in TAG_STATES_IN_ORDER.iter().zip(runs) {
-        let Some(count) = *count else { continue };
-        let Some((to, starts_attribute)) = tag_step(state, byte) else {
-            continue;
-        };
-        let count = count + usize::from(starts_attribute);
-        if count > ATTRIBUTE_LIMIT {
-            return None;
-        }
-        let slot: &mut Option<usize> = &mut next[to as usize];
-        *slot = Some(slot.map_or(count, |other| other.max(count)));
-    }
-    Some(next)
+/// How many leading bytes of `rest` keep a tag in `state` with no attribute started.
+fn unchanged_prefix(state: TagState, rest: &[u8]) -> usize {
+    let stops: &[u8] = match state {
+        TagState::DoubleQuoted => return memchr(b'"', rest).unwrap_or(rest.len()),
+        TagState::SingleQuoted => return memchr(b'\'', rest).unwrap_or(rest.len()),
+        TagState::Name => b"\t\n\x0C\r />",
+        TagState::AttributeName => b"\t\n\x0C\r />=",
+        TagState::Unquoted => b"\t\n\x0C\r >",
+        _ => return 0,
+    };
+    rest.iter().position(|byte| stops.contains(byte)).unwrap_or(rest.len())
 }
 
 /// Raw-text content the tokenizer is inside: where it starts, and how its end is found.
@@ -383,6 +364,8 @@ struct Recorder<'h> {
     found: RefCell<RealTags>,
     open: Cell<Option<OpenRawText>>,
     raw_text: RefCell<Vec<Range<usize>>>,
+    /// How many tokens but parse errors the tokenizer has emitted.
+    tokens: Cell<usize>,
 }
 
 impl Recorder<'_> {
@@ -418,6 +401,7 @@ impl Recorder<'_> {
 
     /// Move [`Self::next_start`] past a token that was just emitted.
     fn after_token(&self) {
+        self.tokens.set(self.tokens.get() + 1);
         let piece = self.piece.take();
         let lone_lt = &self.text.borrow().as_bytes()[piece.clone()] == b"<";
         self.next_start.set(if lone_lt { piece.start } else { piece.end });
@@ -843,20 +827,69 @@ mod tests {
                 ("packed slash", format!(" {}", packed("/"))),
             ])
         {
-            let html = format!("<div{list}><a href=y>");
+            let div = format!("<div{list}>");
+            let html = format!("{div}<a href=y>");
+            let read = scan(&html, true, |name| name == "div" || name == "a");
+            let tags: Vec<_> = read
+                .tags
+                .iter()
+                .map(|tag| (tag.name.to_owned(), tag.span.clone(), tag.attrs.len()))
+                .collect();
+            assert!(
+                tags.first().is_some_and(|(name, span, count)| name == "div"
+                    && *span == (0..div.len())
+                    && *count <= ATTRIBUTE_LIMIT),
+                "{value}: the div ends where it ends in the source, {:?}",
+                tags.first().map(|(name, span, count)| (name, span, count))
+            );
+            assert_eq!(
+                tags.get(1),
+                Some(&("a".to_owned(), div.len()..html.len(), 1)),
+                "{value}: the next tag is read"
+            );
+            assert_eq!(tags.len(), 2, "{value}: nothing in the div's values is read as a tag");
+        }
+    }
+
+    #[test]
+    fn should_leave_a_wide_candidate_that_opens_no_tag_unchanged() {
+        let wide = attributes(3 * ATTRIBUTE_LIMIT, "");
+        for html in [
+            format!("<p>a</p><!-- <a{wide} --><p>after"),
+            format!(r#"<div title="<b{wide}"><p>after"#),
+            format!("<!DOCTYPE html <a{wide}><p>after"),
+            format!("<?x <a{wide}><p>after"),
+            format!("<textarea><b{wide}></textarea><p>after"),
+        ] {
+            let read = scan(&html, true, |name| name == "p");
+            assert!(
+                matches!(read.text, Cow::Borrowed(_)),
+                "no tag is read there, so nothing is overwritten: {}",
+                &html[..40]
+            );
+            assert!(
+                read.tags.iter().any(|tag| tag.span.end == html.len() - "after".len()),
+                "the last <p> is read"
+            );
+        }
+    }
+
+    #[test]
+    fn should_bound_a_wide_tag_after_a_less_than_sign_that_opened_none() {
+        let wide = attributes(3 * ATTRIBUTE_LIMIT, "");
+        for prefix in ["<", "</>", "&amp", "x <3 ", "<!-- x -->", "<title>t</title>"] {
+            let html = format!("{prefix}<div{wide}><a href=y>");
             let read = scan(&html, true, |name| name == "div" || name == "a");
             let tags: Vec<_> = read
                 .tags
                 .iter()
                 .map(|tag| (tag.name.to_owned(), tag.attrs.len()))
                 .collect();
-            assert!(
-                tags.first()
-                    .is_some_and(|(name, count)| name == "div" && *count <= ATTRIBUTE_LIMIT),
-                "{value}: {:?}",
-                tags.first()
+            assert_eq!(
+                tags,
+                [("div".to_owned(), ATTRIBUTE_LIMIT), ("a".to_owned(), 1)],
+                "after {prefix:?}"
             );
-            assert_eq!(tags.last(), Some(&("a".to_owned(), 1)), "{value}: the next tag is read");
         }
     }
 
