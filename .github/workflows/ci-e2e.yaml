@@ -28,7 +28,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-e2e-${{ github.ref }}
+  # ~keep A push to main must never cancel a run already in flight: keying the group only on
+  # github.ref meant every new push to main cancelled the previous run's E2E job before it could
+  # finish, and 13 consecutive commits landed on main with zero completed E2E runs as a result.
+  # Folding the run id into the group on main gives every main push its own group (nothing to
+  # cancel), while PR branches keep sharing a group so a stale run there still gets cancelled.
+  group: ci-e2e-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
   cancel-in-progress: true
 
 env:

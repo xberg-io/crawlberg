@@ -36,7 +36,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-plugin-${{ github.ref }}
+  group: ci-plugin-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || '' }}
   cancel-in-progress: true
 
 permissions:
