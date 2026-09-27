@@ -1182,7 +1182,8 @@ type CrawlConfig struct {
 	// `["utm_*", "fbclid", "gclid", "ref"]`, applied only once `strip_tracking_params` is
 	// enabled.
 	TrackingParams []string `json:"tracking_params,omitempty"`
-	// Custom HTTP headers to send with each request.
+	// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+	// does not carry them.
 	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
 	// Timeout for individual HTTP requests (in milliseconds when serialized).
 	RequestTimeout *uint64 `json:"request_timeout,omitempty"`

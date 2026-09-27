@@ -911,7 +911,12 @@ namespace Crawlberg {
              * @var array<string>
              */
             public readonly array $trackingParams,
-            /** @var array<string, string> Custom HTTP headers to send with each request. */
+            /**
+             * Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+             * does not carry them.
+             *
+             * @var array<string, string>
+             */
             public readonly array $customHeaders,
             /** @var int Maximum number of redirects to follow. */
             public readonly int $maxRedirects,
