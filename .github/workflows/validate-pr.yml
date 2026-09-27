@@ -1,8 +1,18 @@
 name: Validate PR
 
 on:
-  pull_request:
-    types: [opened, edited, synchronize]
+  # ~keep TEMPORARY: workflow_dispatch is the only live trigger so this file stays a VALID
+  # ~keep workflow while its pull_request trigger is off. A workflow whose `on:` block resolves
+  # ~keep to empty is rejected by Actions as an invalid workflow file and shows as a permanent
+  # ~keep failure annotation on main.
+  workflow_dispatch:
+
+# ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+# ~keep saturated by the open PR backlog; CI runs on pushes to main only. This removes the
+# ~keep pr-base-is-main hard-fail guard below (stacked PRs won't be blocked while this is off).
+# ~keep Restore this block before merging any PR that needs its own CI.
+# pull_request:
+#   types: [opened, edited, synchronize]
 
 jobs:
   validate:

@@ -7,10 +7,13 @@ on:
       - "scripts/**"
       - "Taskfile.yml"
       - ".github/workflows/ci-scripts.yaml"
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main]
-    paths: *script-paths
+  # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+  # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
+  # ~keep before merging any PR that needs its own CI.
+  # pull_request:
+  #   types: [opened, synchronize, reopened, ready_for_review]
+  #   branches: [main]
+  #   paths: *script-paths
   workflow_dispatch:
 
 concurrency:

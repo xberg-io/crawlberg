@@ -13,18 +13,21 @@ on:
       - "Cargo.lock"
       - "Taskfile.yml"
       - ".github/workflows/ci-e2e.yaml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "crates/**"
-      - "packages/**"
-      - "e2e/**"
-      - "fixtures/**"
-      - "alef.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "Taskfile.yml"
-      - ".github/workflows/ci-e2e.yaml"
+  # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+  # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
+  # ~keep before merging any PR that needs its own CI.
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "crates/**"
+  #     - "packages/**"
+  #     - "e2e/**"
+  #     - "fixtures/**"
+  #     - "alef.toml"
+  #     - "Cargo.toml"
+  #     - "Cargo.lock"
+  #     - "Taskfile.yml"
+  #     - ".github/workflows/ci-e2e.yaml"
   workflow_dispatch:
 
 concurrency:

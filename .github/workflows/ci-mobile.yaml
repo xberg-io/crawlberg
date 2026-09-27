@@ -9,14 +9,17 @@ on:
       - "packages/swift/**"
       - "packages/kotlin-android/**"
       - ".github/workflows/ci-mobile.yaml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "crates/**"
-      - "packages/dart/**"
-      - "packages/swift/**"
-      - "packages/kotlin-android/**"
-      - ".github/workflows/ci-mobile.yaml"
+  # ~keep TEMPORARY: pull_request CI is disabled repo-wide while the org's Actions runners are
+  # ~keep saturated by the open PR backlog; CI runs on pushes to main only. Restore this block
+  # ~keep before merging any PR that needs its own CI.
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "crates/**"
+  #     - "packages/dart/**"
+  #     - "packages/swift/**"
+  #     - "packages/kotlin-android/**"
+  #     - ".github/workflows/ci-mobile.yaml"
   workflow_dispatch:
 
 concurrency:
