@@ -962,6 +962,71 @@ async fn a_response_fetched_with_url_credentials_is_never_served_from_the_shared
     );
 }
 
+/// A page an anonymous scrape cached never answers a later credentialed scrape.
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn a_page_cached_by_an_anonymous_scrape_is_never_served_to_a_credentialed_one() {
+    let site = site().await;
+    let observed = Arc::new(Observed::default());
+    let cache = RecordingCache::new(Arc::clone(&observed));
+    let engine = CrawlEngine::builder()
+        .config(config())
+        .cache(cache.clone())
+        .build()
+        .expect("engine must build");
+
+    engine
+        .scrape(&site.clean("/relative"))
+        .await
+        .expect("the anonymous scrape must succeed");
+    let sets_after_anonymous = cache.sets.lock().expect("lock").clone();
+    assert!(
+        !sets_after_anonymous.is_empty(),
+        "the anonymous response is cached, so a read could serve it"
+    );
+    engine
+        .scrape(&site.credentialed("/relative"))
+        .await
+        .expect("the credentialed scrape must succeed");
+
+    let seen = authorization_on(&site.seed_host, "/relative").await;
+    assert_eq!(
+        seen,
+        [None, Some(basic_header())],
+        "the credentialed scrape must go to the network with its credentials, not reuse the anonymous page"
+    );
+}
+
+/// A robots.txt read anonymously never answers a later credentialed crawl.
+#[tokio::test]
+#[serial(url_credentials_canary)]
+async fn an_anonymous_robots_txt_read_is_not_shared_with_a_credentialed_crawl() {
+    let site = site().await;
+    let engine = CrawlEngine::builder()
+        .config(CrawlConfig {
+            max_depth: Some(0),
+            ..config()
+        })
+        .build()
+        .expect("engine must build");
+
+    engine
+        .crawl(&site.clean("/"))
+        .await
+        .expect("the anonymous crawl must succeed");
+    engine
+        .crawl(&site.credentialed("/"))
+        .await
+        .expect("the credentialed crawl must succeed");
+
+    let robots = authorization_on(&site.seed_host, "/robots.txt").await;
+    assert_eq!(
+        robots,
+        [None, Some(basic_header())],
+        "the credentialed crawl reads robots.txt itself, with its credentials"
+    );
+}
+
 /// A robots.txt read with the caller's credentials never answers a later anonymous crawl.
 #[tokio::test]
 #[serial(url_credentials_canary)]
