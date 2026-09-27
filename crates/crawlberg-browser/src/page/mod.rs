@@ -112,19 +112,13 @@ impl Page {
         false
     }
 
-    /// Resolve a sub-resource reference against the page URL, leaving absolute http(s)
-    /// references and unjoinable references untouched.
-    fn resolve_subresource_url(&self, reference: &str) -> String {
-        if reference.starts_with("http://") || reference.starts_with("https://") {
-            return reference.to_string();
-        }
-        match &self.url {
-            Some(base) => base
-                .join(reference)
-                .map(|url| url.to_string())
-                .unwrap_or_else(|_| reference.to_string()),
-            None => reference.to_string(),
-        }
+    /// Parse a sub-resource reference against the page URL; `None` when it does not parse.
+    fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
+        Url::options()
+            .base_url(self.url.as_ref())
+            .parse(reference)
+            .ok()
+            .map(String::from)
     }
 
     async fn do_fetch(&self, url: &Url) -> Result<Response, NetError> {

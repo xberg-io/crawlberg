@@ -18,7 +18,11 @@ impl SsrfValidator for AllowAll {
 
 /// Serves a fixed path -> (content-type, body) map over loopback.
 async fn serve(routes: StdHashMap<String, (String, String)>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    serve_on(TcpListener::bind("127.0.0.1:0").await.expect("bind"), routes)
+}
+
+/// Serves `routes` on an already bound listener, so a page can name its own absolute address.
+fn serve_on(listener: TcpListener, routes: StdHashMap<String, (String, String)>) -> String {
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
         loop {
@@ -242,6 +246,138 @@ async fn a_script_blocked_by_interception_is_not_fetched_or_executed() {
     page.navigate(&base).await.expect("navigation must succeed");
 
     assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+/// Navigates to a page built from its own origin, served beside `extra` routes, with interception
+/// blocking every address that ends in `blocked.js`.
+async fn navigate_intercepted(page_html: impl Fn(&str) -> String, extra: &[(&str, &str, &str)]) -> (String, Page) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let origin = format!("http://{}", listener.local_addr().expect("addr"));
+    let html = page_html(&origin);
+    let mut entries = vec![("/", "text/html", html.as_str())];
+    entries.extend_from_slice(extra);
+    let base = serve_on(listener, routes(&entries));
+
+    let mut page = test_page();
+    page.intercept_enabled = true;
+    page.intercept_block_patterns = vec!["*blocked.js".to_string()];
+    page.navigate(&base).await.expect("navigation must succeed");
+    (origin, page)
+}
+
+fn event_urls(page: &Page, resource_type: &str) -> Vec<String> {
+    page.network_events
+        .iter()
+        .filter(|event| event.resource_type == resource_type)
+        .map(|event| event.url.clone())
+        .collect()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_absolute_script_src_with_trailing_spaces_is_still_caught_by_interception() {
+    let blocked = push("blocked");
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |origin| {
+            format!(
+                "<html><body><script src=\"{origin}/blocked.js  \"></script>\
+                 <script src=\"{origin}/ok.js\"></script></body></html>"
+            )
+        },
+        &[
+            ("/blocked.js", "application/javascript", &blocked),
+            ("/ok.js", "application/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["ok"],
+        "the interception pattern must see the parsed address, not the raw attribute with trailing spaces"
+    );
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_absolute_script_src_with_an_inner_tab_is_still_caught_by_interception() {
+    let blocked = push("blocked");
+    let ok = push("ok");
+    let (_, mut page) = navigate_intercepted(
+        |origin| {
+            format!(
+                "<html><body><script src=\"{origin}/bl&#9;ocked.js\"></script>\
+                 <script src=\"{origin}/ok.js\"></script></body></html>"
+            )
+        },
+        &[
+            ("/blocked.js", "application/javascript", &blocked),
+            ("/ok.js", "application/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["ok"],
+        "the URL parser removes an inner tab, so the parsed address ends in blocked.js and is blocked"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_absolute_stylesheet_href_is_recorded_under_its_parsed_address() {
+    let (origin, page) = navigate_intercepted(
+        |origin| {
+            format!(
+                "<html><head><link rel=\"stylesheet\" href=\"{origin}/o&#10;ne.css \"></head>\
+                 <body></body></html>"
+            )
+        },
+        &[("/one.css", "text/css", "a{color:red}")],
+    )
+    .await;
+
+    assert_eq!(
+        event_urls(&page, "Stylesheet"),
+        vec![format!("{origin}/one.css")],
+        "the network event must carry the parsed address, without the newline or the trailing space"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_absolute_module_src_is_recorded_under_its_parsed_address() {
+    let (origin, page) = navigate_intercepted(
+        |origin| format!("<html><body><script type=\"module\" src=\"{origin}/mod.js \"></script></body></html>"),
+        &[("/mod.js", "application/javascript", "export {};")],
+    )
+    .await;
+
+    assert_eq!(
+        event_urls(&page, "Script"),
+        vec![format!("{origin}/mod.js")],
+        "the module's network event must carry the parsed address, without the trailing space"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_subresource_address_that_does_not_parse_is_skipped() {
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |origin| {
+            format!(
+                "<html><head><link rel=\"stylesheet\" href=\"http://[::1/x.css\"></head><body>\
+                 <script src=\"http://[::1/x.js\"></script>\
+                 <script type=\"module\" src=\"http://[::1/m.js\"></script>\
+                 <script src=\"{origin}/ok.js\"></script></body></html>"
+            )
+        },
+        &[("/ok.js", "application/javascript", &ok)],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+    assert!(event_urls(&page, "Stylesheet").is_empty());
 }
 
 #[tokio::test(flavor = "current_thread")]
