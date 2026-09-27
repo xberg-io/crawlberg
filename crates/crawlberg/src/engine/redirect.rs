@@ -10,9 +10,9 @@ use super::CrawlEngine;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::RobotsOutcome;
-use crate::helpers::{default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive};
+use crate::helpers::{default_robots_user_agent, fetch_robots_outcome};
 use crate::html::is_html_content;
-use crate::html::{detect_meta_refresh, mask_raw_text_markup};
+use crate::html::{detect_meta_refresh, mask_raw_text_markup, refresh_target};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
@@ -502,9 +502,6 @@ fn next_redirect_target(
 /// Statuses whose `Location` header this crawl follows.
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
-/// The `url=` marker inside a `Refresh` header's value.
-const REFRESH_URL_MARKER: &str = "url=";
-
 /// The `Location` target of an HTTP 3xx, resolved against `current_url`.
 fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     if !REDIRECT_STATUSES.contains(&resp.status) {
@@ -517,9 +514,8 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
-    let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
-    let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+    let target = refresh_target(refresh)?;
+    Some(resolve_redirect(current_url, &target))
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -661,6 +657,63 @@ mod tests {
         );
         assert_eq!(
             meta_refresh_target(&meta("0; url=\u{1}\u{B}"), "https://example.com/start"),
+            None
+        );
+    }
+
+    /// The `Refresh` header target is cleaned by the URL rule, as the meta refresh target is: a
+    /// no-break space stays (#206). ~keep
+    #[test]
+    fn a_refresh_header_target_keeps_unicode_spaces_and_drops_c0_controls() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; url= /next\u{A0}"), "https://example.com/start"),
+            Some("https://example.com/next%C2%A0".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; url=\u{1}\u{B}"), "https://example.com/start"),
+            None
+        );
+    }
+
+    /// Both refresh forms drop one pair of matching quotes around the target (#208). ~keep
+    #[test]
+    fn a_quoted_refresh_target_is_followed_without_its_quotes() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; url='/next'"), "https://example.com/start"),
+            Some("https://example.com/next".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; URL=\"/next\""), "https://example.com/start"),
+            Some("https://example.com/next".to_owned())
+        );
+        let meta = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url='/next'"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&meta, "https://example.com/start"),
+            Some("https://example.com/next".to_owned())
+        );
+    }
+
+    /// The refresh header is read as a browser reads it: the label is optional, a `url=` inside
+    /// the address is not a label, and a value with no leading delay is no refresh. ~keep
+    #[test]
+    fn a_refresh_header_is_read_with_the_browser_refresh_steps() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; /next"), "https://example.com/start"),
+            Some("https://example.com/next".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; /go?url=/elsewhere"), "https://example.com/start"),
+            Some("https://example.com/go?url=/elsewhere".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("url=/next"), "https://example.com/start"),
             None
         );
     }

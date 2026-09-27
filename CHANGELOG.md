@@ -112,6 +112,19 @@ All notable changes to crawlberg are documented here.
   skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
   links in any case, as it skips `javascript:`. (#200)
 
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
