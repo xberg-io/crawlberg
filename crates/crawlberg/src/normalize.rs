@@ -184,6 +184,41 @@ pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
     Url::parse(target).ok()
 }
 
+/// Human-readable form of `url_str`, for matching a caller's typed search term against an
+/// address the parser has percent-encoded and idna-encoded.
+///
+/// ~keep Percent-encoding is substring-safe (each character encodes on its own), but
+/// ~keep punycode is not: it transforms a whole host label, so encoding a substring of a
+/// ~keep search term the way a host is encoded does not, in general, land inside that host's
+/// ~keep encoded label. Decoding the address instead covers both the path and the host with
+/// ~keep one pass, and an ASCII address decodes back to itself unchanged.
+/// Falls back to `url_str` unchanged if it fails to parse.
+pub(crate) fn decoded_for_search(url_str: &str) -> String {
+    let Ok(parsed) = Url::parse(url_str) else {
+        return url_str.to_owned();
+    };
+    let mut out = String::new();
+    out.push_str(parsed.scheme());
+    out.push_str("://");
+    if let Some(host) = parsed.host_str() {
+        out.push_str(&idna::domain_to_unicode(host).0);
+    }
+    if let Some(port) = parsed.port() {
+        out.push(':');
+        out.push_str(&port.to_string());
+    }
+    out.push_str(&percent_encoding::percent_decode_str(parsed.path()).decode_utf8_lossy());
+    if let Some(query) = parsed.query() {
+        out.push('?');
+        out.push_str(&percent_encoding::percent_decode_str(query).decode_utf8_lossy());
+    }
+    if let Some(fragment) = parsed.fragment() {
+        out.push('#');
+        out.push_str(&percent_encoding::percent_decode_str(fragment).decode_utf8_lossy());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +485,60 @@ mod tests {
             resolved,
             Some(clean.to_owned()),
             "a target with nothing left to normalize must come back byte-identical, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_path() {
+        let decoded = decoded_for_search("https://example.com/caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/café",
+            "expected the percent-encoded path decoded back to the UTF-8 text it encodes, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_idna_decodes_a_punycode_host() {
+        let decoded = decoded_for_search("https://xn--bcher-kva.example/x");
+        assert_eq!(
+            decoded, "https://bücher.example/x",
+            "expected the punycode host decoded back to its Unicode form, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_query_value() {
+        let decoded = decoded_for_search("https://example.com/x?q=caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/x?q=café",
+            "expected the percent-encoded query value decoded back to its UTF-8 text, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_fragment() {
+        let decoded = decoded_for_search("https://example.com/x#caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/x#café",
+            "expected the percent-encoded fragment decoded back to its UTF-8 text, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_leaves_an_ascii_address_unchanged() {
+        let decoded = decoded_for_search("https://example.com/keep-1?a=1");
+        assert_eq!(
+            decoded, "https://example.com/keep-1?a=1",
+            "an ASCII address must decode back to itself, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_falls_back_to_the_raw_string_when_unparseable() {
+        let decoded = decoded_for_search("not a url");
+        assert_eq!(
+            decoded, "not a url",
+            "an address the parser refuses must come back unchanged, got {decoded:?}"
         );
     }
 }

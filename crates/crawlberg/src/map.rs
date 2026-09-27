@@ -242,6 +242,10 @@ impl MapFilter {
     ///
     /// A URL that fails to parse is not subject to `exclude_paths` (there is no
     /// path to match against) but is still subject to `map_search`.
+    ///
+    /// `map_search` matches either the address as `map()` returns it (percent-encoded,
+    /// punycode host) or its decoded, human-readable form, so a caller's non-ASCII term
+    /// still finds an address whose path is percent-encoded or whose host is punycode.
     pub(crate) fn matches(&self, url: &str) -> bool {
         if !self.exclude_paths.is_empty()
             && let Ok(parsed) = Url::parse(url)
@@ -260,6 +264,9 @@ impl MapFilter {
         }
         if let Some(ref search) = self.search
             && !url.to_lowercase().contains(search)
+            && !crate::normalize::decoded_for_search(url)
+                .to_lowercase()
+                .contains(search)
         {
             return false;
         }
@@ -504,6 +511,56 @@ mod tests {
                 "https://example.com/keep-2".to_owned()
             ],
             "map_search must match case-insensitively and map_limit must cap the result"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_non_ascii_term_against_a_percent_encoded_path() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://example.com/café".to_owned(),
+            "https://example.com/other".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            map_search: Some("café".to_owned()),
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.com/caf%C3%A9".to_owned()],
+            "map_search=\"café\" must match the entry map() stores percent-encoded, got {:?}",
+            result.urls
+        );
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_non_ascii_term_against_a_punycode_host() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://bücher.example/x".to_owned(),
+            "https://example.com/other".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            map_search: Some("bücher".to_owned()),
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://xn--bcher-kva.example/x".to_owned()],
+            "map_search=\"bücher\" must match the entry map() stores as punycode, got {:?}",
+            result.urls
         );
     }
 
