@@ -73,7 +73,9 @@ const INLINE_DATA_ELEMENTS: &[&str] = &["img", "video", "audio", "iframe", "sour
 ///
 /// Each start tag of a [`TARGETS`] element or `<base>` is written back as the HTML parser reads
 /// it, when that differs from the source: every attribute once, in double quotes, with the
-/// rewritten addresses. Every byte outside a rewritten start tag is kept.
+/// rewritten addresses. An attribute whose name has a character other than a letter, a digit,
+/// `-`, `_` or `:` is left out, as the converter never reads it. Every byte outside a rewritten
+/// start tag is kept, except an empty end tag `</>` just before one, which an HTML parser ignores.
 pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow<'h, str> {
     // ~keep Scripting on, as the converter reads `<noscript>` (it drops the element).
     let read = scan(html, true, |name| rewritten_attributes(name.as_bytes()).is_some());

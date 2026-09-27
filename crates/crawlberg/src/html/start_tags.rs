@@ -161,8 +161,9 @@ struct Recorder<'h> {
     /// ~keep the piece being fed, or at the piece itself when it is a lone `<`: a token emitted
     /// ~keep while a lone `<` is fed was held back by what came before it, such as a character
     /// ~keep reference. Between that token and a start tag the tokenizer emits nothing, and every
-    /// ~keep `<` it reads there in the data state would emit a token unless it opens that tag, so
-    /// ~keep the tag starts at the first `<` from here.
+    /// ~keep `<` it reads there in the data state would emit a token unless it opens that tag or
+    /// ~keep is an empty end tag `</>`, which emits nothing. So the tag starts at the first `<`
+    /// ~keep from here, and its span takes in any `</>` just before it.
     next_start: Cell<usize>,
     keep: fn(&str) -> bool,
     found: RefCell<RealTags>,
