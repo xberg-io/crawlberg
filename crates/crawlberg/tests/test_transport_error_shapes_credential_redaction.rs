@@ -11,9 +11,13 @@
 //! `CrawlEngine::scrape()` against credentials embedded in the address.
 
 use crawlberg::{CrawlConfig, CrawlEngine, HostMatcher};
-use std::process::{Child, Command, Stdio};
+use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use std::net::SocketAddr;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 
 fn build_engine(config: CrawlConfig) -> CrawlEngine {
     CrawlEngine::builder().config(config).build().unwrap()
@@ -79,87 +83,61 @@ async fn should_drop_url_credentials_from_a_timeout() {
     assert_credentials_redacted(&err, &addr.ip().to_string());
 }
 
-/// Kills the child `openssl s_server` on drop, so a failed assertion still cleans it up.
-struct OpensslServer(Child);
+/// A throwaway self-signed certificate for `127.0.0.1`, checked in as static DER fixtures
+/// rather than generated at test time: no external process, no cross-OpenSSL-version
+/// drift between CI's Linux and macOS legs (#463's own review flagged the old
+/// `openssl req`/`s_server` version as untested on macOS). `rustls` and `tokio-rustls`
+/// are already resolved in `Cargo.lock` via other dependents, so this adds no new
+/// supply-chain surface.
+static CERT_DER: &[u8] = include_bytes!("fixtures/self_signed/cert.der");
+static KEY_DER: &[u8] = include_bytes!("fixtures/self_signed/key.der");
 
-impl Drop for OpensslServer {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
+fn install_crypto_provider() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
-/// A TLS server presenting a self-signed certificate for `127.0.0.1`, produced with the
-/// box's own `openssl` binary (no new crate for one test's certificate). The client never
-/// trusts it, so the handshake fails on certificate verification -- a real "bad
-/// certificate" shape, not a bare connection abort.
-fn spawn_self_signed_tls_server(port: u16, cert_dir: &std::path::Path) -> OpensslServer {
-    let cert_path = cert_dir.join("cert.pem");
-    let key_path = cert_dir.join("key.pem");
+/// Spawns an in-process TLS server presenting the self-signed certificate above and
+/// returns the address it is listening on. The client never trusts the certificate, so
+/// the handshake fails on verification -- a real "bad certificate" shape, not a bare
+/// connection abort. Each accepted connection is handled on its own task, and a failed
+/// handshake is expected and ignored: the test only cares what the *client* sees.
+async fn spawn_self_signed_tls_server() -> SocketAddr {
+    install_crypto_provider();
 
-    let status = Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-keyout",
-            key_path.to_str().expect("utf8 path"),
-            "-out",
-            cert_path.to_str().expect("utf8 path"),
-            "-days",
-            "2",
-            "-nodes",
-            "-subj",
-            "/CN=127.0.0.1",
-            "-addext",
-            "subjectAltName=IP:127.0.0.1",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("openssl must be on PATH to generate a throwaway self-signed cert");
-    assert!(status.success(), "openssl req must succeed, got {status:?}");
+    let cert = CertificateDer::from(CERT_DER.to_vec());
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY_DER.to_vec()));
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)
+        .expect("the self-signed server config must build");
+    let acceptor = TlsAcceptor::from(Arc::new(config));
 
-    let child = Command::new("openssl")
-        .args([
-            "s_server",
-            "-accept",
-            &port.to_string(),
-            "-cert",
-            cert_path.to_str().expect("utf8 path"),
-            "-key",
-            key_path.to_str().expect("utf8 path"),
-            "-quiet",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("openssl s_server must start");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("must bind an ephemeral port");
+    let addr = listener.local_addr().expect("must read local addr");
 
-    OpensslServer(child)
-}
-
-async fn wait_until_accepting(addr: std::net::SocketAddr) {
-    for _ in 0..100 {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            return;
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                let _ = acceptor.accept(stream).await;
+            });
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("openssl s_server never started accepting connections on {addr}");
+    });
+
+    addr
 }
 
 #[tokio::test]
 async fn should_drop_url_credentials_from_a_bad_certificate() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("must bind an ephemeral port");
-    let addr = listener.local_addr().expect("must read local addr");
-    drop(listener);
-
-    let cert_dir = tempfile::tempdir().expect("must create a temp dir for the throwaway cert");
-    let _server = spawn_self_signed_tls_server(addr.port(), cert_dir.path());
-    wait_until_accepting(addr).await;
+    let addr = spawn_self_signed_tls_server().await;
 
     let mut config = CrawlConfig::default();
     config.ssrf.deny_private = false;
