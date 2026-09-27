@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{LinkInfo, LinkType};
 
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
+use super::{get_attr, get_url_attr, has_link_qualifier, is_fetchable_scheme};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -74,10 +74,10 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             let resolved = base_url.join(href);
             // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
             // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
-            if resolved
-                .as_ref()
-                .is_ok_and(|u| matches!(u.scheme(), "mailto" | "tel") || INLINE_SCHEMES.contains(&u.scheme()))
-            {
+            // ~keep Only `http` and `https` are kept: the crawler can fetch neither `mailto:`,
+            // ~keep `tel:` nor the inline schemes, and no more than these two can name a `file:`,
+            // ~keep `blob:` or other address the crawler cannot reach either.
+            if resolved.as_ref().is_ok_and(|u| !is_fetchable_scheme(u)) {
                 continue;
             }
 
@@ -171,6 +171,17 @@ mod tests {
         let html = r#"<a href="JavaScript:alert(1)">a</a><a href="&#74;avascript:alert(1)">b</a>
             <a href="java&#9;script:alert(1)">c</a><a href="MAILTO:x@example.com">d</a>
             <a href="Tel:+1">e</a><a href="&#68;ata:text/html,x">f</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
+    }
+
+    #[test]
+    fn schemes_the_crawler_cannot_fetch_are_skipped() {
+        let html = concat!(
+            r#"<a href="file:///etc/passwd">a</a><a href="blob:https://example.com/x">b</a>"#,
+            r#"<a href="ftp://example.com/f">c</a><a href="ok.html">ok</a>"#,
+        );
         let links = extract(html, "https://example.com/dir/page");
         let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
         assert_eq!(urls, ["https://example.com/dir/ok.html"]);

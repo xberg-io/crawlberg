@@ -92,8 +92,9 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
 }
 
 /// URL schemes whose address carries its content inline, as data or script, instead of naming a
-/// resource to fetch. The links list, the images list, asset discovery, and the feed, canonical and
-/// hreflang links skip these addresses. Favicons skip only the script schemes.
+/// resource to fetch. The feed, canonical and hreflang links skip these addresses directly.
+/// Favicons skip only the script schemes. The links list, the images list and asset discovery
+/// skip a broader set through [`is_fetchable_scheme`], which also rejects these.
 pub(crate) const INLINE_SCHEMES: [&str; 3] = ["data", "javascript", "vbscript"];
 
 /// Whether `address`, cleaned by [`clean_url`] or resolved, has one of the [`INLINE_SCHEMES`].
@@ -105,6 +106,21 @@ pub(crate) fn has_inline_scheme(address: &str) -> bool {
 /// lower case, without the colon). An address that does not parse has no scheme.
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
     Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
+}
+
+/// Whether `url` is a scheme the crawler can fetch. `http_fetch` builds on a `reqwest::Client`,
+/// which speaks only `http` and `https`; every other scheme, including the [`INLINE_SCHEMES`]
+/// above, `mailto:`, `tel:`, `file:` and `blob:`, names something the client can never retrieve.
+pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// Whether `address` parses as an absolute URL whose scheme [`is_fetchable_scheme`] rejects. The
+/// links list, image discovery and asset discovery report only addresses the crawler can act on,
+/// so they skip these. An address that does not parse has no scheme and is not judged here: the
+/// call sites that reach this keep the raw, unresolved href instead.
+pub(crate) fn has_unfetchable_scheme(address: &str) -> bool {
+    Url::parse(address).is_ok_and(|url| !is_fetchable_scheme(&url))
 }
 
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace

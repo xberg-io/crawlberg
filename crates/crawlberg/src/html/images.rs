@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{INLINE_SCHEMES, attr_eq, clean_url, get_attr, get_url_attr, has_inline_scheme, resolve_url};
+use super::{attr_eq, clean_url, get_attr, get_url_attr, has_unfetchable_scheme, is_fetchable_scheme, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -38,7 +38,9 @@ pub(crate) fn extract_images(dom: &VDom<'_>, base_url: &Url) -> Vec<ImageInfo> {
     images
 }
 
-/// Collect `<img src>` images, skipping blank sources and inline `data:` or script sources.
+/// Collect `<img src>` images, skipping blank sources and addresses the crawler cannot fetch
+/// (inline `data:` and script sources, `mailto:`, `tel:`, `file:`, `blob:`, and any other
+/// non-`http`/`https` scheme).
 fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_IMG_SRC) else {
@@ -52,7 +54,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
             continue;
         };
         let resolved = base_url.join(&src);
-        if resolved.as_ref().is_ok_and(|u| INLINE_SCHEMES.contains(&u.scheme())) {
+        if resolved.as_ref().is_ok_and(|u| !is_fetchable_scheme(u)) {
             continue;
         }
         images.push(ImageInfo {
@@ -66,7 +68,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
 }
 
 /// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
-/// skipping blank candidates and candidates that resolve to an inline `data:` or script address.
+/// skipping blank candidates and candidates that resolve to an address the crawler cannot fetch.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -84,7 +86,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
             continue;
         };
         let url = resolve_url(&raw_url, base_url);
-        if has_inline_scheme(&url) {
+        if has_unfetchable_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
@@ -98,7 +100,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
 }
 
 /// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
-/// skipping contents that resolve to an inline `data:` or script address.
+/// skipping contents that resolve to an address the crawler cannot fetch.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
@@ -122,7 +124,7 @@ fn collect_meta_images(
             continue;
         };
         let url = resolve_url(&content, base_url);
-        if has_inline_scheme(&url) {
+        if has_unfetchable_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
@@ -242,6 +244,31 @@ mod tests {
             r#"<meta property="og:image" content="og.png">"#,
             r#"<meta name="twitter:image" content="Javascript:alert(1)">"#,
             r#"<meta name="twitter:image" content="vbscript:x">"#,
+            r#"<meta name="twitter:image" content="tw.png">"#,
+        );
+        assert_eq!(
+            extract(html),
+            [
+                flat("https://example.com/dir/i.png", "img"),
+                flat("https://example.com/dir/s.png", "picture_source"),
+                flat("https://example.com/dir/og.png", "og:image"),
+                flat("https://example.com/dir/tw.png", "twitter:image"),
+            ]
+        );
+    }
+
+    #[test]
+    fn file_and_blob_sources_are_skipped_at_every_site() {
+        let html = concat!(
+            r#"<img src="file:///etc/passwd"><img src="blob:https://example.com/x">"#,
+            r#"<img src="i.png">"#,
+            r#"<source srcset="file:///etc/passwd 1x"><source srcset="blob:https://example.com/x">"#,
+            r#"<source srcset="s.png">"#,
+            r#"<meta property="og:image" content="file:///etc/passwd">"#,
+            r#"<meta property="og:image" content="blob:https://example.com/x">"#,
+            r#"<meta property="og:image" content="og.png">"#,
+            r#"<meta name="twitter:image" content="file:///etc/passwd">"#,
+            r#"<meta name="twitter:image" content="blob:https://example.com/x">"#,
             r#"<meta name="twitter:image" content="tw.png">"#,
         );
         assert_eq!(
