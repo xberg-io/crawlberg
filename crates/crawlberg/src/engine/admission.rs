@@ -86,7 +86,10 @@ mod tests {
     use crate::types::{AuthConfig, CrawlConfig};
 
     fn engine_with(config: CrawlConfig) -> CrawlEngine {
-        CrawlEngine::builder().config(config).build().expect("engine must build")
+        CrawlEngine::builder()
+            .config(config)
+            .build()
+            .expect("engine must build")
     }
 
     #[test]
@@ -99,7 +102,10 @@ mod tests {
         let scope = admitted.config.credential_scope.expect("scope must be set");
         assert!(scope.has_url_credentials());
         assert_eq!(scope.host(), "example.com");
-        assert!(engine.config.credential_scope.is_none(), "the caller's engine is unchanged");
+        assert!(
+            engine.config.credential_scope.is_none(),
+            "the caller's engine is unchanged"
+        );
     }
 
     #[test]

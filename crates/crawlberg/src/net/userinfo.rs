@@ -33,7 +33,11 @@ pub(crate) fn split(mut url: Url) -> (Url, Option<(String, String)>) {
     if !has_userinfo(&url) {
         return (url, None);
     }
-    let decode = |part: &str| percent_encoding::percent_decode_str(part).decode_utf8_lossy().into_owned();
+    let decode = |part: &str| {
+        percent_encoding::percent_decode_str(part)
+            .decode_utf8_lossy()
+            .into_owned()
+    };
     let username = decode(url.username());
     let password = url.password().map(decode).unwrap_or_default();
     strip(&mut url);

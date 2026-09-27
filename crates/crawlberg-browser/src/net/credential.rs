@@ -93,7 +93,11 @@ mod tests {
     #[test]
     fn another_host_gets_nothing() {
         let credential = credential();
-        for other in ["http://cdn.test/a.js", "http://sub.example.com/", "http://example.com.evil.test/"] {
+        for other in [
+            "http://cdn.test/a.js",
+            "http://sub.example.com/",
+            "http://example.com.evil.test/",
+        ] {
             assert_eq!(credential.header_for(&url(other)), None, "{other} must get nothing");
         }
     }

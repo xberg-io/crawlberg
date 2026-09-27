@@ -121,7 +121,11 @@ mod validate_seed_url_tests {
 
     #[tokio::test]
     async fn rejects_a_loopback_seed_url() {
-        let result = validate_seed_url(&url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"), &SsrfPolicy::default()).await;
+        let result = validate_seed_url(
+            &url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"),
+            &SsrfPolicy::default(),
+        )
+        .await;
         assert!(
             matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
             "loopback seed URL must be rejected, got {result:?}"
@@ -134,7 +138,11 @@ mod validate_seed_url_tests {
             deny_private: false,
             ..SsrfPolicy::default()
         };
-        let result = validate_seed_url(&url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"), &policy).await;
+        let result = validate_seed_url(
+            &url::Url::parse("http://127.0.0.1:9/").expect("test URL must parse"),
+            &policy,
+        )
+        .await;
         assert!(result.is_ok(), "loopback must pass when deny_private=false: {result:?}");
     }
 
@@ -142,7 +150,11 @@ mod validate_seed_url_tests {
     async fn allows_a_public_seed_url() {
         // ~keep A literal IP, not a hostname: `validate_url` resolves hostnames via
         // ~keep `tokio::net::lookup_host`, which would make this test depend on live DNS/network.
-        let result = validate_seed_url(&url::Url::parse("https://1.1.1.1/").expect("test URL must parse"), &SsrfPolicy::default()).await;
+        let result = validate_seed_url(
+            &url::Url::parse("https://1.1.1.1/").expect("test URL must parse"),
+            &SsrfPolicy::default(),
+        )
+        .await;
         assert!(result.is_ok(), "a public IP must pass the default policy: {result:?}");
     }
 }

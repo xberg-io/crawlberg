@@ -129,7 +129,6 @@ const DEFAULT_CONTENT_TYPE: &str = "text/html";
 /// Status reported for a rendered page when the backend surfaces none.
 const DEFAULT_RENDERED_STATUS: u16 = 200;
 
-
 /// The proxy URL to render through: the browser-specific proxy if set, else the
 /// crawl-wide one, with any configured credentials inlined into the URL.
 fn resolve_proxy_url(config: &CrawlConfig) -> Option<String> {
@@ -268,7 +267,9 @@ mod tests {
             !native.extra_headers.contains_key("Authorization"),
             "every host receives extra_headers, so the token must not be there"
         );
-        let credential = native.origin_credential.expect("the token must be scoped to the seed host");
+        let credential = native
+            .origin_credential
+            .expect("the token must be scoped to the seed host");
         assert_eq!(credential.host, "example.com");
         assert_eq!(
             (credential.name.as_str(), credential.value.as_str()),
@@ -289,7 +290,10 @@ mod tests {
         let credential = build_native_config(&config, None)
             .origin_credential
             .expect("the header must be scoped to the seed host");
-        assert_eq!((credential.name.as_str(), credential.value.as_str()), ("X-Api-Key", "k"));
+        assert_eq!(
+            (credential.name.as_str(), credential.value.as_str()),
+            ("X-Api-Key", "k")
+        );
     }
 
     #[test]

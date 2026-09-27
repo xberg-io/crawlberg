@@ -33,7 +33,6 @@ pub(crate) use selection::take_selected;
 use std::sync::Arc;
 
 use crate::error::CrawlError;
-use crate::telemetry::attributes::URL_FULL;
 
 /// Default cap on links enqueued from one page, when `max_links_per_page` is unset.
 ///
@@ -120,30 +119,41 @@ impl CrawlEngine {
     /// The public API is always available. Runtime execution depends on the
     /// configured browser backend and the browser backend features compiled
     /// into the crate.
-    // ~keep `actions` may carry user-typed form text (TypeText), so it is skipped
-    // ~keep rather than recorded; only its length is cheap and safe to trace.
-    #[tracing::instrument(
-        name = "crawl.engine.interact",
-        skip(self, actions),
-        fields(url.full = tracing::field::Empty, action_count = actions.len())
-    )]
     pub async fn interact(
         &self,
         url: &str,
         actions: &[crate::interact::PageAction],
     ) -> Result<InteractionResult, CrawlError> {
         let (engine, seed) = self.admit(url)?;
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&seed));
-        crate::interact::run(&engine, &seed, actions).await
+        engine.interact_seed(&seed, actions).await
+    }
+
+    /// Run browser actions on an admitted seed URL. See [`CrawlEngine::interact`].
+    // ~keep `actions` may carry user-typed form text (TypeText), so only its length is traced.
+    #[tracing::instrument(
+        name = "crawl.engine.interact",
+        skip_all,
+        fields(url.full = %seed, action_count = actions.len())
+    )]
+    async fn interact_seed(
+        &self,
+        seed: &SeedUrl,
+        actions: &[crate::interact::PageAction],
+    ) -> Result<InteractionResult, CrawlError> {
+        crate::interact::run(self, seed, actions).await
     }
 
     /// Discover all pages on a website by following links and sitemaps.
-    #[tracing::instrument(name = "crawl.engine.map", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn map(&self, url: &str) -> Result<MapResult, CrawlError> {
         let (engine, seed) = self.admit(url)?;
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&seed));
-        engine.config.validate()?;
-        crate::map::map(&seed, &engine.config).await
+        engine.map_seed(&seed).await
+    }
+
+    /// Map an admitted seed URL. See [`CrawlEngine::map`].
+    #[tracing::instrument(name = "crawl.engine.map", skip_all, fields(url.full = %seed))]
+    async fn map_seed(&self, seed: &SeedUrl) -> Result<MapResult, CrawlError> {
+        self.config.validate()?;
+        crate::map::map(seed, &self.config).await
     }
 }
 
@@ -193,8 +203,7 @@ mod tests {
     }
 
     /// Regression test: `CrawlEngine::scrape`'s `crawl.engine.scrape` span must record
-    /// the `url.full` field with credentials redacted (see `crate::net::redact_url_credentials`),
-    /// regardless of whether the fetch itself succeeds.
+    /// the admitted `url.full`, without the caller's userinfo, whether or not the fetch succeeds.
     // ~keep Serial with the sequential-crawl tests in `engine::wasm_crawl`: this assertion
     // ~keep reads a thread-local capturing subscriber, and `tracing` rebuilds its global
     // ~keep callsite-interest cache whenever a dispatcher is installed. Heavy concurrent span

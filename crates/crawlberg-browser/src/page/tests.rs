@@ -385,11 +385,17 @@ async fn a_navigation_to_a_url_with_userinfo_is_refused_before_robots_txt_is_rea
     };
     let mut page = Page::new("page-1".to_string(), Arc::new(context));
 
-    let error = page.navigate(&credentialed).await.expect_err("a URL with userinfo must be refused");
+    let error = page
+        .navigate(&credentialed)
+        .await
+        .expect_err("a URL with userinfo must be refused");
     let PageError::NetworkError(message) = &error else {
         panic!("expected a network error, got {error:?}");
     };
-    assert!(!message.contains(URL_PASSWORD), "the password must not be named, got '{message}'");
+    assert!(
+        !message.contains(URL_PASSWORD),
+        "the password must not be named, got '{message}'"
+    );
     // ~keep Positive twin: the refusal, not the robots.txt block, stopped the navigation, and
     // ~keep it names the URL without its userinfo.
     assert!(

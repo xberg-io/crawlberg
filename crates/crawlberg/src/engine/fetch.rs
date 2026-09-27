@@ -202,10 +202,7 @@ impl CrawlEngine {
     ///
     /// This is intentionally `#[cfg(not(target_arch = "wasm32"))]`-only: wasm
     /// has its own simpler inline path inside `scrape`.
-    pub(super) async fn fetch_response(
-        &self,
-        url: &str,
-    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+    pub(super) async fn fetch_response(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth) {
             let pool = self.config.browser_pool.as_deref();

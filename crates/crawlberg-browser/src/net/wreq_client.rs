@@ -202,8 +202,14 @@ mod tests {
         let NetError::Blocked(message) = &err else {
             panic!("expected NetError::Blocked, got {err:?}");
         };
-        assert!(!message.contains("s3cret"), "the password must not be named, got '{message}'");
-        assert!(message.contains(&addr.to_string()), "the refusal names the clean URL, got '{message}'");
+        assert!(
+            !message.contains("s3cret"),
+            "the password must not be named, got '{message}'"
+        );
+        assert!(
+            message.contains(&addr.to_string()),
+            "the refusal names the clean URL, got '{message}'"
+        );
         assert!(!accepted.is_finished(), "nothing may reach the network");
         accepted.abort();
     }

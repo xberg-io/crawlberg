@@ -176,10 +176,9 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        // ~keep Built through `ssrf_violation`, never a struct literal. `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL that `ssrf_intercept` recorded, so a redirect to
-        // ~keep `https://user:secret@10.0.0.1/` arrives here with its userinfo intact, and this
-        // ~keep value goes on to API error bodies, MCP error payloads and tracing fields.
+        // ~keep Built through `ssrf_violation`, never a struct literal. `ssrf_intercept` records
+        // ~keep a URL with userinfo without it, and `ssrf_violation` redacts again as the last
+        // ~keep guard before API error bodies, MCP error payloads and tracing fields.
         // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
@@ -279,13 +278,8 @@ mod tests {
 
     /// A blocked request whose URL carries `user:pass@` userinfo.
     ///
-    /// ~keep The seed URL is deliberately NOT the vector here. `chromiumoxide_fetch_inner`
-    /// ~keep (`browser.rs`) already routes a credential-bearing *seed* through
-    /// ~keep `CrawlError::ssrf_violation`, so a test that merely passes a credential-bearing
-    /// ~keep seed passes with or without the fix this covers. The leak is the *intercepted*
-    /// ~keep URL: Chrome follows a redirect itself, `Fetch.requestPaused` reports the redirect
-    /// ~keep target verbatim, and `ssrf_intercept` stores that string unchanged — so the URL
-    /// ~keep arriving here is the refused redirect target, credentials and all.
+    /// ~keep `ssrf_intercept` records such a URL without its userinfo, so this pins the last
+    /// ~keep guard: a URL that arrives here with userinfo anyway is still redacted.
     fn blocked_with_credentials() -> Option<(String, String)> {
         Some((
             "https://user:secret@10.0.0.1/".to_owned(),

@@ -62,8 +62,7 @@ impl SsrfInterceptGuard {
 /// subresources, and is recorded without it. This is the per-request decision applied to
 /// every browser-issued request.
 async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<url::Url, (String, String)> {
-    let parsed =
-        url::Url::parse(request_url).map_err(|e| (UNPARSEABLE_URL.to_owned(), format!("invalid URL: {e}")))?;
+    let parsed = url::Url::parse(request_url).map_err(|e| (UNPARSEABLE_URL.to_owned(), format!("invalid URL: {e}")))?;
     if userinfo::has_userinfo(&parsed) {
         let mut clean = parsed;
         userinfo::strip(&mut clean);

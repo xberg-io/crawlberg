@@ -74,9 +74,10 @@ impl Page {
             );
             // ~keep The credential is set on the context's client before any page exists,
             // ~keep so it is already there to copy; the stealth client must scope it the same way.
-            if let (Ok(source), Ok(mut target)) =
-                (http_client.origin_credential.try_read(), stealth.origin_credential.try_write())
-            {
+            if let (Ok(source), Ok(mut target)) = (
+                http_client.origin_credential.try_read(),
+                stealth.origin_credential.try_write(),
+            ) {
                 target.clone_from(&source);
             }
             Some(Arc::new(stealth))

@@ -127,24 +127,32 @@ mod tests {
     }
 
     fn url_scope() -> Option<CredentialScope> {
-        CredentialScope::for_seed(
-            &url("http://example.com/"),
-            Some(("user".to_owned(), "pw".to_owned())),
-        )
+        CredentialScope::for_seed(&url("http://example.com/"), Some(("user".to_owned(), "pw".to_owned())))
     }
 
     #[test]
     fn url_credentials_go_to_the_seed_host_as_basic() {
         let config = config_with(url_scope(), None);
         let header = credential_header(&config, &url("https://EXAMPLE.com:8443/page"));
-        assert_eq!(header, Some(("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())));
+        assert_eq!(
+            header,
+            Some(("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned()))
+        );
     }
 
     #[test]
     fn url_credentials_never_go_to_another_host() {
         let config = config_with(url_scope(), None);
-        for other in ["http://other.test/", "http://sub.example.com/", "http://example.com.evil.test/"] {
-            assert_eq!(credential_header(&config, &url(other)), None, "{other} must get nothing");
+        for other in [
+            "http://other.test/",
+            "http://sub.example.com/",
+            "http://example.com.evil.test/",
+        ] {
+            assert_eq!(
+                credential_header(&config, &url(other)),
+                None,
+                "{other} must get nothing"
+            );
         }
     }
 

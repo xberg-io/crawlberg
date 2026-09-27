@@ -86,8 +86,8 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
             // per the WHATWG URL spec, so no special-casing is needed here.
             let link_type = classify_link(href, &effective_base);
 
-            let resolved_url = crate::net::userinfo::resolve(&effective_base, href)
-                .map_or_else(|| href.to_owned(), String::from);
+            let resolved_url =
+                crate::net::userinfo::resolve(&effective_base, href).map_or_else(|| href.to_owned(), String::from);
 
             let rel = get_attr(tag, "rel").map(String::from);
             let nofollow = rel.as_ref().map(|r| r.contains("nofollow")).unwrap_or(false);

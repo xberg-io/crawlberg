@@ -158,7 +158,9 @@ async fn crawl_never_records_raw_credentials_into_a_span() {
         "expected a 'url.full' value naming the crawled host among {url_full_values:?}"
     );
     assert!(
-        url_full_values.iter().all(|v| !v.contains("user:") && !v.contains("***")),
+        url_full_values
+            .iter()
+            .all(|v| !v.contains("user:") && !v.contains("***")),
         "no 'url.full' value may carry userinfo, redacted or not: {url_full_values:?}"
     );
 }

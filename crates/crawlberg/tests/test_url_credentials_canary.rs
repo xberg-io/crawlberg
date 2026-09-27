@@ -289,12 +289,14 @@ async fn site() -> Site {
         <a href="{absolute}">absolute with userinfo</a>
         <a href="/redirect">redirect</a>
         <a href="/missing">missing</a>
+        <a href="{other_document}">a document on another host</a>
         <img src="{image}">
         <img src="{other_image}">
         </body></html>"#,
         absolute = site.page_supplied("/absolute"),
         image = site.page_supplied("/image.png"),
         other_image = site.other("/pic.png"),
+        other_document = site.other("/report.pdf"),
     );
     serve(seed, "/", html(root)).await;
     for leaf in ["/relative", "/absolute", "/landed", "/from-sitemap"] {
@@ -320,6 +322,14 @@ async fn site() -> Site {
     serve(&site.other_host, "/pic.png", png).await;
     serve(
         &site.other_host,
+        "/report.pdf",
+        ResponseTemplate::new(200)
+            .set_body_bytes(b"%PDF-1.4\n".to_vec())
+            .insert_header("content-type", "application/pdf"),
+    )
+    .await;
+    serve(
+        &site.other_host,
         "/elsewhere",
         html("<html><body>elsewhere</body></html>".to_owned()),
     )
@@ -327,11 +337,13 @@ async fn site() -> Site {
     site
 }
 
+/// Page links stay on the seed host, so a crawl reaches the other host through a document link.
 fn config() -> CrawlConfig {
     CrawlConfig {
         max_depth: Some(2),
         respect_robots_txt: true,
         download_assets: true,
+        follow_document_urls: true,
         ..CrawlConfig::builder().allow_private_networks(true).build()
     }
 }
@@ -393,14 +405,19 @@ async fn assert_authenticated(site: &Site, at: &str) {
     let seen = authorization_on(&site.seed_host, at).await;
     assert!(!seen.is_empty(), "{at} on the seed host must have been requested");
     assert!(
-        seen.iter().all(|header| header.as_deref() == Some(basic_header().as_str())),
+        seen.iter()
+            .all(|header| header.as_deref() == Some(basic_header().as_str())),
         "every request for {at} on the seed host must carry the caller's Basic header, got {seen:?}"
     );
 }
 
 /// The other host was requested, and never with an `Authorization` header.
 async fn assert_other_host_unauthenticated(site: &Site) {
-    let requests = site.other_host.received_requests().await.expect("request recording is on");
+    let requests = site
+        .other_host
+        .received_requests()
+        .await
+        .expect("request recording is on");
     assert!(!requests.is_empty(), "the crawl must have reached the other host");
     for request in requests {
         assert!(
@@ -417,7 +434,10 @@ fn assert_no_canary(site: &Site, observed: &Observed, output: &str) {
     let texts = observed.texts.lock().expect("lock");
     let leaks: Vec<&String> = texts.iter().filter(|text| text.contains(PASSWORD)).collect();
     assert!(leaks.is_empty(), "the canary password leaked into {leaks:#?}");
-    assert!(!output.contains(PASSWORD), "the canary password leaked into the output: {output}");
+    assert!(
+        !output.contains(PASSWORD),
+        "the canary password leaked into the output: {output}"
+    );
     assert!(
         texts.iter().any(|text| text.contains(&site.seed_authority())),
         "the capture must have seen the seed host, or the absence above proves nothing"
@@ -428,11 +448,15 @@ fn assert_no_canary(site: &Site, observed: &Observed, output: &str) {
     );
 }
 
-/// Every URL a seam received parses and has no userinfo.
+/// Every URL a seam received parses and has no userinfo. A scrape has no frontier or store, and a
+/// credentialed scrape bypasses the cache, so only a crawl is expected to feed them.
 fn assert_no_userinfo_reached_a_seam(observed: &Observed, expect_urls: bool) {
     let urls = observed.urls.lock().expect("lock");
     if expect_urls {
-        assert!(!urls.is_empty(), "the seams must have received URLs, or the check below proves nothing");
+        assert!(
+            !urls.is_empty(),
+            "the seams must have received URLs, or the check below proves nothing"
+        );
     }
     for url in urls.iter() {
         if let Ok(parsed) = url::Url::parse(url) {
@@ -470,7 +494,7 @@ async fn scrape_admits_the_seed_and_authenticates_only_the_seed_host() {
         "a markdown link target loses the page's userinfo: {markdown}"
     );
     assert_no_canary(&site, &harness.observed, &output);
-    assert_no_userinfo_reached_a_seam(&harness.observed, true);
+    assert_no_userinfo_reached_a_seam(&harness.observed, false);
     assert_authenticated(&site, "/").await;
     assert_authenticated(&site, "/image.png").await;
     assert_other_host_unauthenticated(&site).await;
@@ -527,7 +551,10 @@ async fn crawl_stream_admits_the_seed_and_authenticates_only_the_seed_host() {
 
     let events: Vec<CrawlEvent> = traced(
         &harness.observed,
-        harness.engine.crawl_stream(&site.credentialed("/")).collect::<Vec<CrawlEvent>>(),
+        harness
+            .engine
+            .crawl_stream(&site.credentialed("/"))
+            .collect::<Vec<CrawlEvent>>(),
     )
     .await;
     let output = serde_json::to_string(&events).expect("events serialize");
@@ -559,7 +586,7 @@ async fn batch_scrape_keys_results_by_the_admitted_url() {
 
     assert_eq!(key, &site.clean("/"), "a batch result is keyed by the admitted URL");
     assert_no_canary(&site, &harness.observed, &output);
-    assert_no_userinfo_reached_a_seam(&harness.observed, true);
+    assert_no_userinfo_reached_a_seam(&harness.observed, false);
     assert_authenticated(&site, "/").await;
 }
 
@@ -594,7 +621,10 @@ async fn batch_crawl_stream_admits_every_seed() {
 
     let events: Vec<CrawlEvent> = traced(
         &harness.observed,
-        harness.engine.batch_crawl_stream(&[seed.as_str()]).collect::<Vec<CrawlEvent>>(),
+        harness
+            .engine
+            .batch_crawl_stream(&[seed.as_str()])
+            .collect::<Vec<CrawlEvent>>(),
     )
     .await;
     let output = serde_json::to_string(&events).expect("events serialize");
@@ -682,9 +712,16 @@ async fn url_credentials_together_with_configured_auth_are_a_config_error() {
         .expect_err("two sources of credentials must be refused");
 
     assert!(matches!(error, CrawlError::InvalidConfig { .. }), "{error:?}");
-    assert!(error.to_string().contains("auth"), "the error names the setting: {error}");
+    assert!(
+        error.to_string().contains("auth"),
+        "the error names the setting: {error}"
+    );
     assert!(!format!("{error} {error:?}").contains(PASSWORD));
-    let requests = site.seed_host.received_requests().await.expect("request recording is on");
+    let requests = site
+        .seed_host
+        .received_requests()
+        .await
+        .expect("request recording is on");
     assert!(requests.is_empty(), "nothing goes out for a refused configuration");
 }
 
@@ -694,7 +731,11 @@ async fn an_unparseable_seed_is_refused_without_echoing_it() {
     let harness = harness(config());
     let raw = format!("http://{USER}:{PASSWORD}@exa mple.test/");
 
-    let error = harness.engine.scrape(&raw).await.expect_err("an unparseable URL is refused");
+    let error = harness
+        .engine
+        .scrape(&raw)
+        .await
+        .expect_err("an unparseable URL is refused");
     let text = format!("{error} {error:?}");
     assert!(text.contains("invalid URL"), "{text}");
     assert!(!text.contains(PASSWORD), "{text}");
@@ -704,7 +745,10 @@ async fn an_unparseable_seed_is_refused_without_echoing_it() {
         panic!("one URL must give one result, got {}", results.len());
     };
     assert!(outcome.is_err());
-    assert!(!key.contains(PASSWORD), "a batch key never echoes an unparseable URL: {key}");
+    assert!(
+        !key.contains(PASSWORD),
+        "a batch key never echoes an unparseable URL: {key}"
+    );
 }
 
 #[tokio::test]
@@ -718,12 +762,19 @@ async fn configured_auth_reaches_only_the_seed_host() {
         ..config()
     });
 
-    harness.engine.scrape(&site.clean("/")).await.expect("scrape must succeed");
+    harness
+        .engine
+        .scrape(&site.clean("/"))
+        .await
+        .expect("scrape must succeed");
 
     for at in ["/", "/image.png"] {
         let seen = authorization_on(&site.seed_host, at).await;
         assert!(
-            !seen.is_empty() && seen.iter().all(|header| header.as_deref() == Some("Bearer configured-token")),
+            !seen.is_empty()
+                && seen
+                    .iter()
+                    .all(|header| header.as_deref() == Some("Bearer configured-token")),
             "{at} on the seed host gets the configured token: {seen:?}"
         );
     }
@@ -747,9 +798,15 @@ async fn scrape_twice_through_one_cache(site: &Site, first: CrawlConfig, first_u
         .build()
         .expect("engine must build");
 
-    authenticated.scrape(first_url).await.expect("first scrape must succeed");
+    authenticated
+        .scrape(first_url)
+        .await
+        .expect("first scrape must succeed");
     let sets_after_first = cache.sets.lock().expect("lock").clone();
-    anonymous.scrape(&site.clean("/relative")).await.expect("second scrape must succeed");
+    anonymous
+        .scrape(&site.clean("/relative"))
+        .await
+        .expect("second scrape must succeed");
 
     let requests = site
         .seed_host
@@ -773,11 +830,16 @@ async fn a_response_fetched_with_configured_auth_is_never_served_from_the_shared
         ..config()
     };
 
-    let (requests, sets_after_first) =
-        scrape_twice_through_one_cache(&site, with_auth, &site.clean("/relative")).await;
+    let (requests, sets_after_first) = scrape_twice_through_one_cache(&site, with_auth, &site.clean("/relative")).await;
 
-    assert!(sets_after_first.is_empty(), "an authorized response is not stored: {sets_after_first:?}");
-    assert_eq!(requests, 2, "the anonymous scrape must go to the network, not reuse the authorized page");
+    assert!(
+        sets_after_first.is_empty(),
+        "an authorized response is not stored: {sets_after_first:?}"
+    );
+    assert_eq!(
+        requests, 2,
+        "the anonymous scrape must go to the network, not reuse the authorized page"
+    );
 }
 
 #[tokio::test]
@@ -788,8 +850,14 @@ async fn a_response_fetched_with_url_credentials_is_never_served_from_the_shared
     let (requests, sets_after_first) =
         scrape_twice_through_one_cache(&site, config(), &site.credentialed("/relative")).await;
 
-    assert!(sets_after_first.is_empty(), "an authorized response is not stored: {sets_after_first:?}");
-    assert_eq!(requests, 2, "the anonymous scrape must go to the network, not reuse the authorized page");
+    assert!(
+        sets_after_first.is_empty(),
+        "an authorized response is not stored: {sets_after_first:?}"
+    );
+    assert_eq!(
+        requests, 2,
+        "the anonymous scrape must go to the network, not reuse the authorized page"
+    );
 }
 
 // ---- page-supplied URLs ---------------------------------------------------------------
@@ -801,7 +869,8 @@ async fn a_rejected_page_link_is_logged_without_its_userinfo() {
     let mock = MockServer::start().await;
     // ~keep A document link may leave the seed host, and 10.0.0.0/8 is outside the allowlist,
     // ~keep so the policy rejects it without a DNS lookup.
-    let page = format!(r#"<html><body><a href="http://{USER}:{PASSWORD}@10.0.0.1/report.pdf">report</a></body></html>"#);
+    let page =
+        format!(r#"<html><body><a href="http://{USER}:{PASSWORD}@10.0.0.1/report.pdf">report</a></body></html>"#);
     serve(&mock, "/", html(page)).await;
     let observed = Arc::new(Observed::default());
     let engine = CrawlEngine::builder()
@@ -813,12 +882,17 @@ async fn a_rejected_page_link_is_logged_without_its_userinfo() {
         .build()
         .expect("engine must build");
 
-    traced(&observed, engine.crawl(&mock.uri())).await.expect("the seed itself is allowlisted");
+    traced(&observed, engine.crawl(&mock.uri()))
+        .await
+        .expect("the seed itself is allowlisted");
 
     let texts = observed.texts.lock().expect("lock");
     assert!(
         texts.iter().any(|text| text.contains("http://10.0.0.1/report.pdf")),
         "the rejected link must be logged, without its userinfo: {texts:#?}"
     );
-    assert!(texts.iter().all(|text| !text.contains(PASSWORD)), "the link's password leaked: {texts:#?}");
+    assert!(
+        texts.iter().all(|text| !text.contains(PASSWORD)),
+        "the link's password leaked: {texts:#?}"
+    );
 }

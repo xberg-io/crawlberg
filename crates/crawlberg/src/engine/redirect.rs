@@ -340,10 +340,7 @@ pub(crate) async fn follow_redirects(
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&chain.current_url);
-        let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url)
-            .await
-        {
+        let (resp, hop_browser_used) = match hop_engine.fetch_response(&chain.current_url).await {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.

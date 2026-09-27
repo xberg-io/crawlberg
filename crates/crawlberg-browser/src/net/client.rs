@@ -993,11 +993,20 @@ mod tests {
         let NetError::Blocked(message) = &err else {
             panic!("expected NetError::Blocked, got {err:?}");
         };
-        assert!(!message.contains(URL_PASSWORD), "the password must not be named, got '{message}'");
+        assert!(
+            !message.contains(URL_PASSWORD),
+            "the password must not be named, got '{message}'"
+        );
         // ~keep Positive twin: the refusal names the URL without its userinfo, so the test
         // ~keep cannot pass on an empty message.
-        assert!(message.contains(&base), "the refusal must name the clean URL, got '{message}'");
-        assert!(requests.lock().expect("lock").is_empty(), "nothing may reach the network");
+        assert!(
+            message.contains(&base),
+            "the refusal must name the clean URL, got '{message}'"
+        );
+        assert!(
+            requests.lock().expect("lock").is_empty(),
+            "nothing may reach the network"
+        );
     }
 
     #[tokio::test]
