@@ -360,7 +360,7 @@ fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, Stri
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
-        let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
+        let p = crate::net::proxy::reqwest_proxy(proxy).map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
         builder = builder.proxy(p);
     }
     builder
@@ -903,5 +903,31 @@ pub fn build_extension() -> Extension {
             op_navigate(),
         ]),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_proxy_scheme_reqwest_would_drop_refuses_the_client() {
+        let err = build_request_client(Some("ftp://operator:s3cr3t@127.0.0.1:1"))
+            .expect_err("an ftp proxy must not build a direct client");
+        assert!(err.contains("'ftp'"), "the error must name the scheme, got {err}");
+        assert!(!err.contains("s3cr3t"), "the error leaked the proxy password: {err}");
+    }
+
+    #[test]
+    fn a_scheme_less_or_unparseable_proxy_refuses_the_client_without_echoing_it() {
+        for proxy in crate::net::proxy::credential_urls::URLS {
+            let err = build_request_client(Some(proxy)).expect_err("the proxy must not build a direct client");
+            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err);
+        }
+    }
+
+    #[test]
+    fn an_http_proxy_builds_the_client() {
+        assert!(build_request_client(Some("http://proxy.test:8080")).is_ok());
     }
 }

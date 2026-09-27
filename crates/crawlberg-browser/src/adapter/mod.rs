@@ -240,7 +240,7 @@ pub async fn interact_url(
 }
 
 async fn render_url_local(url: &str, config: &NativeBrowserConfig) -> Result<RenderedPage, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     render_with_context(url, config, context).await
 }
 
@@ -250,7 +250,7 @@ async fn interact_url_local(
     actions: &[NativePageAction],
     post_navigation_wait: Option<Duration>,
 ) -> Result<NativeInteractionResult, PageError> {
-    let context = create_context(config).await;
+    let context = create_context(config).await?;
     let mut page = Page::new("page-1".to_string(), context);
     configure_page_interception(&mut page, config);
     navigate_configured(&mut page, url, config).await?;
@@ -311,7 +311,7 @@ async fn interact_url_local(
     })
 }
 
-async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
+async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserContext>, PageError> {
     let ssrf: Arc<dyn SsrfValidator> = config
         .ssrf
         .clone()
@@ -323,7 +323,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         config.user_agent.clone(),
         ssrf,
         config.allow_file_access,
-    );
+    )?;
     context.obey_robots = config.respect_robots_txt;
     if let Some(ref robots_ua) = config.robots_user_agent {
         context.user_agent = robots_ua.clone();
@@ -345,7 +345,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         );
     }
 
-    context
+    Ok(context)
 }
 
 async fn render_with_context(

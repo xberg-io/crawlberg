@@ -80,10 +80,10 @@ impl ModuleLoader for BrowserModuleLoader {
 
             let mut builder = reqwest::Client::builder();
             if let Some(ref proxy) = proxy_url {
-                match reqwest::Proxy::all(proxy) {
+                match crate::net::proxy::reqwest_proxy(proxy) {
                     Ok(p) => builder = builder.proxy(p),
                     Err(e) => {
-                        return Err(io_err(format!("Invalid module proxy '{}': {}", proxy, e)));
+                        return Err(io_err(format!("Invalid module proxy: {e}")));
                     }
                 }
             }
@@ -123,5 +123,57 @@ impl ModuleLoader for BrowserModuleLoader {
                 None,
             ))
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct AllowAll;
+
+    #[async_trait::async_trait]
+    impl SsrfValidator for AllowAll {
+        async fn validate(&self, _url: &url::Url) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    async fn module_fetch_error(proxy: &str) -> String {
+        let loader = BrowserModuleLoader::with_ssrf("http://127.0.0.1:1/", Some(proxy.to_string()), Arc::new(AllowAll));
+        let specifier = ModuleSpecifier::parse("http://127.0.0.1:1/module.js").expect("valid specifier");
+        let options = ModuleLoadOptions {
+            is_dynamic_import: true,
+            is_synchronous: false,
+            requested_module_type: deno_core::RequestedModuleType::None,
+        };
+        let ModuleLoadResponse::Async(load) = loader.load(&specifier, None, options) else {
+            panic!("the loader fetches over the network, so the load must be async");
+        };
+        match load.await {
+            Ok(_) => panic!("{proxy} must refuse the module fetch"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_scheme_less_or_unparseable_proxy_refuses_the_module_fetch_without_echoing_it() {
+        for proxy in crate::net::proxy::credential_urls::URLS {
+            crate::net::proxy::credential_urls::assert_not_shown(proxy, &module_fetch_error(proxy).await);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_proxy_scheme_reqwest_would_drop_refuses_the_module_fetch() {
+        let message = module_fetch_error("ftp://operator:s3cr3t@127.0.0.1:1").await;
+        assert!(
+            message.contains("'ftp'"),
+            "the error must name the scheme, got {message}"
+        );
+        assert!(
+            !message.contains("s3cr3t"),
+            "the error leaked the proxy password: {message}"
+        );
     }
 }

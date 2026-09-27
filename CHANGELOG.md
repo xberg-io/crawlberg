@@ -27,7 +27,25 @@ All notable changes to crawlberg are documented here.
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+- **The native browser backend refuses a proxy it cannot use.** A render whose proxy is not an
+  `http://` or `https://` URL now fails with a configuration error before any request is sent.
+  This affects a `socks5://` or `socks5h://` proxy, which never worked with this backend (the
+  render failed at connect time), and a `browser.proxy` written without a scheme, such as
+  `127.0.0.1:3128`. The default mode used such a proxy as an HTTP proxy, and the stealth mode
+  ignored it and connected directly. Write the scheme, or use the chromiumoxide backend for a
+  SOCKS proxy.
+
 ### Fixed
+
+- **The native browser backend could ignore its proxy and connect directly.** A proxy URL that
+  did not parse, or one whose scheme the HTTP client cannot speak, such as `ftp://`, was dropped
+  without an error, and every request of the render then went direct. A caller who relied on the
+  proxy for egress control got neither the proxy nor a failure. The backend now checks the proxy
+  URL when it builds its clients and fails the render with a configuration error that names the
+  reason. Only `http` and `https` are accepted; SOCKS is refused by name, because neither client
+  is built with SOCKS support. The error never contains the URL, so credentials in it cannot
+  leak. The same check covers page-initiated fetches and dynamic module imports, whose errors
+  printed the proxy URL, credentials included. (#237)
 
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical

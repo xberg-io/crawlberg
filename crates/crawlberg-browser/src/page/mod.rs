@@ -63,18 +63,7 @@ impl Page {
         // ~keep Playwright expects the main frame id to equal target id; diverging detaches the frame.
         let frame_id = id.clone();
         #[cfg(feature = "stealth")]
-        let stealth_client = if context.stealth {
-            // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
-            // ~keep Share the plain client's SSRF policy: the stealth path is an
-            // alternate transport, not an alternate policy.
-            Some(Arc::new(StealthHttpClient::with_ssrf(
-                context.cookie_jar.clone(),
-                context.proxy_url.as_deref(),
-                http_client.ssrf.clone(),
-            )))
-        } else {
-            None
-        };
+        let stealth_client = context.stealth_client.clone();
 
         Page {
             id,
@@ -503,10 +492,17 @@ pub enum PageError {
 
     #[error("Too many redirects (limit {0})")]
     TooManyRedirects(usize),
+
+    /// The render configuration cannot be used, so nothing was fetched.
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 }
 
 impl From<NetError> for PageError {
     fn from(e: NetError) -> Self {
-        PageError::NetworkError(e.to_string())
+        match e {
+            NetError::InvalidProxy(reason) => PageError::InvalidConfig(reason.to_string()),
+            other => PageError::NetworkError(other.to_string()),
+        }
     }
 }

@@ -1,6 +1,7 @@
 pub mod client;
 pub mod cookies;
 pub mod interceptor;
+pub mod proxy;
 pub mod robots;
 pub mod ssrf;
 #[cfg(feature = "stealth")]
