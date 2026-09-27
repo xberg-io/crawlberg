@@ -92,8 +92,14 @@ pub(crate) fn clean_url(value: Cow<'_, str>) -> Option<Cow<'_, str>> {
 }
 
 /// URL schemes whose address carries its content inline, as data or script, instead of naming a
-/// resource to fetch. The links list, the images list and asset discovery skip these addresses.
+/// resource to fetch. The links list, the images list, asset discovery, and the feed, canonical and
+/// hreflang links skip these addresses. Favicons skip only the script schemes.
 pub(crate) const INLINE_SCHEMES: [&str; 3] = ["data", "javascript", "vbscript"];
+
+/// Whether `address`, cleaned by [`clean_url`] or resolved, has one of the [`INLINE_SCHEMES`].
+pub(crate) fn has_inline_scheme(address: &str) -> bool {
+    INLINE_SCHEMES.iter().any(|scheme| has_scheme(address, scheme))
+}
 
 /// Whether the URL parser reads `address` as an absolute URL whose scheme is `scheme` (given in
 /// lower case, without the colon). An address that does not parse has no scheme.

@@ -9,7 +9,7 @@ use crate::types::{ImageInfo, ImageSource};
 
 use super::link_targets::srcset_candidates;
 use super::selectors::{SEL_IMG_SRC, SEL_META, SEL_SOURCE_SRCSET};
-use super::{INLINE_SCHEMES, attr_eq, clean_url, get_attr, get_url_attr, has_scheme, resolve_url};
+use super::{INLINE_SCHEMES, attr_eq, clean_url, get_attr, get_url_attr, has_inline_scheme, resolve_url};
 
 /// Extract all images from a parsed HTML document, resolved against the document's base URL.
 ///
@@ -66,7 +66,7 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
 }
 
 /// Collect the first candidate of each `<source srcset>`, dropping its density descriptor and
-/// skipping blank candidates and inline `data:` or script candidates.
+/// skipping blank candidates and candidates that resolve to an inline `data:` or script address.
 fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageInfo>) {
     let parser = dom.parser();
     let Some(iter) = dom.query_selector(SEL_SOURCE_SRCSET) else {
@@ -83,11 +83,12 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
         else {
             continue;
         };
-        if INLINE_SCHEMES.iter().any(|scheme| has_scheme(&raw_url, scheme)) {
+        let url = resolve_url(&raw_url, base_url);
+        if has_inline_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(&raw_url, base_url),
+            url,
             alt: None,
             width: None,
             height: None,
@@ -97,7 +98,7 @@ fn collect_picture_sources(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<Imag
 }
 
 /// Collect images from the `content` of each `<meta>` whose `attr` is `name`, in any case,
-/// skipping inline `data:` or script contents.
+/// skipping contents that resolve to an inline `data:` or script address.
 fn collect_meta_images(
     dom: &VDom<'_>,
     base_url: &Url,
@@ -120,11 +121,12 @@ fn collect_meta_images(
         let Some(content) = get_url_attr(tag, "content") else {
             continue;
         };
-        if INLINE_SCHEMES.iter().any(|scheme| has_scheme(&content, scheme)) {
+        let url = resolve_url(&content, base_url);
+        if has_inline_scheme(&url) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolve_url(&content, base_url),
+            url,
             alt: None,
             width: None,
             height: None,
