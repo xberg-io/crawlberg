@@ -20,10 +20,10 @@ use std::sync::{Arc, Mutex};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, RequestPattern, RequestStage,
+    FailRequestParams, HeaderEntry, RequestPattern, RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
-use chromiumoxide::cdp::browser_protocol::page::FrameId;
+use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, FrameId};
 use tokio_stream::StreamExt;
 
 use crate::error::CrawlError;
@@ -50,6 +50,15 @@ pub(crate) struct InterceptOutcome {
     /// The main-frame response the navigation ends on without a document: the redirect past
     /// the redirect limit, or a response Chrome does not commit (204, 205, 304).
     pub(crate) stopped_response: Option<StoppedResponse>,
+    /// The first main-frame document request the SSRF policy blocked, as `(url, reason)`.
+    /// The page then shows Chrome's error page, not a document from the server.
+    pub(crate) blocked_navigation: Option<(String, String)>,
+    /// Main-frame responses that were not a redirect, keyed by their network request id. For
+    /// a navigation that id is the loader id of the document the response commits. A new record
+    /// drops every other response but the committed document's.
+    pub(crate) documents: HashMap<String, DocumentResponse>,
+    /// The loader id of the document the main frame committed last, from `Page.frameNavigated`.
+    committed_loader: Option<String>,
     /// Whether the main frame has received a document that is not a redirect. Redirects
     /// after it belong to a navigation the page started itself.
     first_document_arrived: bool,
@@ -69,7 +78,46 @@ pub(crate) struct StoppedResponse {
     pub(crate) headers: HashMap<String, Vec<String>>,
 }
 
+/// The status and headers of a main-frame document response.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "browser"), allow(dead_code))]
+pub(crate) struct DocumentResponse {
+    pub(crate) status: u16,
+    /// Response headers, keyed by lowercase name.
+    pub(crate) headers: HashMap<String, Vec<String>>,
+}
+
 impl SsrfInterceptGuard {
+    /// Return how the navigation ended, and keep intercepting: the blocked request, the
+    /// redirects followed and the response the navigation stopped on.
+    #[cfg(feature = "browser")]
+    pub(crate) fn navigation_outcome(&self) -> InterceptOutcome {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        InterceptOutcome {
+            blocked: state.blocked.take(),
+            redirects_followed: state.redirects_followed,
+            stopped_response: state.stopped_response.take(),
+            ..InterceptOutcome::default()
+        }
+    }
+
+    /// The status and headers of the main-frame document that `loader_id` committed, or `None`
+    /// when no response was recorded for it (a `data:` URL, or Chrome's error page for a request
+    /// that got no response).
+    ///
+    /// ~keep Keyed by the committed loader, not taken from the last response: Chrome commits
+    /// ~keep no document for a 204 or a 2xx download, so the page keeps showing the previous one.
+    #[cfg(feature = "browser")]
+    pub(crate) fn document(&self, loader_id: &str) -> Option<DocumentResponse> {
+        match self.state.lock() {
+            Ok(state) => state.documents.get(loader_id).cloned(),
+            Err(poisoned) => poisoned.into_inner().documents.get(loader_id).cloned(),
+        }
+    }
+
     /// Disable interception, stop the listener, and return what it observed.
     pub(crate) async fn finish(self) -> InterceptOutcome {
         let _ = self.page.execute(FetchDisableParams::default()).await;
@@ -111,6 +159,11 @@ pub(crate) async fn start_ssrf_interception(
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to register intercept listener: {e}")))?;
 
+    let mut navigations = page
+        .event_listener::<EventFrameNavigated>()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to register navigation listener: {e}")))?;
+
     let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
 
     page.execute(FetchEnableParams {
@@ -126,7 +179,24 @@ pub(crate) async fn start_ssrf_interception(
     let listener_state = Arc::clone(&state);
 
     let listener = tokio::spawn(async move {
-        while let Some(event) = events.next().await {
+        loop {
+            // ~keep Biased to commits: Chrome sends a commit before any later paused response, so
+            // ~keep the committed loader is current when a response is recorded.
+            let event = tokio::select! {
+                biased;
+                Some(navigated) = navigations.next() => {
+                    if navigated.frame.id == main_frame
+                        && let Ok(mut state) = listener_state.lock()
+                    {
+                        state.committed_loader = Some(navigated.frame.loader_id.clone().into());
+                    }
+                    continue;
+                }
+                event = events.next() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             let request_id = event.request_id.clone();
 
             if is_response_stage(&event) {
@@ -160,10 +230,16 @@ pub(crate) async fn start_ssrf_interception(
                     let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
                 }
                 Err(reason) => {
-                    if let Ok(mut state) = listener_state.lock()
-                        && state.blocked.is_none()
-                    {
-                        state.blocked = Some((request_url, reason));
+                    if let Ok(mut state) = listener_state.lock() {
+                        if event.frame_id == main_frame
+                            && event.resource_type == ResourceType::Document
+                            && state.blocked_navigation.is_none()
+                        {
+                            state.blocked_navigation = Some((request_url.clone(), reason.clone()));
+                        }
+                        if state.blocked.is_none() {
+                            state.blocked = Some((request_url, reason));
+                        }
                     }
                     let _ = listener_page
                         .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
@@ -219,9 +295,11 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
     event.response_status_code.is_some() || event.response_error_reason.is_some()
 }
 
-/// Whether a paused document response may proceed. A main-frame redirect of the requested
-/// navigation is counted while it is within `limit`; the one past it is recorded and must be
-/// failed. A main-frame response Chrome does not commit is also recorded and failed.
+/// Whether a paused document response may proceed, recording the status and headers of each
+/// main-frame document response. Only the response of the committed document is kept beside the
+/// new one. A main-frame redirect of the requested navigation is counted while it is within
+/// `limit`; the one past it is recorded and must be failed. A main-frame response Chrome does not
+/// commit is also recorded and failed.
 ///
 /// ~keep The requested navigation ends at the first main-frame response that is not a
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
@@ -242,14 +320,32 @@ fn main_frame_verdict(
         Ok(state) => state,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if state.first_document_arrived {
-        return true;
-    }
-
     let headers = event.response_headers.as_deref().unwrap_or_default();
     let status = event.response_status_code.and_then(|code| u16::try_from(code).ok());
     let is_redirect = status.is_some_and(|code| REDIRECT_STATUSES.contains(&code))
         && headers.iter().any(|h| h.name.eq_ignore_ascii_case("location"));
+    if !is_redirect
+        && let Some(status) = status
+        && let Some(network_id) = &event.network_id
+    {
+        // ~keep A newer main-frame response cancels a navigation that has not committed, so only
+        // ~keep the committed document and this response can still be the one the page shows.
+        // ~keep Without the pruning a page that keeps navigating to a 204 grows the map.
+        if let Some(committed) = state.committed_loader.clone() {
+            state.documents.retain(|id, _| *id == committed);
+        }
+        state.documents.insert(
+            network_id.as_ref().to_owned(),
+            DocumentResponse {
+                status,
+                headers: header_map(headers),
+            },
+        );
+    }
+    if state.first_document_arrived {
+        return true;
+    }
+
     let Some(status) = status.filter(|code| is_redirect || NO_DOCUMENT_STATUSES.contains(code)) else {
         state.first_document_arrived = true;
         return true;
@@ -259,19 +355,23 @@ fn main_frame_verdict(
         state.redirects_followed += 1;
         return true;
     }
-    let mut header_map: HashMap<String, Vec<String>> = HashMap::new();
-    for header in headers {
-        header_map
-            .entry(header.name.to_ascii_lowercase())
-            .or_default()
-            .push(header.value.clone());
-    }
     state.stopped_response = Some(StoppedResponse {
         url: event.request.url.clone(),
         status,
-        headers: header_map,
+        headers: header_map(headers),
     });
     false
+}
+
+/// CDP response headers keyed by lowercase name, as the HTTP fetch path keys them.
+fn header_map(headers: &[HeaderEntry]) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for header in headers {
+        map.entry(header.name.to_ascii_lowercase())
+            .or_default()
+            .push(header.value.clone());
+    }
+    map
 }
 
 #[cfg(test)]
@@ -280,7 +380,9 @@ mod tests {
     //! Fetch interception. These cover the security-critical verdict (the CDP
     //! plumbing around it is thin glue) and stay hermetic by using literal-IP
     //! and scheme rejections that require no DNS resolution or network.
-    use super::{FrameId, require_main_frame, ssrf_verdict};
+    use std::sync::Mutex;
+
+    use super::{EventRequestPaused, FrameId, InterceptOutcome, main_frame_verdict, require_main_frame, ssrf_verdict};
     use crate::net::ssrf::SsrfPolicy;
 
     fn deny_policy() -> SsrfPolicy {
@@ -350,6 +452,54 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "browser: cannot apply the redirect limit: failed to read the page's main frame: channel closed"
+        );
+    }
+
+    /// A paused main-frame document response with `status`, from the navigation `network_id`.
+    fn main_frame_response(network_id: &str, status: u16) -> EventRequestPaused {
+        serde_json::from_value(serde_json::json!({
+            "requestId": format!("interception-{network_id}"),
+            "request": {
+                "url": format!("http://example.com/{network_id}"),
+                "method": "GET",
+                "headers": {},
+                "initialPriority": "VeryHigh",
+                "referrerPolicy": "no-referrer",
+            },
+            "frameId": "MAIN",
+            "resourceType": "Document",
+            "responseStatusCode": status,
+            "responseHeaders": [{"name": "X-Navigation", "value": network_id}],
+            "networkId": network_id,
+        }))
+        .expect("a paused response event")
+    }
+
+    #[test]
+    fn keeps_only_the_committed_document_and_the_newest_response() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        for (network_id, status, committed) in [("A", 200, None), ("B", 204, Some("A")), ("C", 204, Some("A"))] {
+            state.lock().expect("state lock").committed_loader = committed.map(str::to_owned);
+            assert!(main_frame_verdict(
+                &main_frame_response(network_id, status),
+                &main_frame,
+                0,
+                &state
+            ));
+        }
+        let state = state.into_inner().expect("state lock");
+        let mut kept: Vec<(&str, u16)> = state
+            .documents
+            .iter()
+            .map(|(id, document)| (id.as_str(), document.status))
+            .collect();
+        kept.sort_unstable();
+        assert_eq!(kept, [("A", 200), ("C", 204)]);
+        assert_eq!(
+            state.documents["A"].headers.get("x-navigation"),
+            Some(&vec!["A".to_owned()]),
+            "headers are recorded with the status, keyed by lowercase name"
         );
     }
 }
