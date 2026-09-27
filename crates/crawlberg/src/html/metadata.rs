@@ -219,30 +219,96 @@ pub(crate) fn detect_nofollow(dom: &VDom<'_>) -> bool {
     has_robots_directive(dom, "nofollow")
 }
 
-/// Marker introducing the redirect target inside a `refresh` directive's content.
+/// The target of a refresh directive, a `<meta http-equiv="refresh">` `content` value or an HTTP
+/// `Refresh` header value, read with the HTML "shared declarative refresh steps" and then cleaned by
+/// [`clean_url`](super::clean_url).
+///
+/// Returns `None` when the value is no refresh (see [`parse_refresh`]), names no target, or names an
+/// absolute address whose scheme is not `http` or `https` (`mailto:`, `javascript:`, `data:` and so
+/// on), which the crawl cannot follow. A target that names the page itself is returned as written.
 #[cfg(not(target_arch = "wasm32"))]
-const META_REFRESH_URL_MARKER: &[u8] = b"url=";
-
-/// Find the byte offset just past a case-insensitive `url=` marker in `content`.
-#[cfg(not(target_arch = "wasm32"))]
-fn meta_refresh_target_offset(content: &str) -> Option<usize> {
-    // ~keep Search original bytes case-insensitively so the extracted URL offset remains correct.
-    content
-        .as_bytes()
-        .windows(META_REFRESH_URL_MARKER.len())
-        .position(|w| {
-            w.iter()
-                .zip(META_REFRESH_URL_MARKER)
-                .all(|(a, b)| a.to_ascii_lowercase() == *b)
-        })
-        .map(|pos| pos + META_REFRESH_URL_MARKER.len())
+pub(crate) fn refresh_target(value: &str) -> Option<Cow<'_, str>> {
+    parse_refresh(value)?.target
 }
 
-/// Detect a `<meta http-equiv="refresh">` tag and return the redirect target URL.
+/// A refresh directive read with the HTML "shared declarative refresh steps".
+#[cfg(not(target_arch = "wasm32"))]
+struct Refresh<'a> {
+    /// Whole seconds before the refresh comes due; a fraction is ignored.
+    delay: u64,
+    /// The address to load, cleaned by [`clean_url`](super::clean_url), or `None` to stay on the page:
+    /// the refresh names no target, or an absolute address whose scheme is not `http` or `https`. An
+    /// address the URL parser rejects is kept as written.
+    target: Option<Cow<'a, str>>,
+}
+
+/// `value` read as a refresh directive, or `None` when it does not start with a delay or its target
+/// is a `javascript:` address, which the refresh steps ignore.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
+    let rest = value.trim_ascii_start();
+    if !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let delay = rest[..digits_end].bytes().fold(0_u64, |delay, digit| {
+        delay.saturating_mul(10).saturating_add(u64::from(digit - b'0'))
+    });
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+    if !rest.is_empty() && !rest.starts_with(|c: char| matches!(c, ';' | ',') || c.is_ascii_whitespace()) {
+        return None;
+    }
+    let rest = rest.trim_ascii_start();
+    let rest = rest.strip_prefix([';', ',']).unwrap_or(rest).trim_ascii_start();
+    let target = super::clean_url(Cow::Borrowed(refresh_url(rest)));
+    if target
+        .as_deref()
+        .is_some_and(|target| super::has_scheme(target, "javascript"))
+    {
+        return None;
+    }
+    let target = target.filter(|target| match Url::parse(target) {
+        Ok(absolute) => matches!(absolute.scheme(), "http" | "https"),
+        Err(_) => true,
+    });
+    Some(Refresh { delay, target })
+}
+
+/// The address in what follows a refresh delay: after an optional `url=` label in any case, and
+/// without a pair of matching quotes around it.
+#[cfg(not(target_arch = "wasm32"))]
+fn refresh_url(rest: &str) -> &str {
+    let labelled = rest
+        .get(..3)
+        .filter(|label| label.eq_ignore_ascii_case("url"))
+        .and_then(|_| rest[3..].trim_ascii_start().strip_prefix('='));
+    match labelled {
+        Some(value) => unquote_refresh_url(value.trim_ascii_start()),
+        None => unquote_refresh_url(rest),
+    }
+}
+
+/// `value` without a leading `'` or `"`, cut at the next matching quote when there is one.
+#[cfg(not(target_arch = "wasm32"))]
+fn unquote_refresh_url(value: &str) -> &str {
+    let Some(quote) = value.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
+        return value;
+    };
+    let quoted = &value[1..];
+    quoted.find(quote).map_or(quoted, |end| &quoted[..end])
+}
+
+/// The target of the `<meta http-equiv="refresh">` a browser acts on, or `None` when there is none or
+/// it keeps the page.
+///
+/// ~keep Chrome replaces a scheduled refresh with each later one whose delay is not longer, so the
+/// ~keep shortest delay wins and the later tag wins a tie; a refresh that keeps the page (no target,
+/// ~keep or a scheme the crawl cannot follow) takes part like any other (#279).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
     let parser = dom.parser();
     let iter = dom.query_selector(SEL_META)?;
+    let mut chosen: Option<(u64, Option<String>)> = None;
     for handle in iter {
         let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
             continue;
@@ -253,14 +319,13 @@ pub(crate) fn detect_meta_refresh(dom: &VDom<'_>) -> Option<String> {
         let Some(content) = get_attr(tag, "content") else {
             continue;
         };
-        let Some(offset) = meta_refresh_target_offset(&content) else {
-            continue;
-        };
-        if let Some(target) = super::clean_url(Cow::Borrowed(&content[offset..])) {
-            return Some(target.into_owned());
+        if let Some(refresh) = parse_refresh(&content)
+            && chosen.as_ref().is_none_or(|(delay, _)| refresh.delay <= *delay)
+        {
+            chosen = Some((refresh.delay, refresh.target.map(Cow::into_owned)));
         }
     }
-    None
+    chosen?.1
 }
 
 #[cfg(test)]
@@ -510,19 +575,196 @@ mod tests {
     }
 
     #[test]
-    fn meta_refresh_is_none_without_a_url_marker_or_with_an_empty_target() {
+    fn meta_refresh_is_none_without_a_target_or_with_an_empty_target() {
         assert_eq!(meta_refresh(r#"<meta http-equiv="refresh" content="5">"#), None);
         assert_eq!(meta_refresh(r#"<meta http-equiv="refresh" content="0;url=   ">"#), None);
         assert_eq!(meta_refresh("<p>no meta at all</p>"), None);
     }
 
     #[test]
-    fn meta_refresh_skips_an_empty_target_and_uses_a_later_tag() {
+    fn meta_refresh_with_an_empty_target_loses_a_tie_to_a_later_tag() {
         assert_eq!(
             meta_refresh(
                 r#"<meta http-equiv="refresh" content="0;url="><meta http-equiv="refresh" content="0;url=/second">"#
             ),
             Some("/second".to_owned())
         );
+    }
+
+    /// An unparseable target is a refresh like any other: a later tag with a longer delay does not
+    /// replace it (#279).
+    #[test]
+    fn meta_refresh_keeps_an_unparseable_target_over_a_later_longer_one() {
+        assert_eq!(
+            meta_refresh(
+                r#"<meta http-equiv="refresh" content="0; url=http://ex ample.com/"><meta http-equiv="refresh" content="3; url=/second">"#
+            ),
+            Some("http://ex ample.com/".to_owned())
+        );
+    }
+
+    /// A value that is no refresh, or a `javascript:` one, takes no part in the choice (#279).
+    #[test]
+    fn meta_refresh_skips_a_tag_that_is_no_refresh() {
+        for first in ["", "x; url=/first", "0; url=javascript:void(0)"] {
+            let html = format!(
+                r#"<meta http-equiv="refresh" content="{first}"><meta http-equiv="refresh" content="3; url=/second">"#
+            );
+            assert_eq!(meta_refresh(&html), Some("/second".to_owned()), "{first:?}");
+        }
+    }
+
+    #[test]
+    fn parse_refresh_reads_the_whole_seconds_of_the_delay() {
+        let delay = |value: &str| parse_refresh(value).map(|refresh| refresh.delay);
+        assert_eq!(delay("0; url=/next"), Some(0));
+        assert_eq!(delay("1.5; url=/next"), Some(1));
+        assert_eq!(delay(".5; url=/next"), Some(0));
+        assert_eq!(delay(" 12"), Some(12));
+        assert_eq!(delay("999999999999999999999999999999; url=/next"), Some(u64::MAX));
+        assert_eq!(delay("x; url=/next"), None);
+    }
+
+    #[test]
+    fn parse_refresh_ignores_a_javascript_target_in_any_case() {
+        assert!(parse_refresh("0; url=javascript:void(0)").is_none());
+        assert!(parse_refresh("0; url=JAVASCRIPT:void(0)").is_none());
+        assert!(parse_refresh("0; url='\tjava\nscript:void(0)'").is_none());
+        assert_eq!(
+            parse_refresh("0; url=javascript-page.html")
+                .and_then(|refresh| refresh.target)
+                .as_deref(),
+            Some("javascript-page.html")
+        );
+        let reload = parse_refresh("5").expect("a delay alone is a refresh");
+        assert_eq!((reload.delay, reload.target), (5, None));
+    }
+
+    /// The HTML refresh parser drops one pair of matching quotes around the target (#208).
+    #[test]
+    fn meta_refresh_drops_a_pair_of_matching_quotes_around_the_target() {
+        assert_eq!(
+            meta_refresh(r#"<meta http-equiv="refresh" content="0; url='/next'">"#),
+            Some("/next".to_owned())
+        );
+        assert_eq!(
+            meta_refresh(r#"<meta http-equiv="refresh" content='0; url="/next"'>"#),
+            Some("/next".to_owned())
+        );
+    }
+
+    #[test]
+    fn refresh_target_drops_one_pair_of_matching_quotes() {
+        assert_eq!(refresh_target("0; url='/next'").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0; url=\"/next\"").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0; URL = '/next' trailing").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0; url='/it\"s'").as_deref(), Some("/it\"s"));
+        assert_eq!(refresh_target("0; '/next'").as_deref(), Some("/next"));
+    }
+
+    /// An opening quote with no closing one is dropped, and the rest of the value is the target.
+    #[test]
+    fn refresh_target_with_an_unterminated_quote_keeps_the_rest() {
+        assert_eq!(refresh_target("0; url='/next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0; url='").as_deref(), None);
+    }
+
+    #[test]
+    fn refresh_target_reads_a_target_without_a_url_label() {
+        assert_eq!(refresh_target("0; /next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0,/next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0 /next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target(" 1.5; url=/next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target(".5;url=/next").as_deref(), Some("/next"));
+    }
+
+    /// A `u` that does not start a whole `url=` label is part of the address, quotes included.
+    #[test]
+    fn refresh_target_keeps_a_partial_url_label_as_the_address() {
+        assert_eq!(refresh_target("0; ur=/next").as_deref(), Some("ur=/next"));
+        assert_eq!(refresh_target("0; url /next").as_deref(), Some("url /next"));
+        assert_eq!(refresh_target("0; u'/next'").as_deref(), Some("u'/next'"));
+    }
+
+    /// A `url=` inside the address is part of the address, not a second label.
+    #[test]
+    fn refresh_target_takes_the_first_address_not_a_url_label_inside_it() {
+        assert_eq!(
+            refresh_target("0; https://example.com/?url=/elsewhere").as_deref(),
+            Some("https://example.com/?url=/elsewhere")
+        );
+        assert_eq!(
+            refresh_target("0; url=/go?url=/elsewhere").as_deref(),
+            Some("/go?url=/elsewhere")
+        );
+    }
+
+    /// A value that does not start with a delay, or has something other than a separator after
+    /// it, is not a refresh, however it names a target.
+    #[test]
+    fn refresh_target_is_none_for_a_value_that_is_not_a_refresh() {
+        assert_eq!(refresh_target("url=/next"), None);
+        assert_eq!(refresh_target("; url=/next"), None);
+        assert_eq!(refresh_target(" ,/next"), None);
+        assert_eq!(refresh_target("-1; url=/next"), None);
+        assert_eq!(refresh_target("0x; url=/next"), None);
+        assert_eq!(refresh_target(""), None);
+    }
+
+    /// A refresh with no target, or a blank one, reloads the page itself, which is no new address.
+    #[test]
+    fn refresh_target_is_none_for_a_refresh_of_the_page_itself() {
+        assert_eq!(refresh_target("5"), None);
+        assert_eq!(refresh_target("5; url="), None);
+    }
+
+    /// The target is cleaned by the URL rule: a no-break space stays, C0 controls and spaces go.
+    #[test]
+    fn refresh_target_is_cleaned_by_the_url_rule() {
+        assert_eq!(refresh_target("0; url= /next\u{A0}\n").as_deref(), Some("/next\u{A0}"));
+        assert_eq!(refresh_target("0; url='\u{1}/next '").as_deref(), Some("/next"));
+    }
+
+    /// Whitespace may come between the delay and the `;` or `,` separator.
+    #[test]
+    fn refresh_target_skips_whitespace_before_the_separator() {
+        assert_eq!(refresh_target("0 ; url=/next").as_deref(), Some("/next"));
+        assert_eq!(refresh_target("0\t,/next").as_deref(), Some("/next"));
+    }
+
+    /// The quoted address ends at the first matching quote, as the HTML refresh steps say.
+    #[test]
+    fn refresh_target_cuts_at_the_first_matching_quote() {
+        assert_eq!(refresh_target("0; url='/a'b'").as_deref(), Some("/a"));
+        assert_eq!(refresh_target("0; url=\"/a\"b\"").as_deref(), Some("/a"));
+    }
+
+    /// An absolute address with a scheme other than `http` or `https` is no target the crawl can
+    /// follow; a relative, scheme-relative or web address still is.
+    #[test]
+    fn refresh_target_is_none_for_a_scheme_the_crawl_cannot_fetch() {
+        for value in [
+            "0; mailto:a@example.com",
+            "0; url=javascript:void(0)",
+            "0; url='JavaScript:alert(1)'",
+            "0; tel:+15550100",
+            "0; vbscript:x",
+            "0; data:text/html,hi",
+            "0; about:blank",
+            "0; url:/next",
+            "0; url=ja\tvascript:x",
+        ] {
+            assert_eq!(refresh_target(value), None, "{value:?}");
+        }
+        assert_eq!(
+            refresh_target("0; HTTPS://example.com/x").as_deref(),
+            Some("HTTPS://example.com/x")
+        );
+        assert_eq!(
+            refresh_target("0; http://example.com/x").as_deref(),
+            Some("http://example.com/x")
+        );
+        assert_eq!(refresh_target("0; //example.com/x").as_deref(), Some("//example.com/x"));
+        assert_eq!(refresh_target("0; /mailto:a").as_deref(), Some("/mailto:a"));
     }
 }

@@ -112,6 +112,26 @@ All notable changes to crawlberg are documented here.
   skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
   links in any case, as it skips `javascript:`. (#200)
 
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
 - **Images with a script address were reported.** The images list skipped only `data:`
   addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
   `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
