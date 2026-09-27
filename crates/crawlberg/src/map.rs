@@ -51,7 +51,7 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
         return Ok(filter_map_result(urls, &filter, config.map_limit));
     }
 
-    let resp = fetch_with_retry(url, config, &std::collections::HashMap::new(), &client).await?;
+    let resp = fetch_with_retry(url, config, &std::collections::HashMap::new(), &client, None).await?;
     let urls = urls_from_direct_response(url, &parsed_url, &resp, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
@@ -76,7 +76,7 @@ async fn sitemap_urls_from_robots(
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
     let crate::helpers::RobotsOutcome::Rules(rules) =
-        crate::helpers::fetch_robots_outcome(url, config, client, ua).await
+        crate::helpers::fetch_robots_outcome(url, config, client, ua, None).await
     else {
         return Vec::new();
     };
@@ -107,7 +107,8 @@ async fn sitemap_urls_from_well_known(
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
     let sitemap_url = format!("{}://{}/sitemap.xml", parsed_url.scheme(), parsed_url.authority());
-    let Ok(sitemap_resp) = http_fetch(&sitemap_url, config, &std::collections::HashMap::new(), client).await else {
+    let Ok(sitemap_resp) = http_fetch(&sitemap_url, config, &std::collections::HashMap::new(), client, None).await
+    else {
         return Vec::new();
     };
     if !(sitemap_resp.body.contains("<urlset") || sitemap_resp.body.contains("<sitemapindex")) {

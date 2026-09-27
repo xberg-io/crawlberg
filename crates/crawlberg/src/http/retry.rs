@@ -35,13 +35,14 @@ pub(crate) async fn fetch_with_retry(
     config: &CrawlConfig,
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
+    origin_host: Option<&str>,
 ) -> Result<HttpResponse, CrawlError> {
     let retries = config.retry_count;
     let retry_codes = config.retry_codes.clone();
 
     let mut last_err = None;
     for attempt in 0..=retries {
-        match http_fetch(url, config, extra_headers, client).await {
+        match http_fetch(url, config, extra_headers, client, origin_host).await {
             Ok(resp) => return Ok(resp),
             Err(e) => {
                 let should_retry = should_retry_error(&e, &retry_codes);

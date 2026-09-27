@@ -83,7 +83,7 @@ async fn download_single_asset(
     max_asset_size: Option<usize>,
     config: &CrawlConfig,
 ) -> Option<DownloadedAsset> {
-    let resp = match http_fetch(&asset_ref.url, config, &std::collections::HashMap::new(), client).await {
+    let resp = match http_fetch(&asset_ref.url, config, &std::collections::HashMap::new(), client, None).await {
         Ok(r) => r,
         Err(_) => return None,
     };

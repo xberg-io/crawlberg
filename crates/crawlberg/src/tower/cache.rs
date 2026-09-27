@@ -140,11 +140,25 @@ fn apply_validators(req: &mut CrawlRequest, cached: &CachedPage) -> bool {
 /// Tower layer that caches HTTP responses using a [`CrawlCache`].
 pub struct CrawlCacheLayer {
     cache: Arc<dyn CrawlCache>,
+    has_auth: bool,
 }
 
 impl CrawlCacheLayer {
     pub fn new(cache: Arc<dyn CrawlCache>) -> Self {
-        Self { cache }
+        Self { cache, has_auth: false }
+    }
+
+    /// Whether the crawl this layer serves has `AuthConfig` credentials configured.
+    ///
+    /// RFC 9111 §3.5: a shared cache must not store or reuse a response to a request that
+    /// carries credentials unless the response explicitly permits it, which this cache never
+    /// checks for -- so when `has_auth` is `true`, [`CrawlCacheService`] bypasses the cache
+    /// outright for any request still on the host those credentials are scoped to (see
+    /// [`CrawlRequest::is_on_origin_host`]). Defaults to `false` so an existing `new(cache)`
+    /// caller keeps its current behavior unless it opts in.
+    pub fn with_auth_configured(mut self, has_auth: bool) -> Self {
+        self.has_auth = has_auth;
+        self
     }
 }
 
@@ -155,6 +169,7 @@ impl<S: Clone> Layer<S> for CrawlCacheLayer {
         CrawlCacheService {
             inner,
             cache: self.cache.clone(),
+            has_auth: self.has_auth,
         }
     }
 }
@@ -164,6 +179,21 @@ impl<S: Clone> Layer<S> for CrawlCacheLayer {
 pub struct CrawlCacheService<S> {
     inner: S,
     cache: Arc<dyn CrawlCache>,
+    has_auth: bool,
+}
+
+impl<S> CrawlCacheService<S> {
+    /// Whether `req` must skip this cache entirely rather than be read from or written to.
+    ///
+    /// ~keep RFC 9111 §3.5: a shared cache (this one, replaying one entry to every caller)
+    /// must not store or reuse a response to a credentialed request. `req` does not yet
+    /// carry the `Authorization` header itself -- `HttpFetchService` attaches it deeper in
+    /// the stack -- so `has_auth` (crawl-wide: is any credential configured at all) combined
+    /// with `is_on_origin_host` (will THIS request actually receive it) is the only way this
+    /// layer can know that ahead of forwarding. See crawlberg#390.
+    fn bypasses_cache_for(&self, req: &CrawlRequest) -> bool {
+        self.has_auth && req.is_on_origin_host()
+    }
 }
 
 impl<S> Service<CrawlRequest> for CrawlCacheService<S>
@@ -184,6 +214,10 @@ where
         let mut inner = self.inner.clone();
         std::mem::swap(&mut self.inner, &mut inner);
         let url = req.url.clone();
+
+        if self.bypasses_cache_for(&req) {
+            return Box::pin(async move { inner.call(req).await });
+        }
 
         Box::pin(async move {
             let mut req = req;
@@ -424,6 +458,67 @@ mod tests {
         assert!(
             cache.entries.lock().expect("cache mutex").is_empty(),
             "a no-store response must not be cached"
+        );
+    }
+
+    /// #390: RFC 9111 §3.5 -- a shared cache must not store or reuse a response to a
+    /// credentialed request. `has_auth` alone means every request MIGHT carry credentials
+    /// (the header itself is attached deeper in the stack, past this layer), so the origin
+    /// must be asked, and its answer must not overwrite whatever this key already held.
+    #[tokio::test]
+    async fn a_credentialed_request_on_the_origin_host_bypasses_the_cache_entirely() {
+        let cache = RecordingCache::default();
+        cache.entries.lock().expect("cache mutex").insert(
+            "http://a.com".to_owned(),
+            CachedPage {
+                url: "http://a.com".to_owned(),
+                status_code: 200,
+                content_type: "text/html".to_owned(),
+                body: "stale cached body".to_owned(),
+                etag: None,
+                last_modified: None,
+                cached_at: now_secs(),
+                max_age_secs: Some(3600),
+                must_revalidate: false,
+            },
+        );
+        let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache.clone())).with_auth_configured(true);
+        let mut svc = layer.layer(ScriptedService::new(200, &[("cache-control", "max-age=3600")]));
+
+        let resp = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
+
+        assert_eq!(
+            resp.body, "fresh from origin",
+            "a credentialed request must ask the origin rather than serve the fresh cached entry"
+        );
+        assert_eq!(
+            cache
+                .entries
+                .lock()
+                .expect("cache mutex")
+                .get("http://a.com")
+                .map(|page| page.body.as_str()),
+            Some("stale cached body"),
+            "the origin's response to a credentialed request must not overwrite the cache"
+        );
+    }
+
+    /// The positive control for the test above: `has_auth` alone must not blank the cache for
+    /// every request -- only for one still on the host those credentials are scoped to.
+    #[tokio::test]
+    async fn has_auth_does_not_bypass_the_cache_for_a_request_off_the_credentialed_host() {
+        let cache = RecordingCache::default();
+        let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache.clone())).with_auth_configured(true);
+        let mut svc = layer.layer(ScriptedService::new(200, &[("cache-control", "max-age=3600")]));
+
+        svc.call(CrawlRequest::new("http://b.com").with_origin_host(Some("a.com".to_owned())))
+            .await
+            .unwrap();
+
+        assert!(
+            cache.entries.lock().expect("cache mutex").contains_key("http://b.com"),
+            "a request off the credentialed origin never receives the credentials, so it must \
+             still be cached normally"
         );
     }
 

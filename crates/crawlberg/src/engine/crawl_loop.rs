@@ -92,6 +92,20 @@ impl CrawlBounds {
 }
 
 impl CrawlEngine {
+    /// Build the seed's redirect policy, scoped to `bounds.base_host` so configured
+    /// credentials stay with the seed even across a redirect that leaves it -- see
+    /// crawlberg#387. Split out so the multi-line `RedirectPolicy::new` call this replaces
+    /// does not push `crawl_with_sender` past the function-length limit on its own.
+    fn seed_policy<'a>(
+        &'a self,
+        client: &'a reqwest::Client,
+        exclude_regexes: &'a [Regex],
+        include_regexes: &'a [Regex],
+        bounds: &'a CrawlBounds,
+    ) -> RedirectPolicy<'a> {
+        RedirectPolicy::new(self, client, exclude_regexes, include_regexes, Some(&bounds.base_host))
+    }
+
     /// Internal crawl implementation that uses the engine's trait objects.
     ///
     /// When `tx` is `Some`, each page is sent through the channel as it is processed
@@ -122,7 +136,7 @@ impl CrawlEngine {
         // into the redirect resolution below rather than bracketing it. A redirect can leave
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
-        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), &include_regexes);
+        let mut policy = self.seed_policy(&client, exclude_regexes.as_ref(), &include_regexes, &bounds);
         // ~keep A stream dropped while the seed is still resolving abandons it here, so its
         // ~keep retries and redirect hops stop with it; the loop below watches the same drop.
         let seed = tokio::select! {
@@ -352,7 +366,9 @@ impl CrawlEngine {
         state: &mut CrawlState,
         policy: &mut RedirectPolicy<'_>,
     ) -> Result<Option<RedirectOutcome>, PolicyRefusal> {
-        let resolution = match follow_redirects(self, url, max_redirects, Some(policy)).await {
+        // ~keep `None`: `url` here already IS the seed, so deriving the credential scope from
+        // it (`follow_redirects`'s fallback) gives the same answer as the seed host would.
+        let resolution = match follow_redirects(self, url, max_redirects, Some(policy), None).await {
             Ok(RedirectResolution::Refused {
                 refusal,
                 redirect_count,
@@ -635,19 +651,20 @@ impl CrawlEngine {
         permit: tokio::sync::OwnedSemaphorePermit,
         context: &LoopContext<'_>,
     ) {
-        let exclude_regexes = Arc::clone(&context.exclude_regexes);
-        // ~keep `LoopContext::include_regexes` is a borrowed slice, so a fresh `Arc` is built
-        // ~keep here rather than cloned, unlike `exclude_regexes`: the spawned task still
-        // ~keep needs an owned, `'static` list for its own task-local `RedirectPolicy`.
-        let include_regexes: Arc<[Regex]> = context.include_regexes.into();
-        drive.join_set.spawn(fetch_and_extract(
-            engine,
-            entry,
-            preloaded_response,
-            permit,
-            exclude_regexes,
-            include_regexes,
-        ));
+        let filters = FrontierFilters {
+            exclude_regexes: Arc::clone(&context.exclude_regexes),
+            // ~keep `LoopContext::include_regexes` is a borrowed slice, so a fresh `Arc` is
+            // built here rather than cloned, unlike `exclude_regexes`: the spawned task still
+            // needs an owned, `'static` list for its own task-local `RedirectPolicy`.
+            include_regexes: context.include_regexes.into(),
+            // ~keep Owned for the same reason: the task outlives this call and needs the
+            // crawl's seed host to scope configured credentials to it (crawlberg#387) rather
+            // than to whichever host this one frontier entry happens to be on.
+            base_host: context.base_host.to_owned(),
+        };
+        drive
+            .join_set
+            .spawn(fetch_and_extract(engine, entry, preloaded_response, permit, filters));
     }
 
     /// Whether the page budget still admits another fetch.
@@ -851,23 +868,73 @@ fn take_preloaded_response(
     }
 }
 
+/// The filters and crawl-wide seed host one frontier fetch task needs, grouped so
+/// `spawn_fetch`/`fetch_and_extract` stay within the parameter-count limit -- all three
+/// travel together for the lifetime of one task and are built once in `spawn_fetch`.
+struct FrontierFilters {
+    exclude_regexes: Arc<[Regex]>,
+    include_regexes: Arc<[Regex]>,
+    /// The crawl's seed host, so configured credentials scope to it rather than to
+    /// whichever host this one frontier entry happens to be on -- see crawlberg#387.
+    base_host: String,
+}
+
+/// Fetch `entry.url` fresh (no preloaded response), following any redirect it answers
+/// with through a task-local `RedirectPolicy`.
+///
+/// ~keep A frontier entry is resolved through `follow_redirects` exactly like the seed is,
+/// ~keep with the policy built fresh here rather than shared across the crawl: its per-origin
+/// ~keep robots memoization is redundant with -- and no faster than -- `CrawlEngine::robots_cache`,
+/// ~keep which every task already shares, so a fresh policy per task needs no cross-task
+/// ~keep synchronization to stay correct.
+async fn fetch_frontier_entry(
+    engine: &CrawlEngine,
+    entry: &FrontierEntry,
+    filters: &FrontierFilters,
+) -> Result<Option<(crate::tower::CrawlResponse, bool, String, usize)>, (FrontierEntry, CrawlError)> {
+    let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
+    let mut policy = RedirectPolicy::new(
+        engine,
+        &client,
+        filters.exclude_regexes.as_ref(),
+        filters.include_regexes.as_ref(),
+        Some(&filters.base_host),
+    );
+    let max_redirects = engine.config.max_redirects;
+    match follow_redirects(
+        engine,
+        &entry.url,
+        max_redirects,
+        Some(&mut policy),
+        Some(&filters.base_host),
+    )
+    .await
+    {
+        Ok(RedirectResolution::Fetched(outcome)) => Ok(Some((
+            outcome.final_response,
+            outcome.browser_used,
+            outcome.final_url,
+            outcome.redirect_count,
+        ))),
+        // ~keep Refused only by a per-hop policy check (robots, exclude_paths, or a dedup
+        // ~keep collision with a page already claimed elsewhere) -- the same silent rejection
+        // ~keep `should_fetch_url` already applies to a frontier entry the policy rejects
+        // ~keep before it is ever spawned.
+        Ok(RedirectResolution::Refused { .. }) => Ok(None),
+        Err(e) => Err((entry.clone(), e)),
+    }
+}
+
 /// Fetch one URL, following any redirect it answers with, and run HTML extraction off the
 /// runtime thread.
 ///
 /// `permit` is held for the whole task so the semaphore bounds concurrent fetches.
-///
-/// ~keep A frontier entry is resolved through `follow_redirects` exactly like the seed is,
-/// ~keep with a task-local `RedirectPolicy` built fresh here rather than shared across the
-/// ~keep crawl: the policy's per-origin robots memoization is redundant with -- and no faster
-/// ~keep than -- `CrawlEngine::robots_cache`, which every task already shares, so a fresh
-/// ~keep policy per task needs no cross-task synchronization to stay correct.
 async fn fetch_and_extract(
     engine: CrawlEngine,
     entry: FrontierEntry,
     preloaded_response: Option<(crate::tower::CrawlResponse, bool)>,
     permit: tokio::sync::OwnedSemaphorePermit,
-    exclude_regexes: Arc<[Regex]>,
-    include_regexes: Arc<[Regex]>,
+    filters: FrontierFilters,
 ) -> Result<FetchOutcome, (FrontierEntry, CrawlError)> {
     let _permit = permit;
 
@@ -875,25 +942,10 @@ async fn fetch_and_extract(
         // ~keep The seed's redirect chain was already resolved before the loop started; its
         // ~keep frontier entry URL is already the post-redirect final URL (see `seed_frontier`).
         Some((resp, browser_used)) => (resp, browser_used, entry.url.clone(), 0),
-        None => {
-            let client = crate::http::build_client(&engine.config).map_err(|e| (entry.clone(), e))?;
-            let mut policy = RedirectPolicy::new(&engine, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
-            let max_redirects = engine.config.max_redirects;
-            match follow_redirects(&engine, &entry.url, max_redirects, Some(&mut policy)).await {
-                Ok(RedirectResolution::Fetched(outcome)) => (
-                    outcome.final_response,
-                    outcome.browser_used,
-                    outcome.final_url,
-                    outcome.redirect_count,
-                ),
-                // ~keep Refused only by a per-hop policy check (robots, exclude_paths, or a
-                // ~keep dedup collision with a page already claimed elsewhere) -- the same
-                // ~keep silent rejection `should_fetch_url` already applies to a frontier entry
-                // ~keep the policy rejects before it is ever spawned.
-                Ok(RedirectResolution::Refused { .. }) => return Ok(FetchOutcome::Skipped(entry)),
-                Err(e) => return Err((entry.clone(), e)),
-            }
-        }
+        None => match fetch_frontier_entry(&engine, &entry, &filters).await? {
+            Some(fetched) => fetched,
+            None => return Ok(FetchOutcome::Skipped(entry)),
+        },
     };
 
     let status_code = resp.status;

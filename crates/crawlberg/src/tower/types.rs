@@ -63,8 +63,7 @@ impl CrawlRequest {
         };
         Url::parse(&self.url)
             .ok()
-            .and_then(|u| u.host_str().map(|host| host.eq_ignore_ascii_case(origin)))
-            .unwrap_or(false)
+            .is_some_and(|parsed| crate::net::origin::is_authorized_host(origin, &parsed))
     }
 }
 

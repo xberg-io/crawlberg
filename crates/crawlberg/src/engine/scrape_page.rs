@@ -56,7 +56,7 @@ impl CrawlEngine {
             use super::redirect::{RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            let outcome = match follow_redirects(self, url, max_redirects, None).await? {
+            let outcome = match follow_redirects(self, url, max_redirects, None, None).await? {
                 RedirectResolution::Fetched(outcome) => outcome,
                 // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
@@ -245,7 +245,8 @@ impl CrawlEngine {
         url: &str,
     ) -> Result<(String, crate::tower::CrawlResponse, bool), CrawlError> {
         let client = crate::http::build_client(&self.config)?;
-        let resp = crate::http::fetch_with_retry(url, &self.config, &std::collections::HashMap::new(), &client).await?;
+        let resp =
+            crate::http::fetch_with_retry(url, &self.config, &std::collections::HashMap::new(), &client, None).await?;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
         let crawl_resp = crate::tower::CrawlResponse {

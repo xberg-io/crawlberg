@@ -249,6 +249,7 @@ pub(crate) async fn fetch_sitemap_tree(
         context.config,
         &std::collections::HashMap::new(),
         context.client,
+        None,
     )
     .await
     {
@@ -402,6 +403,7 @@ async fn fetch_child_sitemap(
         context.config,
         &std::collections::HashMap::new(),
         context.client,
+        None,
     )
     .await
     else {

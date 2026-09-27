@@ -237,6 +237,7 @@ pub(crate) async fn fetch_robots_outcome(
     config: &CrawlConfig,
     client: &reqwest::Client,
     user_agent: &str,
+    origin_host: Option<&str>,
 ) -> RobotsOutcome {
     let Ok(parsed) = Url::parse(url) else {
         return RobotsOutcome::DisallowAll {
@@ -248,7 +249,15 @@ pub(crate) async fn fetch_robots_outcome(
     // from `host_str()` instead sent every port-bearing seed's robots request to the default
     // port, where it failed and silently degraded to "no rules".
     let robots_url = crate::normalize::robots_url(&parsed);
-    match http_fetch(&robots_url, config, &std::collections::HashMap::new(), client).await {
+    match http_fetch(
+        &robots_url,
+        config,
+        &std::collections::HashMap::new(),
+        client,
+        origin_host,
+    )
+    .await
+    {
         Ok(resp) if resp.status >= 500 => RobotsOutcome::DisallowAll {
             reason: format!("robots.txt returned HTTP {}", resp.status),
             denial: RobotsDenial::Sustained,

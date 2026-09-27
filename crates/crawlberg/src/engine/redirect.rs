@@ -119,6 +119,11 @@ pub(crate) struct RedirectPolicy<'a> {
     pub(super) last_origin: Option<RobotsCacheKey>,
     /// URLs this policy rejected, folded into `CrawlState::urls_filtered`.
     pub(super) urls_filtered: usize,
+    /// The crawl's seed host, so a robots.txt request for a hop that left it (a redirect, a
+    /// subdomain widened in by `allow_subdomains`) does not also carry configured
+    /// credentials meant only for the seed -- see crawlberg#387. `None` derives the scope
+    /// from each robots.txt request's own host, matching `follow_redirects`'s fallback.
+    pub(super) origin_host: Option<&'a str>,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -127,6 +132,7 @@ impl<'a> RedirectPolicy<'a> {
         client: &'a reqwest::Client,
         exclude_regexes: &'a [Regex],
         include_regexes: &'a [Regex],
+        origin_host: Option<&'a str>,
     ) -> Self {
         Self {
             engine,
@@ -137,6 +143,7 @@ impl<'a> RedirectPolicy<'a> {
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
+            origin_host,
         }
     }
 
@@ -191,7 +198,7 @@ impl<'a> RedirectPolicy<'a> {
                 self.engine
                     .robots_cache
                     .get_or_fetch(origin.clone(), || {
-                        fetch_robots_outcome(url, &self.engine.config, self.client, user_agent)
+                        fetch_robots_outcome(url, &self.engine.config, self.client, user_agent, self.origin_host)
                     })
                     .await
             } else {
@@ -315,14 +322,20 @@ pub(crate) async fn follow_redirects(
     initial_url: &str,
     max_redirects: usize,
     mut policy: Option<&mut RedirectPolicy<'_>>,
+    crawl_origin_host: Option<&str>,
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
-    // ~keep Scopes configured credentials to the host the chain started on; hops that leave
-    // ~keep it must not carry the caller's Authorization header to a redirect target.
-    let origin_host = url::Url::parse(initial_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned));
+    // ~keep Scopes configured credentials to the host they are authorized for: the crawl's
+    // seed host when `crawl_origin_host` names one (a frontier entry may sit on a different
+    // host than the crawl that discovered it -- see crawlberg#387), falling back to this
+    // chain's own starting host when there is no wider crawl (a single scrape, or the seed's
+    // own redirect resolution, where the chain's start IS the seed).
+    let origin_host = crawl_origin_host.map(str::to_owned).or_else(|| {
+        url::Url::parse(initial_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned))
+    });
 
     let mut browser_used = false;
     loop {

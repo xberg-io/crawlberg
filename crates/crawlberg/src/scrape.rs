@@ -169,7 +169,7 @@ async fn resolve_robots_status(
     // ~keep The `"*"` user-agent is preserved from the previous behaviour; see
     // `helpers::default_robots_user_agent` for why unifying it is deferred.
     let ua = config.user_agent.as_deref().unwrap_or("*");
-    match fetch_robots_outcome(url, config, client, ua).await {
+    match fetch_robots_outcome(url, config, client, ua, None).await {
         RobotsOutcome::Rules(rules) => RobotsStatus {
             is_allowed: is_path_allowed(parsed_url.path(), &rules),
             crawl_delay: rules.crawl_delay,

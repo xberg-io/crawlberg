@@ -99,7 +99,9 @@ impl CrawlEngine {
 
         let service = ServiceBuilder::new()
             .layer(crate::tower::PerDomainRateLimitLayer::new(self.rate_limiter.clone()))
-            .layer(crate::tower::CrawlCacheLayer::new(self.cache.clone()))
+            .layer(
+                crate::tower::CrawlCacheLayer::new(self.cache.clone()).with_auth_configured(self.config.auth.is_some()),
+            )
             .layer(self.ua_rotation.clone())
             .service(crate::tower::HttpFetchService::new(client.clone(), self.config.clone()));
 
