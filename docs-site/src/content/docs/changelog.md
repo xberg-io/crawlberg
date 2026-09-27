@@ -60,6 +60,17 @@ title: "Changelog"
   it is used as the duplicate key, matching the resolver already used for redirect targets, and
   a child address that fails to parse is skipped instead of fetched as raw text. (#226)
 
+- **`map()` returned sitemap `<loc>` entries as raw text and kept duplicates.** Two spellings of
+  one page, such as `https://example.com/a` and `HTTPS://example.com:443/a`, came back as two
+  entries, a relative `<loc>` came back as a bare path, and a `<loc>` that is not an address came
+  back as text. Each `<loc>` is now resolved against the sitemap's own URL with the same parser as
+  sitemap-index children and returned in its normalized form. A `<loc>` that does not parse is
+  dropped. An address is returned once per `map()` call, even when several sitemaps list it, and a
+  duplicate does not count toward `map_limit`. A relative `<loc>` is now subject to
+  `exclude_paths`, like every other entry. `map_search` now matches the normalized address, so a
+  search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
+  longer matches. (#323)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,

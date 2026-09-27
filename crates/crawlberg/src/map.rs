@@ -11,7 +11,7 @@ use crate::html::{extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
 use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
 use crate::sitemap::{
-    SitemapDocument, SitemapWalkContext, decompress_gzip, fetch_sitemap_tree, is_sitemap_index, parse_sitemap_xml,
+    SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
     process_sitemap_response,
 };
 use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
@@ -33,11 +33,7 @@ pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlErro
     let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
-    let context = SitemapWalkContext {
-        config,
-        client: &client,
-        filter: &filter,
-    };
+    let context = SitemapWalkContext::new(config, &client, &filter);
 
     if config.respect_robots_txt {
         let urls = sitemap_urls_from_robots(url, &parsed_url, config, &client, &context).await;
@@ -159,7 +155,7 @@ async fn urls_from_direct_response(
         || url.to_lowercase().ends_with(".gz")
         || (resp.body_bytes.len() >= 2 && resp.body_bytes[0] == GZIP_MAGIC[0] && resp.body_bytes[1] == GZIP_MAGIC[1]);
     if is_gzip && let Ok(decompressed) = decompress_gzip(&resp.body_bytes) {
-        let urls = parse_sitemap_xml(&decompressed);
+        let urls = collect_urlset_entries(url, &decompressed, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -169,7 +165,7 @@ async fn urls_from_direct_response(
         if is_sitemap_index(&resp.body) {
             return fetch_sitemap_tree(url, context, config.map_limit).await;
         }
-        let urls = parse_sitemap_xml(&resp.body);
+        let urls = collect_urlset_entries(url, &resp.body, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -639,5 +635,285 @@ mod tests {
             error.to_string().contains("invalid URL"),
             "expected an invalid-URL error, got: {error}"
         );
+    }
+
+    /// Serve `locs` as the well-known `/sitemap.xml` and return the addresses `map()` reports.
+    async fn map_well_known_urlset(locs: &[&str], config: &CrawlConfig) -> (String, Vec<String>) {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs: Vec<String> = locs.iter().map(|loc| (*loc).to_owned()).collect();
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+        let result = map(&base, config).await.expect("map should succeed");
+        (base, result.urls.into_iter().map(|u| u.url).collect())
+    }
+
+    #[tokio::test]
+    async fn map_lower_cases_the_scheme_and_host_of_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["HTTPS://EXAMPLE.COM/Page"], &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/Page".to_owned()],
+            "a urlset <loc> must be returned in the parser's normalized form, with the path's case kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_drops_the_default_port_of_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["https://example.com:443/a"], &local_test_config()).await;
+
+        assert_eq!(urls, vec!["https://example.com/a".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_strips_stray_whitespace_inside_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["https://example.com/a\n\tb"], &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/ab".to_owned()],
+            "an embedded newline or tab must be removed by the URL parser, not returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_urlset_loc_against_the_sitemap_url() {
+        let (base, urls) = map_well_known_urlset(&["/relative/page"], &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/relative/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_applies_exclude_paths_to_a_relative_urlset_loc() {
+        let config = CrawlConfig {
+            exclude_paths: vec!["^/admin".to_owned()],
+            ..local_test_config()
+        };
+        let (base, urls) = map_well_known_urlset(&["/admin/secret", "/blog/one"], &config).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/blog/one")],
+            "a relative <loc> resolves to an address, so exclude_paths must apply to it"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_two_spellings_of_one_urlset_page_once() {
+        let (_, urls) = map_well_known_urlset(
+            &[
+                "https://example.com/a",
+                "HTTPS://example.com:443/a",
+                "https://example.com/b",
+            ],
+            &local_test_config(),
+        )
+        .await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn map_limit_is_not_consumed_by_a_duplicate_urlset_loc() {
+        let config = CrawlConfig {
+            map_limit: Some(2),
+            ..local_test_config()
+        };
+        let (_, urls) = map_well_known_urlset(
+            &[
+                "https://example.com/a",
+                "https://EXAMPLE.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+            ],
+            &config,
+        )
+        .await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
+            "a duplicate must be dropped before it counts toward map_limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_a_page_listed_by_two_child_sitemaps_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/sitemap.xml",
+            "application/xml",
+            format!(
+                r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>{base}/one.xml</loc></sitemap><sitemap><loc>{base}/two.xml</loc></sitemap></sitemapindex>"#
+            ),
+        )
+        .await;
+        let one = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        let two = vec![
+            "https://example.com:443/a".to_owned(),
+            "https://example.com/c".to_owned(),
+        ];
+        mount_body(&mock, "/one.xml", "application/xml", urlset(&one)).await;
+        mount_body(&mock, "/two.xml", "application/xml", urlset(&two)).await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec![
+                "https://example.com/a".to_owned(),
+                "https://example.com/b".to_owned(),
+                "https://example.com/c".to_owned()
+            ],
+            "a page listed by two child sitemaps of one index must be returned once"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_a_page_listed_by_two_robots_sitemap_directives_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {base}/one.xml\nSitemap: {base}/two.xml\n"),
+        )
+        .await;
+        let one = vec!["https://example.com/a".to_owned()];
+        let two = vec!["HTTPS://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        mount_body(&mock, "/one.xml", "application/xml", urlset(&one)).await;
+        mount_body(&mock, "/two.xml", "application/xml", urlset(&two)).await;
+
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
+            "a page listed by two robots.txt Sitemap: directives must be returned once"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_normalizes_and_dedupes_a_urlset_fetched_directly() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec![
+            "https://example.com/a".to_owned(),
+            "HTTPS://example.com:443/a".to_owned(),
+            "/relative".to_owned(),
+        ];
+        mount_body(&mock, "/feed.xml", "application/xml", urlset(&locs)).await;
+
+        let result = map(&format!("{base}/feed.xml"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), format!("{base}/relative")]
+        );
+    }
+
+    #[tokio::test]
+    async fn map_normalizes_and_dedupes_a_gzip_urlset_fetched_directly() {
+        use std::io::Write as _;
+
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec![
+            "https://example.com/a".to_owned(),
+            "HTTPS://example.com:443/a".to_owned(),
+            "/relative".to_owned(),
+        ];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(urlset(&locs).as_bytes()).expect("gzip write");
+        let gzipped = encoder.finish().expect("gzip finish");
+        mount_bytes(&mock, "/sitemap.xml.gz", "application/octet-stream", gzipped).await;
+
+        let result = map(&format!("{base}/sitemap.xml.gz"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), format!("{base}/relative")]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn map_drops_an_unparseable_urlset_loc_and_never_logs_its_credentials() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime must build");
+        let mock = runtime.block_on(MockServer::start());
+        let base = mock.uri();
+        let bad_loc = "https://user:hunter2@ex ample.com/bad";
+        let locs = vec![bad_loc.to_owned(), "https://example.com/kept".to_owned()];
+        runtime.block_on(mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)));
+
+        let (result, fields) = capture_events(|| runtime.block_on(map(&base, &local_test_config())));
+
+        assert_eq!(
+            result
+                .expect("map should succeed")
+                .urls
+                .into_iter()
+                .map(|u| u.url)
+                .collect::<Vec<_>>(),
+            vec!["https://example.com/kept".to_owned()],
+            "a <loc> that does not parse must be dropped, not returned as text"
+        );
+        assert_logged_without_secret(&fields, "hunter2", "urlset entry");
+        assert!(
+            fields
+                .iter()
+                .any(|(name, value)| name == "target_len" && *value == bad_loc.len().to_string()),
+            "the dropped <loc> must be logged by length, got {fields:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn map_redacts_credentials_carried_by_a_credentialed_seed_url_when_logging_an_unparseable_urlset_loc() {
+        // ~keep `sitemap_urls_from_well_known` builds the well-known sitemap URL from the
+        // ~keep seed's authority, which carries the seed's userinfo along. That built URL
+        // ~keep parses, so this exercises `log_unparseable_loc`'s `source_url_parses` branch,
+        // ~keep the one M10 (log `source_url` unredacted) leaves uncovered.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime must build");
+        let mock = runtime.block_on(MockServer::start());
+        let base = mock.uri();
+        let seed_url = base.replacen("http://", "http://user:hunter2@", 1);
+        let bad_loc = "https://ex ample.com/bad";
+        let locs = vec![bad_loc.to_owned(), "https://example.com/kept".to_owned()];
+        runtime.block_on(mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)));
+
+        let (result, fields) = capture_events(|| runtime.block_on(map(&seed_url, &local_test_config())));
+
+        assert_eq!(
+            result
+                .expect("map should succeed")
+                .urls
+                .into_iter()
+                .map(|u| u.url)
+                .collect::<Vec<_>>(),
+            vec!["https://example.com/kept".to_owned()],
+            "a <loc> that does not parse must still be dropped when the seed URL carries credentials"
+        );
+        assert_logged_without_secret(&fields, "hunter2", "127.0.0.1");
     }
 }

@@ -58,6 +58,10 @@ The engine handles the full range of sitemap formats:
 </urlset>
 ```
 
+Each `<loc>` is resolved to an absolute, normalized address and deduplicated within the map
+operation: two spellings of one page, such as a default port or an upper-case host, count once,
+and the same page listed in two sitemaps also counts once.
+
 ### Sitemap index files
 
 When a sitemap index is encountered, the engine recursively fetches all referenced child sitemaps:

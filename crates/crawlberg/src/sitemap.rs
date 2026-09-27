@@ -275,6 +275,23 @@ pub(crate) struct SitemapWalkContext<'a> {
     pub(crate) config: &'a CrawlConfig,
     pub(crate) client: &'a reqwest::Client,
     pub(crate) filter: &'a MapFilter,
+    /// The parsed address of every urlset entry the walk has returned so far.
+    ///
+    /// ~keep One context serves one `map()` call, so this deduplicates across every document
+    /// ~keep that call reads. It sits behind a `Mutex` because the context is shared by
+    /// ~keep reference across awaits; the lock is only taken inside synchronous code.
+    seen_entries: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl<'a> SitemapWalkContext<'a> {
+    pub(crate) fn new(config: &'a CrawlConfig, client: &'a reqwest::Client, filter: &'a MapFilter) -> Self {
+        Self {
+            config,
+            client,
+            filter,
+            seen_entries: std::sync::Mutex::default(),
+        }
+    }
 }
 
 /// An already-fetched sitemap document: where it came from and what came back.
@@ -340,12 +357,34 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
     }
 }
 
-/// Parse a leaf sitemap, keeping only entries `filter` accepts and stopping once
-/// `limit` of them have been collected.
-fn collect_filtered_urls(xml_body: &str, filter: &MapFilter, limit: Option<usize>) -> Vec<SitemapUrl> {
+/// Parse a urlset document fetched from `document_url`, keeping only entries the walk's
+/// filter accepts and stopping once `limit` of them have been collected.
+///
+/// ~keep Each `<loc>` goes through the same resolver as sitemap-index children, without their
+/// ~keep host rewrite: an entry on another host is returned on that host, as before. The entry
+/// ~keep is returned in the parser's normalized form, so a relative `<loc>` becomes absolute and
+/// ~keep two spellings of one address become one entry. An address the walk already returned,
+/// ~keep from this document or an earlier one, is skipped before it counts toward `limit`. A
+/// ~keep `<loc>` that does not parse is dropped.
+pub(crate) fn collect_urlset_entries(
+    document_url: &str,
+    xml_body: &str,
+    context: &SitemapWalkContext<'_>,
+    limit: Option<usize>,
+) -> Vec<SitemapUrl> {
+    let document_url_parses = Url::parse(document_url).is_ok();
+    let mut seen = context
+        .seen_entries
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut urls = Vec::new();
-    for entry in parse_sitemap_xml(xml_body) {
-        if !filter.matches(&entry.url) {
+    for mut entry in parse_sitemap_xml(xml_body) {
+        let Some(resolved) = resolve_redirect(document_url, &entry.url) else {
+            log_unparseable_loc(document_url, document_url_parses, entry.url.len(), "urlset entry");
+            continue;
+        };
+        entry.url = resolved.into();
+        if !context.filter.matches(&entry.url) || !seen.insert(entry.url.clone()) {
             continue;
         }
         urls.push(entry);
@@ -354,6 +393,29 @@ fn collect_filtered_urls(xml_body: &str, filter: &MapFilter, limit: Option<usize
         }
     }
     urls
+}
+
+/// Log a sitemap `<loc>` that failed to parse and is skipped. The `<loc>` is logged by
+/// length only. `source_url` is the document the `<loc>` came from.
+///
+/// ~keep `redact_url_credentials` returns an address that does not parse unchanged, so a
+/// ~keep `source_url` that does not parse is logged by length only too.
+fn log_unparseable_loc(source_url: &str, source_url_parses: bool, loc_len: usize, loc_kind: &'static str) {
+    if source_url_parses {
+        tracing::debug!(
+            sitemap_url = %crate::net::redact_url_credentials(source_url),
+            target_len = loc_len,
+            loc_kind,
+            "sitemap <loc> failed to parse; skipping it"
+        );
+    } else {
+        tracing::debug!(
+            sitemap_url_len = source_url.len(),
+            target_len = loc_len,
+            loc_kind,
+            "sitemap <loc> failed to parse; skipping it"
+        );
+    }
 }
 
 /// Whether the walk has already committed to fetching [`MAX_SITEMAP_DOCUMENTS`] documents.
@@ -389,21 +451,7 @@ fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &
     }
     let resolved = resolve_redirect(sitemap_url, child_url);
     if resolved.is_none() {
-        // ~keep `redact_url_credentials` returns an address that does not parse unchanged,
-        // ~keep so a `sitemap_url` without a `base` is logged by length only.
-        if base.is_some() {
-            tracing::debug!(
-                sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
-                target_len = child_url.len(),
-                "sitemap-index child <loc> failed to parse; skipping it"
-            );
-        } else {
-            tracing::debug!(
-                sitemap_url_len = sitemap_url.len(),
-                target_len = child_url.len(),
-                "sitemap-index child <loc> failed to parse; skipping it"
-            );
-        }
+        log_unparseable_loc(sitemap_url, base.is_some(), child_url.len(), "sitemap-index child");
     }
     resolved.map(String::from)
 }
@@ -462,7 +510,7 @@ async fn process_sitemap_response_inner(
     let reached_limit = |len: usize| limit.is_some_and(|limit| len >= limit);
 
     if !is_sitemap_index(xml_body) {
-        return collect_filtered_urls(xml_body, context.filter, limit);
+        return collect_urlset_entries(document.url, xml_body, context, limit);
     }
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
@@ -549,7 +597,7 @@ mod tests {
         client: &'a reqwest::Client,
         filter: &'a MapFilter,
     ) -> SitemapWalkContext<'a> {
-        SitemapWalkContext { config, client, filter }
+        SitemapWalkContext::new(config, client, filter)
     }
 
     fn xml_document<'a>(url: &'a str, body: &'a str) -> SitemapDocument<'a> {
