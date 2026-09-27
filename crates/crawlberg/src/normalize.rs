@@ -146,16 +146,21 @@ pub(crate) fn strip_fragment(url: &str) -> String {
     }
 }
 
+/// Rewrite `url_str` onto `base`'s host when the two differ, keeping only `url_str`'s path
+/// and query. Returns the URL parser's normalized form of `url_str` when the host already
+/// matches `base`'s, not the raw input: a caller using the return value as a fetch target or
+/// a dedup key must not see two spellings of the same address.
 pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    if let Ok(parsed) = Url::parse(url_str)
-        && parsed.host_str() != base.host_str()
-    {
+    let Ok(parsed) = Url::parse(url_str) else {
+        return url_str.to_owned();
+    };
+    if parsed.host_str() != base.host_str() {
         let mut resolved = base.clone();
         resolved.set_path(parsed.path());
         resolved.set_query(parsed.query());
         return resolved.to_string();
     }
-    url_str.to_owned()
+    parsed.to_string()
 }
 
 /// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
@@ -178,6 +183,27 @@ pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrite_url_host_normalizes_a_same_host_input_instead_of_returning_it_raw() {
+        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
+        let rewritten = rewrite_url_host("HTTPS://example.com:443/a\tb", &base);
+        assert_eq!(
+            rewritten, "https://example.com/ab",
+            "a same-host input must come back in the parser's normalized form (lower-case \
+             scheme, default port dropped, embedded tab stripped), not raw, got {rewritten:?}"
+        );
+    }
+
+    #[test]
+    fn rewrite_url_host_still_rewrites_a_different_host_onto_base() {
+        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
+        let rewritten = rewrite_url_host("https://other.example/a/b?x=1", &base);
+        assert_eq!(
+            rewritten, "https://example.com/a/b?x=1",
+            "a different-host input must still be rewritten onto base's host, got {rewritten:?}"
+        );
+    }
 
     #[test]
     fn distinct_urls_with_escaped_and_literal_separators_stay_distinct() {

@@ -52,6 +52,14 @@ All notable changes to crawlberg are documented here.
   `%20`, and `127.1` becomes `127.0.0.1`.
   (#207)
 
+- **A sitemap-index child `<loc>` was fetched and deduplicated on its raw text instead of its
+  parsed form.** A same-host absolute child address, and any child address when the sitemap
+  index's own URL failed to parse, skipped the URL parser entirely, so two spellings of the
+  same address (a default port, an upper-case scheme, a stray tab) were fetched as two separate
+  documents. Every child address is now parsed and normalized before it is fetched and before
+  it is used as the duplicate key, matching the resolver already used for redirect targets, and
+  a child address that fails to parse is skipped instead of fetched as raw text. (#226)
+
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
   collected was discarded before the crawl or the escalation path could read it — `ETag`,
