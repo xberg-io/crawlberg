@@ -128,7 +128,14 @@ impl Page {
             let Some(src) = &script.src else {
                 continue;
             };
-            let full_url = self.resolve_subresource_url(src);
+            let Some(full_url) = self.resolve_subresource_url(src) else {
+                tracing::debug!(
+                    "skipping unparseable <script src>: page={} src_len={}",
+                    self.url_string(),
+                    src.len(),
+                );
+                continue;
+            };
 
             if !subresource_allowed(self.url.as_ref(), &full_url) {
                 // ~keep Block off-origin script schemes so an HTTP page cannot read local files as JS source.
@@ -215,7 +222,14 @@ impl Page {
     async fn run_module_scripts(&mut self, module_scripts: &[ScriptInfo]) {
         for module_script in module_scripts {
             if let Some(src) = &module_script.src {
-                let full_url = self.resolve_subresource_url(src);
+                let Some(full_url) = self.resolve_subresource_url(src) else {
+                    tracing::debug!(
+                        "skipping unparseable <script type=module src>: page={} src_len={}",
+                        self.url_string(),
+                        src.len(),
+                    );
+                    continue;
+                };
                 self.load_remote_module(&full_url).await;
             } else if !module_script.inline.is_empty() {
                 let base = self.url_string();
