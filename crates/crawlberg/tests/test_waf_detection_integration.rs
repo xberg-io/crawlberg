@@ -437,3 +437,37 @@ async fn a_403_whose_only_waf_evidence_is_cdn_presence_still_blocks() {
     )
     .await;
 }
+
+/// Sucuri's `x-sucuri-id` fingerprint is a bare presence check: it names no value and no status,
+/// and Sucuri sets the header on every response it proxies. A 200 that carries it with an
+/// ordinary body is returned as content through the engine's scrape path, like the
+/// `server`-header CDNs above.
+///
+/// ~keep The body stays under the Tower service's challenge-body limit, so the 2xx WAF check
+/// runs on this response rather than being skipped for size.
+#[tokio::test]
+async fn a_2xx_whose_only_waf_evidence_is_a_bare_sucuri_id_is_returned_as_content() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><head><title>Blog</title></head><body><h1>Release notes</h1></body></html>")
+                .append_header("content-type", "text/html")
+                .append_header("x-sucuri-id", "18012"),
+        )
+        .mount(&mock)
+        .await;
+
+    let handle = create_engine(Some(no_browser_config()))
+        .expect("create_engine with no-browser config should succeed in integration test");
+    let page = scrape(&handle, &mock.uri())
+        .await
+        .unwrap_or_else(|error| panic!("a 200 with a bare x-sucuri-id must succeed, got: {error:?}"));
+    assert_eq!(page.status_code, 200);
+    assert!(
+        page.html.contains("Release notes"),
+        "the real page must reach the caller, got: {}",
+        page.html
+    );
+}

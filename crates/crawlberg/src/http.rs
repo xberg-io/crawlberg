@@ -1152,6 +1152,35 @@ mod tests {
         );
     }
 
+    /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
+    /// `http_fetch`, the path robots.txt, sitemap and asset fetches take (crawlberg#231).
+    #[tokio::test]
+    async fn http_fetch_returns_a_2xx_with_only_a_cdn_presence_header_as_content() {
+        for (name, value) in [("server", "AkamaiGHost"), ("x-sucuri-id", "18012")] {
+            let mock = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/probe"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .append_header(name, value)
+                        .set_body_string("<html><body><h1>Release notes</h1></body></html>"),
+                )
+                .mount(&mock)
+                .await;
+
+            let config = permissive_config();
+            let client = build_client(&config).expect("client must build");
+            let response = http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|error| panic!("a 200 with only `{name}: {value}` must succeed, got {error:?}"));
+            assert!(
+                response.body.contains("Release notes"),
+                "the real page must reach the caller, got: {}",
+                response.body
+            );
+        }
+    }
+
     /// A 3xx whose `Location` does not resolve to a URL is returned as the response
     /// rather than followed or rejected. ~keep
     #[tokio::test]
