@@ -220,14 +220,12 @@ impl Page {
     }
 
     async fn run_module_scripts(&mut self, module_scripts: &[ScriptInfo]) {
-        for module_script in module_scripts {
-            if let Some(src) = &module_script.src {
-                let Some(full_url) = self.resolve_subresource_url(src) else {
-                    tracing::debug!(
-                        "skipping unparseable <script type=module src>: page={} src_len={}",
-                        self.url_string(),
-                        src.len(),
-                    );
+        // ~keep The same policy as a classic `src`: the loader fetches and runs what passes it.
+        let mut allowed: std::collections::HashMap<usize, String> =
+            self.allowed_script_urls(module_scripts).into_iter().collect();
+        for (index, module_script) in module_scripts.iter().enumerate() {
+            if module_script.src.is_some() {
+                let Some(full_url) = allowed.remove(&index) else {
                     continue;
                 };
                 self.load_remote_module(&full_url).await;

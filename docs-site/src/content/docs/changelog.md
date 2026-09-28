@@ -81,6 +81,15 @@ title: "Changelog"
   letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
   `javascript:`. (#86)
 
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy and proxy as an `import()`, and then run with every
+  module it imports. A module address also goes through the interception block list, as a classic
+  `<script src>` does. A module that fails to load, or whose server does not answer within 10
+  seconds, is skipped and the other scripts still run. The same 10-second bound now also applies to
+  the modules an inline module script imports. (#441)
+
 - **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
   the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
   were skipped the same way. Tag names now match in any case. (#87)

@@ -201,6 +201,243 @@ async fn module_scripts_run_after_every_classic_script() {
     );
 }
 
+fn rendered_html(page: &Page) -> String {
+    page.with_dom(|dom| dom.outer_html(dom.document()))
+        .expect("the page must have a DOM")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_with_a_src_is_fetched_and_run() {
+    let html = "<html><body><script type=\"module\" src=\"app.js\"></script></body></html>";
+    let app = "const p = document.createElement('p');\
+               p.setAttribute('id', 'from-module');\
+               p.textContent = 'module ran';\
+               document.body.appendChild(p);";
+    let base = serve(routes(&[("/", "text/html", html), ("/app.js", "text/javascript", app)])).await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    let rendered = rendered_html(&page);
+    assert!(
+        rendered.contains("<p id=\"from-module\">module ran</p>"),
+        "the module's code must run and add its element: {rendered}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_with_a_src_runs_the_modules_it_imports() {
+    let html = "<html><body><script type=\"module\" src=\"/js/app.js\"></script></body></html>";
+    let app = format!(
+        "import {{ tag }} from './dep.js';\n{}\nglobalThis.imported = tag;",
+        push("app")
+    );
+    let dep = format!("{}\nexport const tag = 'from-dep';", push("dep"));
+    let base = serve(routes(&[
+        ("/", "text/html", html),
+        ("/js/app.js", "text/javascript", &app),
+        ("/js/dep.js", "text/javascript", &dep),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(
+        order(&mut page),
+        vec!["dep", "app"],
+        "the imported module runs first, resolved against the importing module's address"
+    );
+    assert_eq!(global(&mut page, "globalThis.imported"), serde_json::json!("from-dep"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_fails_to_load_does_not_stop_the_page() {
+    let html = format!(
+        "<html><body><h1>still here</h1>\
+         <script type=\"module\" src=\"/missing.js\"></script>\
+         <script type=\"module\" src=\"/imports-missing.js\"></script>\
+         <script type=\"module\">{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script>\
+         </body></html>",
+        push("inline"),
+    );
+    let imports_missing = format!("import './gone.js';\n{}", push("imports-missing"));
+    let ok = push("ok");
+    let base = serve(routes(&[
+        ("/", "text/html", &html),
+        ("/imports-missing.js", "text/javascript", &imports_missing),
+        ("/ok.js", "text/javascript", &ok),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must still succeed");
+
+    assert_eq!(
+        order(&mut page),
+        vec!["inline", "ok"],
+        "a module that is missing, or imports one that is, must not run and must not stop the others"
+    );
+    assert!(rendered_html(&page).contains("<h1>still here</h1>"));
+    assert_eq!(
+        event_urls(&page, "Script"),
+        vec![format!("{base}/ok.js")],
+        "only the module that loaded is recorded as a script"
+    );
+}
+
+/// Refuses every address whose path ends in `refused.js`, and allows the rest.
+#[derive(Debug)]
+struct RefuseRefusedJs;
+
+#[async_trait::async_trait]
+impl SsrfValidator for RefuseRefusedJs {
+    async fn validate(&self, url: &Url) -> Result<(), String> {
+        if url.path().ends_with("refused.js") {
+            Err("refused by the test policy".to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_the_ssrf_policy_refuses_is_not_run() {
+    let html = "<html><body>\
+                <script type=\"module\" src=\"/refused.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script>\
+                </body></html>";
+    let refused = push("refused");
+    let ok = push("ok");
+    let base = serve(routes(&[
+        ("/", "text/html", html),
+        ("/refused.js", "text/javascript", &refused),
+        ("/ok.js", "text/javascript", &ok),
+    ]))
+    .await;
+
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(RefuseRefusedJs), false);
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_blocked_by_interception_is_not_run() {
+    let blocked = push("blocked");
+    let ok = push("ok");
+    let (origin, mut page) = navigate_intercepted(
+        |_| {
+            "<html><body><script type=\"module\" src=\"/blocked.js\"></script>\
+             <script type=\"module\" src=\"/ok.js\"></script></body></html>"
+                .to_string()
+        },
+        &[
+            ("/blocked.js", "text/javascript", &blocked),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_named_twice_runs_once() {
+    let html = "<html><body><script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let app = push("app");
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[("/app.js", "text/javascript", &app), ("/ok.js", "text/javascript", &ok)],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["app", "ok"],
+        "a module runs once per page, as in a browser"
+    );
+}
+
+/// Accepts connections and never answers them, so a fetch from it stalls until its caller gives up.
+async fn stalling_origin() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            held.push(socket);
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// Navigates to `html` with a bound on the whole render, so a stalled module fails the test rather than hanging it.
+async fn navigate_bounded(html: &str, extra: &[(&str, &str, &str)]) -> Page {
+    let mut entries = vec![("/", "text/html", html)];
+    entries.extend_from_slice(extra);
+    let base = serve(routes(&entries)).await;
+    let mut page = test_page();
+    tokio::time::timeout(std::time::Duration::from_secs(40), page.navigate(&base))
+        .await
+        .expect("the render must finish although a module server never answers")
+        .expect("navigation must succeed");
+    page
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_whose_server_never_answers_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\" src=\"{stall}/app.js\"></script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>"
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_whose_import_never_answers_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">import '{stall}/dep.js';\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("stalled"),
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_still_runs_the_modules_it_imports() {
+    let html = format!(
+        "<html><body><script type=\"module\">import {{ tag }} from './dep.js';\n{}\nglobalThis.imported = tag;</script></body></html>",
+        push("inline"),
+    );
+    let dep = format!("{}\nexport const tag = 'from-dep';", push("dep"));
+    let base = serve(routes(&[
+        ("/", "text/html", &html),
+        ("/dep.js", "text/javascript", &dep),
+    ]))
+    .await;
+
+    let mut page = test_page();
+    page.navigate(&base).await.expect("navigation must succeed");
+
+    assert_eq!(order(&mut page), vec!["dep", "inline"]);
+    assert_eq!(global(&mut page, "globalThis.imported"), serde_json::json!("from-dep"));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_failing_script_does_not_stop_the_remaining_scripts() {
     let html = format!(
