@@ -57,6 +57,10 @@ pub struct JsOpState {
     pub intercept_tx: Option<tokio::sync::mpsc::UnboundedSender<InterceptedRequest>>,
     pub intercept_counter: u64,
     pub intercept_enabled: bool,
+    /// The page's interception block list. The module loader refuses a module address it matches.
+    pub intercept_block_patterns: Vec<String>,
+    /// The page's User-Agent, which the module loader sends with every module request.
+    pub user_agent: Option<String>,
 }
 
 impl JsOpState {
@@ -73,6 +77,8 @@ impl JsOpState {
             intercept_tx: None,
             intercept_counter: 0,
             intercept_enabled: false,
+            intercept_block_patterns: Vec::new(),
+            user_agent: None,
         }
     }
 
