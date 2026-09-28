@@ -47,8 +47,7 @@ title: "Changelog"
   (`AkamaiGHost`, `Incapsula`, `BIG-IP`) now decide a 403 only. An overloaded or redeploying origin
   behind one of those CDNs is therefore retried per `retry_codes` as it was before challenge
   statuses were fingerprinted, instead of being classified as a WAF block and escalated to the
-  bypass or browser tier. The same header no longer turns a 2xx served through those CDNs into a
-  `WafBlocked` error either. A real block from those vendors is still caught on a 403, and no other
+  bypass or browser tier. A real block from those vendors is still caught on a 403, and no other
   fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
   `statuses` array of the codes it may decide; an empty array is rejected. (#197)
 
