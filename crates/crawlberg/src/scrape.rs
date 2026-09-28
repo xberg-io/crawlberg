@@ -864,7 +864,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_head_links_that_resolve_to_a_script_base() {
+    async fn scrape_resolves_relative_head_links_to_the_page_under_a_script_base() {
         let result = scrape_head(
             "<base href=\"javascript:alert(1)//\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"#feed\">\
@@ -873,24 +873,49 @@ mod tests {
              <link rel=\"canonical\" href=\"#top\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"https://example.com/feed.xml\">\
              <link rel=\"alternate\" hreflang=\"en\" href=\"https://example.com/en/\">\
-             <link rel=\"icon\" href=\"https://example.com/fav.ico\">",
+             <link rel=\"icon\" href=\"https://example.com/fav.ico\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"javascript:alert(2)\">\
+             <link rel=\"alternate\" hreflang=\"fr\" href=\"data:text/html,x\">\
+             <link rel=\"icon\" href=\"VBScript:msgbox(1)\">",
         )
         .await;
-        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+        // A script base is ignored (the HTML frozen base URL steps), so a relative address
+        // resolves against the page; an absolute script or data address still names itself
+        // and is still dropped, even under the same base.
+        assert_eq!(
+            urls(&result.feeds, |f| &f.url),
+            ["https://example.com/page#feed", "https://example.com/feed.xml"]
+        );
         let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
-        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/en/"]);
+        assert_eq!(
+            urls(hreflangs, |h| &h.url),
+            ["https://example.com/page#de", "https://example.com/en/"]
+        );
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
-        assert_eq!(urls(favicons, |f| &f.url), ["https://example.com/fav.ico"]);
-        assert_eq!(result.metadata.canonical_url, None);
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["https://example.com/page#icon", "https://example.com/fav.ico"]
+        );
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/page#top")
+        );
     }
 
     #[tokio::test]
-    async fn scrape_skips_images_that_resolve_to_a_script_or_data_base() {
-        for (base, image) in [
-            ("javascript:alert(1)//", "#x"),
-            ("JavaScript://host/", "x.png"),
-            ("vbscript://host/", "x.png"),
-            ("data:text/html,x", "#x"),
+    async fn scrape_resolves_relative_images_to_the_page_under_a_script_or_data_base() {
+        // A script or data base is ignored (the HTML frozen base URL steps), so a relative
+        // image address resolves against the page and is kept. `vbscript:` is not one of the
+        // frozen-base schemes, so its base still stands and a relative address under it still
+        // names an absolute script address and is still dropped, same as before #450. The last
+        // case is a literal absolute script address: it names itself under any base and stays
+        // dropped.
+        for (base, image, resolved) in [
+            ("javascript:alert(1)//", "#x", Some("https://example.com/page#x")),
+            ("JavaScript://host/", "x.png", Some("https://example.com/x.png")),
+            ("vbscript://host/", "x.png", None),
+            ("data:text/html,x", "#x", Some("https://example.com/page#x")),
+            ("javascript:alert(1)//", "javascript:evil()", None),
         ] {
             let resp = response(
                 "text/html",
@@ -908,14 +933,27 @@ mod tests {
             let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
                 .await
                 .expect("scrape should succeed");
-            assert_eq!(
-                urls(&result.images, |i| &i.url),
-                [
+            let expected: Vec<&str> = match resolved {
+                Some(resolved) => vec![
+                    resolved,
+                    "https://example.com/i.png",
+                    resolved,
+                    "https://example.com/s.png",
+                    resolved,
+                    "https://example.com/og.png",
+                    resolved,
+                    "https://example.com/tw.png",
+                ],
+                None => vec![
                     "https://example.com/i.png",
                     "https://example.com/s.png",
                     "https://example.com/og.png",
                     "https://example.com/tw.png",
                 ],
+            };
+            assert_eq!(
+                urls(&result.images, |i| &i.url),
+                expected,
                 "for {image:?} against {base:?}"
             );
         }
