@@ -92,6 +92,12 @@ title: "Changelog"
   now redact any credentials from the address first, the same way the config and CLI checks
   already do. (#424)
 
+- **Two more places printed a browser endpoint's password.** The interact backend built the
+  same connect error as the launch path, without redacting the address, and the browser
+  configuration's debug output showed `endpoint` as configured, so any debug print of a crawl
+  configuration carried the password. Both now redact credentials the same way the launch path
+  and the config and CLI checks already do. (#473)
+
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
   Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.

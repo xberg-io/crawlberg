@@ -89,7 +89,7 @@ impl Default for ContentConfig {
 }
 
 /// Browser fallback configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct BrowserConfig {
     /// When to use the headless browser fallback.
@@ -153,6 +153,39 @@ pub struct BrowserConfig {
     /// requests so cookies + fingerprint + solved challenges persist.
     /// Default: true. When false, each request gets a fresh Page.
     pub session_affinity: bool,
+}
+
+// ~keep Manual, not derived: `endpoint` may carry userinfo (ws://user:pass@host/), and this
+// config reaches `tracing::debug!(?config, ...)` and any `{:?}` capture of a `CrawlConfig`
+// (whose derived `Debug` calls this one), so a derived impl here would put the password
+// wherever a debug print of the crawl configuration reaches. xberg-io/crawlberg#473.
+impl std::fmt::Debug for BrowserConfig {
+    // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
+    // binding representation, so without this the surface fails generation with
+    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
+    #[cfg_attr(alef, alef(skip))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowserConfig")
+            .field("mode", &self.mode)
+            .field("backend", &self.backend)
+            .field(
+                "endpoint",
+                &self.endpoint.as_deref().map(crate::net::redact_url_credentials),
+            )
+            .field("timeout", &self.timeout)
+            .field("overall_timeout", &self.overall_timeout)
+            .field("shutdown_timeout", &self.shutdown_timeout)
+            .field("wait", &self.wait)
+            .field("wait_selector", &self.wait_selector)
+            .field("extra_wait", &self.extra_wait)
+            .field("proxy", &self.proxy)
+            .field("block_url_patterns", &self.block_url_patterns)
+            .field("eval_script", &self.eval_script)
+            .field("robots_user_agent", &self.robots_user_agent)
+            .field("capture_network_events", &self.capture_network_events)
+            .field("session_affinity", &self.session_affinity)
+            .finish()
+    }
 }
 
 impl Default for BrowserConfig {

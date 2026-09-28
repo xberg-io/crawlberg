@@ -429,9 +429,12 @@ fn action_type(action: &PageAction) -> &'static str {
 
 async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        let (browser, handler) = Browser::connect(endpoint).await.map_err(|e| {
+            // ~keep `endpoint` may carry userinfo (ws://user:pass@host/); redact before it
+            // reaches this error, which flows into MCP error payloads and the interact result.
+            let redacted = crate::net::redact_url_credentials(endpoint);
+            CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
+        })?;
         Ok((browser, handler, None))
     } else {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -542,6 +545,39 @@ mod tests {
         assert!(
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
+        );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password, though the failing address must still be readable for debugging.
+    ///
+    /// ~keep This is the interact path's own copy of `browser::launch::launch_or_connect`;
+    /// ~keep xberg-io/crawlberg#473 was exactly this test missing here after #424 added it
+    /// ~keep only to the launch path. A closed local port refuses the connection immediately,
+    /// ~keep so this needs no real Chrome and stays fast; `ws://` skips chromiumoxide's
+    /// ~keep `json/version` HTTP probe and goes straight to the WebSocket handshake, so this
+    /// ~keep is the only way to reach this function's error path without a real remote browser.
+    #[tokio::test]
+    async fn connect_error_never_contains_the_endpoint_password() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
         );
     }
 }
