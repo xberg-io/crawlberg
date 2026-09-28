@@ -251,6 +251,18 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "requires html already masked")]
+    fn extract_links_panics_in_debug_when_the_caller_forgot_to_mask() {
+        // ~keep `<title>` content is raw text: a real parser never reads the `<a href=1>` inside
+        // ~keep it as a tag, so `mask_raw_text_markup` always rewrites this input. Calling
+        // ~keep `extract_links` on it unmasked is the precondition violation both call sites
+        // ~keep (`extract.rs`, `map.rs`) avoid by masking first.
+        let html = "<title>x<a href=1></title>";
+        let base_url = Url::parse("https://example.com/").expect("valid base URL");
+        let _ = extract_links(html, &base_url);
+    }
+
+    #[test]
     fn a_malformed_attribute_name_is_left_out_of_the_rewritten_tag() {
         // ~keep html5ever's attribute-name state treats a `"` as a parse error but still appends
         // ~keep it to the name (only whitespace, `/`, `>` and `=` end the name), so `x"y` is a
