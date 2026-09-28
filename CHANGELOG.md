@@ -450,7 +450,7 @@ All notable changes to crawlberg are documented here.
 
 - **A sitemap-index child differing only by a URL fragment was fetched twice.** The
   fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
-  `rewrite_url_host` kept the fragment on a same-host child address before it was fetched
+  the host rewrite kept the fragment on a same-host child address before it was fetched
   and used as the duplicate key. A relative child address such as `a.xml#x` kept its fragment
   too. The fragment is now dropped from every child address, so both addresses fetch and dedupe
   as one document. (#324, #363)
