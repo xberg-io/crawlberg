@@ -345,6 +345,108 @@ async fn a_module_src_blocked_by_interception_is_not_run() {
     assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
 }
 
+/// Navigates to `html` with interception blocking every address that ends in `blocked.js`, and
+/// returns the page with the request lines the server saw.
+async fn navigate_intercepted_recording(html: &str, extra: &[(&str, &str)]) -> (Page, Vec<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let mut entries = vec![("/".to_string(), ok_response("text/html", html))];
+    entries.extend(
+        extra
+            .iter()
+            .map(|(path, body)| ((*path).to_string(), ok_response("text/javascript", body))),
+    );
+    let requests = serve_raw_recording(listener, entries.into_iter().collect());
+
+    let mut page = test_page();
+    page.intercept_enabled = true;
+    page.intercept_block_patterns = vec!["*blocked.js".to_string()];
+    page.navigate(&format!("http://{addr}/"))
+        .await
+        .expect("navigation must succeed");
+    let requests = requests.lock().expect("lock").clone();
+    (page, requests)
+}
+
+fn requested(requests: &[String], path: &str) -> bool {
+    requests
+        .iter()
+        .any(|request| request.starts_with(&format!("GET {path} ")))
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_script_import_blocked_by_interception_is_not_fetched() {
+    let html = "<html><body><script type=\"module\" src=\"/app.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let app = format!("import './blocked.js';\n{}", push("app"));
+    let (mut page, requests) = navigate_intercepted_recording(
+        html,
+        &[
+            ("/app.js", &app),
+            ("/blocked.js", &push("blocked")),
+            ("/ok.js", &push("ok")),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        order(&mut page),
+        vec!["ok"],
+        "a module that imports a blocked address must not run, and must not stop the others"
+    );
+    assert!(requested(&requests, "/app.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import is never requested: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_import_blocked_by_interception_is_not_fetched() {
+    let html = format!(
+        "<html><body><script type=\"module\">import './blocked.js';\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("inline"),
+    );
+    let (mut page, requests) =
+        navigate_intercepted_recording(&html, &[("/blocked.js", &push("blocked")), ("/ok.js", &push("ok"))]).await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import is never requested: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_request_carries_the_page_user_agent() {
+    let html = "<html><body><script src=\"/classic.js\"></script>\
+                <script type=\"module\" src=\"/app.js\"></script></body></html>";
+    let app = format!("import './dep.js';\n{}", push("app"));
+    let (mut page, requests) = navigate_intercepted_recording(
+        html,
+        &[("/classic.js", &push("classic")), ("/app.js", &app), ("/dep.js", "")],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["classic", "app"]);
+    let user_agent = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+                    .map(|(_, value)| value.trim().to_string())
+            })
+    };
+    let page_user_agent = user_agent("/classic.js").expect("the page client sends a User-Agent");
+    assert_eq!(user_agent("/app.js").as_deref(), Some(page_user_agent.as_str()));
+    assert_eq!(user_agent("/dep.js").as_deref(), Some(page_user_agent.as_str()));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_module_src_named_twice_runs_once() {
     let html = "<html><body><script type=\"module\" src=\"/app.js\"></script>\
@@ -416,6 +518,41 @@ async fn an_inline_module_whose_import_never_answers_does_not_hold_the_page() {
     let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
 
     assert_eq!(order(&mut page), vec!["ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_whose_top_level_await_never_settles_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/tla.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let tla = format!(
+        "{}\nawait fetch('{stall}/never');\n{}",
+        push("tla-before"),
+        push("tla-after")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[("/tla.js", "text/javascript", &tla), ("/ok.js", "text/javascript", &ok)],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_whose_top_level_await_never_settles_does_not_hold_the_page() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">{}\nawait fetch('{stall}/never');\n{}</script>\
+         <script type=\"module\" src=\"/ok.js\"></script></body></html>",
+        push("tla-before"),
+        push("tla-after"),
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "ok"]);
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -85,10 +85,12 @@ All notable changes to crawlberg are documented here.
   `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
   fetched and the page rendered as if the script were absent. The module is now fetched through
   the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
-  and then run with every module it imports. A module address also goes through the interception
-  block list, as a classic `<script src>` does. A module that fails to load, or whose server does
-  not answer within 10 seconds, is skipped and the other scripts still run. The same 10-second
-  bound now also applies to the modules an inline module script imports. (#441)
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
 
 - **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
   the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
