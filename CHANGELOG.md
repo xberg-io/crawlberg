@@ -63,6 +63,13 @@ All notable changes to crawlberg are documented here.
   engine's own crawl uses, shares that decision with `http_fetch` instead of classifying every 2xx
   as if it were a 403. (#231)
 
+- **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
+  WAF fingerprint match, and the fetch path fingerprints one response more than once, so a single
+  block added two or three. It now moves once for each response the fetch path refuses as a WAF
+  block. A response that a fingerprint matches but that is returned as content, such as an ordinary
+  200 behind Sucuri, does not count, and neither does a match from a `WafClassifier` set on the
+  engine.
+
 - **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
   within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
   before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`

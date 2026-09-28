@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use opentelemetry::KeyValue;
+
 use super::HttpResponse;
 use crate::error::CrawlError;
 use crate::types::WafClassifier;
@@ -62,6 +64,28 @@ pub(super) fn waf_vendor_from_body(
     classify_vendor(&build_partial_response(status, body, headers_map))
 }
 
+/// The WAF vendor `headers` alone fingerprint for `status`, without reading any body.
+///
+/// ~keep Passing an empty body is not a shortcut. `Rules::classify` evaluates its header-only
+/// fingerprints and returns before it scans the body, and a `body_substring` signal cannot
+/// match an empty body, so this is exactly the header-only subset of a full classification and
+/// reports the same vendor a full one would.
+pub(super) fn header_waf_vendor(status: u16, headers: &HashMap<String, Vec<String>>) -> Option<String> {
+    waf_vendor_from_body(status, "", headers)
+}
+
+/// The [`CrawlError::WafBlocked`] a response is refused with, counted in `crawl_waf_blocks_total`.
+///
+/// ~keep This is the only place that counter is incremented, and every refusal on the fetch
+/// path is built here. So the counter moves once per refused response, and never for a response
+/// that the classifier matched but the fetch path returned as content.
+pub(super) fn waf_block(vendor: String, message: String) -> CrawlError {
+    crate::telemetry::metrics::registry()
+        .waf_blocks_total
+        .add(1, &[KeyValue::new("vendor", vendor.clone())]);
+    CrawlError::WafBlocked { message, vendor }
+}
+
 /// The evidence that decided a 2xx response carries a WAF interstitial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WafEvidence {
@@ -96,10 +120,8 @@ pub(crate) fn waf_2xx_error(
     headers_map: &HashMap<String, Vec<String>>,
 ) -> Option<CrawlError> {
     let (vendor, evidence) = confirmed_2xx_waf(status, body_bytes, body, headers_map)?;
-    Some(CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx ({}): {vendor}", evidence.label()),
-        vendor,
-    })
+    let message = format!("waf/blocked detected on 2xx ({}): {vendor}", evidence.label());
+    Some(waf_block(vendor, message))
 }
 
 /// The vendor a 2xx is refused for, with the evidence class that decided it.
@@ -116,11 +138,9 @@ fn confirmed_2xx_waf(
         headers_map,
     ))?;
 
-    // ~keep An empty body reproduces exactly the header-only subset of a classification:
-    // `Rules::classify` evaluates its header-only fingerprints first and returns before it scans
-    // the body, and a `body_substring` signal cannot match an empty body. So a `None` here means
-    // a body signal took part in the match above and the match needs no further corroboration.
-    if waf_vendor_from_body(status, "", headers_map).is_none() {
+    // ~keep No header-only match means a body signal took part in the match above, so the match
+    // needs no further corroboration.
+    if header_waf_vendor(status, headers_map).is_none() {
         return Some((vendor, WafEvidence::Body));
     }
 

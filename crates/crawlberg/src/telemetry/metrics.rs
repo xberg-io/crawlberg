@@ -52,7 +52,11 @@ pub struct MetricRegistry {
     /// Page fetches blocked by robots.txt.
     pub robots_blocked_total: Counter<u64>,
 
-    /// WAF / antibot challenges detected, partitioned by vendor.
+    /// Responses refused as a WAF block, partitioned by vendor.
+    ///
+    /// Counts once for each response the fetch path refuses as a WAF block. A response that a WAF
+    /// fingerprint matches but that is returned as content does not count, and neither does a
+    /// refusal that a custom retry policy or antibot strategy makes.
     ///
     /// Labels: `vendor`
     pub waf_blocks_total: Counter<u64>,
@@ -109,7 +113,7 @@ impl MetricRegistry {
 
         let waf_blocks_total = meter
             .u64_counter("crawl_waf_blocks_total")
-            .with_description("WAF / antibot challenges detected, partitioned by vendor")
+            .with_description("Responses refused as a WAF block, partitioned by vendor")
             .build();
 
         let backend_escalations_total = meter

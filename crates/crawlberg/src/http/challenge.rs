@@ -38,16 +38,6 @@ pub(crate) fn is_challenge_status(status: u16) -> bool {
     CHALLENGE_STATUSES.contains(&status)
 }
 
-/// The WAF vendor `headers` alone fingerprint for `status`, without reading any body.
-///
-/// ~keep Passing an empty body is not a shortcut. `Rules::classify` evaluates its header-only
-/// fingerprints and returns before it scans the body, and a `body_substring` signal cannot
-/// match an empty body, so this is exactly the header-only subset of a full classification and
-/// reports the same vendor a full one would.
-pub(super) fn header_waf_vendor(status: u16, headers: &HashMap<String, Vec<String>>) -> Option<String> {
-    waf::waf_vendor_from_body(status, "", headers)
-}
-
 /// Classify a challenge status: a [`CrawlError::WafBlocked`] when the response fingerprints,
 /// otherwise the plain error the status carries on its own.
 ///
@@ -61,7 +51,7 @@ pub(crate) async fn challenge_status_error(
     resp: reqwest::Response,
     max_body_size: Option<usize>,
 ) -> CrawlError {
-    if let Some(vendor) = header_waf_vendor(status, headers) {
+    if let Some(vendor) = waf::header_waf_vendor(status, headers) {
         return waf_blocked(status, vendor);
     }
 
@@ -83,10 +73,8 @@ fn waf_blocked(status: u16, vendor: String) -> CrawlError {
         vendor = %vendor,
         "challenge status fingerprinted as a WAF block; escalating rather than retrying"
     );
-    CrawlError::WafBlocked {
-        message: challenge_message(status, &vendor),
-        vendor,
-    }
+    let message = challenge_message(status, &vendor);
+    waf::waf_block(vendor, message)
 }
 
 /// The freeform part of a WAF block's message.
@@ -136,7 +124,7 @@ mod tests {
         let headers = HashMap::from([("x-datadome".to_string(), vec!["blocked".to_string()])]);
         for status in [403_u16, 429, 503] {
             assert_eq!(
-                header_waf_vendor(status, &headers).as_deref(),
+                waf::header_waf_vendor(status, &headers).as_deref(),
                 Some("datadome"),
                 "status {status} must fingerprint from headers alone"
             );
@@ -148,13 +136,13 @@ mod tests {
         for (server, vendor) in [("AkamaiGHost", "akamai"), ("Incapsula", "imperva"), ("BIG-IP", "f5")] {
             let headers = HashMap::from([("server".to_string(), vec![server.to_string()])]);
             assert_eq!(
-                header_waf_vendor(FORBIDDEN_STATUS, &headers).as_deref(),
+                waf::header_waf_vendor(FORBIDDEN_STATUS, &headers).as_deref(),
                 Some(vendor),
                 "a 403 behind {server} is near-certainly a block"
             );
             for status in [429_u16, 503] {
                 assert_eq!(
-                    header_waf_vendor(status, &headers),
+                    waf::header_waf_vendor(status, &headers),
                     None,
                     "a {status} behind {server} is the origin, not an interstitial"
                 );
@@ -166,7 +154,7 @@ mod tests {
     fn a_body_only_fingerprint_is_not_reported_from_headers_alone() {
         let headers = HashMap::from([("server".to_string(), vec!["cloudflare".to_string()])]);
         assert_eq!(
-            header_waf_vendor(503, &headers),
+            waf::header_waf_vendor(503, &headers),
             None,
             "a fingerprint needing a body signal must not fire on headers alone"
         );

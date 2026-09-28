@@ -2,15 +2,14 @@
 //!
 //! # Observability
 //!
-//! OTel counters (`opentelemetry::global`) emit unconditionally — consumers
-//! (xberg-enterprise) expect these always. Tracing spans/events are always compiled
-//! as `tracing` is now an unconditional dependency.
+//! ~keep `Rules::classify` records no metric. A match is not a block: the fetch path classifies
+//! one response several times, and it returns some matched 2xx responses as content. The block
+//! counter is incremented where a response is refused, in `crate::http::waf`.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use opentelemetry::KeyValue;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -346,15 +345,11 @@ impl Rules {
                     Signal::BodySubstring => false,
                 })
             {
-                let signal = WafSignal {
+                return Ok(Some(WafSignal {
                     vendor: fingerprint.vendor.clone(),
                     fingerprint_id: fingerprint.id.clone(),
                     weight: fingerprint.weight,
-                };
-                crate::telemetry::metrics::registry()
-                    .waf_blocks_total
-                    .add(1, &[KeyValue::new("vendor", signal.vendor.clone())]);
-                return Ok(Some(signal));
+                }));
             }
         }
 
@@ -371,15 +366,11 @@ impl Rules {
 
         for (fp_idx, fingerprint) in self.fingerprints.iter().enumerate() {
             if self.fingerprint_matches(fingerprint, fp_idx, &matched_fp_indices, response, is_2xx) {
-                let signal = WafSignal {
+                return Ok(Some(WafSignal {
                     vendor: fingerprint.vendor.clone(),
                     fingerprint_id: fingerprint.id.clone(),
                     weight: fingerprint.weight,
-                };
-                crate::telemetry::metrics::registry()
-                    .waf_blocks_total
-                    .add(1, &[KeyValue::new("vendor", signal.vendor.clone())]);
-                return Ok(Some(signal));
+                }));
             }
         }
         Ok(None)
