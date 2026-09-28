@@ -15,6 +15,19 @@ use crate::net::userinfo;
 /// Placeholder reported instead of a URL that did not parse, so the raw input is never echoed.
 const UNPARSEABLE_URL: &str = "(unparseable URL)";
 
+/// Parse a caller's URL, refusing one that has no host and contains an `@`.
+///
+/// ~keep `user:pw@host/path` parses as scheme `user` with no host, so it has no userinfo to
+/// ~keep split off, and its password would become the seed's text. The credential redactor
+/// ~keep hides such a value whole for the same reason.
+fn parse_caller_url(raw: &str) -> Result<Url, String> {
+    let url = Url::parse(raw).map_err(|e| format!("invalid URL: {e}"))?;
+    if url.host().is_none() && raw.contains('@') {
+        return Err("invalid URL: it has no host and contains an `@`, which may be a credential".to_owned());
+    }
+    Ok(url)
+}
+
 /// A caller's URL after admission: parsed, and without userinfo.
 ///
 /// The text is the caller's own string when it carried no userinfo, so a URL without
@@ -66,18 +79,24 @@ pub(crate) fn admission_key(raw: &str, admitted: Option<&SeedUrl>) -> String {
     if let Some(seed) = admitted {
         return seed.as_str().to_owned();
     }
-    userinfo::parse(raw).map_or_else(|| UNPARSEABLE_URL.to_owned(), String::from)
+    parse_caller_url(raw).map_or_else(
+        |_| UNPARSEABLE_URL.to_owned(),
+        |mut url| {
+            userinfo::strip(&mut url);
+            url.into()
+        },
+    )
 }
 
 impl CrawlEngine {
     /// Admit a caller's URL: split off its userinfo and scope credentials to its host.
     ///
     /// Returns a clone of this engine whose configuration carries the credential scope, and
-    /// the clean seed URL. A URL that does not parse is refused without echoing it. A URL
-    /// that carries userinfo while `auth` is also configured is a configuration error.
+    /// the clean seed URL. A URL that does not parse, or has no host and contains an `@`, is
+    /// refused without echoing it. A URL that carries userinfo while `auth` is also configured
+    /// is a configuration error.
     pub(crate) fn admit(&self, raw: &str) -> Result<(CrawlEngine, SeedUrl), CrawlError> {
-        let parsed =
-            Url::parse(raw).map_err(|e| CrawlError::ssrf_violation(UNPARSEABLE_URL, format!("invalid URL: {e}")))?;
+        let parsed = parse_caller_url(raw).map_err(|reason| CrawlError::ssrf_violation(UNPARSEABLE_URL, reason))?;
         let (clean, basic) = userinfo::split(parsed);
         let text = if basic.is_some() {
             clean.as_str().to_owned()
@@ -168,5 +187,21 @@ mod tests {
         let rendered = format!("{error} {error:?}");
         assert!(!rendered.contains("secret"), "{rendered}");
         assert!(rendered.contains("invalid URL"), "{rendered}");
+    }
+
+    #[test]
+    fn admission_refuses_a_hostless_url_with_an_at_sign_without_echoing_it() {
+        let engine = engine_with(CrawlConfig::default());
+        for raw in ["user:hunter2@evil.example/path", "user:hunt#er2@evil.example/path"] {
+            let Err(error) = engine.admit(raw) else {
+                panic!("{raw} must be refused");
+            };
+            let rendered = format!("{error} {error:?}");
+            assert!(!rendered.contains("hunt"), "{rendered}");
+            assert!(rendered.contains(UNPARSEABLE_URL), "{rendered}");
+            assert_eq!(admission_key(raw, None), UNPARSEABLE_URL);
+        }
+        let (_, seed) = engine.admit("mailto:").expect("a hostless URL without `@` is admitted");
+        assert_eq!(seed.as_str(), "mailto:");
     }
 }
