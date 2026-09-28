@@ -80,10 +80,9 @@ async fn status_error_names_only_the_vendor_and_status() {
     assert_eq!(err.to_string(), "server_error: querykey upstream 500");
 }
 
-#[tokio::test]
-async fn send_error_carries_no_api_key() {
-    // A server that reads the request and closes the connection without a response. The listener
-    // stays bound for the whole test, so no other process can take the port and answer instead.
+/// A server that reads one request and closes the connection without a response. The listener
+/// stays bound until then, so no other process can take the port and answer instead.
+fn closing_server() -> (u16, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
@@ -92,6 +91,12 @@ async fn send_error_carries_no_api_key() {
             let _ = stream.read(&mut buf);
         }
     });
+    (port, server)
+}
+
+#[tokio::test]
+async fn send_error_carries_no_api_key() {
+    let (port, server) = closing_server();
 
     let provider = SimpleHttpProvider::new(query_key_config(&format!("http://127.0.0.1:{port}/v1/"))).unwrap();
     let err = provider.fetch(TARGET).await.unwrap_err();

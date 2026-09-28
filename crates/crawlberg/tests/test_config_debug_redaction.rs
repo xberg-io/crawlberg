@@ -67,18 +67,49 @@ fn crawl_config_debug_hides_every_secret_field() {
 }
 
 #[test]
-fn browser_config_debug_hides_the_endpoint_token() {
+fn browser_config_debug_prints_only_the_endpoint_origin() {
     let config = secret_browser_config();
     assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
     let compact = format!("{config:?}");
     assert!(
-        compact.contains(r#"endpoint: Some("wss://chrome.example.com/devtools?***")"#),
-        "endpoint host must stay visible: {compact}"
+        compact.contains(r#"endpoint: Some("wss://chrome.example.com")"#),
+        "endpoint origin must stay visible and nothing else: {compact}"
     );
     let script = format!(r#"eval_script: Some("*** ({} bytes)")"#, secret_script().len());
     assert!(
         compact.contains(&script),
         "eval_script must print as set, with its length: {compact}"
+    );
+}
+
+/// The canonical CDP endpoint carries its capability in the **path**, not the query:
+/// `ws://host:9222/devtools/browser/<GUID>`. Anyone holding that GUID drives the browser.
+#[test]
+fn browser_config_debug_hides_a_cdp_endpoint_path_token() {
+    let config = BrowserConfig {
+        endpoint: Some(format!("ws://127.0.0.1:9222/devtools/browser/{SECRET}")),
+        ..BrowserConfig::default()
+    };
+    assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains(r#"endpoint: Some("ws://127.0.0.1:9222")"#),
+        "the port must stay visible and the path token must not: {compact}"
+    );
+}
+
+/// An endpoint the URL parser rejects must not be echoed either — the helper fails closed.
+#[test]
+fn browser_config_debug_fails_closed_on_an_unparseable_endpoint() {
+    let config = BrowserConfig {
+        endpoint: Some(format!("chrome.internal:9222/devtools/browser/{SECRET}")),
+        ..BrowserConfig::default()
+    };
+    assert_hidden("BrowserConfig", format!("{config:?}"), format!("{config:#?}"));
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains(r#"endpoint: Some("***")"#),
+        "an unparseable endpoint must print as the placeholder: {compact}"
     );
 }
 
@@ -99,20 +130,60 @@ fn cookie_info_debug_hides_the_value() {
 
 #[cfg(feature = "browser-chromiumoxide")]
 #[test]
-fn browser_pool_config_debug_hides_the_endpoint_token() {
+fn browser_pool_config_debug_prints_only_the_endpoint_origin() {
     let config = crawlberg::browser_pool::BrowserPoolConfig {
         browser_endpoint: Some(format!(
-            "ws://user:{SECRET}@chrome.internal:9222/devtools?token={SECRET}"
+            "ws://user:{SECRET}@chrome.internal:9222/devtools/browser/{SECRET}?token={SECRET}"
         )),
         ..Default::default()
     };
     assert_hidden("BrowserPoolConfig", format!("{config:?}"), format!("{config:#?}"));
+    let compact = format!("{config:?}");
+    assert!(
+        compact.contains(r#"browser_endpoint: Some("ws://chrome.internal:9222")"#),
+        "only the origin may print: {compact}"
+    );
 }
 
 #[cfg(feature = "browser")]
 #[test]
 fn session_key_debug_hides_proxy_credentials() {
-    let proxy = format!("http://user:{SECRET}@proxy.internal:8080");
+    let proxy = format!("http://user:{SECRET}@proxy.internal:8080/route?token={SECRET}");
     let key = crawlberg::browser_session_pool::SessionKey::from_url("https://example.com/", Some(&proxy)).unwrap();
     assert_hidden("SessionKey", format!("{key:?}"), format!("{key:#?}"));
+    let compact = format!("{key:?}");
+    assert!(
+        compact.contains(r#"proxy: Some("http://proxy.internal:8080")"#),
+        "only the proxy URL's origin may print: {compact}"
+    );
+}
+
+#[test]
+fn static_proxy_provider_debug_prints_only_each_url_origin() {
+    let provider = crawlberg::StaticProxyProvider::new(vec![ProxyConfig {
+        url: format!("http://proxy.internal:8080/route?token={SECRET}"),
+        username: None,
+        password: None,
+    }]);
+    assert_hidden("StaticProxyProvider", format!("{provider:?}"), format!("{provider:#?}"));
+    let compact = format!("{provider:?}");
+    assert!(
+        compact.contains(r#""http://proxy.internal:8080""#),
+        "only the proxy URL's origin may print: {compact}"
+    );
+}
+
+#[test]
+fn proxy_config_debug_prints_only_the_url_origin() {
+    let proxy = ProxyConfig {
+        url: format!("http://proxy.internal:8080/route/{SECRET}?token={SECRET}"),
+        username: None,
+        password: None,
+    };
+    assert_hidden("ProxyConfig", format!("{proxy:?}"), format!("{proxy:#?}"));
+    let compact = format!("{proxy:?}");
+    assert!(
+        compact.contains(r#"url: "http://proxy.internal:8080""#),
+        "only the proxy URL's origin may print: {compact}"
+    );
 }
