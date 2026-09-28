@@ -82,6 +82,7 @@ minijinja = { workspace = true, optional = true }
 notify = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
+percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
