@@ -483,6 +483,11 @@ All notable changes to crawlberg are documented here.
   `café`, and `STRASSE` finds `/Straße`. Case folding does not use a locale, so the Turkish dotted
   and dotless `i` do not match their Turkish case partners. (#338)
 
+- **The `search` field of `POST /v1/map` never matched a non-ASCII term.** The REST handler kept
+  its own lower-case substring check against the returned address, so `café` never found
+  `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
+  a term the same way as the CLI and the MCP `map` tool. (#362)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
