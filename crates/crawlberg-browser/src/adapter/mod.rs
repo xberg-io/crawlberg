@@ -22,7 +22,7 @@ use snapshot::{
 };
 
 /// A cookie passed into or captured from the native browser.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeCookie {
     pub name: String,
     pub value: String,
@@ -31,6 +31,32 @@ pub struct NativeCookie {
     pub secure: bool,
     pub http_only: bool,
 }
+
+impl std::fmt::Debug for NativeCookie {
+    /// Redacted: a cookie value is often a session credential. Shows whether a value is
+    /// set, never the value itself.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            name,
+            value,
+            domain,
+            path,
+            secure,
+            http_only,
+        } = self;
+        f.debug_struct("NativeCookie")
+            .field("name", name)
+            .field("value", &(!value.is_empty()).then_some(REDACTED))
+            .field("domain", domain)
+            .field("path", path)
+            .field("secure", secure)
+            .field("http_only", http_only)
+            .finish()
+    }
+}
+
+/// Placeholder `Debug` prints in place of a secret.
+const REDACTED: &str = "***";
 
 /// A single network event recorded during page navigation.
 #[derive(Debug, Clone)]
@@ -45,7 +71,7 @@ pub struct NativeNetworkEvent {
     pub timestamp_ms: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeBrowserConfig {
     pub user_agent: Option<String>,
     pub timeout: Duration,
@@ -83,6 +109,65 @@ pub struct NativeBrowserConfig {
     /// Unlike `extra_headers`, which every host receives, these never reach a third-party
     /// subresource or a cross-host redirect target.
     pub origin_headers: Option<OriginHeaders>,
+}
+
+impl std::fmt::Debug for NativeBrowserConfig {
+    /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
+    /// auth config, `proxy_url` can carry `user:pass@` credentials, and `prior_cookies`
+    /// are session cookies. `eval_script` can embed a token, so it prints as `***` with its
+    /// length. Header names stay visible; secret values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            user_agent,
+            timeout,
+            wait_until,
+            extra_headers,
+            respect_robots_txt,
+            stealth,
+            proxy_url,
+            prior_cookies,
+            block_url_patterns,
+            eval_script,
+            wait_selector,
+            robots_user_agent,
+            capture_network_events,
+            ssrf,
+            allow_file_access,
+            origin_headers,
+        } = self;
+        f.debug_struct("NativeBrowserConfig")
+            .field("user_agent", user_agent)
+            .field("timeout", timeout)
+            .field("wait_until", wait_until)
+            .field("extra_headers", &RedactedValues(extra_headers))
+            .field("respect_robots_txt", respect_robots_txt)
+            .field("stealth", stealth)
+            .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
+            .field("prior_cookies", prior_cookies)
+            .field("block_url_patterns", block_url_patterns)
+            .field(
+                "eval_script",
+                &eval_script
+                    .as_ref()
+                    .map(|script| format!("{REDACTED} ({} bytes)", script.len())),
+            )
+            .field("wait_selector", wait_selector)
+            .field("robots_user_agent", robots_user_agent)
+            .field("capture_network_events", capture_network_events)
+            .field("ssrf", ssrf)
+            .field("allow_file_access", allow_file_access)
+            .field("origin_headers", origin_headers)
+            .finish()
+    }
+}
+
+/// `Debug` view of a header map that shows each name and hides each value.
+struct RedactedValues<'a>(&'a HashMap<String, String>);
+
+impl std::fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.keys().map(|key| (key, REDACTED))).finish()
+    }
 }
 
 impl Default for NativeBrowserConfig {

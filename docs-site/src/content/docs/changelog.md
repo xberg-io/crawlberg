@@ -324,6 +324,57 @@ title: "Changelog"
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
 
+- **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
+  query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
+  URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
+  `fetch` that read `final_url` or formatted the response with `{:?}` saw the key. Crawl and scrape
+  results never carried it, because the engine does not read a bypass response's `final_url`.
+  `final_url` is now empty, as the field's contract allows when the vendor does not report the
+  resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
+
+- **A caller's debug output of a config printed its secrets.** Crawlberg does not log these types,
+  but a caller that formats one with `{:?}`, such as `tracing::debug!(?config)`, a panic or an
+  `expect` message, printed a bypass provider config's API key, token or auth header value. The
+  same held for custom request headers, a CDP endpoint token, proxy credentials in a browser session
+  key, the REST API token, cookie values and the native browser's proxy URL. Each now prints `***`
+  in place of the secret and keeps the non-secret fields. A browser `eval_script` prints as `***`
+  with its length, because a script can embed a token. This covers the Rust types only: the
+  language bindings define their own config types, and their `repr` and `inspect` output is
+  unchanged. (#118, #290)
+- **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
+  whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached the error
+  text and, through it, an API error body. The error now names only the field and prints no part
+  of the value, not even redacted: the endpoint is a capability, and the field name is enough to
+  find it. The `proxy.url` error has not carried the value since #401. (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
+
+- **A caller's debug output of a bypass provider config printed `${ENV}` values.** Crawlberg
+  prints only the vendor name for a provider, but a caller that formats a loaded `ProviderConfig`
+  with `{:?}` saw a secret substituted into the endpoint, a fixed query value or the JSON body
+  template. The endpoint now prints as its origin only: the scheme, the host and a non-default
+  port, or `***` when it does not parse as an absolute URL or has no host. Each query value prints
+  as `***`. The body template prints as `***` with its length, and with whether it holds the
+  `{{url}}` marker. (#144, #152)
+- **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
+  `ws://host:9222/devtools/browser/<GUID>`, and the GUID in the path is the capability that drives
+  the browser. Redaction covered only the userinfo and the query, so the debug output of
+  `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
+  that did not parse printed whole. Both now print through
+  `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
+  uses, which prints `***` for a value without a host. A proxy URL now prints as its origin too,
+  in a `ProxyConfig`, a browser session key and a static proxy provider. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  no more secret than the host. Two pooled endpoints on the same host and port now print the same.
+  (#152)
+- **A failed bypass request logs its cause.** The send and body-read errors carry only the error
+  kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
+  chain when a send or a body read fails. (#89)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
