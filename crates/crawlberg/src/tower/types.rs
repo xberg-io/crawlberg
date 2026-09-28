@@ -79,6 +79,7 @@ mod tests {
                 ("server".to_owned(), vec!["nginx".to_owned()]),
             ]),
             landed_url: None,
+            sent_user_agent: None,
         };
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
@@ -158,6 +159,7 @@ impl std::fmt::Debug for CrawlResponse {
             body_bytes,
             headers,
             landed_url,
+            sent_user_agent,
         } = self;
         f.debug_struct("CrawlResponse")
             .field("status", status)
@@ -166,6 +168,7 @@ impl std::fmt::Debug for CrawlResponse {
             .field("body_bytes", body_bytes)
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
             .field("landed_url", landed_url)
+            .field("sent_user_agent", sent_user_agent)
             .finish()
     }
 }
