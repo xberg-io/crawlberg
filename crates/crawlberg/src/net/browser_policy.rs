@@ -60,12 +60,11 @@ mod tests {
         // parity test above cannot see that copy drift.
         //
         // ~keep The reason is compared, not just the allow/deny bit, and that is what gives this
-        // test teeth: positional drift can change which candidate matches while leaving the
-        // decision alone. Measured: reading the /56 position as `at(8, 9, 10, 11)` — the
-        // off-by-one that forgets RFC 6052's reserved `u` octet — leaves `64:ff9b:1:a:0:5::`
-        // denied, because every reading then falls in `0.0.0.0/8` and the all-skipped rule
-        // refuses it anyway, but moves the reason from `private_network` to `unspecified`. The
-        // allow/deny bit alone does not see that row at all.
+        // test teeth: drift can change which reason an address gets while leaving the decision
+        // alone. Measured: swapping the fallback's `link_local` and `unique_local` table entries
+        // leaves every row decided the same way, and this test reports `feaa::1` and both
+        // `fe80::` ISATAP rows as `unique_local`. Candidate order is the other case: trying the
+        // embedded address before `ip` reports `fe80::200:5efe:10.0.0.5` as `private_network`.
         //
         // ~keep Serial because the fallback reads CRAWLBERG_ALLOW_PRIVATE_NETWORK, which other
         // serial tests set. A non-serial test that sets it would still race this one; the env-var

@@ -10,7 +10,7 @@
 /// so it proves nothing about it; it is there to catch a regression in behaviour that already
 /// worked. Do not count a GUARD row as coverage of the fix. The split was measured rather than
 /// assumed, by running this table against the previous extraction (IPv4-mapped and NAT64
-/// well-known only): 21 of the 50 rows failed, and they are precisely the 21 that carry no
+/// well-known only): 22 of the 51 rows failed, and they are precisely the 22 that carry no
 /// `GUARD`. No row failed the other way, so nothing this table permits was newly refused.
 pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     // IPv4-mapped, RFC 4291 section 2.5.5.2. Already unwrapped before this change.
@@ -67,6 +67,10 @@ pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     ("64:ff9b:1::e000:1", Some("multicast")),
     // Teredo, RFC 4380 section 4: the client address is stored inverted in the last 32 bits.
     // 5601:5601 inverts to 169.254.169.254 and f5ff:fffa to 10.0.0.5.
+    //
+    // ~keep Section 5.2.4 obliges a *remote* Teredo node to drop a packet whose embedded address
+    // is not global. crawlberg can neither observe nor enforce that, so it is not a control this
+    // deny-list can lean on.
     ("2001:0:4136:e378:0:ffff:5601:5601", Some("link_local")),
     ("2001:0:4136:e378:8000:ffff:f5ff:fffa", Some("private_network")),
     // 63bf:3fff:fdd2 inverts to 192.0.2.45, which no deny row covers; 2001:db8::/32 is not
@@ -79,6 +83,9 @@ pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     ("2001:db8::200:5efe:127.0.0.1", Some("loopback")),
     ("2001:db8::5efe:8.8.8.8", None),     // GUARD
     ("2001:db8::200:5efe:8.8.8.8", None), // GUARD
+    // A fixed-position form has no skip rule, so an address only shaped like ISATAP is refused
+    // for what it reads as: 0.1.0.1 here.
+    ("2001:db8::5efe:1:1", Some("unspecified")),
     // A link-local ISATAP address stays denied as link-local whatever address it carries;
     // fe80::/10 already refused both of these.
     ("fe80::5efe:8.8.8.8", Some("link_local")),      // GUARD

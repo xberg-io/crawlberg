@@ -51,7 +51,9 @@ title: "Changelog"
   IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
   `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
   address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
-  connect-time resolver and the browser crate's fallback validator apply the same rules. (#109)
+  connect-time resolver and the browser crate's fallback validator apply the same rules. An
+  address that only has the shape of one of these forms is refused for the address it seems to
+  carry: `2001:db8::5efe:1:1` reads as `0.1.0.1` and is refused. (#109)
 
 - **A Teredo address reached the private IPv4 address it carries.** A `2001:0::/32` address
   stores the client's IPv4 address inverted in its last 32 bits, and nothing decoded it, so
