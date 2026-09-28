@@ -33,6 +33,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. (#423)
+
 - **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
   A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
   nor nofollow, although `none` means both. A header addressed to one crawler, such as

@@ -114,6 +114,21 @@ impl CrawlEngine {
         tower::util::BoxCloneService::new(service)
     }
 
+    /// Decide the agent the next request should send.
+    ///
+    /// ~keep The single place that picks an agent ahead of a request: it advances the exact
+    /// round-robin counter the UA rotation layer uses, so pinning the result onto a
+    /// `CrawlRequest` before it reaches that layer (`RedirectPolicy::admits`, for the robots
+    /// decision) and the agent the layer would otherwise have chosen are never two different
+    /// picks. Falls back to the configured default when no rotation list is set, so a
+    /// non-rotating crawl sees no change (crawlberg#423).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn choose_request_user_agent(&self) -> String {
+        self.ua_rotation
+            .choose_next()
+            .unwrap_or_else(|| crate::helpers::default_robots_user_agent(&self.config).to_owned())
+    }
+
     /// Execute browser actions on a single page.
     ///
     /// The public API is always available. Runtime execution depends on the

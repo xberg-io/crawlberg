@@ -52,6 +52,7 @@ impl CrawlEngine {
         &self,
         tier: crate::types::Tier,
         url: &str,
+        forced_user_agent: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         match tier {
             crate::types::Tier::Http => {
@@ -60,6 +61,13 @@ impl CrawlEngine {
                 use tower::Service;
                 let mut req = CrawlRequest::new(url);
                 req.tier = Some(Self::tier_name(tier));
+                // ~keep Pins the agent `RedirectPolicy::admits` chose for the robots decision
+                // ~keep onto the request, so the UA rotation layer (which only fills in a
+                // ~keep `user-agent` header that is not already set) sends exactly that agent
+                // ~keep instead of picking its own (crawlberg#423).
+                if let Some(ua) = forced_user_agent {
+                    req.headers.insert("user-agent".to_owned(), ua.to_owned());
+                }
                 let resp = service.call(req).await?;
                 Ok((resp, false))
             }
@@ -81,6 +89,9 @@ impl CrawlEngine {
                         body_bytes: bypass_resp.body_bytes,
                         headers: bypass_resp.headers,
                         landed_url: None,
+                        // ~keep A custom bypass provider is a user plugin outside the rotation
+                        // layer; it does not report which agent it sent, if any.
+                        sent_user_agent: None,
                     },
                     false,
                 ))
@@ -143,6 +154,9 @@ impl CrawlEngine {
                 // ~keep classifier however faithfully the backend had reported them (crawlberg#148).
                 headers: r.headers,
                 landed_url: Some(r.final_url),
+                // ~keep The browser tier never reads `config.user_agents`; it always sends the
+                // single configured agent, so callers fall back to the configured default.
+                sent_user_agent: None,
             },
             extras,
         )
@@ -161,6 +175,7 @@ impl CrawlEngine {
             body_bytes: Vec::new(),
             headers: std::collections::HashMap::new(),
             landed_url: None,
+            sent_user_agent: None,
         }
     }
 

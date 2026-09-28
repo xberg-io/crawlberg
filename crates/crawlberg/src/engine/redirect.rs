@@ -10,7 +10,7 @@ use super::CrawlEngine;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::RobotsOutcome;
-use crate::helpers::{default_robots_user_agent, fetch_robots_outcome};
+use crate::helpers::fetch_robots_outcome;
 use crate::html::{detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
@@ -118,6 +118,14 @@ pub(crate) struct RedirectPolicy<'a> {
     pub(super) last_origin: Option<RobotsCacheKey>,
     /// URLs this policy rejected, folded into `CrawlState::urls_filtered`.
     pub(super) urls_filtered: usize,
+    /// The agent [`Self::admits`] chose for the most recently admitted URL.
+    ///
+    /// ~keep Set once per hop, by the same call that used it for robots.txt group selection.
+    /// `follow_redirects` reads this after a successful `admits()` and pins it onto that hop's
+    /// `CrawlRequest`, so the request the robots decision was made for and the request that
+    /// actually goes out (including its retries and escalations, which re-send the same
+    /// request rather than starting a new one) are the same agent (crawlberg#423).
+    pub(super) pending_user_agent: Option<String>,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -136,6 +144,7 @@ impl<'a> RedirectPolicy<'a> {
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
+            pending_user_agent: None,
         }
     }
 
@@ -182,8 +191,13 @@ impl<'a> RedirectPolicy<'a> {
             return Ok(Some(refusal));
         }
 
-        let user_agent = default_robots_user_agent(&self.engine.config);
-        let origin = RobotsCacheKey::new(&parsed, user_agent);
+        // ~keep Chosen once per hop, here, before robots.txt is even read: the same call that
+        // ~keep advances the UA rotation counter, so this hop's robots decision and the agent
+        // ~keep `follow_redirects` pins onto its `CrawlRequest` afterward are the same pick
+        // ~keep (crawlberg#423). Without a configured rotation list this is exactly
+        // ~keep `default_robots_user_agent`, so a non-rotating crawl sees no change.
+        let user_agent = self.engine.choose_request_user_agent();
+        let origin = RobotsCacheKey::new(&parsed, &user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
             // ~keep A robots.txt read with the caller's credentials is theirs alone: the
@@ -191,12 +205,12 @@ impl<'a> RedirectPolicy<'a> {
             let outcome = if self.engine.config.respect_robots_txt
                 && crate::net::credentials::is_credentialed(&self.engine.config, &parsed)
             {
-                Arc::new(fetch_robots_outcome(url, &self.engine.config, self.client, user_agent).await)
+                Arc::new(fetch_robots_outcome(url, &self.engine.config, self.client, &user_agent).await)
             } else if self.engine.config.respect_robots_txt {
                 self.engine
                     .robots_cache
                     .get_or_fetch(origin.clone(), || {
-                        fetch_robots_outcome(url, &self.engine.config, self.client, user_agent)
+                        fetch_robots_outcome(url, &self.engine.config, self.client, &user_agent)
                     })
                     .await
             } else {
@@ -229,6 +243,7 @@ impl<'a> RedirectPolicy<'a> {
             self.engine.apply_crawl_delay(outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
+        self.pending_user_agent = Some(user_agent);
         Ok(None)
     }
 
@@ -334,11 +349,20 @@ pub(crate) async fn follow_redirects(
                 intermediate_headers: chain.intermediate_headers,
             });
         }
+        // ~keep The agent `admits()` just chose (for robots.txt group selection) and this hop's
+        // ~keep fetch must send are the same one: pinned onto the request below so every retry
+        // ~keep or tier escalation of this hop reuses it rather than picking a new one
+        // ~keep (crawlberg#423). `None` when no policy runs (`scrape()`), which leaves the UA
+        // ~keep rotation layer free to pick per its own default behaviour, unchanged.
+        let forced_user_agent = policy.as_deref().and_then(|p| p.pending_user_agent.clone());
 
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&chain.current_url);
-        let (resp, hop_browser_used) = match hop_engine.fetch_response(&chain.current_url).await {
+        let (resp, hop_browser_used) = match hop_engine
+            .fetch_response(&chain.current_url, forced_user_agent.as_deref())
+            .await
+        {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -452,6 +476,7 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         body_bytes: Vec::new(),
         headers: HashMap::new(),
         landed_url: None,
+        sent_user_agent: None,
     }
 }
 
@@ -569,6 +594,7 @@ mod tests {
             body_bytes: body.as_bytes().to_vec(),
             headers: map,
             landed_url: None,
+            sent_user_agent: None,
         }
     }
 

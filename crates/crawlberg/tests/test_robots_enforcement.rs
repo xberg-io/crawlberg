@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use crawlberg::{CrawlConfig, crawl, create_engine};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ROBOTS_DISALLOW_PRIVATE: &str = "User-agent: *\nDisallow: /private/\n";
@@ -308,5 +308,121 @@ async fn should_not_parse_an_http_error_page_body_as_robots_txt() {
     assert!(
         result.is_allowed,
         "451 is a 4xx 'unavailable' status; its error-page body is not a robots.txt policy"
+    );
+}
+
+/// crawlberg#423: with rotation on, a single-agent rotation list always sends "AgentB" (the
+/// round-robin index always lands on the only entry), never the configured "AgentA". A
+/// robots.txt group written for "AgentB" must block the crawl, because that is the agent the
+/// request actually sends -- not the configured one.
+fn rotating_config(robots: bool) -> CrawlConfig {
+    CrawlConfig::builder()
+        .respect_robots_txt(robots)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("AgentA")
+        .user_agents(vec!["AgentB".to_owned()])
+        .build()
+}
+
+#[tokio::test]
+async fn should_block_a_page_when_robots_txt_names_the_agent_rotation_actually_sent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: AgentB\nDisallow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let engine = create_engine(Some(rotating_config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert!(
+        result.pages.is_empty(),
+        "a robots.txt group naming the agent this request actually sent must block it"
+    );
+}
+
+#[tokio::test]
+async fn should_allow_a_page_when_robots_txt_names_only_the_configured_agent_that_was_not_sent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: AgentA\nDisallow: /\n", 1).await;
+    mount_html_expecting(&mock, "/", "<html><body>root</body></html>", 1).await;
+
+    let engine = create_engine(Some(rotating_config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "a robots.txt group naming only the configured agent must not block a request that sent a different one"
+    );
+}
+
+/// Without rotation, robots.txt group selection is unchanged: it matches the single configured
+/// agent, exactly as before crawlberg#423.
+#[tokio::test]
+async fn should_match_the_configured_agent_when_no_rotation_list_is_set() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: AgentA\nDisallow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .respect_robots_txt(true)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("AgentA")
+        .build();
+    let engine = create_engine(Some(config)).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert!(
+        result.pages.is_empty(),
+        "without rotation, robots.txt must still match the single configured agent"
+    );
+}
+
+/// crawlberg#423: the agent `RedirectPolicy::admits` chose for the robots decision must be the
+/// exact agent the request sends -- not a second, independent pick by the UA rotation layer.
+/// With two rotating agents, `admits` advances the round-robin counter once (landing on
+/// "AgentB", the first entry) to check robots.txt; if the rotation layer picked again instead of
+/// reusing that pin, it would advance to "AgentC" and send a different agent than the one robots
+/// was checked for.
+#[tokio::test]
+async fn should_send_the_exact_agent_the_robots_decision_was_made_for() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: *\nAllow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .and(header("user-agent", "AgentB"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .respect_robots_txt(true)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("AgentA")
+        .user_agents(vec!["AgentB".to_owned(), "AgentC".to_owned()])
+        .build();
+    let engine = create_engine(Some(config)).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "the request must be sent with the exact agent robots.txt group selection used"
     );
 }

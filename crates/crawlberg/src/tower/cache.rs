@@ -100,7 +100,13 @@ fn now_secs() -> u64 {
 const STATUS_NOT_MODIFIED: u16 = 304;
 
 /// Build a [`CrawlResponse`] that replays `cached`.
-fn response_from_cache(cached: CachedPage) -> CrawlResponse {
+///
+/// `sent_user_agent` is the agent the request pinned before this layer answered from cache
+/// (a caller earlier in the chain -- `RedirectPolicy::admits` -- may have chosen one for
+/// robots.txt group selection and forced it onto the request); a cache hit never reaches the
+/// UA rotation layer, but the caller's robots decision was still made for that agent, so the
+/// replayed response must report the same one rather than none.
+fn response_from_cache(cached: CachedPage, sent_user_agent: Option<String>) -> CrawlResponse {
     let mut headers = HashMap::new();
     if let Some(ref etag) = cached.etag {
         headers.insert("etag".to_owned(), vec![etag.clone()]);
@@ -116,6 +122,7 @@ fn response_from_cache(cached: CachedPage) -> CrawlResponse {
         body_bytes,
         headers,
         landed_url: None,
+        sent_user_agent,
     }
 }
 
@@ -206,12 +213,15 @@ where
                 return inner.call(req).await;
             }
             let mut req = req;
+            let sent_user_agent = req.headers.get("user-agent").cloned();
 
             // ~keep A fresh entry short-circuits; a stored-but-unusable one (expired, or
             // `no-cache`) is still worth a conditional request, so it is carried forward
             // to be validated rather than discarded.
             let revalidating = match cache.get(&url).await {
-                Ok(Some(cached)) if is_fresh(&cached, now_secs()) => return Ok(response_from_cache(cached)),
+                Ok(Some(cached)) if is_fresh(&cached, now_secs()) => {
+                    return Ok(response_from_cache(cached, sent_user_agent));
+                }
                 Ok(Some(stale)) => Some(stale),
                 _ => cache.get_stale(&url).await.ok().flatten(),
             };
@@ -229,7 +239,7 @@ where
                     ..cached
                 };
                 let _ = cache.set(&url, &refreshed).await;
-                return Ok(response_from_cache(refreshed));
+                return Ok(response_from_cache(refreshed, resp.sent_user_agent.clone()));
             }
 
             if resp.status >= 200 && resp.status < 300 {
@@ -298,6 +308,7 @@ mod tests {
                     body_bytes: vec![],
                     headers: HashMap::new(),
                     landed_url: None,
+                    sent_user_agent: None,
                 })
             })
         }
@@ -376,6 +387,7 @@ mod tests {
                     body_bytes: b"fresh from origin".to_vec(),
                     headers,
                     landed_url: None,
+                    sent_user_agent: None,
                 })
             })
         }
