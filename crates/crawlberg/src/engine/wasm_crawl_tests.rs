@@ -10,6 +10,12 @@ use crate::types::CrawlConfig;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Admit `url` and run the sequential crawl on it, as `CrawlEngine::crawl` does on wasm32.
+async fn crawl_admitted(engine: &CrawlEngine, url: &str) -> Result<CrawlResult, CrawlError> {
+    let (engine, seed) = engine.admit(url)?;
+    engine.crawl_sequential(&seed).await
+}
+
 async fn mount_html(mock: &MockServer, at: &str, body: &str) {
     Mock::given(method("GET"))
         .and(path(at))
@@ -138,7 +144,7 @@ async fn sequential_crawl_visits_breadth_first() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -159,7 +165,7 @@ async fn sequential_crawl_stops_following_links_at_max_depth() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -185,7 +191,7 @@ async fn sequential_crawl_caps_links_enqueued_per_page() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -207,7 +213,7 @@ async fn sequential_crawl_drops_excluded_paths() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -232,7 +238,7 @@ async fn sequential_crawl_ignores_query_in_exclude_paths_by_default() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -257,7 +263,7 @@ async fn sequential_crawl_excludes_by_query_when_match_query_is_enabled() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -285,7 +291,7 @@ async fn sequential_crawl_collapses_distinct_queries_by_default() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -315,7 +321,7 @@ async fn sequential_crawl_fetches_both_queries_when_dedup_include_query_is_enabl
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -346,7 +352,7 @@ async fn sequential_crawl_strips_tracking_params_from_fetched_and_reported_url()
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
     assert!(
@@ -389,7 +395,7 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
         },
     ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -429,7 +435,7 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
         },
     ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -471,7 +477,7 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
         },
     ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -515,7 +521,7 @@ async fn sequential_crawl_stays_on_the_seed_host() {
         },
     ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -536,8 +542,7 @@ async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
         .mount(&seed_down)
         .await;
     let engine = engine_with(permissive(CrawlConfig::default()));
-    let result = engine
-        .crawl_sequential(&seed_down.uri())
+    let result = crawl_admitted(&engine, &seed_down.uri())
         .await
         .expect("a failing seed is still a completed crawl");
     assert!(result.pages.is_empty(), "a failing seed produces no pages");
@@ -558,7 +563,7 @@ async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
         max_depth: Some(1),
         ..CrawlConfig::default()
     }));
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
     assert_eq!(
         visited(&result, &base),
         vec!["/".to_owned()],
@@ -587,7 +592,7 @@ async fn sequential_crawl_counts_a_seed_redirect() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(result.redirect_count, 1, "the seed hop must be counted once");
     assert_eq!(
@@ -635,7 +640,7 @@ async fn sequential_crawl_follows_a_cross_host_document_link_by_default() {
         },
     ));
 
-    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     // ~keep The `.expect(1)` on /report.pdf is the real assertion; it is verified on drop.
     drop(mock);
@@ -665,7 +670,7 @@ async fn sequential_crawl_rejects_a_cross_host_document_link_when_stay_on_domain
         },
     ));
 
-    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     drop(mock);
 }
@@ -704,13 +709,48 @@ async fn sequential_crawl_honours_nofollow_when_respecting_robots() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
         vec!["/".to_owned(), "/meta".to_owned(), "/nf".to_owned()]
     );
     assert!(result.pages[1].noindex_detected && result.pages[1].nofollow_detected);
+    drop(mock);
+}
+
+/// The sequential loop reads each page through `CrawlEngine::scrape`, the same entry point
+/// `scrape()` uses, so a meta tag named for crawlberg's own product token (not only the generic
+/// `robots` name) must bind a page here too.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_honours_a_meta_tag_named_for_our_own_user_agent() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
+    )
+    .await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        respect_robots_txt: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert!(
+        result.pages[0].noindex_detected,
+        "a meta tag naming our own product token must be honoured by the sequential crawl loop"
+    );
     drop(mock);
 }
 
@@ -742,7 +782,7 @@ async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
         ..CrawlConfig::default()
     }));
 
-    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     drop(mock);
 }

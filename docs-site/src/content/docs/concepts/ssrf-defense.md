@@ -62,9 +62,15 @@ service embedding the wasm binding can be driven to internal hosts by domain nam
 restrictions (network policy, firewall, proxy allowlist) outside the process.
 :::
 
-Each 30x `Location` is re-resolved and re-validated against the same policy
-before the next hop is taken. Up to `SsrfPolicy::max_redirects` (default 5)
-hops are followed.
+A request to a [non-http/https scheme](#what-is-refused) is refused. A
+redirect is different: when a 30x `Location`, a `Refresh` header, or a
+`<meta http-equiv="refresh">` tag names one, the crawl does not follow it.
+The chain ends there, and the redirect response itself is returned as the
+page, with no SSRF error.
+
+A `Location` that names a web address is re-resolved and re-validated
+against the same policy before the next hop is taken. Up to
+`SsrfPolicy::max_redirects` (default 5) hops are followed.
 
 ## Opting out
 
