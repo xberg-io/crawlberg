@@ -426,3 +426,74 @@ async fn should_send_the_exact_agent_the_robots_decision_was_made_for() {
         "the request must be sent with the exact agent robots.txt group selection used"
     );
 }
+
+/// crawlberg#423, main crawl loop: the header and meta robots directives a fetched page
+/// carries must bind against the agent that request actually sent, not the configured
+/// default. With a single-entry rotation list, every request sends "AgentB"; a page whose
+/// `X-Robots-Tag` names "AgentA" (configured but never sent) must not bind, and one naming
+/// "AgentB" must.
+#[tokio::test]
+async fn crawl_loop_matches_the_x_robots_tag_header_against_the_agent_actually_sent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: *\nAllow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>root</body></html>")
+                .append_header("content-type", "text/html")
+                .append_header("x-robots-tag", "AgentB: noindex"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let engine = create_engine(Some(rotating_config(true))).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "robots.txt allows the page, so it must be fetched"
+    );
+    assert!(
+        result.pages[0].noindex_detected,
+        "an X-Robots-Tag naming the agent this request actually sent must bind it"
+    );
+}
+
+/// crawlberg#423-adjacent: a `user-agent` set through `custom_headers` is the agent
+/// `apply_headers` actually puts on the wire (it is layered onto every request to the seed's
+/// host), so robots.txt group selection must judge that agent, not the configured
+/// `user_agent`. A robots.txt group naming only the custom-header agent must block the
+/// request that sends it.
+#[tokio::test]
+async fn should_block_a_page_when_robots_txt_names_the_custom_header_agent_actually_sent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: CustomBot\nDisallow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .respect_robots_txt(true)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("ConfiguredAgent")
+        .custom_headers(std::collections::HashMap::from([(
+            "user-agent".to_owned(),
+            "CustomBot".to_owned(),
+        )]))
+        .build();
+    let engine = create_engine(Some(config)).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert!(
+        result.pages.is_empty(),
+        "a robots.txt group naming the custom-header agent must block a request that sends it"
+    );
+}

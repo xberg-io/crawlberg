@@ -57,7 +57,14 @@ fn apply_headers(
         req = req.header(reqwest::header::USER_AGENT, sent_user_agent);
     }
 
+    // ~keep A `user-agent` custom header is already reflected in `sent_user_agent`
+    // (`default_robots_user_agent` reads it, crawlberg#423), which the branch above already
+    // set on the request; re-adding it here would append a second, redundant `User-Agent`
+    // header line rather than replacing the first one.
     for (name, value) in seed_host_headers(config, url) {
+        if name.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(name.as_str(), value.as_str());
     }
 

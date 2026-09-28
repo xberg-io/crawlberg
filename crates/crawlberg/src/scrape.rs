@@ -689,6 +689,47 @@ mod tests {
         );
     }
 
+    /// crawlberg#423: `resolve_robots_status`'s own robots.txt fetch, inside `scrape()`, must
+    /// pick the agent that request actually sent when rotation is configured, exactly like
+    /// the crawl loop's `RedirectPolicy::admits`. A robots.txt group naming only the sent
+    /// agent must block the page.
+    #[tokio::test]
+    async fn scrape_matches_robots_txt_against_the_agent_actually_sent_when_rotating() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("User-agent: AgentB\nDisallow: /\n")
+                    .append_header("content-type", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig {
+            respect_robots_txt: true,
+            user_agent: Some("AgentA".to_owned()),
+            user_agents: vec!["AgentB".to_owned()],
+            ..CrawlConfig::default()
+        };
+        config.ssrf.deny_private = false;
+        let mut resp = response("text/html", "<html><body>x</body></html>");
+        resp.sent_user_agent = Some("AgentB".to_owned());
+
+        let url = format!("{}/page", mock.uri());
+        let result = scrape_from_crawl_response(&url, &resp, &config, None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            !result.is_allowed,
+            "a robots.txt group naming the agent this request actually sent must block it"
+        );
+    }
+
     #[tokio::test]
     async fn scrape_redecodes_the_body_using_the_detected_charset() {
         // ~keep windows-1252 0xE9 is `é`; read as UTF-8 it is invalid and lossy-decodes to

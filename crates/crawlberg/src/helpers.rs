@@ -205,10 +205,32 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
 /// those two functions, so it is deferred out of this patch release rather than folded
 /// into a robots *correctness* fix.
 pub(crate) fn default_robots_user_agent(config: &CrawlConfig) -> &str {
+    if let Some(value) = custom_user_agent_header(config) {
+        return value;
+    }
     config
         .user_agent
         .as_deref()
         .unwrap_or(concat!("crawlberg/", env!("CARGO_PKG_VERSION")))
+}
+
+/// A `user-agent` entry in `config.custom_headers`, matched case-insensitively as HTTP
+/// header names are.
+///
+/// ~keep `apply_headers` (tower/service.rs) always layers `custom_headers` onto the request
+/// to the seed's host, so a caller-set `user-agent` there is the agent that actually goes out
+/// on the wire, ahead of `config.user_agent` and the rotation layer's own default. Every
+/// caller of `default_robots_user_agent` -- the engine's robots.txt group selection, the
+/// header realized on the wire, and the fallback `scrape()`/crawl-loop directive matching use
+/// when no rotation pinned a value -- reads this one function, so this is the single place a
+/// custom-header agent needs to be taken into account for robots decisions to judge the agent
+/// actually sent (crawlberg#423).
+fn custom_user_agent_header(config: &CrawlConfig) -> Option<&str> {
+    config
+        .custom_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.as_str())
 }
 
 pub(crate) async fn fetch_robots_outcome(
