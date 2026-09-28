@@ -10,6 +10,7 @@ use tower::Service;
 
 use super::types::{CrawlRequest, CrawlResponse};
 use crate::error::{CrawlError, classify_reqwest_error};
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
@@ -34,6 +35,7 @@ fn apply_headers(
     mut req: reqwest::RequestBuilder,
     config: &CrawlConfig,
     crawl_req: &CrawlRequest,
+    url: &url::Url,
 ) -> reqwest::RequestBuilder {
     if !crawl_req.headers.contains_key("user-agent") {
         if let Some(ref ua) = config.user_agent {
@@ -46,32 +48,8 @@ fn apply_headers(
         }
     }
 
-    // ~keep Withhold configured credentials once a redirect chain has left its origin host;
-    // ~keep reqwest's own cross-host stripping never runs because we follow redirects manually.
-    if let Some(ref auth) = config.auth {
-        if crawl_req.is_on_origin_host() {
-            match auth {
-                crate::types::AuthConfig::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                crate::types::AuthConfig::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                crate::types::AuthConfig::Header { name, value } => {
-                    req = req.header(name.as_str(), value.as_str());
-                }
-            }
-        } else {
-            tracing::debug!(
-                origin = crawl_req.origin_host.as_deref().unwrap_or(""),
-                target = crawl_req.domain().unwrap_or_default(),
-                "withholding configured credentials from a cross-host redirect hop"
-            );
-        }
-    }
-
-    for (k, v) in &config.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+    for (name, value) in seed_host_headers(config, url) {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     for (k, v) in &crawl_req.headers {
@@ -244,11 +222,12 @@ async fn do_fetch(
     let url =
         url::Url::parse(&req.url).map_err(|e| CrawlError::ssrf_violation(&req.url, format!("invalid URL: {e}")))?;
 
+    crate::net::userinfo::refuse(&url)?;
     validate_url(&url, &config.ssrf)
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
-    let http_req = apply_headers(client.get(url.to_string()), config, req);
+    let http_req = apply_headers(client.get(url.to_string()), config, req, &url);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;
@@ -335,6 +314,47 @@ impl Service<CrawlRequest> for HttpFetchService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_request_url_with_userinfo_is_refused_before_the_network() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig::builder().allow_private_networks(true).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+
+        let credentialed = CrawlRequest {
+            url: mock.uri().replacen("http://", "http://user:TOWER-PW-8b2c@", 1) + "/in",
+            headers: std::collections::HashMap::new(),
+            tier: None,
+        };
+        let error = do_fetch(&client, &config, &credentialed)
+            .await
+            .map(|_| ())
+            .expect_err("a URL with userinfo must be refused");
+        let text = error.to_string();
+        assert!(
+            !text.contains("TOWER-PW-8b2c"),
+            "the error must not print the password: {text}"
+        );
+
+        do_fetch(&client, &config, &CrawlRequest::new(format!("{}/out", mock.uri())))
+            .await
+            .expect("the same URL without userinfo must be fetched");
+        let paths: Vec<String> = mock
+            .received_requests()
+            .await
+            .expect("request recording is on")
+            .into_iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
+    }
 
     #[test]
     fn only_3xx_is_returned_to_the_caller_as_a_redirect() {

@@ -67,11 +67,20 @@ impl Page {
             // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
             // ~keep Share the plain client's SSRF policy: the stealth path is an
             // alternate transport, not an alternate policy.
-            Some(Arc::new(StealthHttpClient::with_ssrf(
+            let stealth = StealthHttpClient::with_ssrf(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
                 http_client.ssrf.clone(),
-            )))
+            );
+            // ~keep The scoped headers are set on the context's client before any page exists,
+            // ~keep so they are already there to copy; the stealth client must scope them the same way.
+            if let (Ok(source), Ok(mut target)) = (
+                http_client.origin_headers.try_read(),
+                stealth.origin_headers.try_write(),
+            ) {
+                target.clone_from(&source);
+            }
+            Some(Arc::new(stealth))
         } else {
             None
         };
@@ -123,12 +132,14 @@ impl Page {
         false
     }
 
-    /// Parse a sub-resource reference against the page URL; `None` when it does not parse.
+    /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
+    /// carries userinfo, which is refused before anything logs or fetches it.
     fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
         Url::options()
             .base_url(self.url.as_ref())
             .parse(reference)
             .ok()
+            .filter(|url| !crate::net::credential::has_userinfo(url))
             .map(String::from)
     }
 
