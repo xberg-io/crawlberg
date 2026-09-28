@@ -33,6 +33,29 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
+  message, was logged exactly as received, credentials included. Such a value is now replaced
+  whole with `[address hidden: it may carry credentials]` when it contains an `@`, and a value
+  without an `@` comes back unchanged. A URL that parses with a host and has no whitespace is
+  redacted as before. The placeholder also replaces any other value with an `@` that is not one
+  URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
+  a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
+  index depth cap, and cycle detection) also logged their address without going through the
+  redactor at all; they now do. A call that starts from an address with no host and an `@`,
+  such as `user:pass@host/path`, is now refused before any trace span or event records the
+  address, and the error names it as `(unparseable URL)`, so the password no longer reaches a log
+  field. (#236, #243, #261, #399)
+
+- **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
+  comment by searching for a literal `-->` right after the opening `<!--`, so it never
+  recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
+  `--!>` instead of `-->`; or a plain, valid, empty comment, `<!---->`, whose close sits
+  directly against the opener's own dashes. After any of these, `tl` kept reading as if
+  still inside the comment, so every link, image and base address past it was missed. The
+  raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
+
 - **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
   A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
   nor nofollow, although `none` means both. A header addressed to one crawler, such as
@@ -71,6 +94,34 @@ All notable changes to crawlberg are documented here.
 - **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
   of the page's links instead of appearing with its unresolved text as its URL. (#394)
 
+- **A redirect to a non-web address failed the whole scrape.** A 3xx whose `Location` was a
+  `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
+  scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
+  with the same error and dropped such a linked page. A browser sends no request for such an
+  address. That `Location` is now no redirect target, matching how a refresh naming such an
+  address directly already was, so the 3xx response is the page. The same holds for robots.txt,
+  sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
+  the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+
+- **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
+  A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
+  target passed that check and could still resolve to a `mailto:`, `ftp:` or other non-web
+  address afterward, for example under a `<base href>` on such an address, and the fetch then hit
+  the SSRF policy. The scheme is now checked on the resolved address instead, the same way the
+  `Location` header already was, so such a target is no redirect target either, and the page is
+  kept. (#478)
+- **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
+  content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
+  path, while a browser requests `/app/next`. The target now resolves against the page's base
+  URL, the same base the links list uses. A `Refresh` HTTP header still resolves against the
+  response's own address: it arrives before any document exists to carry a base element, and
+  Chrome ignores the body's base for it too. (#300)
+- **A `data:` or `javascript:` base address was used as the page base.** With
+  `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
+  on the page resolved against the script address, and the markdown kept relative links as
+  written. The page base is now the page address when the base address has one of these schemes,
+  in any letter case and with spaces around it, as the HTML spec and browsers do. (#311)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and
@@ -80,6 +131,20 @@ All notable changes to crawlberg are documented here.
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
 
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. The address in the same error goes
+  through the credential redactor, which hides such an address whole. (#329)
+
+- **A crawl of an address without a host printed its credential.** A crawl refused a seed such
+  as `user:token@host` because the seed has no host to read robots.txt from, and the reason named
+  the seed as written, so `token` reached the crawl result, the error event and the error hook.
+  Such a seed is now refused before the crawl starts and is named `(unparseable URL)`. The robots
+  refusal for an address without a host also names it through the credential redactor. (#427)
+
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
   Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
@@ -88,6 +153,17 @@ All notable changes to crawlberg are documented here.
   images list and asset downloads skip are now recognised as the URL parser reads them, in any
   letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
   `javascript:`. (#86)
+
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
 
 - **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
   the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
