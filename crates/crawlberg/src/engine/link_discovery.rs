@@ -124,16 +124,11 @@ impl CrawlEngine {
                             .ok()
                             .and_then(|u| u.host_str().map(str::to_owned))
                             .unwrap_or_default();
-                        // ~keep Both fields are full URLs a crawl may have discovered with
-                        // embedded userinfo (http://user:pass@host/); redact before they reach
-                        // the span, which is shipped to logs/OTLP by default.
-                        let redacted_link_url = crate::net::redact_url_credentials(&link_url);
-                        let redacted_parent_url = crate::net::redact_url_credentials(parent.url);
                         let _discover_span = tracing::info_span!(
                             "crawl.page.discover",
-                            { URL_FULL } = %redacted_link_url,
+                            { URL_FULL } = %link_url,
                             { URL_DOMAIN } = %link_host,
-                            { CRAWL_PARENT_URL } = %redacted_parent_url,
+                            { CRAWL_PARENT_URL } = %parent.url,
                             { CRAWL_DEPTH } = child_depth as i64,
                             { CRAWL_LINK_TYPE } = if is_doc_link { "document" } else { "internal" },
                         )

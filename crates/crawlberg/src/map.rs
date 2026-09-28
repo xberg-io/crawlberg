@@ -28,8 +28,9 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// threaded into the sitemap fetch loop so a large sitemap-index tree is not
 /// fully materialized before truncation. Peak memory is bounded to roughly the
 /// limit plus a single child sitemap.
-pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-    let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
+pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
+    let url = seed.as_str();
+    let parsed_url = seed.url().clone();
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
     let context = SitemapWalkContext {
@@ -90,7 +91,9 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let sitemap_url = resolve_redirect(url, sitemap_ref);
+        let Some(sitemap_url) = resolve_redirect(url, sitemap_ref) else {
+            continue;
+        };
         let resolved = rewrite_url_host(&sitemap_url, parsed_url);
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
@@ -264,6 +267,11 @@ pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, filter: &MapFilter, l
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Map an already-clean test URL, as the engine does after admission.
+    async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
+        super::map(&crate::engine::SeedUrl::for_test(url), config).await
+    }
     use crate::types::CrawlConfig;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -630,7 +638,12 @@ mod tests {
 
     #[tokio::test]
     async fn map_rejects_an_unparseable_url() {
-        let error = map("not a url", &local_test_config())
+        let engine = crate::CrawlEngine::builder()
+            .config(local_test_config())
+            .build()
+            .expect("engine must build");
+        let error = engine
+            .map("not a url")
             .await
             .expect_err("an unparseable URL must be rejected");
 
