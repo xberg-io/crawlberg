@@ -153,6 +153,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn names_the_resolved_candidate_the_allowlist_did_not_admit() {
+        // ~keep With fe80::/10 allowlisted, fe80::5efe:10.0.0.5 is refused only for the 10.0.0.5
+        // its ISATAP identifier carries, so the reason must be private_network, not link_local.
+        let resolver = PolicyResolver::new(SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr("fe80::/10").expect("literal CIDR is valid")],
+            ..deny_private_policy()
+        });
+
+        let error = resolve_host(&resolver, "fe80::5efe:10.0.0.5")
+            .await
+            .expect_err("the embedded private address must still be refused");
+
+        assert_eq!(error, "denied by SSRF policy: private_network");
+    }
+
+    #[tokio::test]
     async fn permits_a_host_resolving_into_denied_space_when_deny_private_is_off() {
         let resolver = PolicyResolver::new(SsrfPolicy {
             deny_private: false,

@@ -7,6 +7,8 @@
 //! ever exposed is re-exported here unchanged, because these names are part of the
 //! binding-generator surface.
 
+#[cfg(test)]
+mod cases;
 mod error;
 mod matcher;
 mod policy;
@@ -25,114 +27,8 @@ pub(crate) use validate::DEFAULT_DENY_NET_CIDRS;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use validate::{classify_private_ip, is_ip_permitted};
 
-/// IPv6 literals that embed an IPv4 address, each paired with the denial reason the
-/// default policy must report, or `None` when the address must stay permitted.
-///
-/// Shared by the pre-connect check, the connect-time resolver and the browser parity
-/// test, so all three are held to one table.
-///
-/// ~keep A row marked `GUARD` decides exactly the same way on the release before this change,
-/// so it proves nothing about it; it is there to catch a regression in behaviour that already
-/// worked. Do not count a GUARD row as coverage of the fix. The split was measured rather than
-/// assumed, by running this table against the previous extraction: 28 of the 52 rows failed,
-/// and they are precisely the 28 that carry no `GUARD`. No row failed the other way, so
-/// nothing this table permits was newly refused.
 #[cfg(test)]
-pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
-    // IPv4-mapped, RFC 4291 section 2.5.5.2. Already unwrapped before this change.
-    ("::ffff:127.0.0.1", Some("loopback")),         // GUARD
-    ("::ffff:10.0.0.5", Some("private_network")),   // GUARD
-    ("::ffff:169.254.169.254", Some("link_local")), // GUARD
-    ("::ffff:8.8.8.8", None),                       // GUARD
-    // IPv4-compatible, RFC 4291 section 2.5.5.1.
-    ("::127.0.0.1", Some("loopback")),
-    ("::10.0.0.5", Some("private_network")),
-    ("::169.254.169.254", Some("link_local")),
-    ("::8.8.8.8", None), // GUARD
-    // IPv4-translated, RFC 2765 section 2.1.
-    ("::ffff:0:127.0.0.1", Some("loopback")),
-    ("::ffff:0:10.0.0.5", Some("private_network")),
-    ("::ffff:0:169.254.169.254", Some("link_local")),
-    ("::ffff:0:8.8.8.8", None), // GUARD
-    // NAT64 well-known prefix, RFC 6052 section 2.1. Already unwrapped before this change.
-    ("64:ff9b::127.0.0.1", Some("loopback")),         // GUARD
-    ("64:ff9b::10.0.0.5", Some("private_network")),   // GUARD
-    ("64:ff9b::169.254.169.254", Some("link_local")), // GUARD
-    ("64:ff9b::8.8.8.8", None),                       // GUARD
-    // 6to4, RFC 3056 section 2: the IPv4 address sits in bits 16 to 47.
-    ("2002:7f00:1::", Some("loopback")),
-    ("2002:a00:5::", Some("private_network")),
-    ("2002:a9fe:a9fe::", Some("link_local")),
-    ("2002:808:808::", None), // GUARD
-    // Local-use NAT64 prefix, RFC 8215, with the IPv4 address at each position RFC 6052
-    // section 2.2 allows inside a /48: after a /48, /56, /64 and /96 prefix.
-    ("64:ff9b:1:a00:0:500::", Some("private_network")),
-    ("64:ff9b:1:808:8:800::", None), // GUARD
-    ("64:ff9b:1:a:0:5::", Some("private_network")),
-    ("64:ff9b:1:8:8:808::", None), // GUARD
-    ("64:ff9b:1:0:a:0:500:0", Some("private_network")),
-    ("64:ff9b:1:0:8:808:800:0", None), // GUARD
-    ("64:ff9b:1::10.0.0.5", Some("private_network")),
-    ("64:ff9b:1::127.0.0.1", Some("loopback")),
-    ("64:ff9b:1::8.8.8.8", None), // GUARD
-    // Every octet of each position decides: 169.254.0.0/16 and 172.16.0.0/12 need the second
-    // octet read from the right place. The /48 metadata address also reads as 169.254.0.0 at
-    // the /64 position, so 172.16.8.8 is the case that pins the /48 position alone.
-    ("64:ff9b:1:a9fe:a9:fe00::", Some("link_local")),
-    ("64:ff9b:1:ac10:8:800::", Some("private_network")),
-    ("64:ff9b:1:a9:fe:a9fe::", Some("link_local")),
-    ("64:ff9b:1:ac:10:808::", Some("private_network")),
-    ("64:ff9b:1:0:a9:fea9:fe00:0", Some("link_local")),
-    ("64:ff9b:1:0:ac:1008:800:0", Some("private_network")),
-    ("64:ff9b:1::169.254.169.254", Some("link_local")),
-    // A position that reads as multicast is skipped: 8.8.8.230 after a /64 prefix reads as
-    // 230.0.0.0 at the /96 position.
-    ("64:ff9b:1:0:8:808:e600:0", None), // GUARD
-    // ~keep The other side of that filter, and a known residual rather than a wanted result: a
-    // /48, /56 or /64 network can address a real destination inside 0.0.0.0/8 or 224.0.0.0/4,
-    // and that reading is skipped as if it were unused bits, so the address is permitted --
-    // 0.1.2.3 after a /48 prefix, 224.0.0.1 after a /64 one. Only the /96 position refuses
-    // these two ranges. Closing it needs the network's real prefix length (#174); until then
-    // these two rows record what the check does rather than what it should do.
-    ("64:ff9b:1:1:2:300::", None),    // GUARD
-    ("64:ff9b:1:0:e0:0:100:0", None), // GUARD
-    // An address whose every position reads as 0.0.0.0/8 or multicast carries no real
-    // destination, and a stateful NAT64 translator can forward 0.0.0.0 to its own host.
-    ("64:ff9b:1::", Some("unspecified")),
-    ("64:ff9b:1::1", Some("unspecified")),
-    ("64:ff9b:1:0:0:1::", Some("unspecified")),
-    ("64:ff9b:1:e000::", Some("multicast")),
-    ("64:ff9b:1::e000:1", Some("unspecified")),
-    // ISATAP, RFC 5214 section 6.1: the interface identifier 0000:5efe or 0200:5efe carries
-    // the IPv4 address under any prefix.
-    ("2001:db8::5efe:10.0.0.5", Some("private_network")),
-    ("2001:db8::200:5efe:127.0.0.1", Some("loopback")),
-    ("2001:db8::5efe:8.8.8.8", None),     // GUARD
-    ("2001:db8::200:5efe:8.8.8.8", None), // GUARD
-    // A link-local ISATAP address stays denied as link-local whatever address it carries;
-    // fe80::/10 already refused both of these.
-    ("fe80::5efe:8.8.8.8", Some("link_local")),      // GUARD
-    ("fe80::200:5efe:10.0.0.5", Some("link_local")), // GUARD
-    // ~keep Teredo (2001::/32, RFC 4380) is deliberately absent, and is not covered anywhere
-    // yet (#196). Its embedded IPv4 address is XOR-obfuscated in the low 32 bits --
-    // 2001:0:4136:e378:0:ffff:5601:5601 decodes to 169.254.169.254 -- so no fixed reading finds
-    // it and the extraction above cannot help. Adding 2001::/32 to DEFAULT_DENY_NET_CIDRS is
-    // the fix, kept as a separate change so that two concurrent ones do not both rewrite that
-    // constant.
-    //
-    // ~keep Two things not to do here. Do not add a row asserting a Teredo address is
-    // permitted: #196's fix denies the whole prefix rather than decoding it, so any such row
-    // stops being true the moment it lands -- which is why the earlier
-    // ("2001:0:4136:e378:8000:63bf:3fff:fdd2", None) row is gone. That row was *correct* when
-    // written (it decodes to 192.0.2.45, TEST-NET-1, which no deny row covers), so it was not
-    // pinning a bypass; it was simply about to become wrong. And do not read its absence as
-    // coverage: what is still missing is a Teredo case carrying a *private* address, and that
-    // belongs with #196's change, which is the first one able to pass it.
-    //
-    // The IPv6 loopback and unspecified addresses keep their IPv6 meaning.
-    ("::1", Some("loopback")),   // GUARD
-    ("::", Some("unspecified")), // GUARD
-];
+pub(crate) use cases::EMBEDDED_IPV4_CASES;
 
 #[cfg(test)]
 mod tests {
@@ -941,6 +837,116 @@ mod tests {
                 }
             ),
             "the reason must name the embedded address, not the allowlisted prefix, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_allowlisted_ipv6_loopback_or_unspecified_address_is_not_read_as_ipv4() {
+        // ~keep `::1` and `::` sit inside the IPv4-compatible range `::/96`, where they would read
+        // as 0.0.0.1 and 0.0.0.0. They are the IPv6 loopback and unspecified addresses, so an
+        // allowlist entry for them must admit them rather than be overruled by that reading.
+        for (literal, cidr) in [("::1", "::1/128"), ("::", "::/128")] {
+            let policy = SsrfPolicy {
+                allowlist: vec![HostMatcher::cidr(cidr).expect("literal CIDR is valid")],
+                ..SsrfPolicy::default()
+            };
+            let url = format!("http://[{literal}]/").parse::<url::Url>().expect("valid URL");
+            validate_url(&url, &policy)
+                .await
+                .unwrap_or_else(|e| panic!("{literal} must be permitted under {cidr}, got {e:?}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn should_deny_a_teredo_literal_carrying_a_private_embedded_ipv4() {
+        // ~keep RFC 4380 section 4 stores the client's IPv4 address as its one's complement, so
+        // nothing in the deny-list saw it: 2001::/32 is absent from the IPv6 nets and ipnet's
+        // contains() is family-scoped. Section 5.2.4 obliges a *remote* Teredo node to drop a
+        // packet whose embedded address is not global, which crawlberg can neither observe nor
+        // enforce, so it is not a control this deny-list can lean on.
+        for (target, expected_reason) in [
+            ("http://[2001:0:4136:e378:0:ffff:5601:5601]/", "link_local"),
+            ("http://[2001:0:4136:e378:8000:ffff:f5ff:fffa]/", "private_network"),
+        ] {
+            let url = target.parse::<url::Url>().expect("valid URL");
+            let err = validate_url(&url, &SsrfPolicy::default())
+                .await
+                .expect_err(&format!("{target} must be denied"));
+            assert!(
+                matches!(err, SsrfError::DeniedByPolicy { reason } if reason == expected_reason),
+                "{target} must be denied as {expected_reason}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn should_permit_a_teredo_literal_whose_embedded_ipv4_is_public() {
+        // ~keep Guards, not coverage: both passed before the decode existed. The first decodes to
+        // 192.0.2.45 (TEST-NET-1, which no deny row covers); the second is the documentation
+        // prefix 2001:db8::/32, which the decode must not touch because only 2001:0::/32 is
+        // Teredo.
+        for target in [
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+            "http://[2001:db8::1]/",
+        ] {
+            let url = target.parse::<url::Url>().expect("valid URL");
+            validate_url(&url, &SsrfPolicy::default())
+                .await
+                .unwrap_or_else(|e| panic!("{target} must remain permitted, got {e:?}"));
+        }
+    }
+
+    #[test]
+    fn every_denial_reason_is_one_the_ssrf_docs_list() {
+        // ~keep The reason strings are a public contract: the SSRF docs list them for callers to
+        // match on. Every other test compares a reason with a literal or with the browser
+        // crate's copy, so renaming one in the code and those tests at once passed. This test
+        // makes the docs the second party to a rename, in both directions.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs-site/src/content/docs/concepts/ssrf-defense.md"
+        );
+        let doc = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let sentence = doc
+            .split("`reason` is one of")
+            .nth(1)
+            .and_then(|rest| rest.split(".\n").next())
+            .expect("the SSRF docs list the denial reasons");
+        let documented: std::collections::BTreeSet<&str> = sentence
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter_map(|span| span.strip_prefix('"')?.strip_suffix('"'))
+            .filter(|reason| !reason.starts_with("disallowed scheme"))
+            .collect();
+        let produced: std::collections::BTreeSet<&str> = validate::DEFAULT_DENY_NET_CIDRS
+            .iter()
+            .map(|cidr| {
+                let net: ipnet::IpNet = cidr.parse().expect("literal CIDR");
+                classify_private_ip(net.network(), &[])
+            })
+            .collect();
+        assert_eq!(
+            documented.len(),
+            6,
+            "expected six documented reasons, parsed {documented:?}"
+        );
+        assert_eq!(
+            produced, documented,
+            "the denial reasons the deny-list produces differ from the ones the SSRF docs list"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn validate_url_refuses_a_hostname_that_resolves_to_loopback() {
+        let url = "http://localhost/".parse::<url::Url>().expect("valid URL");
+        let err = validate_url(&url, &SsrfPolicy::default())
+            .await
+            .expect_err("localhost resolves to loopback and must be refused");
+        assert!(
+            matches!(err, SsrfError::DeniedByPolicy { reason: "loopback" }),
+            "expected a loopback denial, got {err:?}"
         );
     }
 

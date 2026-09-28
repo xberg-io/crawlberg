@@ -6,6 +6,17 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
+  The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
+  ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
+  carry, so an allowlist entry for such an address has to name that IPv4 range instead of the
+  IPv6 one. IPv4-mapped and `64:ff9b::/96` addresses already behaved this way.
+
+- **The browser crate's fallback validator names the denial reason.** `DefaultSsrfValidator`
+  messages now end with the reason the core policy reports (`loopback`, `private_network`,
+  `link_local`, `unspecified`, `multicast`, `unique_local`). Code that compares the whole message
+  must allow for the new suffix.
+
 - **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
   userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
   that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
@@ -32,6 +43,33 @@ All notable changes to crawlberg are documented here.
   remove that step. (#126)
 
 ### Fixed
+
+- **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
+  within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
+  before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
+  all reached the private host 10.0.0.5 with `deny_private` on. The IPv4-compatible (`::/96`),
+  IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
+  `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
+  address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
+  connect-time resolver and the browser crate's fallback validator apply the same rules. (#109)
+
+- **A Teredo address reached the private IPv4 address it carries.** A `2001:0::/32` address
+  stores the client's IPv4 address inverted in its last 32 bits, and nothing decoded it, so
+  `http://[2001:0:4136:e378:0:ffff:5601:5601]/` reached 169.254.169.254 with `deny_private` on.
+  The address is now decoded and checked like the other embedded forms, so a Teredo address that
+  carries a public IPv4 address still works. (#196)
+
+- **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
+  The IPv4 address in the last 32 bits, where a /96 network puts it, is now checked, so
+  `http://[64:ff9b:1::a00:5]/` is refused. A /48, /56 or /64 network puts the address elsewhere
+  and its unused bits read as zeros at that position, so a reading whose last three octets are
+  zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
+  network sizes are checked as IPv6 only, as before. (#108)
+
+- **A denial reason could name an address the allowlist permits.** The reason was classified from
+  the first deny-listed candidate rather than the first one the allowlist did not admit, so an
+  allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
+  `private_network`. The allow or deny decision itself was always correct.
 
 - **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
   comment by searching for a literal `-->` right after the opening `<!--`, so it never

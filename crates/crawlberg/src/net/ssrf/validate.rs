@@ -74,24 +74,8 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 
     let host_str = match host {
         url::Host::Domain(d) => d,
-        url::Host::Ipv4(ip) => {
-            let ip_addr: IpAddr = ip.into();
-            if is_ip_permitted(ip_addr, policy) {
-                return Ok(());
-            } else {
-                let reason = classify_private_ip(ip_addr, &policy.allowlist);
-                return Err(SsrfError::DeniedByPolicy { reason });
-            }
-        }
-        url::Host::Ipv6(ip) => {
-            let ip_addr: IpAddr = ip.into();
-            if is_ip_permitted(ip_addr, policy) {
-                return Ok(());
-            } else {
-                let reason = classify_private_ip(ip_addr, &policy.allowlist);
-                return Err(SsrfError::DeniedByPolicy { reason });
-            }
-        }
+        url::Host::Ipv4(ip) => return check_ip(ip.into(), policy),
+        url::Host::Ipv6(ip) => return check_ip(ip.into(), policy),
     };
 
     for matcher in &policy.allowlist {
@@ -125,13 +109,20 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
 
         // ~keep DNS rebinding mitigation: every resolved IP must satisfy policy.
         for ip in &addresses {
-            if !is_ip_permitted(*ip, policy) {
-                let reason = classify_private_ip(*ip, &policy.allowlist);
-                return Err(SsrfError::DeniedByPolicy { reason });
-            }
+            check_ip(*ip, policy)?;
         }
 
         Ok(())
+    }
+}
+
+/// Decide one address, naming the reason when the policy refuses it.
+fn check_ip(ip: IpAddr, policy: &SsrfPolicy) -> Result<(), SsrfError> {
+    if is_ip_permitted(ip, policy) {
+        Ok(())
+    } else {
+        let reason = classify_private_ip(ip, &policy.allowlist);
+        Err(SsrfError::DeniedByPolicy { reason })
     }
 }
 
@@ -152,37 +143,22 @@ fn port_for_url(scheme: &str, url: &url::Url) -> u16 {
 /// Covers the IPv4-mapped and IPv4-compatible forms (RFC 4291 section 2.5.5), the
 /// IPv4-translated form `::ffff:0:0:0/96` (RFC 2765 section 2.1), the NAT64 well-known
 /// prefix `64:ff9b::/96` (RFC 6052 section 2.1), 6to4 `2002::/16`, which carries the
-/// address in bits 16 to 47 (RFC 3056 section 2), and an ISATAP interface identifier
-/// `0000:5efe` or `0200:5efe` under any prefix (RFC 5214 section 6.1).
+/// address in bits 16 to 47 (RFC 3056 section 2), Teredo `2001:0::/32`, which carries the
+/// client address inverted in the last 32 bits (RFC 4380 section 4), and an ISATAP
+/// interface identifier `0000:5efe` or `0200:5efe` under any prefix (RFC 5214 section 6.1).
 ///
-/// The local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215) fixes no position for the
-/// address: a network may use the whole /48 or a /56, /64 or /96 inside it, and RFC 6052
-/// section 2.2 places the address differently for each. Every one of the four positions
-/// is returned, except one that reads as `0.0.0.0/8` or multicast: the zero bits of a
-/// valid address read as `0.0.0.0/8` at the positions its network does not use, and the
-/// shifted bytes of a public address often read as multicast. When every position is
-/// skipped, all four are returned, so the address is refused: no real destination encodes
-/// that way, and a stateful NAT64 translator such as Jool forwards `0.0.0.0` to its own
-/// host.
+/// Each of those forms fixes one position, so its one reading is taken as it is, with no
+/// skip rule. An address only shaped like one is therefore refused for what that position
+/// reads: `2001:db8::5efe:1:1` reads as `0.1.0.1` and is refused. That space carries no
+/// legitimate traffic, so the refusal is deliberate.
 ///
-/// Skipping is not free in either direction, and a skipped reading is not always a reading
-/// of unused bits. A /48, /56 or /64 network can encode a real destination inside
-/// `0.0.0.0/8` or `224.0.0.0/4`, and that address is permitted here: `64:ff9b:1:1:2:300::`
-/// reads as `0.1.2.3` after a /48 prefix and `64:ff9b:1:0:e0:0:100:0` as `224.0.0.1` after
-/// a /64 one. Only the /96 position refuses them, because its reading is skipped only when
-/// every other one is too. The hole is confined to the two ranges the filter names — no
-/// private, loopback, link-local or CGNAT destination is inside either — and closing it
-/// needs the network's real prefix length, which is issue #174's proposal. In the other
-/// direction, some public destinations are refused on those three prefix lengths, and an
-/// IPv4 allowlist entry admits them.
-///
-/// Teredo `2001::/32` is not unwrapped here, and is not yet covered at all. RFC 4380
-/// section 5.2.4 obliges a Teredo *node* to drop a packet whose embedded address is not
-/// global, which is the peer's behaviour rather than a property of the address: a Teredo
-/// literal handed to a dual-stack host never reaches a Teredo relay.
-/// `2001:0:4136:e378:0:ffff:5601:5601` XOR-decodes to `169.254.169.254`. Covering it is
-/// issue #196, left to the change that adds `2001::/32` to the deny-list, so that two
-/// concurrent changes do not both rewrite [`DEFAULT_DENY_NET_CIDRS`].
+/// The local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215) is read at the /96 position only,
+/// the last 32 bits. A /48, /56 or /64 network inside it places the address elsewhere (RFC
+/// 6052 section 2.2), and its unused low bits then read at the /96 position as `0.0.0.0` or,
+/// on a /64 network, as the destination's last octet followed by three zero octets. So a
+/// /96 reading whose last three octets are zero is skipped when any of bytes 6 to 11 is set:
+/// that is the only shape where the /96 reading can be padding. When bytes 6 to 11 are all
+/// zero, every prefix length reads the same address, and the reading stands.
 fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let octets = v6.octets();
     let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
@@ -195,19 +171,19 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     } else {
         v6.to_ipv4().or(match segments {
             [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+            [0x0064, 0xff9b, 0x0001, ..] => {
+                let v4 = at(12, 13, 14, 15);
+                let padding = octets[6..12].iter().any(|&b| b != 0) && v4.octets()[1..] == [0, 0, 0];
+                (!padding).then_some(v4)
+            }
             [0x2002, ..] => Some(at(2, 3, 4, 5)),
+            [0x2001, 0, ..] => Some(Ipv4Addr::from(!u32::from(at(12, 13, 14, 15)))),
             _ => None,
         })
     };
     let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
-    let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
-        let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
-        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
-        let none_left = positions.iter().all(skipped);
-        positions.into_iter().filter(move |v4| none_left || !skipped(v4))
-    });
 
-    fixed.into_iter().chain(isatap).chain(local_nat64.into_iter().flatten())
+    fixed.into_iter().chain(isatap)
 }
 
 /// The first address a connection to `ip` can reach that the default deny-list covers and

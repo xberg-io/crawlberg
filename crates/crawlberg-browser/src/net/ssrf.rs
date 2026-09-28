@@ -165,7 +165,7 @@ impl SsrfValidator for DefaultSsrfValidator {
 /// The IPv4 addresses an IPv6 address embeds, for each form that is routed to that IPv4 host.
 ///
 /// Mirrors `embedded_ipv4s` in `crawlberg::net::ssrf`'s `validate` submodule, which cites
-/// the RFC for each form and says which local-use NAT64 positions are skipped and why.
+/// the RFC for each form and says when the local-use NAT64 reading is skipped and why.
 /// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips past
 /// `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
 fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
@@ -173,24 +173,23 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
     let segments = v6.segments();
 
-    let fixed = if v6.is_unspecified() || v6.is_loopback() {
-        None
-    } else {
-        v6.to_ipv4().or(match segments {
-            [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
-            [0x2002, ..] => Some(at(2, 3, 4, 5)),
-            _ => None,
-        })
-    };
-    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
-    let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
-        let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
-        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.is_multicast();
-        let none_left = positions.iter().all(skipped);
-        positions.into_iter().filter(move |v4| none_left || !skipped(v4))
+    // ~keep Unlike the core policy this validator has no allowlist, and `::` and `::1` are
+    // ~keep matched by their own deny rows before any embedded reading, so it needs no carve-out
+    // ~keep for them inside `::/96`.
+    let fixed = v6.to_ipv4().or(match segments {
+        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+        [0x0064, 0xff9b, 0x0001, ..] => {
+            let v4 = at(12, 13, 14, 15);
+            let padding = octets[6..12].iter().any(|&b| b != 0) && v4.octets()[1..] == [0, 0, 0];
+            (!padding).then_some(v4)
+        }
+        [0x2002, ..] => Some(at(2, 3, 4, 5)),
+        [0x2001, 0, ..] => Some(Ipv4Addr::from(!u32::from(at(12, 13, 14, 15)))),
+        _ => None,
     });
+    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
 
-    fixed.into_iter().chain(isatap).chain(local_nat64.into_iter().flatten())
+    fixed.into_iter().chain(isatap)
 }
 
 /// The reason the deny-list refuses `ip`, or `None` when it does not.
@@ -269,16 +268,15 @@ mod tests {
             "http://[::a00:5]/",
             "http://[2002:a9fe:a9fe::]/",
             "http://[64:ff9b:1::a00:5]/",
-            "http://[64:ff9b:1:a00:0:500::]/",
-            "http://[64:ff9b:1:a:0:5::]/",
-            "http://[64:ff9b:1:0:a:0:500:0]/",
+            "http://[64:ff9b:1:a00::a00:5]/",
             "http://[2001:db8::5efe:a00:5]/",
             "http://[2001:db8::200:5efe:7f00:1]/",
             "http://[fe80::5efe:808:808]/",
-            "http://[64:ff9b:1:ac10:8:800::]/",
             "http://[64:ff9b:1::]/",
-            "http://[64:ff9b:1:e000::]/",
             "http://[64:ff9b:1::e000:1]/",
+            // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
+            // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
+            "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -300,11 +298,32 @@ mod tests {
             "http://[64:ff9b:1::808:808]/",
             "http://[2001:db8::5efe:808:808]/",
             "http://[2001:db8::200:5efe:808:808]/",
-            "http://[64:ff9b:1:0:8:808:e600:0]/",
+            "http://[64:ff9b:1:a00::808:808]/",
+            "http://[64:ff9b:1:0:8:808:a00:0]/",
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+            "http://[2001:db8::1]/",
         ] {
             validate(permitted, true)
                 .await
                 .unwrap_or_else(|e| panic!("{permitted} must be permitted: {e}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_ends_its_message_with_the_denial_reason() {
+        // ~keep The fallback cannot return crawlberg's typed error, so the reason travels as the
+        // message suffix; crawlberg's parity test reads it back the same way.
+        for (target, reason) in [
+            ("http://127.0.0.1/", "loopback"),
+            ("http://10.0.0.5/", "private_network"),
+            ("http://[fd12::1]/", "unique_local"),
+            ("http://[2002:a9fe:a9fe::]/", "link_local"),
+        ] {
+            let message = validate(target, true).await.expect_err("a denied address");
+            assert!(
+                message.ends_with(&format!(": {reason}")),
+                "{target} must be refused as {reason}, got {message:?}"
+            );
         }
     }
 
