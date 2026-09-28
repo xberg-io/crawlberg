@@ -71,6 +71,12 @@ All notable changes to crawlberg are documented here.
 - **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
   of the page's links instead of appearing with its unresolved text as its URL. (#394)
 
+- **A `data:` or `javascript:` base address was used as the page base.** With
+  `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
+  on the page resolved against the script address, and the markdown kept relative links as
+  written. The page base is now the page address when the base address has one of these schemes,
+  in any letter case and with spaces around it, as the HTML spec and browsers do. (#311)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and
