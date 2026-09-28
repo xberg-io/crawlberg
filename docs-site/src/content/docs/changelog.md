@@ -283,18 +283,22 @@ title: "Changelog"
   `final_url` is now empty, as the field's contract allows when the vendor does not report the
   resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
 
-- **Debug output printed secrets.** Formatting a bypass provider config with `{:?}` printed its API
-  key, token or auth header value. The same held for custom request headers, a CDP endpoint token,
-  proxy credentials in a browser session key, the REST API token, and cookie values. Each now prints
-  `***` in place of the secret and keeps the non-secret fields. (#118)
+- **A caller's debug output of a config printed its secrets.** Crawlberg does not log these types,
+  but a caller that formats one with `{:?}`, such as `tracing::debug!(?config)`, a panic or an
+  `expect` message, printed a bypass provider config's API key, token or auth header value. The
+  same held for custom request headers, a CDP endpoint token, proxy credentials in a browser session
+  key, the REST API token, cookie values and the native browser's proxy URL. Each now prints `***`
+  in place of the secret and keeps the non-secret fields. A browser `eval_script` prints as `***`
+  with its length, because a script can embed a token. This covers the Rust types only: the
+  language bindings define their own config types, and their `repr` and `inspect` output is
+  unchanged. (#118, #290)
 - **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
   whole config value, which can hold a secret. It now names the field and the byte position. (#119)
 - **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
-  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached error text.
-  It fires precisely when the value does not parse as a URL, which is also when the URL redaction
-  helpers pass their input through unchanged — so the redaction added above did not cover it. The
-  error now names only the field. The matching `proxy.url` case is no longer handled here: #401
-  centralised proxy URL parsing and stopped that error carrying the value at all. (#118)
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached the error
+  text and, through it, an API error body. The error now names only the field and prints no part
+  of the value, not even redacted: the endpoint is a capability, and the field name is enough to
+  find it. The `proxy.url` error has not carried the value since #401. (#118)
 
   Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
   `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise

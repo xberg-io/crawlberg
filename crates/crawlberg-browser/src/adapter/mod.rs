@@ -114,7 +114,8 @@ pub struct NativeBrowserConfig {
 impl std::fmt::Debug for NativeBrowserConfig {
     /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
     /// auth config, `proxy_url` can carry `user:pass@` credentials, and `prior_cookies`
-    /// are session cookies. Header names stay visible; secret values print as `***`.
+    /// are session cookies. `eval_script` can embed a token, so it prints as `***` with its
+    /// length. Header names stay visible; secret values print as `***`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             user_agent,
@@ -144,7 +145,12 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
             .field("prior_cookies", prior_cookies)
             .field("block_url_patterns", block_url_patterns)
-            .field("eval_script", eval_script)
+            .field(
+                "eval_script",
+                &eval_script
+                    .as_ref()
+                    .map(|script| format!("{REDACTED} ({} bytes)", script.len())),
+            )
             .field("wait_selector", wait_selector)
             .field("robots_user_agent", robots_user_agent)
             .field("capture_network_events", capture_network_events)

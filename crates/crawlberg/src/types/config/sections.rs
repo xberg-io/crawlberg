@@ -157,7 +157,8 @@ pub struct BrowserConfig {
 
 impl std::fmt::Debug for BrowserConfig {
     /// Redacted: a CDP `endpoint` can carry credentials in its userinfo or an access token
-    /// in its query, so both print as `***`. `proxy` redacts its own secrets. The
+    /// in its query, so both print as `***`. `eval_script` prints as `***` with its length,
+    /// because a script can embed a token. `proxy` redacts its own secrets. The
     /// exhaustive destructure makes a new field a compile error here, not a silent gap.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
@@ -196,7 +197,10 @@ impl std::fmt::Debug for BrowserConfig {
             .field("extra_wait", extra_wait)
             .field("proxy", proxy)
             .field("block_url_patterns", block_url_patterns)
-            .field("eval_script", eval_script)
+            .field(
+                "eval_script",
+                &eval_script.as_deref().map(crate::net::redact::redacted_text),
+            )
             .field("robots_user_agent", robots_user_agent)
             .field("capture_network_events", capture_network_events)
             .field("session_affinity", session_affinity)

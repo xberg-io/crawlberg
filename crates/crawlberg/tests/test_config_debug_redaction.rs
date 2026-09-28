@@ -38,8 +38,13 @@ fn secret_browser_config() -> BrowserConfig {
     BrowserConfig {
         endpoint: Some(format!("wss://chrome.example.com/devtools?token={SECRET}")),
         proxy: Some(secret_proxy()),
+        eval_script: Some(secret_script()),
         ..BrowserConfig::default()
     }
+}
+
+fn secret_script() -> String {
+    format!("fetch('/api?key={SECRET}')")
 }
 
 #[test]
@@ -69,6 +74,11 @@ fn browser_config_debug_hides_the_endpoint_token() {
     assert!(
         compact.contains(r#"endpoint: Some("wss://chrome.example.com/devtools?***")"#),
         "endpoint host must stay visible: {compact}"
+    );
+    let script = format!(r#"eval_script: Some("*** ({} bytes)")"#, secret_script().len());
+    assert!(
+        compact.contains(&script),
+        "eval_script must print as set, with its length: {compact}"
     );
 }
 
