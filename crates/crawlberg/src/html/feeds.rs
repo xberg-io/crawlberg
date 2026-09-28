@@ -8,11 +8,11 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{get_attr, get_url_attr, has_inline_scheme, has_rel, has_scheme, mime_essence, resolve_url};
+use super::{get_attr, get_url_attr, has_rel, has_unfetchable_scheme, mime_essence, resolve_url};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
-/// document's base URL. A link with a blank `href`, or one that resolves to an inline `data:` or
-/// script address, is skipped.
+/// document's base URL. A link with a blank `href`, or one whose address the crawler cannot
+/// fetch, is skipped.
 pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     let parser = dom.parser();
     let mut feeds = Vec::new();
@@ -29,7 +29,7 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
                 continue;
             };
             let href = resolve_url(&href, base_url);
-            if has_inline_scheme(&href) {
+            if has_unfetchable_scheme(&href) {
                 continue;
             }
             let link_type = mime_essence(tag).unwrap_or_default();
@@ -55,8 +55,8 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
 }
 
 /// Extract hreflang alternate links from a parsed HTML document, resolved against the document's
-/// base URL. A link with a blank `hreflang` or `href`, or one that resolves to an inline `data:` or
-/// script address, is skipped.
+/// base URL. A link with a blank `hreflang` or `href`, or one whose address the crawler cannot
+/// fetch, is skipped.
 pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangEntry> {
     let parser = dom.parser();
     let mut entries = Vec::new();
@@ -77,7 +77,7 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangE
                 continue;
             };
             let url = resolve_url(&href, base_url);
-            if has_inline_scheme(&url) {
+            if has_unfetchable_scheme(&url) {
                 continue;
             }
             entries.push(HreflangEntry {
@@ -93,8 +93,8 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangE
 const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 
 /// Extract favicon and icon links from a parsed HTML document, resolved against the document's
-/// base URL. A link with a blank `href`, or one that resolves to a script address, is skipped; an
-/// inline `data:` icon is kept.
+/// base URL. A link with a blank `href`, or one whose address the crawler cannot fetch, is
+/// skipped.
 pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let parser = dom.parser();
     let mut favicons = Vec::new();
@@ -111,7 +111,7 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
                 continue;
             };
             let url = resolve_url(&raw_href, base_url);
-            if has_inline_scheme(&url) && !has_scheme(&url, "data") {
+            if has_unfetchable_scheme(&url) {
                 continue;
             }
             let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
@@ -209,6 +209,57 @@ mod tests {
             favicons[0].url, "https://example.com/en/%C2%A0",
             "an NBSP-only href is part of the address and must be percent-encoded, not treated as blank, got {}",
             favicons[0].url
+        );
+    }
+
+    #[test]
+    fn skips_a_feed_with_a_file_or_blob_address() {
+        let dom = parse(concat!(
+            r#"<link rel="alternate" type="application/rss+xml" href="file:///etc/passwd">"#,
+            r#"<link rel="alternate" type="application/atom+xml" href="blob:https://example.com/x">"#,
+            r#"<link rel="alternate" type="application/rss+xml" href="feed.xml">"#,
+        ));
+        let base = Url::parse("https://example.com/").unwrap();
+        let feeds = extract_feeds(&dom, &base);
+        let urls: Vec<&str> = feeds.iter().map(|f| f.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/feed.xml"],
+            "a file: or blob: feed link must be dropped, the crawler can never fetch it, got {feeds:?}"
+        );
+    }
+
+    #[test]
+    fn skips_a_hreflang_with_a_file_or_blob_address() {
+        let dom = parse(concat!(
+            r#"<link rel="alternate" hreflang="de" href="file:///etc/passwd">"#,
+            r#"<link rel="alternate" hreflang="fr" href="blob:https://example.com/x">"#,
+            r#"<link rel="alternate" hreflang="en" href="en.html">"#,
+        ));
+        let base = Url::parse("https://example.com/").unwrap();
+        let entries = extract_hreflangs(&dom, &base);
+        let urls: Vec<&str> = entries.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/en.html"],
+            "a file: or blob: hreflang link must be dropped, the crawler can never fetch it, got {entries:?}"
+        );
+    }
+
+    #[test]
+    fn skips_a_favicon_with_a_file_or_blob_address() {
+        let dom = parse(concat!(
+            r#"<link rel="icon" href="file:///etc/passwd">"#,
+            r#"<link rel="icon" href="blob:https://example.com/x">"#,
+            r#"<link rel="icon" href="fav.ico">"#,
+        ));
+        let base = Url::parse("https://example.com/").unwrap();
+        let favicons = extract_favicons(&dom, &base);
+        let urls: Vec<&str> = favicons.iter().map(|f| f.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://example.com/fav.ico"],
+            "a file: or blob: icon must be dropped, the crawler can never fetch it, got {favicons:?}"
         );
     }
 

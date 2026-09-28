@@ -735,12 +735,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_feeds_with_an_inline_address() {
+    async fn scrape_skips_feeds_with_an_unfetchable_address() {
         let result = scrape_head(
             "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"JavaScript:alert(1)\">\
              <link rel=\"alternate\" type=\"application/atom+xml\" href=\"VBScript:msgbox(1)\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"java&#9;script:x\">\
              <link rel=\"alternate\" type=\"application/feed+json\" href=\"DATA:application/json,{}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"file:///etc/passwd\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"blob:https://example.com/x\">\
              <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">",
         )
         .await;
@@ -748,11 +750,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_hreflangs_with_an_inline_address() {
+    async fn scrape_skips_hreflangs_with_an_unfetchable_address() {
         let result = scrape_head(
             "<link rel=\"alternate\" hreflang=\"de\" href=\"javascript:alert(1)\">\
              <link rel=\"alternate\" hreflang=\"fr\" href=\"VBSCRIPT:x\">\
              <link rel=\"alternate\" hreflang=\"es\" href=\"data:text/html,x\">\
+             <link rel=\"alternate\" hreflang=\"pt\" href=\"file:///etc/passwd\">\
+             <link rel=\"alternate\" hreflang=\"it\" href=\"blob:https://example.com/x\">\
              <link rel=\"alternate\" hreflang=\"en\" href=\"en.html\">",
         )
         .await;
@@ -761,25 +765,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_script_favicons_and_keeps_a_data_favicon() {
+    async fn scrape_skips_favicons_with_an_unfetchable_address() {
         let result = scrape_head(
             "<link rel=\"icon\" href=\"javascript:alert(1)\">\
              <link rel=\"shortcut icon\" href=\"VBScript:msgbox(1)\">\
              <link rel=\"apple-touch-icon\" href=\"JAVASCRIPT:x\">\
              <link rel=\"icon\" href=\"data:image/png;base64,iVBORw0KGgo=\">\
+             <link rel=\"icon\" href=\"file:///etc/passwd\">\
+             <link rel=\"icon\" href=\"blob:https://example.com/x\">\
              <link rel=\"icon\" href=\"fav.ico\">",
         )
         .await;
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
         assert_eq!(
             urls(favicons, |f| &f.url),
-            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"]
+            ["https://example.com/fav.ico"],
+            "an inline data: icon is no longer kept: only http and https addresses are fetchable"
         );
     }
 
     #[tokio::test]
-    async fn scrape_reports_no_canonical_url_for_an_inline_address() {
-        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+    async fn scrape_reports_no_canonical_url_for_an_unfetchable_address() {
+        for href in [
+            "javascript:alert(1)",
+            "VBScript:msgbox(1)",
+            "Data:text/html,x",
+            "file:///etc/passwd",
+            "blob:https://example.com/x",
+        ] {
             let result = scrape_head(&format!("<link rel=\"canonical\" href=\"{href}\">")).await;
             assert_eq!(result.metadata.canonical_url, None, "for {href}");
         }

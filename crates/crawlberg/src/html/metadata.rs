@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{ArticleMetadata, PageMetadata};
 
 use super::selectors::{META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE};
-use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_inline_scheme, has_rel, resolve_url};
+use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_rel, has_unfetchable_scheme, resolve_url};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -142,8 +142,8 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 /// Extract metadata from a parsed HTML document, with regex fallback for malformed content.
 ///
 /// The canonical URL resolves against `base_url`, the document's base URL. A blank `href` gives no
-/// canonical URL: it points at the page itself. Nor does one that resolves to an inline `data:` or
-/// script address.
+/// canonical URL: it points at the page itself. Nor does one whose address the crawler cannot
+/// fetch.
 pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
     let parser = dom.parser();
 
@@ -158,7 +158,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
             .find(|tag| has_rel(tag, "canonical"))
             .and_then(|tag| get_url_attr(tag, "href"))
             .map(|href| resolve_url(&href, base_url))
-            .filter(|url| !has_inline_scheme(url))
+            .filter(|url| !has_unfetchable_scheme(url))
     });
 
     let mut md = PageMetadata {
@@ -360,6 +360,17 @@ mod tests {
                <link rel="canonical" href="second.html">"#,
         );
         assert_eq!(md.canonical_url.as_deref(), Some("https://example.com/dir/c.html"));
+    }
+
+    #[test]
+    fn canonical_is_none_for_a_file_or_blob_address() {
+        for href in ["file:///etc/passwd", "blob:https://example.com/x"] {
+            let md = parse(&format!(r#"<link rel="canonical" href="{href}">"#));
+            assert_eq!(
+                md.canonical_url, None,
+                "a file: or blob: canonical link must be dropped, the crawler can never fetch it, for {href}"
+            );
+        }
     }
 
     #[test]

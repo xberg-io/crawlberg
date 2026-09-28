@@ -21,6 +21,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Feeds, hreflang alternates, canonical links and icons reported `file:` and `blob:` addresses.**
+  They still used the older check from #307, which drops only `data:`, `javascript:` and
+  `vbscript:` addresses, so a `file:///etc/passwd` feed, hreflang or canonical link, or a `file:` or
+  `blob:` icon, was still reported, though the crawler can never fetch it. All four now use the
+  same rule as the links list, images and asset discovery: only `http` and `https` addresses are
+  reported. An icon with an inline `data:` address, kept before as a deliberate exception, is no
+  longer reported either. (#472)
+
 - **The links list, images and asset discovery reported `file:` and `blob:` addresses.** A
   `file:///etc/passwd` link, a `<img src="file:///x.png">`, or a stylesheet or script with a
   `blob:` address was reported as a normal link, image or asset, though the crawler can never
