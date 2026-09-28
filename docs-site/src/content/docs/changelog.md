@@ -275,6 +275,15 @@ title: "Changelog"
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
 
+- **Link extraction could disagree with the markdown about the same tag.** Link extraction read
+  every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
+  could read a different tag boundary than the page's real structure, so the links list showed no
+  link, or the wrong address, for a link the markdown still carried. Each real `<a>` start tag is
+  now rewritten into unambiguous form first -- one copy of each attribute, double-quoted, as
+  html5ever's tokenizer reads it -- so link extraction and the markdown agree on the same tag. This
+  reads every page's links a second time and is slower on a link-heavy page; a well-formed `<a>`
+  tag is rewritten to itself. (#294)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were

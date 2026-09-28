@@ -163,7 +163,7 @@ async fn urls_from_direct_response(
     if is_html_content(&resp.content_type, &resp.body) {
         let parsed_html = mask_raw_text_markup(&resp.body);
         if let Ok(doc) = crate::html::parse_html(&parsed_html) {
-            return links_as_sitemap_urls(&doc, parsed_url);
+            return links_as_sitemap_urls(&doc, &parsed_html, parsed_url);
         }
     }
 
@@ -176,8 +176,8 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
 /// normalized URL. Anchor-only links are not URLs of their own and are skipped.
-fn links_as_sitemap_urls(doc: &tl::VDom<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(doc, &effective_base_url(doc, parsed_url));
+fn links_as_sitemap_urls(doc: &tl::VDom<'_>, html: &str, parsed_url: &Url) -> Vec<SitemapUrl> {
+    let links = extract_links(html, &effective_base_url(doc, parsed_url));
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
