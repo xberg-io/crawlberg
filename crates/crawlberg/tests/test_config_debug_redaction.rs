@@ -152,3 +152,18 @@ fn session_key_debug_hides_proxy_credentials() {
     let key = crawlberg::browser_session_pool::SessionKey::from_url("https://example.com/", Some(&proxy)).unwrap();
     assert_hidden("SessionKey", format!("{key:?}"), format!("{key:#?}"));
 }
+
+#[test]
+fn proxy_config_debug_prints_only_the_url_origin() {
+    let proxy = ProxyConfig {
+        url: format!("http://proxy.internal:8080/route/{SECRET}?token={SECRET}"),
+        username: None,
+        password: None,
+    };
+    assert_hidden("ProxyConfig", format!("{proxy:?}"), format!("{proxy:#?}"));
+    let compact = format!("{proxy:?}");
+    assert!(
+        compact.contains(r#"url: "http://proxy.internal:8080""#),
+        "only the proxy URL's origin may print: {compact}"
+    );
+}

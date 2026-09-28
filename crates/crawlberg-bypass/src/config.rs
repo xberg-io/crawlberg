@@ -9,6 +9,9 @@
 /// wherever it comes from. `redaction_placeholder_matches_crawlbergs` pins that.
 pub(crate) const REDACTED_PLACEHOLDER: &str = "***";
 
+/// The marker in a JSON body template that the provider replaces with the target URL.
+pub(crate) const URL_PLACEHOLDER: &str = "{{url}}";
+
 /// HTTP method for the vendor's extraction endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -80,10 +83,19 @@ pub enum RequestBody {
 }
 
 impl std::fmt::Debug for RequestBody {
-    /// Redacted: a `${ENV}` value substituted into the template can be a vendor key.
+    /// Redacted: a `${ENV}` value substituted into the template can be a vendor key, so the
+    /// template prints as the placeholder with its length. Whether it holds the `{{url}}`
+    /// marker prints too, because a template without it is the likeliest misconfiguration.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Json { template: _ } => f.debug_struct("Json").field("template", &REDACTED_PLACEHOLDER).finish(),
+            Self::Json { template } => f
+                .debug_struct("Json")
+                .field(
+                    "template",
+                    &format!("{REDACTED_PLACEHOLDER} ({} bytes)", template.len()),
+                )
+                .field("has_url_placeholder", &template.contains(URL_PLACEHOLDER))
+                .finish(),
         }
     }
 }
@@ -232,14 +244,28 @@ mod tests {
     /// A redacted value must render identically whichever crate produced it.
     #[test]
     fn redaction_placeholder_matches_crawlbergs() {
-        // ~keep crawlberg's `REDACTED_PLACEHOLDER` is crate-private, so pin against the one
-        // ~keep public function whose documented fail-closed return value *is* that
-        // ~keep placeholder. An input with no host takes that path.
         assert_eq!(
             REDACTED_PLACEHOLDER,
-            crawlberg::net::redact::redact_url_to_origin("not a url at all"),
+            crawlberg::net::redact::REDACTED_PLACEHOLDER,
             "this crate's placeholder has drifted from crawlberg's"
         );
+    }
+
+    /// A body template prints its length and whether it holds `{{url}}`, never its text.
+    #[test]
+    fn request_body_debug_shows_the_length_and_the_url_placeholder() {
+        for (template, has_placeholder) in [(r#"{"url":"{{url}}","key":"k"}"#, true), (r#"{"url":"url"}"#, false)] {
+            let body = RequestBody::Json {
+                template: template.into(),
+            };
+            assert_eq!(
+                format!("{body:?}"),
+                format!(
+                    r#"Json {{ template: "*** ({} bytes)", has_url_placeholder: {has_placeholder} }}"#,
+                    template.len()
+                ),
+            );
+        }
     }
 
     /// Every secret-bearing field of a provider config prints the placeholder, not the value.

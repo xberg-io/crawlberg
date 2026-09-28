@@ -305,20 +305,26 @@ All notable changes to crawlberg are documented here.
   every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
   serialised config as secret-bearing.
 
-- **Debug output of a bypass provider config printed `${ENV}` values.** A secret substituted into
-  the endpoint, a fixed query value or the JSON body template printed in plain text. The endpoint
-  now prints as its origin only — scheme, host and non-default port — and as `***` when it does not
-  parse as an absolute URL or has no host. Each query value prints as `***`, and so does the body
-  template. (#144, #152)
+- **A caller's debug output of a bypass provider config printed `${ENV}` values.** Crawlberg
+  prints only the vendor name for a provider, but a caller that formats a loaded `ProviderConfig`
+  with `{:?}` saw a secret substituted into the endpoint, a fixed query value or the JSON body
+  template. The endpoint now prints as its origin only: the scheme, the host and a non-default
+  port, or `***` when it does not parse as an absolute URL or has no host. Each query value prints
+  as `***`. The body template prints as `***` with its length, and with whether it holds the
+  `{{url}}` marker. (#144, #152)
 - **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
-  `ws://host:9222/devtools/browser/<GUID>`, where the GUID in the *path* is the capability that
-  drives the browser; redaction covered only the userinfo and the query, so `browser.endpoint` and
-  `BrowserPoolConfig.browser_endpoint` printed it verbatim, and an endpoint that did not parse
-  printed verbatim too. Both now print through the same origin-only helper the bypass provider
-  config uses, `crawlberg::net::redact::redact_url_to_origin`, which fails closed to `***`. The
-  port is kept deliberately: it distinguishes a container-mapped endpoint from the default 9222,
-  which is what makes a connection failure diagnosable, and it is no more secret than the host.
+  `ws://host:9222/devtools/browser/<GUID>`, and the GUID in the path is the capability that drives
+  the browser. Redaction covered only the userinfo and the query, so the debug output of
+  `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
+  that did not parse printed whole. Both now print through
+  `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
+  uses, which prints `***` for a value without a host. A `ProxyConfig` URL now prints as its
+  origin too. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  no more secret than the host. Two pooled endpoints on the same host and port now print the same.
   (#152)
+- **A failed bypass request logs its cause.** The send and body-read errors carry only the error
+  kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
+  chain when a send or a body read fails. (#89)
 
 ## [1.8.0] - 2026-09-27
 

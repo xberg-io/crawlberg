@@ -6,7 +6,9 @@
 //! since both are routinely shipped to logs, OTLP collectors, and issue trackers. This
 //! module centralizes that redaction so every call site applies the same rule.
 
-pub(crate) const REDACTED_PLACEHOLDER: &str = "***";
+/// The text every redacting `Debug` impl and helper here prints in place of a secret.
+#[doc(hidden)]
+pub const REDACTED_PLACEHOLDER: &str = "***";
 
 /// What [`redact_url_credentials`] returns for a value it cannot read as one address.
 ///

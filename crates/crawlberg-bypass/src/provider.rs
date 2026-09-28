@@ -9,7 +9,8 @@ use crawlberg::{BypassProvider, BypassResponse, CrawlError};
 use tracing::{Instrument, info_span};
 
 use crate::config::{
-    AuthScheme, CrawlErrorKind, HttpMethod, ProviderConfig, RequestBody, ResponseKind, UrlParamLocation,
+    AuthScheme, CrawlErrorKind, HttpMethod, ProviderConfig, RequestBody, ResponseKind, URL_PLACEHOLDER,
+    UrlParamLocation,
 };
 use crate::error::ProviderError;
 use crate::extract;
@@ -52,6 +53,28 @@ impl SimpleHttpProvider {
     fn effective_endpoint(&self) -> &str {
         self.endpoint_override.as_deref().unwrap_or(&self.config.endpoint)
     }
+
+    /// Log a failed send or body read with what the error leaves out: the endpoint's origin and
+    /// the cause chain. The error itself names only the vendor and the error kind, because the
+    /// request URL can carry the API key.
+    fn warn_transport_failure(&self, vendor: &str, stage: &str, error: &reqwest::Error) {
+        let mut cause = String::new();
+        let mut source = std::error::Error::source(error);
+        while let Some(inner) = source {
+            if !cause.is_empty() {
+                cause.push_str(": ");
+            }
+            cause.push_str(&inner.to_string());
+            source = inner.source();
+        }
+        tracing::warn!(
+            vendor,
+            endpoint = %crawlberg::net::redact::redact_url_to_origin(self.effective_endpoint()),
+            error = %error,
+            cause = %cause,
+            "bypass provider {stage} failed"
+        );
+    }
 }
 
 impl fmt::Debug for SimpleHttpProvider {
@@ -76,11 +99,13 @@ impl BypassProvider for SimpleHttpProvider {
         async move {
             let req = self.build_request(url)?;
             let resp = req.send().await.map_err(|e| {
+                let e = e.without_url();
+                self.warn_transport_failure(&vendor, "send", &e);
                 CrawlError::other(
                     ProviderError::Send {
                         vendor: vendor.clone(),
                         // ~keep The request URL carries a query-parameter API key; reqwest's message would print it.
-                        message: e.without_url().to_string(),
+                        message: e.to_string(),
                     }
                     .to_string(),
                 )
@@ -112,10 +137,12 @@ impl BypassProvider for SimpleHttpProvider {
             }
 
             let body_bytes = resp.bytes().await.map_err(|e| {
+                let e = e.without_url();
+                self.warn_transport_failure(&vendor, "body read", &e);
                 CrawlError::other(
                     ProviderError::BodyRead {
                         vendor: vendor.clone(),
-                        message: e.without_url().to_string(),
+                        message: e.to_string(),
                     }
                     .to_string(),
                 )
@@ -163,7 +190,7 @@ impl SimpleHttpProvider {
             HttpMethod::Post => {
                 let mut r = self.client.post(&full_url);
                 if let Some(RequestBody::Json { template }) = &self.config.request.body {
-                    let body_str = template.replace("{{url}}", url);
+                    let body_str = template.replace(URL_PLACEHOLDER, url);
                     r = r.header("Content-Type", "application/json").body(body_str);
                 }
                 r
