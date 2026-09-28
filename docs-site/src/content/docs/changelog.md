@@ -21,6 +21,13 @@ title: "Changelog"
 
 ### Fixed
 
+- **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
+  content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
+  path, while a browser requests `/app/next`. The target now resolves against the page's base
+  URL, the same base the links list uses. A `Refresh` HTTP header still resolves against the
+  response's own address: it arrives before any document exists to carry a base element, and
+  Chrome ignores the body's base for it too. (#300)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and
