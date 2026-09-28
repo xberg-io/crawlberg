@@ -84,7 +84,7 @@ pub(crate) async fn resolve_permitted(host: &str, policy: &SsrfPolicy) -> Result
         for address in &addresses {
             let ip = address.ip();
             if !is_ip_permitted(ip, policy) {
-                let reason = classify_private_ip(ip);
+                let reason = classify_private_ip(ip, &policy.allowlist);
                 tracing::warn!(
                     host = %host,
                     reason,
@@ -131,6 +131,42 @@ mod tests {
             .expect_err("localhost resolves to loopback and must be refused");
 
         assert_eq!(error, "denied by SSRF policy: loopback", "expected a loopback denial");
+    }
+
+    #[tokio::test]
+    async fn checks_the_ipv4_address_embedded_in_each_resolved_ipv6_form() {
+        // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
+        // policy check exactly as an AAAA answer carrying that address would.
+        let resolver = PolicyResolver::new(deny_private_policy());
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let actual = resolve_host(&resolver, literal).await.err();
+            let expected = expected.map(|reason| format!("denied by SSRF policy: {reason}"));
+            if actual != expected {
+                mismatches.push(format!("{literal}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "resolver decisions differ:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn names_the_resolved_candidate_the_allowlist_did_not_admit() {
+        // ~keep With fe80::/10 allowlisted, fe80::5efe:10.0.0.5 is refused only for the 10.0.0.5
+        // its ISATAP identifier carries, so the reason must be private_network, not link_local.
+        let resolver = PolicyResolver::new(SsrfPolicy {
+            allowlist: vec![HostMatcher::cidr("fe80::/10").expect("literal CIDR is valid")],
+            ..deny_private_policy()
+        });
+
+        let error = resolve_host(&resolver, "fe80::5efe:10.0.0.5")
+            .await
+            .expect_err("the embedded private address must still be refused");
+
+        assert_eq!(error, "denied by SSRF policy: private_network");
     }
 
     #[tokio::test]

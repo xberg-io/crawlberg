@@ -83,6 +83,74 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_fallback_validator_decides_embedded_ipv4_forms_like_the_core_policy() {
+        // ~keep The fallback validator keeps its own copy of the embedded-IPv4 check; the CIDR
+        // parity test above cannot see that copy drift.
+        //
+        // ~keep The reason is compared, not just the allow/deny bit, and that is what gives this
+        // test teeth: drift can change which reason an address gets while leaving the decision
+        // alone. Measured: swapping the fallback's `link_local` and `unique_local` table entries
+        // leaves every row decided the same way, and this test reports `feaa::1` and both
+        // `fe80::` ISATAP rows as `unique_local`. Candidate order is the other case: trying the
+        // embedded address before `ip` reports `fe80::200:5efe:10.0.0.5` as `private_network`.
+        //
+        // ~keep Serial because the fallback reads CRAWLBERG_ALLOW_PRIVATE_NETWORK, which other
+        // serial tests set. A non-serial test that sets it would still race this one; the env-var
+        // read is the flaky part, not the serial marker.
+        let fallback = crawlberg_browser::adapter::DefaultSsrfValidator::from_env();
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let url = format!("http://[{literal}]/").parse::<Url>().expect("valid URL");
+            let actual = fallback.validate(&url).await.err().map(|message| {
+                // ~keep The fallback cannot name crawlberg's SsrfError, so it appends the reason
+                // to its message. An IPv6 literal never contains ": ", so the last one is it.
+                match message.rsplit_once(": ") {
+                    Some((_, reason)) => reason.to_owned(),
+                    None => message,
+                }
+            });
+            if actual.as_deref() != expected {
+                mismatches.push(format!("{literal}: core {expected:?}, fallback {actual:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "fallback validator drifted on {} of {} cases:\n{}",
+            mismatches.len(),
+            crate::net::ssrf::EMBEDDED_IPV4_CASES.len(),
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_connect_time_resolution_checks_the_embedded_ipv4_address() {
+        // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
+        // check exactly as an AAAA answer carrying that address would. The bridge is what a crawl
+        // uses; the fallback governs direct use of the browser crate and names no reason.
+        let bridge = validator_for(&SsrfPolicy::default());
+        let fallback = crawlberg_browser::adapter::DefaultSsrfValidator::from_env();
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let actual = bridge.resolve(literal).await.err();
+            let wanted = expected.map(|reason| format!("denied by SSRF policy: {reason}"));
+            if actual != wanted {
+                mismatches.push(format!("{literal}: bridge expected {wanted:?}, got {actual:?}"));
+            }
+            let refused = fallback.resolve(literal).await.is_err();
+            if refused != expected.is_some() {
+                mismatches.push(format!("{literal}: fallback refused={refused}, expected {expected:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "browser resolution decisions differ:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
         let validator = validator_for(&SsrfPolicy::default());
         let err = validator

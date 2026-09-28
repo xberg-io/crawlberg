@@ -10,7 +10,7 @@
 //! it re-implements only the default deny-list, never the allowlist matching, so there
 //! is exactly one implementation of the security-relevant matching logic in the stack.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use ipnet::IpNet;
@@ -20,10 +20,11 @@ use url::Url;
 ///
 /// Kept in sync with `crawlberg::net::ssrf::DEFAULT_DENY_NETS` by the parity test in
 /// that module, which compares it against [`DEFAULT_DENY_NET_CIDRS`].
-static DEFAULT_DENY_NETS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
+static DEFAULT_DENY_NETS: LazyLock<Vec<(IpNet, &'static str)>> = LazyLock::new(|| {
     DEFAULT_DENY_NET_CIDRS
         .iter()
-        .map(|c| c.parse().expect("literal CIDR"))
+        .zip(DENY_NET_REASONS)
+        .map(|(cidr, reason)| (cidr.parse().expect("literal CIDR"), reason))
         .collect()
 });
 
@@ -47,6 +48,31 @@ pub const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "fe80::/10",
     "fc00::/7",
     "ff00::/8",
+];
+
+/// The denial reason each entry of [`DEFAULT_DENY_NET_CIDRS`] reports, in the same order.
+///
+/// ~keep These are the reason strings `crawlberg::net::ssrf`'s `classify_private_ip`
+/// produces, restated as a table rather than re-derived from the octets, so this crate
+/// carries no second copy of the classification logic. The deny-nets are pairwise disjoint,
+/// so the entry that matches is the entry that classifies. Sizing the array from
+/// `DEFAULT_DENY_NET_CIDRS` makes adding a range without a reason a compile error, and
+/// [`DEFAULT_DENY_NETS`] pairs the two at construction so no later lookup can miss and
+/// return "not denied" for an address that is.
+const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
+    "loopback",
+    "private_network",
+    "private_network",
+    "private_network",
+    "link_local",
+    "unspecified",
+    "multicast",
+    "private_network",
+    "loopback",
+    "unspecified",
+    "link_local",
+    "unique_local",
+    "multicast",
 ];
 
 /// Refused schemes a refusal names. Any other scheme is not shown: an address written without
@@ -177,12 +203,18 @@ impl SsrfValidator for DefaultSsrfValidator {
         // ~keep Localhost names are blocked before DNS. `validate` does not resolve; the
         // connect-time `resolve` checks every address the connection will use.
         match url.host() {
-            Some(url::Host::Ipv4(ip)) if is_ip_denied(ip.into()) => {
-                Err(format!("Access to private/internal IP address {ip} is not allowed"))
-            }
-            Some(url::Host::Ipv6(ip)) if is_ip_denied(ip.into()) => {
-                Err(format!("Access to private/internal IPv6 address {ip} is not allowed"))
-            }
+            Some(url::Host::Ipv4(ip)) => match denial_reason(ip.into()) {
+                Some(reason) => Err(format!(
+                    "Access to private/internal IP address {ip} is not allowed: {reason}"
+                )),
+                None => Ok(()),
+            },
+            Some(url::Host::Ipv6(ip)) => match denial_reason(ip.into()) {
+                Some(reason) => Err(format!(
+                    "Access to private/internal IPv6 address {ip} is not allowed: {reason}"
+                )),
+                None => Ok(()),
+            },
             Some(url::Host::Domain(domain)) if is_localhost_name(domain) => {
                 Err(format!("Localhost rebinding attack blocked: {domain}"))
             }
@@ -194,7 +226,7 @@ impl SsrfValidator for DefaultSsrfValidator {
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         let addresses = system_lookup(host).await?;
         if self.deny_private
-            && let Some(ip) = addresses.iter().find(|ip| is_ip_denied(**ip))
+            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
         {
             return Err(format!(
                 "{host} resolves to the private/internal address {ip}, which is not allowed"
@@ -204,30 +236,54 @@ impl SsrfValidator for DefaultSsrfValidator {
     }
 }
 
-/// Collapse an IPv6 address that actually addresses IPv4 space into that IPv4 address.
+/// The IPv4 addresses an IPv6 address embeds, for each form that is routed to that IPv4 host.
 ///
-/// Mirrors `crawlberg::net::ssrf::canonicalize_ip`. Without it, `::ffff:127.0.0.1` is
-/// only tested against the IPv6 deny-nets and slips past `127.0.0.0/8`, while a
-/// dual-stack host routes it straight to loopback.
-fn canonicalize_ip(ip: IpAddr) -> IpAddr {
-    let IpAddr::V6(v6) = ip else { return ip };
-
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return IpAddr::V4(v4);
-    }
-
+/// Mirrors `embedded_ipv4s` in `crawlberg::net::ssrf`'s `validate` submodule, which cites
+/// the RFC for each form and says when the local-use NAT64 reading is skipped and why.
+/// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips past
+/// `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
+fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
+    let octets = v6.octets();
+    let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
     let segments = v6.segments();
-    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
-        let octets = v6.octets();
-        return IpAddr::V4(std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
-    }
 
-    ip
+    // ~keep Unlike the core policy this validator has no allowlist, and `::` and `::1` are
+    // ~keep matched by their own deny rows before any embedded reading, so it needs no carve-out
+    // ~keep for them inside `::/96`.
+    let fixed = v6.to_ipv4().or(match segments {
+        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+        [0x0064, 0xff9b, 0x0001, ..] => {
+            let v4 = at(12, 13, 14, 15);
+            let padding = octets[6..12].iter().any(|&b| b != 0) && v4.octets()[1..] == [0, 0, 0];
+            (!padding).then_some(v4)
+        }
+        [0x2002, ..] => Some(at(2, 3, 4, 5)),
+        [0x2001, 0, ..] => Some(Ipv4Addr::from(!u32::from(at(12, 13, 14, 15)))),
+        _ => None,
+    });
+    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
+
+    fixed.into_iter().chain(isatap)
 }
 
-fn is_ip_denied(ip: IpAddr) -> bool {
-    let ip = canonicalize_ip(ip);
-    DEFAULT_DENY_NETS.iter().any(|net| net.contains(&ip))
+/// The reason the deny-list refuses `ip`, or `None` when it does not.
+///
+/// Tries `ip` itself first, then each IPv4 address it embeds, so the reason names the
+/// address the connection would actually reach. The core policy's `denied_address` walks
+/// the same candidates in the same order.
+fn denial_reason(ip: IpAddr) -> Option<&'static str> {
+    let embedded = match ip {
+        IpAddr::V6(v6) => Some(embedded_ipv4s(v6).map(IpAddr::V4)),
+        IpAddr::V4(_) => None,
+    };
+    std::iter::once(ip)
+        .chain(embedded.into_iter().flatten())
+        .find_map(|candidate| {
+            DEFAULT_DENY_NETS
+                .iter()
+                .find(|(net, _)| net.contains(&candidate))
+                .map(|(_, reason)| *reason)
+        })
 }
 
 fn is_localhost_name(domain: &str) -> bool {
@@ -282,6 +338,19 @@ mod tests {
             "http://[::ffff:127.0.0.1]/",
             "http://[::ffff:169.254.169.254]/",
             "http://[64:ff9b::7f00:1]/",
+            "http://[::ffff:0:a00:5]/",
+            "http://[::a00:5]/",
+            "http://[2002:a9fe:a9fe::]/",
+            "http://[64:ff9b:1::a00:5]/",
+            "http://[64:ff9b:1:a00::a00:5]/",
+            "http://[2001:db8::5efe:a00:5]/",
+            "http://[2001:db8::200:5efe:7f00:1]/",
+            "http://[fe80::5efe:808:808]/",
+            "http://[64:ff9b:1::]/",
+            "http://[64:ff9b:1::e000:1]/",
+            // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
+            // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
+            "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -292,9 +361,44 @@ mod tests {
 
     #[tokio::test]
     async fn default_validator_permits_public_addresses() {
-        validate("http://1.1.1.1/", true)
-            .await
-            .expect("a public address must be permitted");
+        for permitted in [
+            "http://1.1.1.1/",
+            "http://[::ffff:0:808:808]/",
+            "http://[::808:808]/",
+            "http://[2002:808:808::]/",
+            "http://[64:ff9b:1:808:8:800::]/",
+            "http://[64:ff9b:1:8:8:808::]/",
+            "http://[64:ff9b:1:0:8:808:800:0]/",
+            "http://[64:ff9b:1::808:808]/",
+            "http://[2001:db8::5efe:808:808]/",
+            "http://[2001:db8::200:5efe:808:808]/",
+            "http://[64:ff9b:1:a00::808:808]/",
+            "http://[64:ff9b:1:0:8:808:a00:0]/",
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+            "http://[2001:db8::1]/",
+        ] {
+            validate(permitted, true)
+                .await
+                .unwrap_or_else(|e| panic!("{permitted} must be permitted: {e}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_ends_its_message_with_the_denial_reason() {
+        // ~keep The fallback cannot return crawlberg's typed error, so the reason travels as the
+        // message suffix; crawlberg's parity test reads it back the same way.
+        for (target, reason) in [
+            ("http://127.0.0.1/", "loopback"),
+            ("http://10.0.0.5/", "private_network"),
+            ("http://[fd12::1]/", "unique_local"),
+            ("http://[2002:a9fe:a9fe::]/", "link_local"),
+        ] {
+            let message = validate(target, true).await.expect_err("a denied address");
+            assert!(
+                message.ends_with(&format!(": {reason}")),
+                "{target} must be refused as {reason}, got {message:?}"
+            );
+        }
     }
 
     #[tokio::test]
