@@ -27,10 +27,7 @@ pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
     if src.is_empty() {
         return String::new();
     }
-    base_url
-        .join(src)
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| src.to_owned())
+    crate::net::userinfo::resolve(base_url, src).map_or_else(|| src.to_owned(), String::from)
 }
 
 /// Parse an HTML document with every tag name in lowercase.
@@ -105,6 +102,13 @@ pub(crate) fn has_inline_scheme(address: &str) -> bool {
 /// lower case, without the colon). An address that does not parse has no scheme.
 pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
     Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
+}
+
+/// Whether `url` is a scheme the crawler can fetch. `http_fetch` builds on a `reqwest::Client`,
+/// which speaks only `http` and `https`; every other scheme, including the [`INLINE_SCHEMES`]
+/// above, `mailto:`, `tel:`, `file:` and `blob:`, names something the client can never retrieve.
+pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
 }
 
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
@@ -239,9 +243,9 @@ pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
 pub(crate) use link_targets::resolve_link_targets;
 pub(crate) use links::{effective_base_url, extract_links};
+pub(crate) use metadata::robots_meta_contents;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::{detect_meta_refresh, refresh_target};
-pub(crate) use metadata::{detect_nofollow, detect_noindex};
 pub(crate) use raw_text::mask_raw_text_markup;
 
 #[cfg(test)]
@@ -320,5 +324,14 @@ mod tests {
         for (scheme, address, expected) in cases {
             assert_eq!(has_scheme(address, scheme), expected, "for {scheme:?} in {address:?}");
         }
+    }
+
+    #[test]
+    fn a_resolved_url_loses_its_userinfo() {
+        let base = Url::parse("https://example.com/").expect("test URL must parse");
+        assert_eq!(
+            resolve_url("http://user:s3cret@example.com/i.png", &base),
+            "http://example.com/i.png"
+        );
     }
 }

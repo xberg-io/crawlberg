@@ -469,3 +469,215 @@ async fn scrape_keeps_the_page_when_a_refresh_names_a_scheme_it_cannot_fetch() {
         );
     }
 }
+
+/// `Location` values a browser sends no request for, one or more per scheme class: contact
+/// (`mailto:`, `tel:`), script (`javascript:` in two cases, `vbscript:`), inline data (`data:`),
+/// local file (`file:`), browser-internal (`about:`), another network protocol (`ftp:`) and a
+/// custom app scheme.
+const NON_WEB_LOCATIONS: [&str; 10] = [
+    "mailto:a@example.com",
+    "tel:+15551234567",
+    "javascript:void(0)",
+    "JavaScript:void(0)",
+    "vbscript:msgbox(1)",
+    "data:text/plain;base64,SGVsbG8=",
+    "file:///etc/passwd",
+    "about:blank",
+    "ftp://ftp.example.com/file.txt",
+    "myapp://open?id=1",
+];
+
+/// `/start` answers 302 with `location`; `/final` is an ordinary page.
+async fn redirect_to(location: &str) -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .append_header("location", location)
+                .set_body_raw("<html><body>Moved</body></html>", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>Final page</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+    mock
+}
+
+/// A 3xx whose `Location` has a scheme the crawl cannot fetch ends the chain: scrape() returns the
+/// 3xx itself, as the refresh path keeps its page, instead of an SSRF error. A web `Location` on
+/// the same server is still followed, so the 3xx is kept because of the scheme.
+#[tokio::test]
+async fn scrape_returns_the_3xx_when_location_names_a_scheme_it_cannot_fetch() {
+    let mut wrong = Vec::new();
+    for location in NON_WEB_LOCATIONS {
+        let mock = redirect_to(location).await;
+        let url = format!("{}/start", mock.uri());
+        match scrape(&default_engine(), &url).await {
+            Ok(page) if page.status_code == 302 && page.final_url == url => {}
+            Ok(page) => wrong.push(format!(
+                "{location}: status {} final_url {}",
+                page.status_code, page.final_url
+            )),
+            Err(error) => wrong.push(format!("{location}: {error}")),
+        }
+    }
+    assert!(wrong.is_empty(), "each 3xx must be the result:\n{}", wrong.join("\n"));
+
+    let mock = redirect_to("/final").await;
+    let page = scrape(&default_engine(), &format!("{}/start", mock.uri()))
+        .await
+        .expect("a web Location must be followed");
+    assert!(page.html.contains("Final page"), "got {:?}", page.html);
+}
+
+/// The same stop one hop into a chain: the result is the second 3xx.
+#[tokio::test]
+async fn scrape_returns_the_later_3xx_when_a_hop_names_a_scheme_it_cannot_fetch() {
+    let mock = redirect_to("mailto:a@example.com").await;
+    Mock::given(method("GET"))
+        .and(path("/hop"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/start"))
+        .mount(&mock)
+        .await;
+
+    let page = scrape(&default_engine(), &format!("{}/hop", mock.uri()))
+        .await
+        .expect("a non-web Location after a hop must not fail the scrape");
+    assert_eq!(page.status_code, 302);
+    assert_eq!(page.final_url, format!("{}/start", mock.uri()));
+}
+
+/// crawl() treats a seed whose 3xx names a non-web scheme as scrape() does: the 3xx is the page.
+#[tokio::test]
+async fn crawl_reports_the_seed_3xx_when_location_names_a_scheme_it_cannot_fetch() {
+    let mut wrong = Vec::new();
+    for location in NON_WEB_LOCATIONS {
+        let mock = redirect_to(location).await;
+        let url = format!("{}/start", mock.uri());
+        match crawl(&default_engine(), &url).await {
+            Ok(result)
+                if result.error.is_none()
+                    && result.redirect_count == 0
+                    && result.pages.first().is_some_and(|page| page.status_code == 302) => {}
+            Ok(result) => wrong.push(format!(
+                "{location}: error {:?} redirect_count {} statuses {:?}",
+                result.error,
+                result.redirect_count,
+                result.pages.iter().map(|page| page.status_code).collect::<Vec<_>>()
+            )),
+            Err(error) => wrong.push(format!("{location}: {error}")),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "each seed 3xx must be the page:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// A discovered link whose 3xx names a non-web scheme is reported as that 3xx page, as a link
+/// whose chain reaches `max_redirects` is.
+#[tokio::test]
+async fn crawl_reports_a_linked_3xx_when_location_names_a_scheme_it_cannot_fetch() {
+    let mut wrong = Vec::new();
+    for location in NON_WEB_LOCATIONS {
+        let mock = redirect_to(location).await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(r#"<html><body><a href="/start">go</a></body></html>"#, "text/html"),
+            )
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig {
+            max_depth: Some(1),
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let result = crawl(&engine_with_config(config), &format!("{}/", mock.uri()))
+            .await
+            .expect("crawl runs");
+        let linked = result.pages.iter().find(|page| page.url.ends_with("/start"));
+        if result.error.is_some() || linked.is_none_or(|page| page.status_code != 302) {
+            wrong.push(format!(
+                "{location}: error {:?} pages {:?}",
+                result.error,
+                result
+                    .pages
+                    .iter()
+                    .map(|page| (page.url.as_str(), page.status_code))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "each linked 3xx must be a page:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// A robots.txt that answers 3xx to a non-web address is not unreachable: the crawl does not
+/// refuse the site because of it. On the base this failed closed with an SSRF error and crawled
+/// nothing.
+#[tokio::test]
+async fn crawl_is_not_blocked_by_a_robots_txt_redirect_to_a_scheme_it_cannot_fetch() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "mailto:a@example.com"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>Home</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+    let config = CrawlConfig {
+        respect_robots_txt: true,
+        max_depth: Some(0),
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+
+    let result = crawl(&engine_with_config(config), &format!("{}/", mock.uri()))
+        .await
+        .expect("crawl runs");
+    assert!(result.error.is_none(), "got error {:?}", result.error);
+    assert!(
+        result
+            .pages
+            .iter()
+            .any(|page| page.status_code == 200 && page.html.contains("Home")),
+        "the home page must be crawled"
+    );
+}
+
+/// A relative meta refresh target under a `<base href>` with a scheme the crawl cannot fetch
+/// resolves to that scheme, so it is no redirect: scrape() keeps the page.
+#[tokio::test]
+async fn scrape_keeps_the_page_when_a_meta_refresh_resolves_to_a_scheme_it_cannot_fetch() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "text/html")
+                .set_body_string(
+                    "<html><head><base href=\"ftp://files.example/\">\
+                     <meta http-equiv=\"refresh\" content=\"0; url=next\"></head>\
+                     <body>Kept page</body></html>",
+                ),
+        )
+        .mount(&mock)
+        .await;
+
+    let page = scrape(&default_engine(), &format!("{}/start", mock.uri()))
+        .await
+        .unwrap_or_else(|e| panic!("a meta refresh that resolves to ftp must not fail the scrape: {e}"));
+
+    assert!(page.html.contains("Kept page"), "got {:?}", page.html);
+}

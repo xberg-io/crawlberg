@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use crate::net::OriginHeaders;
 pub use crate::net::proxy::{ProxyError, SUPPORTED_SCHEMES as SUPPORTED_PROXY_SCHEMES, check_proxy_url};
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
@@ -77,6 +78,12 @@ pub struct NativeBrowserConfig {
     /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
     /// not be able to point the browser at local files.
     pub allow_file_access: bool,
+    /// Headers sent only to one host, such as a credential, on every request and redirect
+    /// hop there, including a page script's `fetch()` and module imports.
+    ///
+    /// Unlike `extra_headers`, which every host receives, these never reach a third-party
+    /// subresource or a cross-host redirect target.
+    pub origin_headers: Option<OriginHeaders>,
 }
 
 impl Default for NativeBrowserConfig {
@@ -97,6 +104,7 @@ impl Default for NativeBrowserConfig {
             capture_network_events: false,
             ssrf: None,
             allow_file_access: false,
+            origin_headers: None,
         }
     }
 }
@@ -333,6 +341,10 @@ async fn create_context(config: &NativeBrowserConfig) -> Result<Arc<BrowserConte
     context
         .http_client
         .set_extra_headers(config.extra_headers.clone())
+        .await;
+    context
+        .http_client
+        .set_origin_headers(config.origin_headers.clone())
         .await;
 
     for cookie in &config.prior_cookies {

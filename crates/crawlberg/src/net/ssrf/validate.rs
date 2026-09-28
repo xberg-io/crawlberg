@@ -7,6 +7,40 @@ use std::sync::LazyLock;
 use super::policy::is_supported_scheme;
 use super::{SsrfError, SsrfPolicy};
 
+/// Refused schemes a [`SsrfError::DisallowedScheme`] names. Any other scheme is reported as
+/// [`UNNAMED_SCHEME`]: an address written without a scheme, such as `user:token@host`, parses
+/// with its user name as the scheme.
+///
+/// Kept in sync with `crawlberg_browser::net::ssrf::NAMED_SCHEMES` apart from `http` and
+/// `https` (a configured `scheme_allowlist` can refuse either; the browser layer never does)
+/// by the parity test in `crate::net::browser_policy`.
+pub(crate) const NAMED_SCHEMES: [&str; 21] = [
+    "http",
+    "https",
+    "ftp",
+    "ftps",
+    "sftp",
+    "ssh",
+    "telnet",
+    "smb",
+    "file",
+    "data",
+    "javascript",
+    "mailto",
+    "ws",
+    "wss",
+    "blob",
+    "gopher",
+    "dict",
+    "ldap",
+    "ldaps",
+    "tftp",
+    "about",
+];
+
+/// What a [`SsrfError::DisallowedScheme`] carries for a scheme not in [`NAMED_SCHEMES`].
+const UNNAMED_SCHEME: &str = "unrecognized";
+
 /// Private / metadata / loopback CIDRs that are denied by default, as source strings.
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
@@ -65,7 +99,12 @@ pub async fn validate_url(url: &url::Url, policy: &SsrfPolicy) -> Result<(), Ssr
             .iter()
             .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
     {
-        return Err(SsrfError::DisallowedScheme(scheme.to_string()));
+        let shown = if NAMED_SCHEMES.contains(&scheme) {
+            scheme
+        } else {
+            UNNAMED_SCHEME
+        };
+        return Err(SsrfError::DisallowedScheme(shown.to_string()));
     }
 
     let host = url
@@ -222,6 +261,55 @@ pub(crate) fn classify_private_ip(ip: IpAddr) -> &'static str {
                 0xff00..=0xffff => "multicast",
                 _ => "private_network",
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The non-`http`/`https` half of [`NAMED_SCHEMES`], hardcoded rather than read from
+    /// the const. Walking `NAMED_SCHEMES` itself would make this test a no-op against the
+    /// bug it guards: dropping an entry from the production list still refuses that scheme
+    /// (it is simply unsupported), it just stops naming it, and a test that iterates the
+    /// same list that shrank would shrink with it instead of turning red.
+    const EXPECTED_NAMED_SCHEMES: [&str; 19] = [
+        "ftp",
+        "ftps",
+        "sftp",
+        "ssh",
+        "telnet",
+        "smb",
+        "file",
+        "data",
+        "javascript",
+        "mailto",
+        "ws",
+        "wss",
+        "blob",
+        "gopher",
+        "dict",
+        "ldap",
+        "ldaps",
+        "tftp",
+        "about",
+    ];
+
+    #[tokio::test]
+    async fn every_listed_scheme_is_named_in_the_refusal() {
+        let policy = SsrfPolicy::default();
+        for scheme in EXPECTED_NAMED_SCHEMES {
+            let url = format!("{scheme}://example.com/")
+                .parse::<url::Url>()
+                .expect("valid URL");
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err("an unsupported scheme must be refused");
+            assert!(
+                matches!(&err, SsrfError::DisallowedScheme(shown) if shown == scheme),
+                "{scheme} must be named in the refusal, got {err:?}"
+            );
         }
     }
 }

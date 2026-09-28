@@ -55,7 +55,7 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ];
 
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
-/// base URL (its first `<base href>`, else `document_url`), using WHATWG URL parsing.
+/// base URL (see [`effective_base_url`]), using WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
 /// the address the links resolve against.
@@ -144,15 +144,22 @@ fn rewrite_value(raw: &str, shape: Shape, base: &Url) -> Option<String> {
 /// Resolve `reference` against `base` when it is a relative reference.
 ///
 /// Returns `None` for anything a reader can already use as written: an absolute URL of any
-/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...), a fragment-only reference that
-/// points into the same document, and a blank value.
+/// scheme (`https:`, `mailto:`, `javascript:`, `data:`, ...) without userinfo, a fragment-only
+/// reference that points into the same document, and a blank value. An absolute URL with
+/// userinfo is rewritten without it.
 fn resolve_reference(reference: &str, base: &Url) -> Option<String> {
     let reference = clean_url(Cow::Borrowed(reference))?;
     if reference.starts_with('#') {
         return None;
     }
     match Url::parse(&reference) {
-        Err(url::ParseError::RelativeUrlWithoutBase) => base.join(&reference).ok().map(String::from),
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            crate::net::userinfo::resolve(base, &reference).map(String::from)
+        }
+        Ok(mut absolute) if crate::net::userinfo::has_userinfo(&absolute) => {
+            crate::net::userinfo::strip(&mut absolute);
+            Some(absolute.into())
+        }
         _ => None,
     }
 }
@@ -378,6 +385,17 @@ mod tests {
         assert_eq!(
             resolve_candidates("a.png, b.png 2x", &base).as_deref(),
             Some("https://example.com/p/a.png, https://example.com/p/b.png 2x")
+        );
+    }
+
+    #[test]
+    fn a_link_target_loses_its_userinfo() {
+        assert_eq!(
+            resolve(
+                r#"<a href="//user:s3cret@example.com/a">x</a><a href="http://page:pw@example.com/b">y</a>"#,
+                "https://example.com/"
+            ),
+            r#"<a href="https://example.com/a">x</a><a href="http://example.com/b">y</a>"#
         );
     }
 }
