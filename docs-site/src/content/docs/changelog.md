@@ -4,6 +4,33 @@ title: "Changelog"
 
 ## [Unreleased]
 
+### Upgrading
+
+- **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
+  userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
+  that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
+  the userinfo: `final_url`, page and link URLs, map entries, and the URL that pairs each
+  `batch_scrape` and `batch_crawl` result. If you match batch results against your own input URLs,
+  remove the userinfo from your input first. A URL that carries userinfo is now a configuration
+  error when `auth` is also set; use one of the two.
+
+- **`auth` and `custom_headers` now go only to the seed URL's host.** A subdomain, a linked
+  document on another host or a redirect target on another host gets neither. If a crawl needs a
+  header on another host, start a separate call with that host as its seed.
+
+- **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
+  the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
+  resolved against the page's base URL and normalized as the links list is, so it gives
+  `https://example.com/en/page`, and `https://Example.com` gives `https://example.com/`. If your
+  code joins a relative canonical URL to the page URL, remove that step. If it compares the value
+  with a literal, compare with the normalized form. (#101)
+
+- **`metadata.hreflangs[].url` is now an absolute URL.** It was each alternate-language link's
+  `href` as the page wrote it, so `<link rel="alternate" hreflang="de" href="/de/">` gave `/de/`.
+  It is now resolved against the page's base URL and normalized as the canonical URL is, so it
+  gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
+  remove that step. (#126)
+
 ### Fixed
 
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
@@ -16,7 +43,46 @@ title: "Changelog"
   URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
   a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
   index depth cap, and cycle detection) also logged their address without going through the
-  redactor at all; they now do. (#236, #243, #261)
+  redactor at all; they now do. (#236, #243, #261, #399)
+
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
+- **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
+  of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
+  keys and plugin callbacks each had to redact it, and several did not. Relative links and
+  redirects also copied it to other pages. The engine now removes it at the start of each call
+  and keeps it as a credential for the seed host only. The same host rule now applies to `auth`:
+  a page, asset, robots.txt or redirect on another host gets no credentials. Both browser backends
+  now send `Basic`, `Bearer` and header credentials only to the seed host, one request at a time,
+  instead of to every host a page loads from. robots.txt and sitemaps on the seed host are now
+  fetched with the credentials. A response fetched with credentials is never stored in or served
+  from the response cache or the shared robots.txt cache. (#378, #387, #388, #389, #390)
+
+- **A page could make the browser send a URL with userinfo.** A page-supplied link, sitemap
+  entry or redirect target loses its userinfo, and in the native browser a navigation, module
+  import or `fetch()` to a URL with userinfo is refused, as the Fetch standard requires. The
+  chromiumoxide backend refuses such a request too. A URL that does not parse is reported
+  without its text. (#347, #357, #382)
+
+- **Custom headers reached every host a crawl touched.** Plain HTTP requests and both browser
+  backends sent `custom_headers` to other hosts: linked documents, third-party subresources and
+  cross-host redirect targets. They now go only to requests on the seed's host, the same as the
+  credentials. (#393)
+
+- **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
+  module import to the seed's host now carries the credentials and the custom headers, as it does
+  in Chrome. A module redirect to another host drops them, and every module redirect is now
+  checked against the SSRF policy. (#409)
+
+- **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
+  of the page's links instead of appearing with its unresolved text as its URL. (#394)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and
@@ -25,6 +91,136 @@ title: "Changelog"
   network event also carried the raw address. Every script and stylesheet address in the page
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
+
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. The `javascript:`, `mailto:`, `tel:` and `data:` addresses that the links list, the
+  images list and asset downloads skip are now recognised as the URL parser reads them, in any
+  letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
+  `javascript:`. (#86)
+
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
+
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. (#101)
+
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
+  without the parameters. A `type`, `name`, `property` or `http-equiv` value is also compared
+  without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
+  not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
+  spaces is a deliberate leniency for pages that add them. (#136)
+
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
+
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
+
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
+- **Images with a script address were reported.** The images list skipped only `data:`
+  addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
+  `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
+  addresses in any case, as the links list does. Asset discovery now skips the same addresses when
+  it finds assets on the page. No asset with one of these addresses was downloaded before, because
+  the downloader accepts only `http:` and `https:`. (#276)
+
+- **Feed, favicon, canonical and hreflang links with a script address were reported.** A
+  `<link rel="icon" href="javascript:...">` came back as the page's favicon, and a `javascript:` or
+  `vbscript:` feed, canonical or hreflang link came back as an address. Feed, canonical and
+  hreflang links now skip `data:`, `javascript:` and `vbscript:` addresses in any case, as the
+  links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
+  type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
+  list, are checked on the address after it resolves against the base, so an address that resolves
+  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
+  unchanged: they still report the `content` without resolving or checking it. (#291)
 
 ## [1.8.0] - 2026-09-27
 

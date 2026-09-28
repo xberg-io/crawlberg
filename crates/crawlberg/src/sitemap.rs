@@ -345,6 +345,10 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
 fn collect_filtered_urls(xml_body: &str, filter: &MapFilter, limit: Option<usize>) -> Vec<SitemapUrl> {
     let mut urls = Vec::new();
     for entry in parse_sitemap_xml(xml_body) {
+        let entry = SitemapUrl {
+            url: crate::net::userinfo::parse(&entry.url).map_or(entry.url.clone(), String::from),
+            ..entry
+        };
         if !filter.matches(&entry.url) {
             continue;
         }
@@ -373,13 +377,13 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
     true
 }
 
-/// Resolve one child `<loc>` of a sitemap index against the index's own URL.
-fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> String {
+/// Resolve one child `<loc>` of a sitemap index against the index's own URL, without userinfo.
+fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> Option<String> {
     let Some(base_parsed) = base else {
-        return child_url.to_owned();
+        return crate::net::userinfo::parse(child_url).map(String::from);
     };
     if Url::parse(child_url).is_ok() {
-        rewrite_url_host(child_url, base_parsed)
+        Some(rewrite_url_host(child_url, base_parsed))
     } else {
         resolve_redirect(sitemap_url, child_url)
     }
@@ -462,7 +466,9 @@ async fn process_sitemap_response_inner(
         if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let resolved = resolve_child_sitemap_url(base.as_ref(), document.url, child_url);
+        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.url, child_url) else {
+            continue;
+        };
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
@@ -926,7 +932,9 @@ mod tests {
         let config = local_test_config();
         let client = reqwest::Client::new();
         let filter = MapFilter::from_config(&config).unwrap();
-        let child = "https://user:hunter2@example.com/child.xml";
+        // ~keep A child on another host resolves onto the index's own address, userinfo included;
+        // ~keep a child's own userinfo is stripped before the cycle check.
+        let child = "https://other.example/child.xml";
         let body = sitemap_index_xml(&[child]);
         // ~keep The child is already visited, so the walk logs the cycle and never fetches it.
         let base = Url::parse(CREDENTIALED_SITEMAP_URL).ok();
@@ -934,7 +942,8 @@ mod tests {
             base.as_ref(),
             CREDENTIALED_SITEMAP_URL,
             child,
-        )]);
+        )
+        .expect("the child resolves")]);
 
         let urls = process_sitemap_response_inner(
             &xml_document(CREDENTIALED_SITEMAP_URL, &body),
@@ -950,5 +959,28 @@ mod tests {
             "an already visited child must not be walked, got {urls:?}"
         );
         assert_sitemap_url_redacted(&sink);
+    }
+
+    #[test]
+    fn a_child_sitemap_url_loses_its_userinfo_with_or_without_a_base() {
+        let child = "http://user:s3cret@example.com/child.xml";
+        assert_eq!(
+            resolve_child_sitemap_url(None, "http://example.com/sitemap.xml", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+        let base = Url::parse("http://example.com/").expect("test URL must parse");
+        assert_eq!(
+            resolve_child_sitemap_url(Some(&base), "http://example.com/sitemap.xml", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+    }
+
+    #[test]
+    fn a_sitemap_loc_loses_its_userinfo() {
+        let xml = r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>http://user:s3cret@example.com/a</loc></url></urlset>"#;
+        let filter = MapFilter::from_config(&CrawlConfig::default()).expect("the default filter compiles");
+        let urls = collect_filtered_urls(xml, &filter, None);
+        let found: Vec<&str> = urls.iter().map(|entry| entry.url.as_str()).collect();
+        assert_eq!(found, vec!["http://example.com/a"]);
     }
 }
