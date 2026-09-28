@@ -36,6 +36,12 @@ title: "Changelog"
   a websocket endpoint with no host is still refused, and a rejection error redacts any
   `user:pass@` credentials the address carries instead of printing them in full. (#343)
 
+- **A failed connection to a remote browser printed its password.** When crawlberg could not
+  connect to a `browser.endpoint` carrying `user:pass@` credentials, the connect error and the
+  browser pool's debug output both showed the address as configured, password included. Both
+  now redact any credentials from the address first, the same way the config and CLI checks
+  already do. (#424)
+
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
   Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.

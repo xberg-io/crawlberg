@@ -23,6 +23,37 @@ fn test_pool_creation() {
     assert!(!pool.shutdown.load(Ordering::Relaxed));
 }
 
+/// A `browser_endpoint` password must never survive into `BrowserPoolConfig`'s `Debug`
+/// output, whether read directly or through `BrowserPool`'s own `Debug` impl (which
+/// prints the whole config).
+#[test]
+fn debug_output_never_contains_the_endpoint_password() {
+    let config = BrowserPoolConfig {
+        browser_endpoint: Some("ws://user:hunter2@127.0.0.1:9222/".to_owned()),
+        ..BrowserPoolConfig::default()
+    };
+    let config_debug = format!("{config:?}");
+    assert!(
+        !config_debug.contains("hunter2"),
+        "password must not survive into BrowserPoolConfig's Debug output, got: {config_debug}"
+    );
+    assert!(
+        config_debug.contains("127.0.0.1"),
+        "host must still appear in BrowserPoolConfig's Debug output, got: {config_debug}"
+    );
+
+    let pool = BrowserPool::new(config);
+    let pool_debug = format!("{pool:?}");
+    assert!(
+        !pool_debug.contains("hunter2"),
+        "password must not survive into BrowserPool's Debug output, got: {pool_debug}"
+    );
+    assert!(
+        pool_debug.contains("127.0.0.1"),
+        "host must still appear in BrowserPool's Debug output, got: {pool_debug}"
+    );
+}
+
 #[tokio::test]
 async fn test_shutdown_idempotent() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());

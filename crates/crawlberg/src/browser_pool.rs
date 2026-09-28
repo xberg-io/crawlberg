@@ -148,7 +148,7 @@ fn build_pool_launch_builder(user_data_dir: &std::path::Path, chrome_args: &[Str
 /// Rust-only: this type is excluded from alef-generated polyglot bindings.
 /// Pool reuse is intended for long-lived Rust processes (e.g. the cloud
 /// worker); language bindings construct pools internally per-call.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BrowserPoolConfig {
     /// Maximum number of concurrent pages (tabs) the pool will open.
     pub max_pages: usize,
@@ -159,6 +159,23 @@ pub struct BrowserPoolConfig {
     pub chrome_args: Vec<String>,
     /// How long to wait for Chrome to start before giving up.
     pub launch_timeout: Duration,
+}
+
+// ~keep Manual, not derived: `browser_endpoint` may carry userinfo (ws://user:pass@host/),
+// and `BrowserPool`'s own `Debug` impl below prints this config wholesale, so a derived
+// impl here would put the password wherever that reaches a log or an error's Debug output.
+impl std::fmt::Debug for BrowserPoolConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowserPoolConfig")
+            .field("max_pages", &self.max_pages)
+            .field(
+                "browser_endpoint",
+                &self.browser_endpoint.as_deref().map(crate::net::redact_url_credentials),
+            )
+            .field("chrome_args", &self.chrome_args)
+            .field("launch_timeout", &self.launch_timeout)
+            .finish()
+    }
 }
 
 impl Default for BrowserPoolConfig {

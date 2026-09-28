@@ -138,9 +138,12 @@ pub(super) async fn launch_or_connect(
                  the remote Chrome process's profile is managed externally"
             );
         }
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        let (browser, handler) = Browser::connect(endpoint).await.map_err(|e| {
+            // ~keep `endpoint` may carry userinfo (ws://user:pass@host/); redact before it
+            // reaches this error, which flows into API error bodies and MCP error payloads.
+            let redacted = crate::net::redact_url_credentials(endpoint);
+            CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
+        })?;
         Ok((browser, handler, None))
     } else {
         let user_data = resolve_user_data_dir(config)?;
@@ -357,6 +360,37 @@ mod tests {
         assert!(
             !path.exists(),
             "an unclaimed ephemeral profile directory must be removed"
+        );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password, though the failing address must still be readable for debugging.
+    ///
+    /// ~keep A closed local port refuses the connection immediately, so this needs no real
+    /// ~keep Chrome and stays fast. `ws://` skips chromiumoxide's `json/version` HTTP probe
+    /// ~keep and goes straight to the WebSocket handshake, so this is the only way to reach
+    /// ~keep `launch_or_connect`'s error path without a real remote browser.
+    #[tokio::test]
+    async fn connect_error_never_contains_the_endpoint_password() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
         );
     }
 
