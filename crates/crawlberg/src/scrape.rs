@@ -595,6 +595,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_reads_a_meta_tag_named_for_our_own_user_agent() {
+        // ~keep The generic `<meta name="robots">` case above passes the product-token check
+        // ~keep unconditionally (`name_lower == ROBOTS_META_NAME`), so it never observes the
+        // ~keep user agent `scrape_from_crawl_response` passes to `with_meta_tags`. This test
+        // ~keep uses a name scoped to crawlberg's own product token instead.
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.noindex_detected,
+            "a meta tag naming our own product token must be honoured"
+        );
+    }
+
+    #[tokio::test]
     async fn scrape_redecodes_the_body_using_the_detected_charset() {
         // ~keep windows-1252 0xE9 is `é`; read as UTF-8 it is invalid and lossy-decodes to
         // U+FFFD, so a result containing `é` proves the redecode ran.

@@ -200,13 +200,16 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
 /// generic `robots` name, or to one named crawler. A tag naming another crawler is not ours to
 /// obey, so it is dropped here rather than folded in with everyone else's.
 pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<String> {
-    let ua_lower = user_agent.to_lowercase();
+    // ~keep HTML compares `name` without case, but only ASCII case (selectors.rs:20-22): a
+    // ~keep Unicode fold would turn some non-ASCII letters into an ASCII one (U+212A KELVIN SIGN
+    // ~keep folds to `k`) and let a page bind a crawler its markup never actually named.
+    let ua_lower = user_agent.to_ascii_lowercase();
     let mut contents = Vec::new();
     super::query_tags(dom, SEL_META, |tag, _parser| {
         let Some(name) = get_attr(tag, "name") else {
             return;
         };
-        let name_lower = name.trim_ascii().to_lowercase();
+        let name_lower = name.trim_ascii().to_ascii_lowercase();
         if name_lower != ROBOTS_META_NAME && !crate::robots::product_token_addresses_us(&name_lower, &ua_lower) {
             return;
         }
@@ -548,6 +551,18 @@ mod tests {
         assert!(
             robots_contents("<meta name=\"\u{a0}robots\" content=\"noindex\">", "crawlberg/1.0").is_empty(),
             "a no-break space is not ASCII whitespace, so the name is not `robots`"
+        );
+    }
+
+    #[test]
+    fn a_robots_name_is_folded_in_ascii_case_only() {
+        // ~keep U+212A KELVIN SIGN lower-cases to `k` under Unicode rules, but HTML's `name`
+        // ~keep comparison is ASCII-only case-insensitive (selectors.rs:20-22). A page using it
+        // ~keep must not bind a crawler whose user agent starts with `k`, which a Unicode fold
+        // ~keep would let it do.
+        assert!(
+            robots_contents("<meta name=\"\u{212a}bot\" content=\"noindex\">", "kbot/1.0").is_empty(),
+            "a Unicode-only case fold must not let a KELVIN SIGN name match `kbot`"
         );
     }
 
