@@ -139,10 +139,11 @@ All notable changes to crawlberg are documented here.
   check says the scheme is forbidden without showing it. The address in the same error goes
   through the credential redactor, which hides such an address whole. (#329)
 
-- **A crawl of an address without a host printed its credential.** A crawl refuses a seed such
-  as `user:token@host` before any request, because the seed has no host to read robots.txt from.
-  The reason named the seed as written, so `token` reached the crawl result, the error event and
-  the error hook. The reason now names the address through the credential redactor. (#427)
+- **A crawl of an address without a host printed its credential.** A crawl refused a seed such
+  as `user:token@host` because the seed has no host to read robots.txt from, and the reason named
+  the seed as written, so `token` reached the crawl result, the error event and the error hook.
+  Such a seed is now refused before the crawl starts and is named `(unparseable URL)`. The robots
+  refusal for an address without a host also names it through the credential redactor. (#427)
 
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.

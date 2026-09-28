@@ -145,7 +145,9 @@ pub enum CrawlError {
 `url` is the refused URL (original input or the redirect target that failed), with
 its user name and password each replaced by `***`. An address that holds an `@` but does not
 parse to a URL with a host, such as `user:token@host`, is replaced whole with
-`[address hidden: it may carry credentials]`.
+`[address hidden: it may carry credentials]`. A call that starts from such an address is
+refused before it starts: `url` is `(unparseable URL)`, and `reason` begins with
+`"invalid URL: "`.
 `reason` is one of `"loopback"`, `"private_network"`, `"link_local"`,
 `"unique_local"`, `"multicast"`, `"unspecified"`, or `"disallowed scheme: <scheme>"`.
 `<scheme>` names the scheme only when it is on a fixed list of known ones, such as

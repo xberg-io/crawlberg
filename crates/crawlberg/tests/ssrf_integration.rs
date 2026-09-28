@@ -434,20 +434,23 @@ async fn too_many_redirects_refused() {
     }
 }
 
-/// The placeholder the credential redactor puts in place of an address it cannot read as one URL.
-const HIDDEN: &str = "[address hidden: it may carry credentials]";
-
 /// What the engine names a caller's address that does not parse, in place of its text.
 const UNPARSEABLE: &str = "(unparseable URL)";
+
+/// Why admission refuses an address that has no host and contains an `@`.
+const HOSTLESS_AT: &str = "invalid URL: it has no host and contains an `@`, which may be a credential";
+
+/// A crawl's refusal of an address that admission refuses for having no host and an `@`.
+const HOSTLESS_AT_REFUSAL: &str = "ssrf_policy_violation: (unparseable URL) - invalid URL: it has no host and contains an `@`, which may be a credential";
 
 /// Credential-bearing addresses a caller can pass: `(address, secrets, url field, reason)`.
 /// The url field and reason are what a scrape's SSRF refusal must carry. The engine takes the
 /// userinfo off an address that parses with a host before any check, so such a row names the
 /// address without it, and an address that does not parse is named as [`UNPARSEABLE`].
 const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
-    // Opaque: parses as scheme `user` with no host.
-    ("user:token@host", &["token"], HIDDEN, "disallowed scheme: unrecognized"),
-    ("KEY:@h:1", &["key"], HIDDEN, "disallowed scheme: unrecognized"),
+    // Opaque: parses as scheme `user` with no host, and is refused at admission.
+    ("user:token@host", &["token"], UNPARSEABLE, HOSTLESS_AT),
+    ("KEY:@h:1", &["key"], UNPARSEABLE, HOSTLESS_AT),
     // Real userinfo under a scheme the policy does not recognise.
     (
         "foo://alice:hunter2@example.com/",
@@ -463,12 +466,7 @@ const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
         "invalid URL: relative URL without a base",
     ),
     // A percent-encoded `@` inside the password.
-    (
-        "user:hunt%40er2@host",
-        &["hunt", "er2"],
-        HIDDEN,
-        "disallowed scheme: unrecognized",
-    ),
+    ("user:hunt%40er2@host", &["hunt", "er2"], UNPARSEABLE, HOSTLESS_AT),
     (
         "foo://alice:hunt%40er2@example.com/",
         &["alice", "hunt", "er2"],
@@ -563,12 +561,12 @@ impl EventEmitter for ErrorRecorder {
 }
 
 /// What a crawl of each [`CREDENTIAL_ROWS`] address reports: `(address, secrets, message,
-/// reported)`. A hostless seed is refused by the crawl's robots check, a seed with a host by
-/// the SSRF check, and a seed that does not parse is refused before the crawl starts, with no
-/// event or hook. `reported` is whether the message also reaches the error event and hook.
+/// reported)`. A seed with a host is refused by the SSRF check. A seed that does not parse, or
+/// that has no host and contains an `@`, is refused at admission before the crawl starts, with
+/// no event or hook. `reported` is whether the message also reaches the error event and hook.
 const CRAWL_ROWS: [(&str, &[&str], &str, bool); 6] = [
-    ("user:token@host", &["token"], NO_HOST, true),
-    ("KEY:@h:1", &["key"], NO_HOST, true),
+    ("user:token@host", &["token"], HOSTLESS_AT_REFUSAL, false),
+    ("KEY:@h:1", &["key"], HOSTLESS_AT_REFUSAL, false),
     (
         "foo://alice:hunter2@example.com/",
         &["alice", "hunter2"],
@@ -581,7 +579,7 @@ const CRAWL_ROWS: [(&str, &[&str], &str, bool); 6] = [
         "ssrf_policy_violation: (unparseable URL) - invalid URL: relative URL without a base",
         false,
     ),
-    ("user:hunt%40er2@host", &["hunt", "er2"], NO_HOST, true),
+    ("user:hunt%40er2@host", &["hunt", "er2"], HOSTLESS_AT_REFUSAL, false),
     (
         "foo://alice:hunt%40er2@example.com/",
         &["alice", "hunt", "er2"],
@@ -589,10 +587,6 @@ const CRAWL_ROWS: [(&str, &[&str], &str, bool); 6] = [
         true,
     ),
 ];
-
-/// The crawl's robots refusal for a seed without a host.
-const NO_HOST: &str =
-    "robots_unreachable: [address hidden: it may carry credentials] has no host to read robots.txt from";
 
 /// The crawl's refusal reaches the result, the error event and the error hook, so the
 /// credential must be absent from all three.
