@@ -1340,4 +1340,39 @@ mod tests {
         );
         assert_eq!(user_agent_values, ["Custom"]);
     }
+
+    /// A fetch that names its own `user-agent` (the wasm page fetch, pinning the agent its
+    /// robots decision judged) must send that agent once, in place of the configured one.
+    #[tokio::test]
+    async fn an_extra_header_user_agent_replaces_the_configured_one() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            ..permissive_config()
+        };
+        let client = build_client(&config).expect("client must build");
+        let extra_headers = HashMap::from([("user-agent".to_owned(), "Pinned".to_owned())]);
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &extra_headers, &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values,
+            ["Pinned"],
+            "an extra-header user-agent must replace the configured one, not add a second line"
+        );
+    }
 }

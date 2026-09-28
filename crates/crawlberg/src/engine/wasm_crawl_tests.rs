@@ -786,3 +786,82 @@ async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
 
     drop(mock);
 }
+
+/// Serve `body` at `robots.txt` for the sequential crawl's seed origin.
+async fn mount_robots(mock: &MockServer, body: &str) {
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body.to_owned()))
+        .mount(mock)
+        .await;
+}
+
+/// crawlberg#483: a `user_agents` rotation list decides the agent robots.txt is judged for,
+/// so a site that disallows only the rotated agent is not crawled.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_sequential_crawl_rotates_the_configured_user_agent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: AgentB\nDisallow: /\n").await;
+    mount_html_expecting(&mock, "/", "<html><body>root</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        user_agent: Some("AgentA".to_owned()),
+        user_agents: vec!["AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        0,
+        "robots.txt disallows the rotated agent, so no page may be fetched"
+    );
+    drop(mock);
+}
+
+/// Each page gets the next agent in the rotation, robots.txt is judged for that agent, and
+/// the page request sends that same agent.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_sequential_crawl_picks_and_sends_the_agent_per_page() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: AgentB\nDisallow: /\n").await;
+    for (at, body) in [
+        ("/", r#"<html><body><a href="/next">n</a><a href="/third">t</a></body></html>"#),
+        ("/third", "<html><body>third</body></html>"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .and(wiremock::matchers::header("user-agent", "AgentA"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(body.to_owned())
+                    .append_header("content-type", "text/html"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+    }
+    mount_html_expecting(&mock, "/next", "<html><body>next</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        user_agents: vec!["AgentA".to_owned(), "AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/third".to_owned()],
+        "the second page is judged for AgentB and refused; the first and third go out as AgentA"
+    );
+    drop(mock);
+}
