@@ -12,6 +12,12 @@ title: "Changelog"
   through such a proxy failed at connect time. The same holds for `browser.proxy` with the native
   backend. Chrome speaks SOCKS, so with the Chrome backend `browser.proxy` still takes `socks4://`
   and `socks5://`. Chrome has no `socks5h` scheme. Use an `http` or `https` proxy everywhere else.
+- **With the Chrome backend, the config check refuses a crawl-wide proxy with credentials.** A
+  Chrome render uses `proxy` when `browser.proxy` is not set, and Chrome cannot use a proxy with a
+  username or password. Such a config now fails `CrawlConfig::validate` instead of every browser
+  render. The HTTP client still takes the proxy. To keep it, set `browser.proxy` to a proxy that
+  needs no credentials, use the native backend, or set `browser.mode` to `never`. A build without
+  the Chrome backend is not affected.
 - **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the browser
   cannot use, such as `gopher://`, now fails the config check instead of the render. (#249)
 

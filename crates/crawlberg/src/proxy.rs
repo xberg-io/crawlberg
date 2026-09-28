@@ -132,7 +132,7 @@ pub(crate) fn chrome_proxy(proxy: &ProxyConfig) -> Result<ChromeProxy, CrawlErro
             "invalid proxy URL scheme '{scheme}': Chrome takes http, https, socks4 or socks5"
         )));
     }
-    if proxy.username.is_some() || proxy.password.is_some() || !url.username().is_empty() || url.password().is_some() {
+    if has_credentials(proxy, &parsed) {
         return Err(CrawlError::invalid_config(
             "the Chrome backend cannot use a proxy with a username or password; \
              use a proxy that needs no credentials, or the native backend",
@@ -144,6 +144,12 @@ pub(crate) fn chrome_proxy(proxy: &ProxyConfig) -> Result<ChromeProxy, CrawlErro
             &url[url::Position::BeforeHost..url::Position::AfterPort]
         ),
     })
+}
+
+/// Whether `proxy` carries a username or password, in its fields or in `url`, its address.
+pub(crate) fn has_credentials(proxy: &ProxyConfig, url: &ProxyUrl) -> bool {
+    let url = url.as_url();
+    proxy.username.is_some() || proxy.password.is_some() || !url.username().is_empty() || url.password().is_some()
 }
 
 /// Embeds `proxy`'s username/password into its URL as percent-encoded userinfo, for

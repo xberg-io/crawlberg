@@ -28,6 +28,9 @@
 				"username": "proxyuser",
 				"password": "proxypass"
 			},
+			"browser": {
+				"mode": "never"
+			},
 			"respect_robots_txt": false
 		}
 	},

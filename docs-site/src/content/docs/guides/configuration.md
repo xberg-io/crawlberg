@@ -162,6 +162,8 @@ ProxyConfig {
 }
 ```
 
+A Chrome render uses `proxy` when `browser.proxy` is not set, and Chrome cannot use a proxy with a username or password. With the Chrome backend, a `proxy` with credentials therefore fails the config check. Set `browser.proxy` to a proxy that needs no credentials, use the native backend, or set `browser.mode` to `never`.
+
 #### Dynamic proxy rotation (Rust)
 
 **This feature is Rust-only. Language bindings configure the static `proxy` field only.**

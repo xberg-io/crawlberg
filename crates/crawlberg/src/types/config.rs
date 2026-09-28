@@ -498,9 +498,17 @@ impl CrawlConfig {
     }
 
     fn validate_proxy(&self) -> Result<(), CrawlError> {
-        use crate::proxy::{chrome_proxy, ensure_supported_scheme, parse_proxy_url};
+        use crate::proxy::{chrome_proxy, ensure_supported_scheme, has_credentials, parse_proxy_url};
         if let Some(proxy) = &self.proxy {
-            ensure_supported_scheme(&parse_proxy_url(&proxy.url)?)?;
+            let parsed = parse_proxy_url(&proxy.url)?;
+            ensure_supported_scheme(&parsed)?;
+            if self.chrome_renders_through_the_crawl_proxy() && has_credentials(proxy, &parsed) {
+                return Err(CrawlError::invalid_config(
+                    "the Chrome backend cannot use a proxy with a username or password, and a Chrome \
+                     render uses proxy when browser.proxy is not set; set browser.proxy to a proxy \
+                     that needs no credentials, use the native backend, or set browser.mode to never",
+                ));
+            }
         }
         if let Some(proxy) = &self.browser.proxy {
             match self.browser.backend {
@@ -511,6 +519,15 @@ impl CrawlConfig {
             }
         }
         Ok(())
+    }
+
+    /// Whether a Chrome render can take the crawl-wide `proxy`: this build has Chrome, the
+    /// backend is Chrome, `browser.proxy` is not set and the mode allows a render.
+    fn chrome_renders_through_the_crawl_proxy(&self) -> bool {
+        cfg!(feature = "browser-chromiumoxide")
+            && self.browser.backend == BrowserBackend::Chromiumoxide
+            && self.browser.proxy.is_none()
+            && self.browser.mode != BrowserMode::Never
     }
 
     fn validate_auth(&self) -> Result<(), CrawlError> {
@@ -1063,5 +1080,88 @@ mod tests {
         .expect_err("the browser proxy is a proxy the browser uses")
         .to_string();
         assert!(err.contains("'gopher'"), "got {err}");
+    }
+
+    fn credentialed_crawl_proxy(url: &str, fields: bool) -> CrawlConfig {
+        let mut config = proxied_config(Some(url), None, BrowserBackend::Chromiumoxide);
+        if fields {
+            let proxy = config.proxy.as_mut().expect("a crawl-wide proxy");
+            proxy.username = Some("operator".into());
+            proxy.password = Some("s3cr3t".into());
+        }
+        config
+    }
+
+    #[cfg(feature = "browser-chromiumoxide")]
+    #[test]
+    fn a_crawl_proxy_with_credentials_is_refused_when_chrome_renders_through_it() {
+        for mode in [BrowserMode::Auto, BrowserMode::Always, BrowserMode::Stealth] {
+            for (url, fields) in [
+                ("http://proxy.test:8080", true),
+                ("http://operator:s3cr3t@proxy.test:8080", false),
+                ("operator:s3cr3t@proxy.test:8080", false),
+            ] {
+                let mut config = credentialed_crawl_proxy(url, fields);
+                config.browser.mode = mode.clone();
+                let err = config
+                    .validate()
+                    .expect_err("a Chrome render would use this proxy and cannot")
+                    .to_string();
+                for way_out in ["browser.proxy", "native backend", "browser.mode to never"] {
+                    assert!(
+                        err.contains(way_out),
+                        "{mode:?} {url}: the error must name {way_out}, got {err}"
+                    );
+                }
+                assert!(
+                    !err.contains("s3cr3t"),
+                    "{mode:?} {url}: the password must not be shown, got {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_crawl_proxy_with_credentials_is_accepted_where_chrome_never_uses_it() {
+        let never = |mut config: CrawlConfig| {
+            config.browser.mode = BrowserMode::Never;
+            config
+        };
+        let native = |mut config: CrawlConfig| {
+            config.browser.backend = BrowserBackend::Native;
+            config
+        };
+        let own_browser_proxy = |mut config: CrawlConfig| {
+            config.browser.proxy = Some(ProxyConfig {
+                url: "http://browser-proxy.test:3128".into(),
+                ..Default::default()
+            });
+            config
+        };
+        for (label, adjust) in [
+            ("mode never", &never as &dyn Fn(CrawlConfig) -> CrawlConfig),
+            ("native backend", &native),
+            ("a browser.proxy without credentials", &own_browser_proxy),
+        ] {
+            for (url, fields) in [
+                ("http://proxy.test:8080", true),
+                ("http://operator:s3cr3t@proxy.test:8080", false),
+            ] {
+                let result = adjust(credentialed_crawl_proxy(url, fields)).validate();
+                assert!(result.is_ok(), "{label} {url}: HTTP can use this proxy, got {result:?}");
+            }
+        }
+        let result = credentialed_crawl_proxy("http://proxy.test:8080", false).validate();
+        assert!(
+            result.is_ok(),
+            "a crawl proxy without credentials suits Chrome, got {result:?}"
+        );
+    }
+
+    #[cfg(not(feature = "browser-chromiumoxide"))]
+    #[test]
+    fn a_crawl_proxy_with_credentials_is_accepted_in_a_build_without_chrome() {
+        let result = credentialed_crawl_proxy("http://proxy.test:8080", true).validate();
+        assert!(result.is_ok(), "this build never renders in Chrome, got {result:?}");
     }
 }

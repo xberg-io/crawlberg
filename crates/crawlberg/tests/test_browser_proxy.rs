@@ -403,3 +403,31 @@ async fn a_loopback_page_goes_through_the_proxy_on_a_launch_and_in_a_pool() {
     }
     pool.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_chrome_render_with_only_the_crawl_wide_proxy_goes_through_it() {
+    let (address, seen) = spawn_proxy().await;
+    let mut config = render_config(proxy_at(address, None, None));
+    config.proxy = config.browser.proxy.take();
+    config.browser.session_affinity = false;
+    let Some(result) = render(
+        "a_chrome_render_with_only_the_crawl_wide_proxy_goes_through_it",
+        config,
+        &seen,
+    )
+    .await
+    else {
+        return;
+    };
+    assert!(result.browser_used, "the page must come from a Chrome render");
+    assert!(
+        result.html.contains(MARKER),
+        "the one-shot Chrome launch must go through the crawl-wide proxy, got {}",
+        result.html
+    );
+    assert!(
+        !target_requests(&seen).is_empty(),
+        "the proxy must see the render's request, saw {:?}",
+        seen.lock().expect("record")
+    );
+}
