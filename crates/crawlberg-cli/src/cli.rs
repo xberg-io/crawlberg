@@ -97,24 +97,9 @@ impl From<CliBrowserMode> for BrowserMode {
     }
 }
 
-/// True when `url` parses as a WebSocket address (`ws` or `wss` scheme).
-///
-/// A URL scheme is case-insensitive (RFC 3986 §3.1), so this parses `url` and reads the
-/// parsed scheme instead of testing the raw text for a lower-case `ws://`/`wss://` prefix.
-///
-/// ~keep This duplicates `crawlberg::net::is_websocket_scheme` (same check, same crate
-/// family) rather than calling it: that function is `pub(crate)` in `crawlberg`, because
-/// making it `pub` there would add a new item to the surface alef generates language
-/// bindings from, for a check no binding calls. Both copies must change together.
-fn is_websocket_scheme(url: &str) -> bool {
-    url::Url::parse(url)
-        .map(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
-        .unwrap_or(false)
-}
-
 /// Validate that a `--browser-endpoint` value is a WebSocket URL (`ws://` or `wss://`).
 pub fn parse_browser_endpoint(value: &str) -> Result<String, String> {
-    if is_websocket_scheme(value) {
+    if crawlberg::net::is_websocket_scheme(value) {
         Ok(value.to_owned())
     } else {
         // ~keep `value` may carry userinfo (ws://user:pass@host/); redact before it reaches

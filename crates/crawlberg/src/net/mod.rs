@@ -27,13 +27,7 @@ pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 /// parsed scheme instead of testing the raw text for a lower-case `ws://`/`wss://`
 /// prefix, so `WS://host` and `Wss://host` are accepted the same as `ws://host`: the
 /// `url` crate lower-cases the scheme while parsing.
-///
-/// ~keep `pub(crate)`, not `pub`: alef treats every `pub` item in this crate as part of
-/// the FFI-bound surface it generates bindings for, with no way to mark one Rust-only.
-/// `crawlberg-cli` needs the identical check but cannot see a `pub(crate)` item across
-/// the crate boundary, so it keeps its own copy (`crawlberg-cli/src/cli.rs`) rather than
-/// force this into the managed surface for a binding that never calls it.
-pub(crate) fn is_websocket_scheme(url: &str) -> bool {
+pub fn is_websocket_scheme(url: &str) -> bool {
     url::Url::parse(url)
         .map(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
         .unwrap_or(false)
