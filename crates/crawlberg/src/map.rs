@@ -844,6 +844,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_drops_a_urlset_loc_that_names_the_sitemap_itself() {
+        let locs = ["?q=1", "#frag", "sitemap.xml", "/sitemap.xml#top", "page"];
+
+        let (base, urls) = map_well_known_urlset(&locs, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/page")],
+            "a <loc> that is only a query or a fragment, or the sitemap's own address, is not a page"
+        );
+    }
+
+    #[tokio::test]
     async fn map_applies_exclude_paths_to_a_relative_urlset_loc() {
         let config = CrawlConfig {
             exclude_paths: vec!["^/admin".to_owned()],

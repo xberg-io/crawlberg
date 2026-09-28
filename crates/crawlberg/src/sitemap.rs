@@ -369,14 +369,14 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
 /// ~keep is returned in the parser's normalized form, so a relative `<loc>` becomes absolute and
 /// ~keep two spellings of one address become one entry. An address the walk already returned,
 /// ~keep from this document or an earlier one, is skipped before it counts toward `limit`. A
-/// ~keep `<loc>` that does not parse is dropped.
+/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself.
 pub(crate) fn collect_urlset_entries(
     document_url: &str,
     xml_body: &str,
     context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
-    let document_url_parses = Url::parse(document_url).is_ok();
+    let document = Url::parse(document_url).ok();
     let mut seen = context
         .seen_entries
         .lock()
@@ -384,9 +384,12 @@ pub(crate) fn collect_urlset_entries(
     let mut urls = Vec::new();
     for mut entry in parse_sitemap_xml(xml_body) {
         let Some(resolved) = resolve_redirect(document_url, &entry.url) else {
-            log_unparseable_loc(document_url, document_url_parses, entry.url.len(), "urlset entry");
+            log_unparseable_loc(document_url, document.is_some(), entry.url.len(), "urlset entry");
             continue;
         };
+        if names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
+            continue;
+        }
         entry.url = resolved.into();
         if !context.filter.matches(&entry.url) || !seen.insert(entry.url.clone()) {
             continue;
@@ -397,6 +400,22 @@ pub(crate) fn collect_urlset_entries(
         }
     }
     urls
+}
+
+/// Whether a urlset `<loc>` names the sitemap document rather than a page: a `<loc>` that is
+/// only a query, or one that resolves to `document`'s own address once fragments are ignored.
+fn names_the_sitemap_itself(loc: &str, resolved: &Url, document: Option<&Url>) -> bool {
+    if loc.trim_start().starts_with('?') {
+        return true;
+    }
+    let Some(document) = document else {
+        return false;
+    };
+    let mut resolved = resolved.clone();
+    resolved.set_fragment(None);
+    let mut document = document.clone();
+    document.set_fragment(None);
+    resolved == document
 }
 
 /// Log a sitemap `<loc>` that failed to parse and is skipped. The `<loc>` is logged by
