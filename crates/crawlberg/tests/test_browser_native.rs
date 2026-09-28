@@ -149,6 +149,65 @@ async fn native_forwards_extra_headers() {
 }
 
 #[tokio::test]
+async fn native_sends_custom_headers_to_the_seed_host_only() {
+    let seed = MockServer::start().await;
+    let other = MockServer::start().await;
+    let page = format!(
+        r#"<html><body><p>seed</p><script src="/own.js"></script><script src="http://localhost:{}/third.js"></script></body></html>"#,
+        other.address().port()
+    );
+    for (mock, route, body, content_type) in [
+        (&seed, "/", page.as_str(), "text/html"),
+        (&seed, "/own.js", "globalThis.own = 1;", "text/javascript"),
+        (&other, "/third.js", "globalThis.third = 1;", "text/javascript"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_owned(), content_type))
+            .mount(mock)
+            .await;
+    }
+    let config = CrawlConfig {
+        custom_headers: std::collections::HashMap::from([("x-canary-header".to_owned(), "custom-canary".to_owned())]),
+        ..native_config(|browser| browser)
+    };
+
+    scrape(&engine_with(config), &format!("{}/", seed.uri()))
+        .await
+        .expect("scrape must succeed");
+
+    let custom_header = |request: &wiremock::Request| {
+        request
+            .headers
+            .get("x-canary-header")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    let seed_requests = seed.received_requests().await.expect("request recording is on");
+    for route in ["/", "/own.js"] {
+        let request = seed_requests
+            .iter()
+            .find(|request| request.url.path() == route)
+            .unwrap_or_else(|| panic!("{route} on the seed host must have been requested"));
+        assert_eq!(
+            custom_header(request).as_deref(),
+            Some("custom-canary"),
+            "{route} on the seed host carries the custom header"
+        );
+    }
+    let other_requests = other.received_requests().await.expect("request recording is on");
+    let third = other_requests
+        .iter()
+        .find(|request| request.url.path() == "/third.js")
+        .expect("the third-party script must have been requested");
+    assert_eq!(
+        custom_header(third),
+        None,
+        "a third-party request never gets the custom header"
+    );
+}
+
+#[tokio::test]
 async fn native_errors_on_connection_refused() {
     let url = "http://127.0.0.1:1/unreachable";
     let result = scrape(&engine_with(native_config(|c| c)), url).await;
