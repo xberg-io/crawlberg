@@ -655,3 +655,29 @@ async fn crawl_is_not_blocked_by_a_robots_txt_redirect_to_a_scheme_it_cannot_fet
         "the home page must be crawled"
     );
 }
+
+/// A relative meta refresh target under a `<base href>` with a scheme the crawl cannot fetch
+/// resolves to that scheme, so it is no redirect: scrape() keeps the page.
+#[tokio::test]
+async fn scrape_keeps_the_page_when_a_meta_refresh_resolves_to_a_scheme_it_cannot_fetch() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "text/html")
+                .set_body_string(
+                    "<html><head><base href=\"ftp://files.example/\">\
+                     <meta http-equiv=\"refresh\" content=\"0; url=next\"></head>\
+                     <body>Kept page</body></html>",
+                ),
+        )
+        .mount(&mock)
+        .await;
+
+    let page = scrape(&default_engine(), &format!("{}/start", mock.uri()))
+        .await
+        .unwrap_or_else(|e| panic!("a meta refresh that resolves to ftp must not fail the scrape: {e}"));
+
+    assert!(page.html.contains("Kept page"), "got {:?}", page.html);
+}

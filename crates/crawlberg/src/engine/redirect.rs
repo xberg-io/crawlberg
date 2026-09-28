@@ -11,7 +11,7 @@ use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::RobotsOutcome;
 use crate::helpers::{default_robots_user_agent, fetch_robots_outcome};
-use crate::html::{detect_meta_refresh, mask_raw_text_markup, refresh_target};
+use crate::html::{detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
 use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
@@ -528,8 +528,10 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     resolve_redirect(current_url, &target)
 }
 
-/// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`, if the
-/// crawl can fetch it.
+/// The target named by a `<meta http-equiv="refresh">`, resolved against the document's base URL
+/// (its `<base href>`, from [`effective_base_url`], the same base every other consumer uses), if
+/// the crawl can fetch it. The `Refresh` header has no document to carry a base, so it resolves
+/// against the response's own address instead (see [`refresh_header_target`]).
 fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     if !is_html_content(&resp.content_type, &resp.body) {
         return None;
@@ -537,10 +539,12 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = crate::html::parse_html(&parsed_html)
-        .ok()
-        .and_then(|doc| detect_meta_refresh(&doc))?;
-    fetchable_target(current_url, &target)
+    let doc = crate::html::parse_html(&parsed_html).ok()?;
+    let target = detect_meta_refresh(&doc)?;
+    let base = Url::parse(current_url)
+        .map(|document_url| effective_base_url(&doc, &document_url).to_string())
+        .unwrap_or_else(|_| current_url.to_owned());
+    fetchable_target(&base, &target)
 }
 
 #[cfg(test)]
@@ -664,6 +668,24 @@ mod tests {
         assert_eq!(target, "https://example.com/from-meta");
     }
 
+    /// A `Refresh` header whose delay is a lone `.`, with no digit anywhere in it, names no
+    /// refresh: the shared refresh parser rejects it exactly as it does for the meta tag, so it
+    /// falls through to the meta refresh in the body (oracle case `d06_dot_only_then_longer`,
+    /// #353).
+    #[test]
+    fn a_refresh_header_with_a_dot_only_delay_falls_through_to_the_meta_refresh() {
+        let resp = response(
+            200,
+            &[("refresh", ".; url=/from-header")],
+            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the meta refresh must still be consulted");
+        assert_eq!(target, "https://example.com/from-meta");
+    }
+
     /// A `<meta http-equiv="refresh">` written inside script text is script source, not a
     /// redirect a browser would follow. ~keep
     #[test]
@@ -732,6 +754,54 @@ mod tests {
         assert_eq!(
             meta_refresh_target(&meta("0; url=\u{1}\u{B}"), "https://example.com/start"),
             None
+        );
+    }
+
+    /// A meta refresh target resolves against the document's base URL, exactly as a browser
+    /// does: a `<base href="/app/">` sends a relative target under `/app/`, not under the page's
+    /// own path (#300, matched against Chrome).
+    #[test]
+    fn a_meta_refresh_target_resolves_against_the_base_element() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><base href="/app/"><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&resp, "https://example.com/dir/page"),
+            Some("https://example.com/app/next".to_owned()),
+            "the target must resolve against the base element, not the page's own directory"
+        );
+    }
+
+    /// With no `<base>` element, the page address is the base, as it always was (#300).
+    #[test]
+    fn a_meta_refresh_target_resolves_against_the_page_url_without_a_base_element() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&resp, "https://example.com/dir/page"),
+            Some("https://example.com/dir/next".to_owned())
+        );
+    }
+
+    /// The `Refresh` HTTP header arrives before any document exists to carry a `<base>`, so it
+    /// has none to honour: it resolves against the response's own address even when the body
+    /// that follows declares a base element (#300, matched against Chrome).
+    #[test]
+    fn a_refresh_header_target_ignores_the_bodys_base_element() {
+        let resp = response(
+            200,
+            &[("refresh", "0; url=next")],
+            r#"<html><head><base href="/app/"></head></html>"#,
+        );
+        assert_eq!(
+            refresh_header_target(&resp, "https://example.com/dir/page"),
+            Some("https://example.com/dir/next".to_owned()),
+            "the Refresh header must resolve against the response URL, never the body's base element"
         );
     }
 
