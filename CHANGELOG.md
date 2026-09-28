@@ -44,6 +44,16 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The native browser backend connected to a rebinding host's second DNS answer.** It checked
+  a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
+  to connect. A DNS answer that changed between the two lookups reached an address the policy
+  denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
+  only to the addresses the policy checked, as the HTTP path already does. With a configured
+  proxy, the proxy resolves the target. Two setups that worked before are now refused, as on the
+  HTTP path: a proxy set by the `HTTP_PROXY` environment variable whose host name resolves to a
+  private address, and, when `crawlberg-browser` is used directly with its default policy, a host name
+  that resolves to a private address. A refusal now names the policy's reason. (#451)
+
 - **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
   within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
   before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
@@ -535,8 +545,10 @@ Four changes can affect an existing setup:
 - **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
   `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
   of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
-  has a hand-written `Debug` that prints `***` for `Authorization`, `Proxy-Authorization`, `Cookie`
-  and `Set-Cookie`, matching names without case; every header name and every other value stays
+  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
+  name and every other value stays
   visible. Output is unchanged for a document crawlberg produced itself, because no path in the
   core populates `headers` yet — the leak was reachable through a deserialised or caller-built
   value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
