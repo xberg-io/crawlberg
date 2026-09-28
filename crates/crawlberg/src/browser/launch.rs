@@ -373,6 +373,39 @@ mod tests {
         assert!(dir.path().is_dir(), "a saved profile directory must survive its value");
     }
 
+    /// A one-shot session whose teardown task runs to the end removes its profile directory.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
+        use tokio_stream::StreamExt;
+
+        let (browser, mut handler, data_dir) = match launch_or_connect(&CrawlConfig::default()).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let path = data_dir
+            .as_ref()
+            .map(|dir| dir.path().to_path_buf())
+            .expect("a launched Chrome must have a profile directory");
+        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        drop(super::super::OneShotSession {
+            browser: Some(browser),
+            open_tab: None,
+            handler_handle: Some(handler_handle),
+            data_dir,
+            shutdown_timeout: std::time::Duration::from_secs(5),
+        });
+
+        tokio::task::spawn_blocking(move || {
+            crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path)
+        })
+        .await
+        .expect("the teardown task must stop Chrome and remove the profile directory");
+    }
+
     /// A one-shot session dropped just before its runtime stops still removes its profile directory.
     ///
     /// ~keep The session's `Drop` spawns its teardown, and a runtime that stops right after, as every
