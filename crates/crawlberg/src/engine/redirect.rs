@@ -209,22 +209,7 @@ impl<'a> RedirectPolicy<'a> {
         let origin = RobotsCacheKey::new(&parsed, &user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
-            // ~keep A robots.txt read with the caller's credentials is theirs alone: the
-            // ~keep shared cache would hand it to the next crawl of the same origin.
-            let outcome = if self.engine.config.respect_robots_txt
-                && crate::net::credentials::is_credentialed(&self.engine.config, &parsed)
-            {
-                Arc::new(fetch_robots_outcome(url, &self.engine.config, self.client, &user_agent).await)
-            } else if self.engine.config.respect_robots_txt {
-                self.engine
-                    .robots_cache
-                    .get_or_fetch(origin.clone(), || {
-                        fetch_robots_outcome(url, &self.engine.config, self.client, &user_agent)
-                    })
-                    .await
-            } else {
-                Arc::new(RobotsOutcome::AllowAll)
-            };
+            let outcome = resolve_robots_outcome(self.engine, self.client, &parsed, url, &user_agent).await;
             self.outcomes.insert(origin.clone(), outcome);
         }
         let outcome = self
@@ -294,8 +279,44 @@ impl<'a> RedirectPolicy<'a> {
     }
 }
 
+/// Resolve the robots.txt outcome `agent` sees at `parsed`'s origin: the shared cache when
+/// `respect_robots_txt` is on and the request carries no credentials, a direct fetch for a
+/// credentialed request (never shared with another caller of the same origin), and
+/// `AllowAll` when robots.txt is off.
+///
+/// ~keep `pub(super)`: the one place that resolves a robots.txt outcome for an agent, shared by
+/// `admits` (judging the agent chosen for the current tier) and
+/// `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm (re-judging the browser's own agent on
+/// escalation), so the two can never resolve the same `(origin, agent)` two different ways
+/// (crawlberg#423).
+pub(super) async fn resolve_robots_outcome(
+    engine: &CrawlEngine,
+    client: &reqwest::Client,
+    parsed: &Url,
+    url: &str,
+    agent: &str,
+) -> Arc<RobotsOutcome> {
+    if !engine.config.respect_robots_txt {
+        return Arc::new(RobotsOutcome::AllowAll);
+    }
+    // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
+    // ~keep would hand it to the next crawl of the same origin.
+    if crate::net::credentials::is_credentialed(&engine.config, parsed) {
+        return Arc::new(fetch_robots_outcome(url, &engine.config, client, agent).await);
+    }
+    let key = RobotsCacheKey::new(parsed, agent);
+    engine
+        .robots_cache
+        .get_or_fetch(key, || fetch_robots_outcome(url, &engine.config, client, agent))
+        .await
+}
+
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.
-fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
+///
+/// ~keep `pub(super)`: also read by `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm, which
+/// judges the same outcome shape against the browser's own agent right before it fetches
+/// (crawlberg#423).
+pub(super) fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
     if let Some(reason) = robots.disallow_all_reason() {
         return Some(format!("robots_unreachable: {reason}"));
     }

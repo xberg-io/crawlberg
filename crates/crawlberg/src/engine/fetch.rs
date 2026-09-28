@@ -214,7 +214,7 @@ impl CrawlEngine {
         forced_user_agent: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
-        if matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth) {
+        if self.request_will_use_browser() {
             let pool = self.config.browser_pool.as_deref();
             #[cfg(feature = "browser-native")]
             let http_resp = crate::browser::browser_fetch(

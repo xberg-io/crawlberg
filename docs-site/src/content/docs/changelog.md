@@ -43,7 +43,12 @@ title: "Changelog"
   is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
   the browser never sends a rotated agent; robots decisions for a browser-fetched request now
   read the browser's own configured or custom-header agent, so a disallowed browser request is
-  blocked instead of judged against an agent it never sends. An empty or whitespace-only
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
   `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
   every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
   sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent

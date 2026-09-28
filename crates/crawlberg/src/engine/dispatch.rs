@@ -43,6 +43,28 @@ pub(super) fn content_density(body: &str) -> f32 {
     text as f32 / total as f32
 }
 
+/// Whether robots.txt disallows the agent the Browser tier itself sends from fetching `url`.
+///
+/// ~keep The single re-judgment point for `run_tier`'s `Tier::Browser` arm (crawlberg#423): every
+/// ~keep path that reaches the Browser tier through the dispatch loop's escalation passes through
+/// ~keep here, judged against `default_robots_user_agent` -- the same agent
+/// ~keep `crate::browser::browser_fetch` below actually sends, never a rotated pick.
+/// ~keep `resolve_robots_outcome` is also what `admits` calls to judge the tier chosen at
+/// ~keep admission, so the two never resolve the same origin two different ways.
+#[cfg(feature = "browser")]
+async fn robots_disallows_browser_agent(engine: &CrawlEngine, url: &str) -> Result<Option<String>, CrawlError> {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return Ok(Some(format!(
+            "robots_unreachable: cannot parse {} to determine its origin",
+            crate::net::redact_url_credentials(url)
+        )));
+    };
+    let agent = crate::helpers::default_robots_user_agent(&engine.config);
+    let client = crate::http::build_client(&engine.config)?;
+    let outcome = super::redirect::resolve_robots_outcome(engine, &client, &parsed, url, agent).await;
+    Ok(super::redirect::robots_block_reason(&outcome, &parsed))
+}
+
 impl CrawlEngine {
     /// Dispatch a single fetch attempt to the given tier.
     ///
@@ -99,6 +121,24 @@ impl CrawlEngine {
             crate::types::Tier::Browser => {
                 #[cfg(feature = "browser")]
                 {
+                    // ~keep A hop that reaches this arm by escalating mid-crawl (`BrowserMode::Auto`
+                    // ~keep with `EscalationStrategy::BrowserOnly`/`BypassThenBrowser`) had its robots
+                    // ~keep decision judged, in `admits`, against the Http tier's own agent -- chosen
+                    // ~keep before the tier was known to end up here. The browser never sends that
+                    // ~keep agent; it always sends `default_robots_user_agent`. Re-judge against that
+                    // ~keep same agent right here, the one place every path into this tier passes
+                    // ~keep through, so a disallow for the browser's own agent stops the fetch instead
+                    // ~keep of a stale rotated-agent judgment letting it through (crawlberg#423).
+                    // ~keep Gated on `forced_user_agent.is_some()`: that is only set once `admits` has
+                    // ~keep run for this hop, i.e. a policy (`crawl()`) is in effect. `scrape()` passes
+                    // ~keep no policy and, by design, reports robots status rather than enforcing it
+                    // ~keep (see `resolve_robots_status` in `scrape.rs`); this check must not turn that
+                    // ~keep report-only contract into enforcement for one tier alone.
+                    if forced_user_agent.is_some()
+                        && let Some(reason) = robots_disallows_browser_agent(self, url).await?
+                    {
+                        return Err(CrawlError::forbidden(reason));
+                    }
                     let pool = self.config.browser_pool.as_deref();
                     #[cfg(feature = "browser-native")]
                     let http_resp = crate::browser::browser_fetch(
