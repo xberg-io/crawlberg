@@ -1,7 +1,7 @@
 //! Warnings the browser path logs, counted by a process-wide tracing subscriber: one per request
-//! the SSRF policy refuses, and none for a Chrome an `interact` session launched, which it
-//! closes rather than leaving to be killed when the last reference to it drops (chromiumoxide
-//! warns "Browser was not closed manually" then).
+//! the SSRF policy refuses, up to a bound per page, then one that reports the count; and none for
+//! a Chrome an `interact` session launched, which it closes rather than leaving to be killed when
+//! the last reference to it drops (chromiumoxide warns "Browser was not closed manually" then).
 //!
 //! The tests run one at a time: a browser another test drops would count against this one.
 //!
@@ -26,11 +26,17 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 
 const NOT_CLOSED: &str = "Browser was not closed manually";
 const REFUSED: &str = "the SSRF policy refused a request the page sent";
+const REFUSED_MORE: &str = "the SSRF policy refused more requests the page sent; only the first were logged";
 
-/// What the subscriber counted: browsers dropped while running, and the URL of every refusal.
+/// How many refusals of one page are logged one by one; the crate's bound.
+const LOGGED_REFUSALS: usize = 5;
+
+/// What the subscriber counted: browsers dropped while running, the URL of every refusal logged
+/// one by one, and the count each summary reported.
 struct Counter {
     not_closed: AtomicUsize,
     refused: Mutex<Vec<String>>,
+    summaries: Mutex<Vec<usize>>,
 }
 
 /// The one counter of this process, installed as the global subscriber on first use.
@@ -40,6 +46,7 @@ fn counter() -> &'static Counter {
         let counter: &'static Counter = Box::leak(Box::new(Counter {
             not_closed: AtomicUsize::new(0),
             refused: Mutex::new(Vec::new()),
+            summaries: Mutex::new(Vec::new()),
         }));
         tracing::subscriber::set_global_default(Subscriber(counter))
             .expect("the counting subscriber must be the only one");
@@ -53,6 +60,7 @@ struct Subscriber(&'static Counter);
 struct Fields {
     message: String,
     url: String,
+    refused: String,
 }
 
 impl tracing::field::Visit for Fields {
@@ -60,6 +68,7 @@ impl tracing::field::Visit for Fields {
         match field.name() {
             "message" => self.message = format!("{value:?}"),
             "url" => self.url = format!("{value:?}"),
+            "refused" => self.refused = format!("{value:?}"),
             _ => {}
         }
     }
@@ -82,6 +91,10 @@ impl tracing::Subscriber for Subscriber {
         }
         if fields.message.contains(REFUSED) {
             self.0.refused.lock().expect("refused lock").push(fields.url);
+        }
+        if fields.message.contains(REFUSED_MORE) {
+            let count = fields.refused.parse().expect("the summary names a count");
+            self.0.summaries.lock().expect("summaries lock").push(count);
         }
     }
     fn enter(&self, _: &tracing::span::Id) {}
@@ -169,11 +182,11 @@ async fn interact_closes_the_browser_it_launched() {
     );
 }
 
-/// Each request the SSRF policy refuses is logged as a warning naming its address.
+/// A request the SSRF policy refuses is logged as a warning naming its address.
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
-async fn scrape_logs_a_warning_for_each_refused_request() {
-    let test_name = "scrape_logs_a_warning_for_each_refused_request";
+async fn scrape_logs_a_warning_for_a_refused_request() {
+    let test_name = "scrape_logs_a_warning_for_a_refused_request";
     let counter = counter();
     let denied = MockServer::start().await;
     Mock::given(any())
@@ -204,12 +217,12 @@ async fn scrape_logs_a_warning_for_each_refused_request() {
     );
 }
 
-/// The native backend logs each refusal the same way.
+/// The native backend logs a refusal the same way.
 #[cfg(feature = "browser-native")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
-async fn native_scrape_logs_a_warning_for_each_refused_request() {
-    let test_name = "native_scrape_logs_a_warning_for_each_refused_request";
+async fn native_scrape_logs_a_warning_for_a_refused_request() {
+    let test_name = "native_scrape_logs_a_warning_for_a_refused_request";
     let counter = counter();
     let denied = MockServer::start().await;
     Mock::given(any())
@@ -233,5 +246,111 @@ async fn native_scrape_logs_a_warning_for_each_refused_request() {
     assert!(
         logged.iter().any(|url| url == &refused),
         "{test_name}: the refusal of {refused} must be logged, got {logged:?}"
+    );
+}
+
+/// Assert the flood logged `LOGGED_REFUSALS` warnings one by one and one summary that counts
+/// every refusal, given the counts before the scrape and the addresses the result lists.
+fn assert_bounded(test_name: &str, counter: &Counter, logged_before: usize, summaries_before: usize, listed: usize) {
+    let logged = counter.refused.lock().expect("refused lock").len() - logged_before;
+    let summaries = counter.summaries.lock().expect("summaries lock")[summaries_before..].to_vec();
+    assert!(
+        listed > LOGGED_REFUSALS,
+        "{test_name}: the page must send more refused requests than are logged, listed {listed}"
+    );
+    assert_eq!(
+        logged, LOGGED_REFUSALS,
+        "{test_name}: only the first refusals are logged one by one"
+    );
+    assert_eq!(
+        summaries,
+        [listed],
+        "{test_name}: one summary must report every refusal"
+    );
+}
+
+/// A page that sends many refused requests logs the first few, then one warning with the count.
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn scrape_logs_the_first_refusals_and_then_one_count() {
+    let test_name = "scrape_logs_the_first_refusals_and_then_one_count";
+    let counter = counter();
+    let denied = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&denied)
+        .await;
+    let refused = format!("http://127.0.0.1:{}/flood", denied.address().port());
+    let site = site(&format!(
+        "<p>start</p><script>for (let i = 0; i < 12; i++) fetch({refused:?} + '?' + i, {{ mode: 'no-cors' }}).catch(() => {{}});</script>"
+    ))
+    .await;
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let mut config = chrome_config(
+        CrawlConfig::builder()
+            .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+            .build(),
+    );
+    config.browser.extra_wait = Some(Duration::from_millis(500));
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let logged_before = counter.refused.lock().expect("refused lock").len();
+    let summaries_before = counter.summaries.lock().expect("summaries lock").len();
+    let result = match scrape(&engine, &seed).await {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: scrape must succeed: {error:?}"),
+    };
+    assert_bounded(
+        test_name,
+        counter,
+        logged_before,
+        summaries_before,
+        result.ssrf_refused_urls.len(),
+    );
+}
+
+/// The native backend bounds the warnings the same way.
+#[cfg(feature = "browser-native")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn native_scrape_logs_the_first_refusals_and_then_one_count() {
+    let test_name = "native_scrape_logs_the_first_refusals_and_then_one_count";
+    let counter = counter();
+    let denied = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&denied)
+        .await;
+    let scripts: String = (0..12)
+        .map(|i| {
+            format!(
+                "<script src=\"http://127.0.0.1:{}/flood{i}.js\"></script>",
+                denied.address().port()
+            )
+        })
+        .collect();
+    let site = site(&format!("<p>start</p>{scripts}")).await;
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let mut config = chrome_config(
+        CrawlConfig::builder()
+            .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+            .build(),
+    );
+    config.browser.backend = BrowserBackend::Native;
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let logged_before = counter.refused.lock().expect("refused lock").len();
+    let summaries_before = counter.summaries.lock().expect("summaries lock").len();
+    let result = scrape(&engine, &seed)
+        .await
+        .unwrap_or_else(|error| panic!("{test_name}: scrape must succeed: {error:?}"));
+    assert_bounded(
+        test_name,
+        counter,
+        logged_before,
+        summaries_before,
+        result.ssrf_refused_urls.len(),
     );
 }

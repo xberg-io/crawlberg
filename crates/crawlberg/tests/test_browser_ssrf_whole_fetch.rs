@@ -638,3 +638,28 @@ async fn scrape_refuses_a_worker_request_to_a_denied_address() {
     assert_listed(test_name, result.ssrf_refused_urls, vec![denied_url(&denied)]);
     assert_refused(test_name, &denied).await;
 }
+
+/// A popup to a denied address with credentials, opened twice, is listed once and redacted.
+///
+/// ~keep A popup is a top-level navigation, so Chrome sends its userinfo to the check; a
+/// ~keep subresource URL with userinfo Chrome refuses on its own, before the check sees it.
+#[tokio::test]
+async fn scrape_lists_a_refused_popup_once_with_credentials_redacted() {
+    let test_name = "scrape_lists_a_refused_popup_once_with_credentials_redacted";
+    let denied = denied_server().await;
+    let port = denied.address().port();
+    let target = format!("http://user:secret@127.0.0.1:{port}/cred");
+    let body = format!("<p>start</p><script>window.open({target:?}); window.open({target:?});</script>");
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1000));
+    let Some(result) = run(test_name, &seed, config).await else {
+        return;
+    };
+    assert_eq!(
+        result.ssrf_refused_urls,
+        vec![format!("http://***:***@127.0.0.1:{port}/cred")],
+        "{test_name}: the popup's address must be listed once, with its credentials redacted"
+    );
+    assert_refused(test_name, &denied).await;
+}

@@ -10,23 +10,32 @@ use std::sync::{Arc, Mutex};
 use crawlberg_browser::adapter::SsrfValidator;
 use url::Url;
 
+use crate::net::LOGGED_REFUSALS;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 
 /// The most refused URLs one render reports.
 const MAX_REFUSED_URLS: usize = 256;
 
-/// The URLs a validator refused, credential-redacted, each once, in the order refused.
-pub(crate) type RefusedUrls = Arc<Mutex<Vec<String>>>;
+/// What a validator refused: the URLs, credential-redacted, each once, in the order refused,
+/// and how many requests it refused in all.
+#[derive(Debug, Default)]
+pub(crate) struct Refused {
+    urls: Vec<String>,
+    count: usize,
+}
 
-/// [`SsrfValidator`] backed by the crawl's configured [`SsrfPolicy`].
+/// The refusals of one render or session, shared between its validator and its result.
+pub(crate) type RefusedUrls = Arc<Mutex<Refused>>;
+
+/// [`SsrfValidator`] backed by the crawl's configured [`SsrfPolicy`], recording each URL it refuses.
 #[derive(Debug)]
 pub(crate) struct CoreSsrfValidator {
     policy: SsrfPolicy,
-    refused: Option<RefusedUrls>,
+    refused: RefusedUrls,
 }
 
 impl CoreSsrfValidator {
-    fn new(policy: &SsrfPolicy, refused: Option<RefusedUrls>) -> Self {
+    fn new(policy: &SsrfPolicy, refused: RefusedUrls) -> Self {
         Self {
             policy: policy.clone(),
             refused,
@@ -38,28 +47,44 @@ impl CoreSsrfValidator {
 impl SsrfValidator for CoreSsrfValidator {
     async fn validate(&self, url: &Url) -> Result<(), String> {
         let verdict = validate_url(url, &self.policy).await.map_err(|e| e.to_string());
-        if let (Err(reason), Some(refused)) = (&verdict, &self.refused) {
+        if let Err(reason) = &verdict {
             let redacted = crate::net::redact_url_credentials(url.as_str());
-            tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
-            let mut refused = refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if refused.len() < MAX_REFUSED_URLS && !refused.contains(&redacted) {
-                refused.push(redacted);
+            let mut refused = self.refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            refused.count += 1;
+            // ~keep The page decides how many requests it sends, so it must not decide the log
+            // ~keep volume: the first refusals are logged one by one, and the end reports the count.
+            if refused.count <= LOGGED_REFUSALS {
+                tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
+            }
+            if refused.urls.len() < MAX_REFUSED_URLS && !refused.urls.contains(&redacted) {
+                refused.urls.push(redacted);
             }
         }
         verdict
     }
 }
 
-/// Build the validator handed to `NativeBrowserConfig::ssrf`.
-pub(crate) fn validator_for(policy: &SsrfPolicy) -> Arc<dyn SsrfValidator> {
-    Arc::new(CoreSsrfValidator::new(policy, None))
-}
-
-/// Build the validator for one render, and the list it fills with every URL it refuses.
+/// Build the validator handed to `NativeBrowserConfig::ssrf` for one render or session, and
+/// the list it fills with every URL it refuses.
 pub(crate) fn recording_validator_for(policy: &SsrfPolicy) -> (Arc<dyn SsrfValidator>, RefusedUrls) {
     let refused = RefusedUrls::default();
-    let validator = Arc::new(CoreSsrfValidator::new(policy, Some(Arc::clone(&refused))));
+    let validator = Arc::new(CoreSsrfValidator::new(policy, Arc::clone(&refused)));
     (validator, refused)
+}
+
+/// Take the URLs `refused` holds, once the render or session that fills it has ended, and
+/// report the refusals that were not logged one by one.
+pub(crate) fn take_refused(refused: &RefusedUrls) -> Vec<String> {
+    let mut refused = refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Refused { urls, count } = std::mem::take(&mut *refused);
+    if count > LOGGED_REFUSALS {
+        tracing::warn!(
+            refused = count,
+            logged = LOGGED_REFUSALS,
+            "the SSRF policy refused more requests the page sent; only the first were logged"
+        );
+    }
+    urls
 }
 
 #[cfg(test)]
@@ -81,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
-        let validator = validator_for(&SsrfPolicy::default());
+        let validator = recording_validator_for(&SsrfPolicy::default()).0;
         let err = validator
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
@@ -102,7 +127,8 @@ mod tests {
             .allowlist
             .push(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"));
 
-        validator_for(&policy)
+        recording_validator_for(&policy)
+            .0
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect("an allowlisted range must be permitted through the bridge");
@@ -113,7 +139,8 @@ mod tests {
         let mut policy = SsrfPolicy::default();
         policy.scheme_allowlist.clear();
 
-        validator_for(&policy)
+        recording_validator_for(&policy)
+            .0
             .validate(&"http://1.1.1.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect_err("an empty scheme allowlist must reject every URL");
@@ -130,7 +157,7 @@ mod tests {
         ] {
             let _ = validator.validate(&target.parse::<Url>().expect("valid URL")).await;
         }
-        let refused = refused.lock().expect("refused lock").clone();
+        let refused = take_refused(&refused);
         assert_eq!(
             refused,
             ["http://***:***@127.0.0.1/admin", "http://10.0.0.1/"],
