@@ -314,16 +314,15 @@ impl Rules {
     /// 1. **Header-first short-circuit**: fingerprints whose signals are ALL
     ///    `response_header` are evaluated before the body is scanned. If any
     ///    header-only fingerprint matches, its signal is returned immediately
-    ///    without running the AC body scan. This makes the TOML corpus the
-    ///    single source of truth for the 2xx header-stamp early-exit path in
-    ///    `http.rs` (replacing the old `headers_only_waf_match` function).
+    ///    without running the AC body scan. `http::waf_2xx_error` relies on this
+    ///    order to tell a header-only match from one a body signal took part in.
     ///
     /// 2. **Full scan**: Aho-Corasick runs over the body and all fingerprints
     ///    (including mixed header+body ones) are evaluated.
     ///
     /// On a 2xx response the body fingerprint check is only applied when the
     /// body is ≤ `CHALLENGE_BODY_LIMIT` — real content pages are much larger.
-    /// Header signals are always checked regardless of status code.
+    /// Header signals are checked on any status a fingerprint's `statuses` admits.
     ///
     /// Returns `Ok(None)` for clean responses, `Ok(Some(sig))` for a match,
     /// and `Err(WafClassifyError)` for classifier-internal failures.

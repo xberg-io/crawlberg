@@ -250,9 +250,8 @@ async fn do_fetch(
 
     // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
     // a second copy: the two copies had already drifted. The one that stood here classified
-    // every response as if it were a 403 (`is_waf_blocked`/`detect_waf_vendor` hardcode that
-    // status) and showed the classifier only the `server` header, so a 403 identified by any
-    // other header came back as vendor "unknown".
+    // every response as if it were a 403 and showed the classifier only the `server` header, so
+    // a 403 identified by any other header came back as vendor "unknown".
     if crate::http::is_challenge_status(status) {
         return Err(crate::http::challenge_status_error(
             status,
