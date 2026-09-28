@@ -148,9 +148,29 @@ fn browser_pool_config_debug_prints_only_the_endpoint_origin() {
 #[cfg(feature = "browser")]
 #[test]
 fn session_key_debug_hides_proxy_credentials() {
-    let proxy = format!("http://user:{SECRET}@proxy.internal:8080");
+    let proxy = format!("http://user:{SECRET}@proxy.internal:8080/route?token={SECRET}");
     let key = crawlberg::browser_session_pool::SessionKey::from_url("https://example.com/", Some(&proxy)).unwrap();
     assert_hidden("SessionKey", format!("{key:?}"), format!("{key:#?}"));
+    let compact = format!("{key:?}");
+    assert!(
+        compact.contains(r#"proxy: Some("http://proxy.internal:8080")"#),
+        "only the proxy URL's origin may print: {compact}"
+    );
+}
+
+#[test]
+fn static_proxy_provider_debug_prints_only_each_url_origin() {
+    let provider = crawlberg::StaticProxyProvider::new(vec![ProxyConfig {
+        url: format!("http://proxy.internal:8080/route?token={SECRET}"),
+        username: None,
+        password: None,
+    }]);
+    assert_hidden("StaticProxyProvider", format!("{provider:?}"), format!("{provider:#?}"));
+    let compact = format!("{provider:?}");
+    assert!(
+        compact.contains(r#""http://proxy.internal:8080""#),
+        "only the proxy URL's origin may print: {compact}"
+    );
 }
 
 #[test]

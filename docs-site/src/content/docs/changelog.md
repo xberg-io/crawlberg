@@ -318,8 +318,8 @@ title: "Changelog"
   `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
   that did not parse printed whole. Both now print through
   `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
-  uses, which prints `***` for a value without a host. A `ProxyConfig` URL now prints as its
-  origin too. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  uses, which prints `***` for a value without a host. A proxy URL now prints as its origin too,
+  in a `ProxyConfig`, a browser session key and a static proxy provider. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
   no more secret than the host. Two pooled endpoints on the same host and port now print the same.
   (#152)
 - **A failed bypass request logs its cause.** The send and body-read errors carry only the error

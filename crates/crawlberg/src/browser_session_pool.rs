@@ -27,12 +27,13 @@ pub struct SessionKey {
 }
 
 impl std::fmt::Debug for SessionKey {
-    /// Redacted: the proxy URL can carry `user:pass@` credentials.
+    /// Redacted: the proxy URL can carry `user:pass@` credentials or a token in its path or
+    /// query, so only its origin prints, as in `ProxyConfig`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { domain, proxy } = self;
         f.debug_struct("SessionKey")
             .field("domain", domain)
-            .field("proxy", &proxy.as_deref().map(crate::net::redact_url_credentials))
+            .field("proxy", &proxy.as_deref().map(crate::net::redact::redact_url_to_origin))
             .finish()
     }
 }
