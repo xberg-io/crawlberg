@@ -466,6 +466,13 @@ title: "Changelog"
   as the sitemaps.org protocol allows. The SSRF policy checks every child fetch, and the seed's
   credentials and custom headers still go only to the seed host. (#398)
 
+- **A robots.txt `Sitemap:` line on another host was fetched from the seed's host.** A robots.txt
+  on `example.com` that named `https://cdn.example.net/sitemap.xml` made `map()` fetch
+  `https://example.com/sitemap.xml` instead, which is another document or none. The sitemaps.org
+  protocol lets robots.txt name a sitemap on another host, so the line is now fetched from the
+  host it names. The SSRF policy checks the fetch, and the seed's credentials and custom headers
+  go only to the seed host. (#268)
+
 - **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
   returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
   path and encodes a non-ASCII host as punycode, so a search for `café` never found

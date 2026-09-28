@@ -8,7 +8,7 @@ use url::Url;
 use crate::error::CrawlError;
 use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
-use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
+use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
     process_sitemap_response,
@@ -36,7 +36,7 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
     let context = SitemapWalkContext::new(config, &client, &filter);
 
     if config.respect_robots_txt {
-        let urls = sitemap_urls_from_robots(url, &parsed_url, config, &client, &context).await;
+        let urls = sitemap_urls_from_robots(url, config, &client, &context).await;
         if !urls.is_empty() {
             return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
@@ -58,7 +58,6 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
 /// which the caller treats as "no hints" and falls through to `/sitemap.xml`.
 async fn sitemap_urls_from_robots(
     url: &str,
-    parsed_url: &Url,
     config: &CrawlConfig,
     client: &reqwest::Client,
     context: &SitemapWalkContext<'_>,
@@ -87,7 +86,7 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let Some(resolved) = resolve_sitemap_directive(url, sitemap_ref, parsed_url) else {
+        let Some(resolved) = resolve_sitemap_directive(url, sitemap_ref) else {
             continue;
         };
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
@@ -96,12 +95,14 @@ async fn sitemap_urls_from_robots(
     all_urls
 }
 
-/// The URL to fetch for one robots.txt `Sitemap:` directive, rewritten onto `parsed_url`'s
-/// host. `None` when `sitemap_ref` cannot be resolved against `url` at all, which the caller
-/// skips rather than fetching as raw text.
-fn resolve_sitemap_directive(url: &str, sitemap_ref: &str, parsed_url: &Url) -> Option<String> {
-    let resolved = resolve_redirect(url, sitemap_ref);
-    let Some(resolved) = resolved else {
+/// The URL to fetch for one robots.txt `Sitemap:` directive. `None` when `sitemap_ref` cannot
+/// be resolved against `url` at all, which the caller skips rather than fetching as raw text.
+///
+/// ~keep A directive on another host is fetched from that host: the sitemaps.org protocol lets
+/// ~keep robots.txt name a sitemap on another host. The SSRF policy gates the fetch, and seed
+/// ~keep credentials go only to the seed host.
+fn resolve_sitemap_directive(url: &str, sitemap_ref: &str) -> Option<String> {
+    let Some(resolved) = resolve_redirect(url, sitemap_ref) else {
         tracing::debug!(
             url = %crate::net::redact_url_credentials(url),
             target_len = sitemap_ref.len(),
@@ -109,7 +110,7 @@ fn resolve_sitemap_directive(url: &str, sitemap_ref: &str, parsed_url: &Url) -> 
         );
         return None;
     };
-    Some(rewrite_url_host(resolved.as_str(), parsed_url))
+    Some(resolved.into())
 }
 
 /// Collect URLs from the conventional `/sitemap.xml`, if the origin serves one.
@@ -308,9 +309,7 @@ mod tests {
     #[test]
     #[serial_test::serial(dropped_target_log)]
     fn an_unparseable_sitemap_directive_is_refused_not_followed_raw() {
-        let base = Url::parse("https://example.com/").expect("valid URL");
-
-        let resolved = resolve_sitemap_directive("https://example.com/", "https://ex ample.com/bad.xml", &base);
+        let resolved = resolve_sitemap_directive("https://example.com/", "https://ex ample.com/bad.xml");
 
         assert!(
             resolved.is_none(),
@@ -322,13 +321,10 @@ mod tests {
     #[test]
     #[serial_test::serial(dropped_target_log)]
     fn an_unparseable_sitemap_directive_with_credentials_is_never_logged() {
-        let base = Url::parse("https://example.com/").expect("valid URL");
-
         let (resolved, fields) = capture_events(|| {
             resolve_sitemap_directive(
                 "https://example.com/robots.txt",
                 "https://user:hunter2@ex ample.com/bad.xml",
-                &base,
             )
         });
 
@@ -1333,6 +1329,43 @@ mod tests {
         let urls = map_urls(&base, &config).await;
 
         assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_fetches_a_robots_sitemap_on_another_host_from_that_host() {
+        let seed = MockServer::start().await;
+        let other = MockServer::start().await;
+        // ~keep The seed host is `localhost` and the sitemap is on `127.0.0.1`, another host.
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &seed,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {}/s.xml#top\n", other.uri()),
+        )
+        .await;
+        mount_body(&seed, "/", "text/html", "<html></html>".to_owned()).await;
+        mount_body(
+            &other,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-other-host".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&seed_base, &config).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-other-host".to_owned()],
+            "a robots.txt Sitemap: line on another host must be fetched from that host"
+        );
+        let requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(requests.len(), 1, "the sitemap must be fetched once");
     }
 
     #[tokio::test]
