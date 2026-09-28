@@ -813,6 +813,7 @@ mod tests {
              fetch, got {urls:?}"
         );
 
+        // ~keep The length check passes on #332's entry dedup alone; the GET count is what proves one fetch.
         let requests = mock.received_requests().await.expect("wiremock records requests");
         let a_xml_hits = requests.iter().filter(|req| req.url.path() == "/a.xml").count();
         assert_eq!(
