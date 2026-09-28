@@ -45,7 +45,10 @@ title: "Changelog"
   read the browser's own configured or custom-header agent, so a disallowed browser request is
   blocked instead of judged against an agent it never sends. An empty or whitespace-only
   `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
-  every tier sends, instead of being sent on the wire as a literal blank agent. (#423)
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
