@@ -64,7 +64,7 @@ pub(crate) fn extract_page_data(
         metadata.word_count = Some(super::content::compute_word_count(dom));
     }
 
-    let links = extract_links(dom, base_url);
+    let links = extract_links(body, base_url);
     let images = extract_images(dom, base_url);
     let feeds = extract_feeds(dom, base_url);
     let json_ld = extract_json_ld(dom);
