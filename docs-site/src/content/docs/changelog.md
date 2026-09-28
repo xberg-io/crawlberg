@@ -40,7 +40,12 @@ title: "Changelog"
   rule for the configured agent applied even to a request that used a different one. Every
   robots decision now reads the agent the request actually sent; a crawl that does not rotate
   sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
-  is the agent the request actually sends. (#423)
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. (#423)
 - **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
   comment by searching for a literal `-->` right after the opening `<!--`, so it never
   recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with

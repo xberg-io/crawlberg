@@ -215,7 +215,9 @@ pub(crate) fn default_robots_user_agent(config: &CrawlConfig) -> &str {
 }
 
 /// A `user-agent` entry in `config.custom_headers`, matched case-insensitively as HTTP
-/// header names are.
+/// header names are. Blank (empty or whitespace-only) counts as absent: a caller who unsets
+/// the header by emptying its value, rather than removing the key, gets the configured or
+/// default agent instead of an empty one (crawlberg#423).
 ///
 /// ~keep `apply_headers` (tower/service.rs) always layers `custom_headers` onto the request
 /// to the seed's host, so a caller-set `user-agent` there is the agent that actually goes out
@@ -231,6 +233,19 @@ fn custom_user_agent_header(config: &CrawlConfig) -> Option<&str> {
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
         .map(|(_, value)| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// Whether `name`/`value` is a `custom_headers` entry naming `user-agent` with no real value.
+///
+/// ~keep Shared by [`custom_user_agent_header`] (the judging side) and
+/// [`crate::net::credentials::seed_host_headers`] (the sending side, read by `apply_headers`,
+/// the chromiumoxide SSRF interceptor, and both native-browser `origin_headers` builders): a
+/// blank `user-agent` entry must be treated as absent by every one of them, or robots would
+/// judge the configured agent while a browser tier still puts an empty header on the wire
+/// (crawlberg#423).
+pub(crate) fn is_blank_user_agent_override(name: &str, value: &str) -> bool {
+    name.eq_ignore_ascii_case("user-agent") && value.trim().is_empty()
 }
 
 pub(crate) async fn fetch_robots_outcome(

@@ -497,3 +497,74 @@ async fn should_block_a_page_when_robots_txt_names_the_custom_header_agent_actua
         "a robots.txt group naming the custom-header agent must block a request that sends it"
     );
 }
+
+/// crawlberg#423: an empty `custom_headers["user-agent"]` value counts as absent, not as a
+/// set value that wins over `config.user_agent`. A caller who unsets the header by emptying
+/// its value, rather than removing the key, must get the configured agent sent, not a blank one.
+#[tokio::test]
+async fn should_send_the_configured_agent_when_the_custom_header_value_is_empty() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: *\nAllow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .and(header("user-agent", "ConfiguredAgent"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .respect_robots_txt(true)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("ConfiguredAgent")
+        .custom_headers(std::collections::HashMap::from([(
+            "user-agent".to_owned(),
+            String::new(),
+        )]))
+        .build();
+    let engine = create_engine(Some(config)).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert_eq!(
+        result.pages.len(),
+        1,
+        "an empty custom-header user-agent value must not stop the configured agent from being sent"
+    );
+}
+
+/// crawlberg#423: the same blank-is-absent rule applies to robots judging, not only to what is
+/// sent. A whitespace-only custom header must not shadow the configured agent that robots.txt
+/// disallows.
+#[tokio::test]
+async fn should_block_a_page_when_robots_txt_names_the_configured_agent_and_the_custom_header_is_blank() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, 200, "User-agent: ConfiguredAgent\nDisallow: /\n", 1).await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body>root</body></html>"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig::builder()
+        .respect_robots_txt(true)
+        .allow_private_networks(true)
+        .max_pages(10)
+        .request_timeout(Duration::from_secs(5))
+        .user_agent("ConfiguredAgent")
+        .custom_headers(std::collections::HashMap::from([(
+            "user-agent".to_owned(),
+            "   ".to_owned(),
+        )]))
+        .build();
+    let engine = create_engine(Some(config)).expect("engine");
+    let result = crawl(&engine, &mock.uri()).await.expect("crawl");
+
+    assert!(
+        result.pages.is_empty(),
+        "robots.txt naming the configured agent must block the request when the custom \
+         user-agent header is blank (whitespace-only), which counts as absent"
+    );
+}
