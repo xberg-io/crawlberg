@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use crate::net::OriginHeaders;
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
