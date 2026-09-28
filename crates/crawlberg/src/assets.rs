@@ -13,6 +13,7 @@ use url::Url;
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
 use crate::html::{effective_base_url, get_url_attr, has_rel, is_fetchable_scheme};
 use crate::http::http_fetch;
+use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
 /// A reference to an asset discovered in an HTML page.
@@ -33,7 +34,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && has_rel(tag, "stylesheet")
                 && let Some(href) = get_url_attr(tag, "href")
-                && let Ok(url) = base_url.join(&href)
+                && let Some(url) = resolve(base_url, &href)
                 && is_fetchable_scheme(&url)
             {
                 assets.push(AssetRef {
@@ -49,7 +50,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Ok(url) = base_url.join(&src)
+                && let Some(url) = resolve(base_url, &src)
                 && is_fetchable_scheme(&url)
             {
                 assets.push(AssetRef {
@@ -65,7 +66,7 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Ok(url) = base_url.join(&src)
+                && let Some(url) = resolve(base_url, &src)
                 && is_fetchable_scheme(&url)
             {
                 assets.push(AssetRef {
@@ -298,5 +299,24 @@ mod tests {
         let base_url = Url::parse("https://example.com/page").expect("valid base URL");
         let urls: Vec<String> = discover_assets(&dom, &base_url).into_iter().map(|a| a.url).collect();
         assert_eq!(urls, ["https://example.com/i.png"]);
+    }
+
+    #[test]
+    fn a_discovered_asset_url_loses_its_userinfo() {
+        assert_eq!(
+            discovered(
+                r#"<base href="http://user:s3cret@example.com/b/">
+                <link rel="stylesheet" href="http://user:s3cret@example.com/a.css">
+                <script src="http://user:s3cret@example.com/a.js"></script>
+                <img src="http://user:s3cret@example.com/a.png"><img src="i.png">"#,
+                "https://example.com/"
+            ),
+            [
+                "http://example.com/a.css",
+                "http://example.com/a.js",
+                "http://example.com/a.png",
+                "http://example.com/b/i.png"
+            ]
+        );
     }
 }

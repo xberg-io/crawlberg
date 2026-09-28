@@ -98,10 +98,10 @@ impl CrawlEngine {
     /// so that callers can consume results incrementally via [`crawl_stream`](Self::crawl_stream).
     pub(crate) async fn crawl_with_sender(
         &self,
-        url: &str,
+        seed: &super::SeedUrl,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
-        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, url);
+        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, seed.as_str());
         let client = build_client(&self.config)?;
         let bounds = CrawlBounds::resolve(&self.config, &seed_url)?;
 
@@ -402,6 +402,10 @@ impl CrawlEngine {
         entry: FrontierEntry,
         state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
+        debug_assert!(
+            !crate::net::userinfo::str_has_userinfo(&entry.url),
+            "a URL reaching the frontier never carries userinfo"
+        );
         let url = entry.url.clone();
         self.frontier
             .push(entry)
@@ -898,19 +902,27 @@ async fn fetch_and_extract(
     let headers = resp.headers;
     let body = resp.body;
     let body_bytes = resp.body_bytes;
+    // ~keep The agent this page's request actually sent (rotation-aware); falls back to the
+    // ~keep configured default when unset, exactly matching the previous behaviour when no
+    // ~keep rotation is in play (crawlberg#423).
+    let sent_user_agent = resp.sent_user_agent;
 
     // ~keep The base URL for extraction is where the content actually came from. Using the
     // ~keep original `entry.url` here would resolve every relative link/asset on a redirected
     // ~keep page against the wrong origin.
     let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
-    let x_robots_tag = crate::scrape::x_robots_tag(&headers);
+    let robots_user_agent =
+        sent_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(&engine.config).to_owned());
+    let header_robots =
+        crate::scrape::RobotsDirectives::from_header_values(headers.get("x-robots-tag"), &robots_user_agent);
 
     let page_ext = tokio::task::spawn_blocking(move || {
         blocking_extract_page(
             &url_for_extract,
             &content_type_clone,
-            x_robots_tag.as_deref(),
+            header_robots,
+            &robots_user_agent,
             body,
             body_bytes,
         )

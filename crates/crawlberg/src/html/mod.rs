@@ -11,6 +11,7 @@ mod link_targets;
 mod links;
 mod metadata;
 mod raw_text;
+mod real_tags;
 pub(crate) mod selectors;
 
 use std::borrow::Cow;
@@ -27,10 +28,7 @@ pub(crate) fn resolve_url(src: &str, base_url: &Url) -> String {
     if src.is_empty() {
         return String::new();
     }
-    base_url
-        .join(src)
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| src.to_owned())
+    crate::net::userinfo::resolve(base_url, src).map_or_else(|| src.to_owned(), String::from)
 }
 
 /// Parse an HTML document with every tag name in lowercase.
@@ -247,9 +245,9 @@ pub(crate) use extract::HtmlExtraction;
 pub(crate) use extract::extract_page_data;
 pub(crate) use link_targets::resolve_link_targets;
 pub(crate) use links::{effective_base_url, extract_links};
+pub(crate) use metadata::robots_meta_contents;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metadata::{detect_meta_refresh, refresh_target};
-pub(crate) use metadata::{detect_nofollow, detect_noindex};
 pub(crate) use raw_text::mask_raw_text_markup;
 
 #[cfg(test)]
@@ -328,5 +326,14 @@ mod tests {
         for (scheme, address, expected) in cases {
             assert_eq!(has_scheme(address, scheme), expected, "for {scheme:?} in {address:?}");
         }
+    }
+
+    #[test]
+    fn a_resolved_url_loses_its_userinfo() {
+        let base = Url::parse("https://example.com/").expect("test URL must parse");
+        assert_eq!(
+            resolve_url("http://user:s3cret@example.com/i.png", &base),
+            "http://example.com/i.png"
+        );
     }
 }
