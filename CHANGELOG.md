@@ -305,21 +305,15 @@ All notable changes to crawlberg are documented here.
   every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
   serialised config as secret-bearing.
 
-- **Debug output printed header credentials.** The network events, the native browser's rendered
-  page and the fetch and bypass responses printed every header value with `{:?}`, including
-  `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie`. Header names always stay
-  visible, and the two directions are now treated differently. (#141)
-
-  A **request** header map prints no value at all. `CrawlRequest.headers`,
-  `NativeNetworkEvent.request_headers`, `NetworkEvent.headers` and `RequestInfo.headers` are
-  populated from `CrawlConfig.custom_headers` and `NativeBrowserConfig.extra_headers`, whose values
-  the config types already hide wholesale — a caller sends an API key under whatever name the
-  vendor asks for, so `custom_headers = {"X-Api-Key": "<key>"}` printed `***` in `CrawlConfig` and
-  in full in `NativeNetworkEvent`. Hiding every value removes that contradiction and keeps the
-  allowlist-over-denylist rule.
-
-  A **response** header map still prints every value except those four names, because
-  `content-type` and `server` come from the server and are the debugging value.
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
 
 ## [1.8.0] - 2026-09-27
 

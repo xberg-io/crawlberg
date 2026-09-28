@@ -1,18 +1,36 @@
 //! `Debug` redaction for header maps and other caller secrets.
 //!
 //! ~keep crawlberg keeps the same list in `crawlberg::net::redact`, because this crate
-//! cannot depend on crawlberg. A crawlberg test pins the two lists and placeholders equal.
+//! cannot depend on crawlberg. A crawlberg test renders one header map through both and
+//! requires the same text. The two constants are public only for that test, so they are
+//! hidden from the docs.
 
 use std::collections::HashMap;
 use std::fmt;
 
 /// Placeholder `Debug` prints in place of a secret.
+#[doc(hidden)]
 pub const REDACTED: &str = "***";
 
-/// Request and response headers whose values are credentials: the caller's own
-/// `Authorization`, a proxy's, and session cookies in either direction. Names are
-/// lowercase and matched without case.
-pub const SENSITIVE_HEADERS: [&str; 4] = ["authorization", "proxy-authorization", "cookie", "set-cookie"];
+/// A denylist of response header names whose values are credentials: an `Authorization` or
+/// `Proxy-Authorization` a server echoes, session cookies in either direction, the
+/// `Authentication-Info` a server returns after a login, and the vendor tokens a server echoes
+/// back (`X-Api-Key`, `X-Amz-Security-Token`). Names are lowercase and matched without case.
+///
+/// A response header outside this list prints in full. The list leaves out the challenge
+/// headers `WWW-Authenticate` and `Proxy-Authenticate`, which carry no secret, the obsolete
+/// `Set-Cookie2`, and any vendor token header it does not name. Request header maps do not use
+/// it: they hide every value.
+#[doc(hidden)]
+pub const SENSITIVE_HEADERS: [&str; 7] = [
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-amz-security-token",
+    "authentication-info",
+];
 
 /// Whether `name` is one of [`SENSITIVE_HEADERS`], in any case.
 pub(crate) fn is_sensitive_header(name: &str) -> bool {

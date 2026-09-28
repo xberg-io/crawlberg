@@ -22,13 +22,12 @@ pub struct CrawlRequest {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for CrawlRequest {
-    /// Redacted: every header value is hidden, not just the four well-known credential
-    /// names. This map is populated from `CrawlConfig.custom_headers`, whose values
-    /// `CrawlConfig`'s own `Debug` already hides wholesale — a caller puts an API key under
-    /// whatever name the vendor asks for (`X-Api-Key`, `apikey`, ...), so a name denylist
-    /// cannot cover it and would contradict `CrawlConfig` on the same data. Names stay
-    /// visible. Response headers keep the name-based rule, where `content-type` and `server`
-    /// are the debugging value.
+    /// Redacted: every header value is hidden, not only the credential denylist's. The engine
+    /// sends `CrawlConfig.custom_headers` on the HTTP client directly, so nothing fills this
+    /// map today; a caller who fills it can put an API key under any name the vendor asks for
+    /// (`X-Api-Key`, `apikey`, ...), which no name denylist covers. Names stay visible.
+    /// Response headers keep the denylist, where `content-type` and `server` are the
+    /// debugging value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { url, headers, tier } = self;
         f.debug_struct("CrawlRequest")

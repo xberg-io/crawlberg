@@ -88,10 +88,24 @@ impl std::fmt::Debug for RedactedValues<'_> {
     }
 }
 
-/// Request and response headers whose values are credentials: the caller's own
-/// `Authorization`, a proxy's, and session cookies in either direction. Names are
-/// lowercase and matched without case.
-pub(crate) const SENSITIVE_HEADERS: [&str; 4] = ["authorization", "proxy-authorization", "cookie", "set-cookie"];
+/// A denylist of response header names whose values are credentials: an `Authorization` or
+/// `Proxy-Authorization` a server echoes, session cookies in either direction, the
+/// `Authentication-Info` a server returns after a login, and the vendor tokens a server echoes
+/// back (`X-Api-Key`, `X-Amz-Security-Token`). Names are lowercase and matched without case.
+///
+/// A response header outside this list prints in full. The list leaves out the challenge
+/// headers `WWW-Authenticate` and `Proxy-Authenticate`, which carry no secret, the obsolete
+/// `Set-Cookie2`, and any vendor token header it does not name. Request header maps do not use
+/// it: they hide every value.
+pub(crate) const SENSITIVE_HEADERS: [&str; 7] = [
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-amz-security-token",
+    "authentication-info",
+];
 
 /// Whether `name` is one of [`SENSITIVE_HEADERS`], in any case.
 pub(crate) fn is_sensitive_header(name: &str) -> bool {
@@ -108,6 +122,8 @@ impl<K: AsRef<str> + std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for Re
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map()
             .entries(self.0.iter().map(|(name, value)| {
+                // ~keep The placeholder replaces the whole value, a list of values included, so a
+                // ~keep sensitive multi-value header prints as one string on purpose.
                 let value: &dyn std::fmt::Debug = if is_sensitive_header(name.as_ref()) {
                     &REDACTED_PLACEHOLDER
                 } else {
@@ -193,11 +209,43 @@ mod tests {
         assert!(debug.contains(r#""content-type": ["text/html"]"#), "got {debug}");
     }
 
+    #[test]
+    fn redacted_headers_hide_echoed_vendor_tokens_and_login_info() {
+        for name in ["X-Api-Key", "x-amz-security-token", "Authentication-Info"] {
+            let map = std::collections::HashMap::from([(name.to_owned(), vec!["s3cr3t".to_owned()])]);
+            let debug = format!("{:?}", RedactedHeaders(&map));
+            assert_eq!(debug, format!(r#"{{"{name}": "***"}}"#));
+        }
+    }
+
     #[cfg(feature = "browser-native")]
     #[test]
-    fn sensitive_headers_match_the_native_browser_crate() {
-        assert_eq!(SENSITIVE_HEADERS, crawlberg_browser::redact::SENSITIVE_HEADERS);
-        assert_eq!(REDACTED_PLACEHOLDER, crawlberg_browser::redact::REDACTED);
+    fn header_redaction_renders_the_same_in_the_native_browser_crate() {
+        // ~keep One header per event, so the text compared does not depend on map order.
+        for name in SENSITIVE_HEADERS
+            .iter()
+            .chain(crawlberg_browser::redact::SENSITIVE_HEADERS.iter())
+            .map(|name| name.to_ascii_uppercase())
+            .chain(["Content-Type".to_owned(), "Server".to_owned()])
+        {
+            let headers = std::collections::HashMap::from([(name.clone(), "v4lue".to_owned())]);
+            let ours = format!("{:?}", RedactedHeaders(&headers));
+            let event = crawlberg_browser::adapter::NativeNetworkEvent {
+                url: String::new(),
+                method: String::new(),
+                resource_type: String::new(),
+                status: 200,
+                request_headers: std::collections::HashMap::new(),
+                response_headers: headers,
+                body_size: 0,
+                timestamp_ms: 0,
+            };
+            let theirs = format!("{event:?}");
+            assert!(
+                theirs.contains(&format!("response_headers: {ours}")),
+                "header {name} renders differently: crawlberg {ours}, native browser {theirs}"
+            );
+        }
     }
 
     #[test]

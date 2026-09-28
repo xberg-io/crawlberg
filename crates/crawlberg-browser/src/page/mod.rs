@@ -41,8 +41,8 @@ pub struct NetworkEvent {
 
 impl std::fmt::Debug for NetworkEvent {
     /// Redacted: names stay visible throughout. `headers` is the *request* map, so every
-    /// value is hidden; `response_headers` keeps every value but the four well-known
-    /// credential names.
+    /// value is hidden; `response_headers` keeps every value but those of the credential
+    /// denylist, `SENSITIVE_HEADERS`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             request_id,
