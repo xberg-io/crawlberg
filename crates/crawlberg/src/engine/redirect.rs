@@ -11,8 +11,8 @@ use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
 use crate::helpers::RobotsOutcome;
 use crate::helpers::{default_robots_user_agent, fetch_robots_outcome};
-use crate::html::is_html_content;
 use crate::html::{detect_meta_refresh, mask_raw_text_markup, refresh_target};
+use crate::html::{is_fetchable_scheme, is_html_content};
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
@@ -462,8 +462,7 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
 /// the one requested, paired with the cycle key it will occupy.
 fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(String, String)> {
     let landed = resp.landed_url.as_deref()?;
-    let parsed = Url::parse(landed).ok()?;
-    if !matches!(parsed.scheme(), "http" | "https") {
+    if !Url::parse(landed).is_ok_and(|parsed| is_fetchable_scheme(&parsed)) {
         return None;
     }
     chain.unseen_key(landed).map(|key| (landed.to_owned(), key))
@@ -502,13 +501,19 @@ fn next_redirect_target(
 /// Statuses whose `Location` header this crawl follows.
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
-/// The `Location` target of an HTTP 3xx, resolved against `current_url`.
+/// The `Location` target of an HTTP 3xx, resolved against `current_url`, or `None` when it has a
+/// scheme the crawl cannot fetch (`mailto:`, `data:`, `file:`, ...). A browser sends no request
+/// for one, so it is no target, as a refresh to one is none.
 fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     if !REDIRECT_STATUSES.contains(&resp.status) {
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    let target = resolve_redirect(current_url, location);
+    Url::parse(&target)
+        .ok()
+        .is_none_or(|parsed| is_fetchable_scheme(&parsed))
+        .then_some(target)
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -590,6 +595,51 @@ mod tests {
         let (target, _) =
             next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
         assert_eq!(target, "https://example.com/from-refresh");
+    }
+
+    /// A `Location` with a scheme the crawl cannot fetch is no target, so it falls through like
+    /// a looping one: to the refresh header when there is one, and to no target when there is none.
+    #[test]
+    fn a_non_web_location_falls_through_to_the_refresh_header() {
+        let chain = chain_at("https://example.com/start", &[]);
+        let resp = response(
+            302,
+            &[
+                ("location", "mailto:a@example.com"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
+        assert_eq!(target, "https://example.com/from-refresh");
+
+        let resp = response(302, &[("location", "mailto:a@example.com")], "");
+        assert!(next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none());
+    }
+
+    /// A browser that lands on a page it made itself (`about:blank`, its error page) or on a
+    /// non-web address has not landed on a redirect target; a web URL it landed on is one.
+    #[test]
+    fn only_a_web_url_a_browser_landed_on_is_a_redirect() {
+        let chain = chain_at("https://example.com/start", &[]);
+        let landed_on = |url: &str| {
+            let mut resp = response(200, &[], "");
+            resp.landed_url = Some(url.to_owned());
+            landed_redirect(&resp, &chain).map(|(target, _)| target)
+        };
+        for url in [
+            "about:blank",
+            "chrome-error://chromewebdata/",
+            "mailto:a@example.com",
+            "data:,x",
+        ] {
+            assert_eq!(landed_on(url), None, "{url}");
+        }
+        assert_eq!(
+            landed_on("https://example.com/landed").as_deref(),
+            Some("https://example.com/landed")
+        );
     }
 
     /// The same fall-through, one source further: both header sources loop, so the meta

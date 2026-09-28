@@ -21,6 +21,15 @@ title: "Changelog"
 
 ### Fixed
 
+- **A redirect to a non-web address failed the whole scrape.** A 3xx whose `Location` was a
+  `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
+  scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
+  with the same error and dropped such a linked page. A browser sends no request for such an
+  address. That `Location` is now no redirect target, as a refresh to such an address already was,
+  so the 3xx response is the page. The same holds for robots.txt, sitemap and asset fetches: a
+  robots.txt that redirected to such an address made the crawl refuse the whole site. Redirects to
+  `http` and `https` addresses still pass the SSRF check. (#361)
+
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
   block list and the network events exactly as written, while a relative address was parsed and

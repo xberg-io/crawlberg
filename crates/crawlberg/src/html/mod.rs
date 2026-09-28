@@ -107,6 +107,13 @@ pub(crate) fn has_scheme(address: &str, scheme: &str) -> bool {
     Url::parse(address).is_ok_and(|url| url.scheme() == scheme)
 }
 
+/// Whether `url` is a scheme the crawler can fetch. `http_fetch` builds on a `reqwest::Client`,
+/// which speaks only `http` and `https`; every other scheme, including the [`INLINE_SCHEMES`]
+/// above, `mailto:`, `tel:`, `file:` and `blob:`, names something the client can never retrieve.
+pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
 /// Whether the tag's `attr` value equals `expected` in any ASCII case, ignoring ASCII whitespace
 /// around the value.
 ///
