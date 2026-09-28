@@ -210,8 +210,9 @@ title: "Changelog"
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, with credentials redacted. An `interact` result lists the refusals of
-  the whole session, the extra wait included. Each refusal is also logged as a warning. This
-  applies to both browser backends, for scrape, crawl and `interact`.
+  the whole session, the extra wait included. The first five refusals of a page are each logged
+  as a warning, then one warning reports the count, so a page cannot flood the log. This applies
+  to both browser backends, for scrape, crawl and `interact`.
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when

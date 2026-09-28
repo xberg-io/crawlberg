@@ -314,6 +314,9 @@ async fn interact_fails_a_click_whose_navigation_was_refused() {
     );
 }
 
+/// A script whose `fetch()` is refused fails: the refusal counts for the script action, or for
+/// the wait after it when the check received the pause after the action's grace, as on a busy
+/// host. Either way, exactly one action fails, and the address receives nothing.
 #[tokio::test]
 async fn interact_fails_a_script_whose_fetch_was_refused() {
     let test_name = "interact_fails_a_script_whose_fetch_was_refused";
@@ -326,7 +329,20 @@ async fn interact_fails_a_script_whose_fetch_was_refused() {
     let Some(result) = run(test_name, &seed, vec![execute_js(&script)]).await else {
         return;
     };
-    assert_action_refused(test_name, &result, 0);
+    let failed: Vec<usize> = result
+        .action_results
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| !action.success)
+        .map(|(index, _)| index)
+        .collect();
+    assert!(
+        failed == [0] || failed == [1],
+        "{test_name}: the script action or the wait after it must fail, and only one of them, got {:?}",
+        result.action_results
+    );
+    assert_action_refused(test_name, &result, failed[0]);
+    assert_refused(test_name, &denied, &result).await;
 }
 
 /// A request refused during the extra wait, after the navigation settled and before the first

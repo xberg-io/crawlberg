@@ -37,6 +37,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::CrawlError;
 use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
+use crate::net::LOGGED_REFUSALS;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 
 /// How long closing a watched page and its popups may take before the watch ends anyway.
@@ -190,6 +191,8 @@ struct WatchedPage {
     refusals: Mutex<Vec<Refusal>>,
     /// Every URL the SSRF policy refused for the page, credential-redacted, each once.
     refused_urls: Mutex<Vec<String>>,
+    /// How many requests of the page the policy refused, for the bound on the warnings.
+    refused_count: AtomicUsize,
     /// Set when the watch ends: from then on every request of the page is refused.
     ending: AtomicBool,
     /// Requests of the page that are paused and whose answer has not been sent yet.
@@ -263,9 +266,10 @@ struct Shared {
     delays: TestDelays,
 }
 
-/// Delays a unit test injects to widen a race window deterministically.
+/// Delays a unit test injects to widen a race window deterministically, and the probe that
+/// reports the idle disable.
 #[cfg(test)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct TestDelays {
     /// Before interception is turned on.
     enable: Duration,
@@ -275,6 +279,8 @@ struct TestDelays {
     deliver: Duration,
     /// Before the listener takes in a paused request, as a busy host holds it.
     receive: Duration,
+    /// Told the moment the idle disable turns interception off, with the last refusal then.
+    disabled: Option<mpsc::UnboundedSender<(Instant, Option<Instant>)>>,
 }
 
 enum Command {
@@ -438,6 +444,7 @@ impl FirewallHandle {
             outcome: Mutex::new(InterceptOutcome::default()),
             refusals: Mutex::new(Vec::new()),
             refused_urls: Mutex::new(Vec::new()),
+            refused_count: AtomicUsize::new(0),
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
         });
@@ -618,6 +625,10 @@ async fn serve(
         let idle = enabled && unanswered == 0 && lock(&shared.registry).is_idle();
         let drained = lock(&shared.last_refused).is_none_or(|at| at.elapsed() >= DISABLE_DRAIN);
         if idle && drained {
+            #[cfg(test)]
+            if let Some(probe) = &shared.delays.disabled {
+                let _ = probe.send((Instant::now(), *lock(&shared.last_refused)));
+            }
             disable_fetch(browser).await;
             enabled = false;
         }
@@ -832,6 +843,14 @@ async fn end_watch(
         }
     })
     .await;
+    let refused = page.refused_count.load(Ordering::Acquire);
+    if refused > LOGGED_REFUSALS {
+        tracing::warn!(
+            refused,
+            logged = LOGGED_REFUSALS,
+            "the SSRF policy refused more requests the page sent; only the first were logged"
+        );
+    }
     Done::Ended(page, keep_root, done)
 }
 
@@ -945,7 +964,11 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
     };
     let url = event.request.url.clone();
     let redacted = crate::net::redact_url_credentials(&url);
-    tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
+    // ~keep The page decides how many requests it sends, so it must not decide the log volume:
+    // ~keep the first refusals are logged one by one, and the watch's end reports the count.
+    if page.refused_count.fetch_add(1, Ordering::AcqRel) < LOGGED_REFUSALS {
+        tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
+    }
     {
         let mut refused = lock(&page.refused_urls);
         if refused.len() < MAX_REFUSALS && !refused.contains(&redacted) {
@@ -1241,7 +1264,7 @@ mod race_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_stream::StreamExt;
 
-    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, TestDelays};
+    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, DISABLE_DRAIN, TestDelays};
     use crate::net::ssrf::SsrfPolicy;
 
     #[allow(
@@ -1414,7 +1437,7 @@ mod race_tests {
             verdict: Duration::ZERO,
             ..TestDelays::default()
         };
-        let firewall = BrowserFirewall::start_with(Arc::clone(&browser), BrowserOrigin::Launched, delays)
+        let firewall = BrowserFirewall::start_with(Arc::clone(&browser), BrowserOrigin::Launched, delays.clone())
             .await
             .expect("the listener must start");
         let first = browser.new_page("about:blank").await.expect("page");
@@ -1821,51 +1844,81 @@ mod race_tests {
         }
     }
 
-    /// A page parked while it keeps sending stays refused for as long as it sends, and reaches
-    /// the network once it has stopped: interception stays on until refusals stop.
+    /// Whether `condition` holds within five seconds.
+    async fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
+        for _ in 0..2500 {
+            if condition() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        false
+    }
+
+    /// Once nothing is watched, interception stays on for `DISABLE_DRAIN` after the last
+    /// refusal, so a request of a page just parked that is still on its way to the check is
+    /// refused, and turns off once that time has passed.
     ///
-    /// ~keep The page sends each request as soon as the previous one is refused, not on a timer:
-    /// ~keep Chrome can hold back a timer for longer than `DISABLE_DRAIN` on a busy host, and a
-    /// ~keep drain that has then elapsed turns interception off by design (measured: 1 of 10 runs
-    /// ~keep with a 20 ms interval at load 60). Without the drain the listener turns interception
-    /// ~keep off in the first moment nothing is unanswered.
+    /// ~keep The test times the listener's drain, not Chrome: the probe reports the moment the
+    /// ~keep idle disable fires and the listener's own stamp of the last refusal, so no CDP round
+    /// ~keep trip enters the measurement. A page that keeps sending cannot show the drain, since
+    /// ~keep Chrome's turnaround between a refusal and the page's next request exceeds the drain
+    /// ~keep on a busy host (measured: 5 of 40 runs at load 100 or more), and the disable then
+    /// ~keep fires by design. The injected verdict delay holds the page's request in judgement
+    /// ~keep until the park, so the refusal lands as the park returns, as a slow DNS lookup on a
+    /// ~keep page being released does for real. Without the drain the disable fires in the first
+    /// ~keep moment nothing is watched and nothing is unanswered.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_parked_page_that_keeps_sending_stays_refused_until_it_stops() {
-        let test_name = "a_parked_page_that_keeps_sending_stays_refused_until_it_stops";
+    async fn interception_stays_on_for_the_drain_after_the_last_refusal() {
+        let test_name = "interception_stays_on_for_the_drain_after_the_last_refusal";
         let Some(browser) = launch(test_name).await else {
             return;
         };
-        let (firewall, page, watch) = watched_page(&browser, TestDelays::default()).await;
+        let (probe, mut disables) = tokio::sync::mpsc::unbounded_channel();
+        let delays = TestDelays {
+            verdict: Duration::from_millis(500),
+            disabled: Some(probe),
+            ..TestDelays::default()
+        };
+        let (firewall, page, watch) = watched_page(&browser, delays).await;
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
-            .evaluate(format!(
-                "window.__run = true; (async () => {{ while (window.__run) {{ \
-                 await fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); }} }})(); 1"
-            ))
+            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let taken = wait_until(|| watch.page.in_flight.load(Ordering::Acquire) > 0).await;
         watch.park().await;
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let reached_while_sending = denied_hits.load(Ordering::SeqCst);
-        let _ = page.evaluate("window.__run = false; 1").await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let disabled = tokio::time::timeout(Duration::from_secs(5), disables.recv()).await;
         let (after, after_hits) = denied_listener().await;
         let _ = page
-            .evaluate(format!(
-                "setInterval(() => fetch({after:?}, {{ mode: 'no-cors' }}).catch(() => 0), 50); 1"
-            ))
+            .evaluate(format!("fetch({after:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
         let reached_after = served(&after_hits).await;
         firewall.stop().await;
         drop(page);
         close(browser).await;
+        assert!(
+            taken,
+            "{test_name}: the check must take the page's request before the park"
+        );
+        let Ok(Some((disabled, last_refused))) = disabled else {
+            panic!("{test_name}: the idle disable must fire once the page is parked");
+        };
+        let Some(last_refused) = last_refused else {
+            panic!("{test_name}: the refusal of the parked page's request must be recorded before the disable");
+        };
+        let held = disabled.saturating_duration_since(last_refused);
+        assert!(
+            held >= DISABLE_DRAIN,
+            "{test_name}: the idle disable must wait for the drain after the last refusal, fired {held:?} after it"
+        );
         assert_eq!(
-            reached_while_sending, 0,
-            "{test_name}: a parked page's requests must be refused while it keeps sending"
+            denied_hits.load(Ordering::SeqCst),
+            0,
+            "{test_name}: the request refused as the page was parked must reach nothing"
         );
         assert!(
             reached_after,
-            "{test_name}: once the page has stopped sending, interception must turn off"
+            "{test_name}: once the drain has passed, interception must be off"
         );
     }
 
