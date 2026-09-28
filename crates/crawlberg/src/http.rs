@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
+use crate::html::is_fetchable_scheme;
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
@@ -109,8 +110,9 @@ enum HopOutcome {
 enum RedirectTarget {
     /// The `Location` header, resolved against the URL that served the redirect.
     Follow(url::Url),
-    /// A `Location` that does not resolve to a URL; the 3xx is returned as the response.
-    Unresolvable,
+    /// A `Location` that does not resolve to a URL, or resolves to one with a scheme the crawler
+    /// cannot fetch (`mailto:`, `data:`, `file:`, ...); the 3xx is returned as the response.
+    Unfollowable,
 }
 
 /// Response metadata captured before the body is consumed.
@@ -230,9 +232,9 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
             Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
-            Some(RedirectTarget::Unresolvable) => {
+            Some(RedirectTarget::Unfollowable) => {
                 return Ok(HopOutcome::Complete(
-                    unresolvable_redirect_response(context.config, resp, head).await,
+                    unfollowable_redirect_response(context.config, resp, head).await,
                 ));
             }
             None => {}
@@ -328,13 +330,13 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
         .map(str::to_string)?;
 
     Some(match crate::net::userinfo::resolve(current_url, &location) {
-        Some(next_url) => RedirectTarget::Follow(next_url),
-        None => RedirectTarget::Unresolvable,
+        Some(next_url) if is_fetchable_scheme(&next_url) => RedirectTarget::Follow(next_url),
+        _ => RedirectTarget::Unfollowable,
     })
 }
 
-/// Return a 3xx whose `Location` could not be resolved as the response itself.
-async fn unresolvable_redirect_response(
+/// Return a 3xx whose `Location` names no URL the crawler can fetch as the response itself.
+async fn unfollowable_redirect_response(
     config: &CrawlConfig,
     resp: reqwest::Response,
     head: ResponseHead,
@@ -542,6 +544,44 @@ mod tests {
             "final_url must contain the requested path, got: {}",
             resp.final_url
         );
+    }
+
+    /// A 3xx whose `Location` has a scheme the crawler cannot fetch is the response, not an SSRF
+    /// error, while a web `Location` on the same server is still followed.
+    #[tokio::test]
+    async fn http_fetch_returns_the_3xx_when_location_names_a_scheme_it_cannot_fetch() {
+        let mock = MockServer::start().await;
+        let locations = [
+            "mailto:a@example.com",
+            "data:,x",
+            "file:///etc/passwd",
+            "myapp://open",
+            "/final",
+        ];
+        for (index, location) in locations.iter().enumerate() {
+            Mock::given(method("GET"))
+                .and(path(format!("/start{index}")))
+                .respond_with(ResponseTemplate::new(302).append_header("location", *location))
+                .mount(&mock)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/final"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("final"))
+            .mount(&mock)
+            .await;
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+
+        for (index, location) in locations.iter().enumerate() {
+            let url = format!("{}/start{index}", mock.uri());
+            let resp = http_fetch(&url, &config, &std::collections::HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|e| panic!("{location}: http_fetch must not fail: {e}"));
+            let expected = if *location == "/final" { 200 } else { 302 };
+            assert_eq!(resp.status, expected, "{location}");
+        }
     }
 
     /// Regression test: `http_fetch`'s internal redirect loop used to enforce

@@ -280,7 +280,7 @@ fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
         return None;
     }
     let target = target.filter(|target| match Url::parse(target) {
-        Ok(absolute) => matches!(absolute.scheme(), "http" | "https"),
+        Ok(absolute) => super::is_fetchable_scheme(&absolute),
         Err(_) => true,
     });
     Some(Refresh { delay, target })

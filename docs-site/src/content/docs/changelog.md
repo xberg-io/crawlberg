@@ -71,6 +71,22 @@ title: "Changelog"
 - **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
   of the page's links instead of appearing with its unresolved text as its URL. (#394)
 
+- **A redirect to a non-web address failed the whole scrape.** A 3xx whose `Location` was a
+  `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
+  scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
+  with the same error and dropped such a linked page. A browser sends no request for such an
+  address. That `Location` is now no redirect target, matching how a refresh naming such an
+  address directly already was, so the 3xx response is the page. The same holds for robots.txt,
+  sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
+  the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+
+- **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
+  A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
+  target passed that check and could still resolve to a `mailto:`, `ftp:` or other non-web
+  address afterward, for example under a `<base href>` on such an address, and the fetch then hit
+  the SSRF policy. The scheme is now checked on the resolved address instead, the same way the
+  `Location` header already was, so such a target is no redirect target either, and the page is
+  kept. (#478)
 - **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
   content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
   path, while a browser requests `/app/next`. The target now resolves against the page's base
