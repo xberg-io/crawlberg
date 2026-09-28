@@ -694,3 +694,48 @@ async fn a_503_without_a_waf_signal_is_retried_and_never_escalates() {
         "retry_count=3 with 503 in retry_codes must send 4 requests"
     );
 }
+
+/// A 503 whose only WAF evidence is the CDN's own `server` header is the origin failing, not
+/// an interstitial, so it is retried like any other 503 instead of escalating (crawlberg#197).
+///
+/// ~keep The request count and `provider.calls()` are the assertions that matter: checking
+/// only the error variant would also pass if the 503 escalated and the bypass tier then failed.
+#[tokio::test]
+async fn a_503_whose_only_waf_evidence_is_cdn_presence_is_retried_and_never_escalates() {
+    let mock = MockServer::start().await;
+    let fronted = [
+        ("/akamai", "AkamaiGHost"),
+        ("/incapsula", "Incapsula"),
+        ("/bigip", "BIG-IP"),
+    ];
+    for (route, server) in fronted {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .insert_header("server", server)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<html><body><h1>Service Unavailable</h1></body></html>"),
+            )
+            .mount(&mock)
+            .await;
+    }
+
+    let provider = CountingMockProvider::new("must not be used");
+    let engine = build_engine(contested_retry_config(EscalationStrategy::BypassOnly, provider.clone()));
+
+    for (route, server) in fronted {
+        let error = engine.scrape(&format!("{}{route}", mock.uri())).await.unwrap_err();
+        assert!(
+            matches!(error, CrawlError::ServerError { .. }),
+            "a 503 behind {server} must stay a ServerError, got: {error:?}"
+        );
+    }
+
+    assert_eq!(provider.calls(), 0, "a 503 behind a CDN must not escalate");
+    assert_eq!(
+        mock.received_requests().await.unwrap().len(),
+        12,
+        "retry_count=3 with 503 in retry_codes must send 4 requests for each of the 3 routes"
+    );
+}

@@ -85,6 +85,23 @@ fn classifier_akamai_server_header() {
     assert_eq!(signal.expect("signal is Some — asserted above").vendor, "akamai");
 }
 
+/// A CDN's own `server` header is not evidence of a block, so it decides a 403 only: the
+/// statuses a real page is served with must stay unclassified (crawlberg#197).
+#[test]
+fn classifier_ignores_cdn_presence_outside_a_403() {
+    let c = TomlClassifier::builtin();
+    for server in ["AkamaiGHost", "Incapsula", "BIG-IP"] {
+        for status in [200_u16, 429, 503] {
+            let resp = make_response(status, vec![("server", server)], "<html>Service Unavailable</html>");
+            let signal = c.classify(&resp).expect("classify must not fail");
+            assert!(
+                signal.is_none(),
+                "{status} behind {server} must not classify, got {signal:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn classifier_large_2xx_not_flagged() {
     let c = TomlClassifier::builtin();
