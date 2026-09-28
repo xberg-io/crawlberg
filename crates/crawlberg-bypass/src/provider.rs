@@ -142,7 +142,7 @@ impl BypassProvider for SimpleHttpProvider {
                 CrawlError::other(
                     ProviderError::BodyRead {
                         vendor: vendor.clone(),
-                        message: e.to_string(),
+                        message: e.without_url().to_string(),
                     }
                     .to_string(),
                 )

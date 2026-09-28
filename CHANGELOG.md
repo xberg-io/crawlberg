@@ -73,6 +73,27 @@ All notable changes to crawlberg are documented here.
   allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
   `private_network`. The allow or deny decision itself was always correct.
 
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
@@ -324,6 +345,14 @@ All notable changes to crawlberg are documented here.
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
 
+- **Link extraction could disagree with the markdown about the same tag.** Link extraction read
+  every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
+  could read a different tag boundary than the page's real structure, so the links list showed no
+  link, or the wrong address, for a link the markdown still carried. Each real `<a>` start tag is
+  now rewritten into unambiguous form first -- one copy of each attribute, double-quoted, as
+  html5ever's tokenizer reads it -- so link extraction and the markdown agree on the same tag. This
+  reads every page's links a second time and is slower on a link-heavy page; a well-formed `<a>`
+  tag is rewritten to itself. (#294)
 - **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
   query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
   URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
@@ -374,6 +403,15 @@ All notable changes to crawlberg are documented here.
 - **A failed bypass request logs its cause.** The send and body-read errors carry only the error
   kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
   chain when a send or a body read fails. (#89)
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
 
 ## [1.8.0] - 2026-09-27
 
