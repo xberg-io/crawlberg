@@ -6,6 +6,18 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
+  userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
+  that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
+  the userinfo: `final_url`, page and link URLs, map entries, and the URL that pairs each
+  `batch_scrape` and `batch_crawl` result. If you match batch results against your own input URLs,
+  remove the userinfo from your input first. A URL that carries userinfo is now a configuration
+  error when `auth` is also set; use one of the two.
+
+- **`auth` and `custom_headers` now go only to the seed URL's host.** A subdomain, a linked
+  document on another host or a redirect target on another host gets neither. If a crawl needs a
+  header on another host, start a separate call with that host as its seed.
+
 - **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
   the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
   resolved against the page's base URL and normalized as the links list is, so it gives
@@ -20,6 +32,50 @@ All notable changes to crawlberg are documented here.
   remove that step. (#126)
 
 ### Fixed
+
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
+- **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
+  of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
+  keys and plugin callbacks each had to redact it, and several did not. Relative links and
+  redirects also copied it to other pages. The engine now removes it at the start of each call
+  and keeps it as a credential for the seed host only. The same host rule now applies to `auth`:
+  a page, asset, robots.txt or redirect on another host gets no credentials. Both browser backends
+  now send `Basic`, `Bearer` and header credentials only to the seed host, one request at a time,
+  instead of to every host a page loads from. robots.txt and sitemaps on the seed host are now
+  fetched with the credentials. A response fetched with credentials is never stored in or served
+  from the response cache or the shared robots.txt cache. (#378, #387, #388, #389, #390)
+
+- **A page could make the browser send a URL with userinfo.** A page-supplied link, sitemap
+  entry or redirect target loses its userinfo, and in the native browser a navigation, module
+  import or `fetch()` to a URL with userinfo is refused, as the Fetch standard requires. The
+  chromiumoxide backend refuses such a request too. A URL that does not parse is reported
+  without its text. (#347, #357, #382)
+
+- **Custom headers reached every host a crawl touched.** Plain HTTP requests and both browser
+  backends sent `custom_headers` to other hosts: linked documents, third-party subresources and
+  cross-host redirect targets. They now go only to requests on the seed's host, the same as the
+  credentials. (#393)
+
+- **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
+  module import to the seed's host now carries the credentials and the custom headers, as it does
+  in Chrome. A module redirect to another host drops them, and every module redirect is now
+  checked against the SSRF policy. (#409)
+
+- **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
+  of the page's links instead of appearing with its unresolved text as its URL. (#394)
+
+- **A `data:` or `javascript:` base address was used as the page base.** With
+  `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
+  on the page resolved against the script address, and the markdown kept relative links as
+  written. The page base is now the page address when the base address has one of these schemes,
+  in any letter case and with spaces around it, as the HTML spec and browsers do. (#311)
 
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
@@ -38,6 +94,17 @@ All notable changes to crawlberg are documented here.
   images list and asset downloads skip are now recognised as the URL parser reads them, in any
   letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
   `javascript:`. (#86)
+
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
 
 - **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
   the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags

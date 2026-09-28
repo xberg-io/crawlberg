@@ -1208,6 +1208,7 @@ dependencies = [
  "notify",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
+ "percent-encoding",
  "proptest",
  "quick-xml 0.42.0",
  "regex",
@@ -1300,6 +1301,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
