@@ -6,7 +6,9 @@
 //! since both are routinely shipped to logs, OTLP collectors, and issue trackers. This
 //! module centralizes that redaction so every call site applies the same rule.
 
-const REDACTED_PLACEHOLDER: &str = "***";
+/// The text every redacting `Debug` impl and helper here prints in place of a secret.
+#[doc(hidden)]
+pub const REDACTED_PLACEHOLDER: &str = "***";
 
 /// What [`redact_url_credentials`] returns for a value it cannot read as one address.
 ///
@@ -52,6 +54,56 @@ pub fn redact_url_credentials(input: &str) -> String {
     url.to_string()
 }
 
+/// Redact a URL down to its origin: scheme, host and non-default port.
+///
+/// For an endpoint whose *capability is the URL itself*. The canonical CDP endpoint is
+/// `ws://host:9222/devtools/browser/<GUID>`: the GUID in the **path** is the bearer token
+/// (anyone holding it drives the browser), and a proxied endpoint may instead carry a
+/// `?token=`. Neither the path, the query, the fragment nor the userinfo may be printed, so
+/// this keeps only the origin, which is the part an operator needs to tell one endpoint from
+/// another.
+///
+/// The port is kept deliberately. It is the field that distinguishes a container-mapped CDP
+/// port from the default 9222, which is what makes a connection failure diagnosable, and it
+/// is no more secret than the host it belongs to. `url::Url::port` reports `None` for a
+/// scheme's default port, so `wss://host:443` prints as `wss://host`.
+///
+/// Fails **closed**: returns the placeholder when `input` does not parse as an absolute URL
+/// or carries no host, so an endpoint the parser rejects is never echoed.
+#[must_use]
+pub fn redact_url_to_origin(input: &str) -> String {
+    let Ok(url) = url::Url::parse(input) else {
+        return REDACTED_PLACEHOLDER.to_owned();
+    };
+    let Some(host) = url.host() else {
+        return REDACTED_PLACEHOLDER.to_owned();
+    };
+    // ~keep `host` is formatted through `url::Host`, not `host_str`, so an IPv6 literal keeps
+    // ~keep its brackets and the `:port` suffix below stays unambiguous.
+    match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    }
+}
+
+/// `Debug` text for a caller's script or template: the placeholder and the length, never
+/// the text. A script is a common place to embed a token.
+pub(crate) fn redacted_text(text: &str) -> String {
+    format!("{REDACTED_PLACEHOLDER} ({} bytes)", text.len())
+}
+
+/// `Debug` view of a string map that shows each key and hides each value, for maps of
+/// header values or cookie values set by the caller.
+pub(crate) struct RedactedValues<'a>(pub(crate) &'a std::collections::HashMap<String, String>);
+
+impl std::fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|key| (key, REDACTED_PLACEHOLDER)))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +144,55 @@ mod tests {
             redact_url_credentials("https://example.com/path?query=1"),
             "https://example.com/path?query=1"
         );
+    }
+
+    #[test]
+    fn redact_url_to_origin_hides_the_path_query_fragment_and_userinfo() {
+        // ~keep This is the canonical CDP endpoint shape. The GUID in the path IS the
+        // ~keep capability, so it must not survive; an earlier version of this test pinned
+        // ~keep the opposite, asserting the whole path printed unchanged.
+        assert_eq!(
+            redact_url_to_origin("ws://127.0.0.1:9222/devtools/browser/b1946ac9-2d2e-4f1f"),
+            "ws://127.0.0.1:9222"
+        );
+        assert_eq!(
+            redact_url_to_origin("wss://user:pw@chrome.example:3000/devtools?token=abc123#frag"),
+            "wss://chrome.example:3000"
+        );
+    }
+
+    #[test]
+    fn redact_url_to_origin_omits_a_default_port_and_brackets_ipv6() {
+        assert_eq!(
+            redact_url_to_origin("wss://chrome.example:443/devtools"),
+            "wss://chrome.example"
+        );
+        assert_eq!(
+            redact_url_to_origin("ws://[::1]:9222/devtools/browser/42"),
+            "ws://[::1]:9222"
+        );
+    }
+
+    #[test]
+    fn redact_url_to_origin_fails_closed() {
+        for hostless in [
+            "not a url at all",
+            "/devtools/browser/b1946ac9-2d2e-4f1f",
+            "ws://:9222/devtools/browser/42",
+            "data:text/plain,secret",
+        ] {
+            assert_eq!(
+                redact_url_to_origin(hostless),
+                "***",
+                "an endpoint with no parseable host must never be echoed, got input '{hostless}'"
+            );
+        }
+    }
+
+    #[test]
+    fn redacted_values_shows_keys_only() {
+        let map = std::collections::HashMap::from([("Authorization".to_owned(), "Bearer abc123".to_owned())]);
+        assert_eq!(format!("{:?}", RedactedValues(&map)), r#"{"Authorization": "***"}"#);
     }
 
     #[test]
