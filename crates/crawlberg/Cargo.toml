@@ -75,6 +75,8 @@ futures = { workspace = true }
 html-escape = { workspace = true }
 html-to-markdown-rs = { workspace = true }
 html5ever = { workspace = true }
+icu_casemap = { workspace = true }
+icu_normalizer = { workspace = true }
 idna = { workspace = true }
 ipnet = { workspace = true }
 liter-llm = { workspace = true, optional = true }

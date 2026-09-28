@@ -216,6 +216,10 @@ fn links_as_sitemap_urls(doc: &tl::VDom<'_>, html: &str, parsed_url: &Url) -> Ve
 /// Compiled URL filter for map results: `exclude_paths` regexes plus an optional
 /// case-insensitive `map_search` substring.
 ///
+/// The term and each address are compared in their [`crate::normalize::search_key`] form, which
+/// joins canonically equivalent spellings and folds case without a locale. The Turkish dotted
+/// and dotless `i` therefore never match their Turkish case partners.
+///
 /// Built once per [`map`] call so the same predicate can be applied incrementally
 /// while sitemaps are fetched — this bounds peak memory instead of materializing
 /// the entire sitemap tree before filtering.
@@ -231,7 +235,7 @@ impl MapFilter {
     /// Returns an error if any `exclude_paths` pattern is not a valid regex.
     pub(crate) fn from_config(config: &CrawlConfig) -> Result<Self, CrawlError> {
         let exclude_paths = crate::helpers::compile_regexes(&config.exclude_paths)?;
-        let search = config.map_search.as_ref().map(|s| s.to_lowercase());
+        let search = config.map_search.as_deref().map(crate::normalize::search_key);
         Ok(Self {
             exclude_paths,
             search,
@@ -265,9 +269,7 @@ impl MapFilter {
         }
         if let Some(ref search) = self.search
             && !url.to_lowercase().contains(search)
-            && !crate::normalize::decoded_for_search(url)
-                .to_lowercase()
-                .contains(search)
+            && !crate::normalize::search_key(&crate::normalize::decoded_for_search(url)).contains(search)
         {
             return false;
         }
@@ -615,6 +617,47 @@ mod tests {
             "map_search=\"bücher\" must match the entry map() stores as punycode, got {:?}",
             result.urls
         );
+    }
+
+    /// The addresses `map()` returns when a sitemap lists `loc` and an unrelated page, and
+    /// `map_search` is `term`.
+    async fn map_search_results(term: &str, loc: &str) -> Vec<String> {
+        let mock = MockServer::start().await;
+        let locs = vec![loc.to_owned(), "https://example.com/other".to_owned()];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+        let config = CrawlConfig {
+            map_search: Some(term.to_owned()),
+            ..local_test_config()
+        };
+        map_urls(&mock.uri(), &config).await
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_decomposed_term_against_a_punycode_host() {
+        let urls = map_search_results("bu\u{308}cher", "https://bücher.example/x").await;
+
+        assert_eq!(urls, vec!["https://xn--bcher-kva.example/x".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_composed_term_against_a_decomposed_path() {
+        let urls = map_search_results("café", "https://example.com/cafe\u{301}").await;
+
+        assert_eq!(urls, vec!["https://example.com/cafe%CC%81".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_decomposed_term_against_a_composed_path() {
+        let urls = map_search_results("cafe\u{301}", "https://example.com/caf\u{e9}").await;
+
+        assert_eq!(urls, vec!["https://example.com/caf%C3%A9".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_folds_sharp_s_to_ss() {
+        let urls = map_search_results("STRASSE", "https://example.com/Straße").await;
+
+        assert_eq!(urls, vec!["https://example.com/Stra%C3%9Fe".to_owned()]);
     }
 
     #[tokio::test]

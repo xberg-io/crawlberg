@@ -171,7 +171,9 @@ pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
 /// ~keep search term the way a host is encoded does not, in general, land inside that host's
 /// ~keep encoded label. Decoding the address instead covers both the path and the host with
 /// ~keep one pass, and an ASCII address decodes back to itself unchanged.
-/// Falls back to `url_str` unchanged if it fails to parse.
+/// Falls back to `url_str` unchanged if it fails to parse. The output exists only to match a
+/// search term: it omits userinfo and writes a non-special scheme as `scheme://`, and the check
+/// against the raw address still covers both.
 pub(crate) fn decoded_for_search(url_str: &str) -> String {
     let Ok(parsed) = Url::parse(url_str) else {
         return url_str.to_owned();
@@ -196,6 +198,21 @@ pub(crate) fn decoded_for_search(url_str: &str) -> String {
         out.push_str(&percent_encoding::percent_decode_str(fragment).decode_utf8_lossy());
     }
     out
+}
+
+/// The form in which a `map_search` term and an address are compared: canonical
+/// decomposition, then Unicode default case folding, then canonical composition, so `é` and
+/// `e` plus a combining acute accent match, and `ß` matches `SS`.
+///
+/// ~keep Default case folding is locale-free, so the Turkish dotted and dotless `i` never
+/// ~keep match their Turkish case partners: `İ` does not match `i`, and `ışık` does not match
+/// ~keep `IŞIK`. Joining them would need a locale, which a search term does not carry.
+pub(crate) fn search_key(text: &str) -> String {
+    let decomposed = icu_normalizer::DecomposingNormalizer::new_nfd().normalize(text);
+    let folded = icu_casemap::CaseMapper::new().fold_string(&decomposed);
+    icu_normalizer::ComposingNormalizer::new_nfc()
+        .normalize(&folded)
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -461,6 +478,8 @@ mod tests {
         );
     }
 
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
     #[test]
     fn decoded_for_search_leaves_an_ascii_address_unchanged() {
         let decoded = decoded_for_search("https://example.com/keep-1?a=1");
@@ -470,6 +489,8 @@ mod tests {
         );
     }
 
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
     #[test]
     fn decoded_for_search_falls_back_to_the_raw_string_when_unparseable() {
         let decoded = decoded_for_search("not a url");

@@ -478,7 +478,10 @@ All notable changes to crawlberg are documented here.
   path and encodes a non-ASCII host as punycode, so a search for `café` never found
   `https://example.com/caf%C3%A9` and a search for `bücher` never found the matching
   `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
-  of the address, alongside the address text itself. (#338)
+  of the address, alongside the address text itself. The term and the address are compared after
+  Unicode normalization and default case folding, so `café` typed with a combining accent finds
+  `café`, and `STRASSE` finds `/Straße`. Case folding does not use a locale, so the Turkish dotted
+  and dotless `i` do not match their Turkish case partners. (#338)
 
 ## [1.8.0] - 2026-09-27
 
