@@ -85,6 +85,10 @@ pub struct InteractionResult {
     /// Populated only when a `PageAction::Screenshot` action actually ran, so
     /// callers that never request a screenshot do not pay the encoding cost.
     pub screenshot_base64: Option<String>,
+    /// URLs of the requests the page sent during the session that the SSRF policy refused,
+    /// including during the extra wait, with credentials redacted, each listed once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssrf_refused_urls: Vec<String>,
 }
 
 /// Result from a single page action execution.

@@ -502,7 +502,6 @@ impl Watch {
 
     /// Every URL the SSRF policy refused for the page so far, once the requests the check has
     /// taken are judged: credential-redacted, each once, in the order they were refused.
-    #[cfg(feature = "browser")]
     pub(crate) async fn refused_urls(&self) -> Vec<String> {
         self.settle().await;
         lock(&self.page.refused_urls).clone()
@@ -1824,6 +1823,12 @@ mod race_tests {
 
     /// A page parked while it keeps sending stays refused for as long as it sends, and reaches
     /// the network once it has stopped: interception stays on until refusals stop.
+    ///
+    /// ~keep The page sends each request as soon as the previous one is refused, not on a timer:
+    /// ~keep Chrome can hold back a timer for longer than `DISABLE_DRAIN` on a busy host, and a
+    /// ~keep drain that has then elapsed turns interception off by design (measured: 1 of 10 runs
+    /// ~keep with a 20 ms interval at load 60). Without the drain the listener turns interception
+    /// ~keep off in the first moment nothing is unanswered.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_parked_page_that_keeps_sending_stays_refused_until_it_stops() {
         let test_name = "a_parked_page_that_keeps_sending_stays_refused_until_it_stops";
@@ -1834,14 +1839,15 @@ mod race_tests {
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
             .evaluate(format!(
-                "window.__probe = setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 60); 1"
+                "window.__run = true; (async () => {{ while (window.__run) {{ \
+                 await fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); }} }})(); 1"
             ))
             .await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         watch.park().await;
         tokio::time::sleep(Duration::from_millis(800)).await;
         let reached_while_sending = denied_hits.load(Ordering::SeqCst);
-        let _ = page.evaluate("clearInterval(window.__probe); 1").await;
+        let _ = page.evaluate("window.__run = false; 1").await;
         tokio::time::sleep(Duration::from_millis(500)).await;
         let (after, after_hits) = denied_listener().await;
         let _ = page

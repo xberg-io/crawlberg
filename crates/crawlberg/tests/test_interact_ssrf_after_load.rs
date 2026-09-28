@@ -330,10 +330,10 @@ async fn interact_fails_a_script_whose_fetch_was_refused() {
 }
 
 /// A request refused during the extra wait, after the navigation settled and before the first
-/// action, fails no action.
+/// action, fails no action, and the result lists its address.
 #[tokio::test]
-async fn interact_fails_no_action_for_a_request_refused_before_the_actions() {
-    let test_name = "interact_fails_no_action_for_a_request_refused_before_the_actions";
+async fn interact_lists_a_request_refused_before_the_actions_and_fails_no_action() {
+    let test_name = "interact_lists_a_request_refused_before_the_actions_and_fails_no_action";
     let denied = denied_server().await;
     let body = format!(
         "<p>start</p><script>setTimeout(() => fetch({:?}, {{ mode: 'no-cors' }}).catch(() => {{}}), 700);</script>",
@@ -355,6 +355,11 @@ async fn interact_fails_no_action_for_a_request_refused_before_the_actions() {
         result.action_results.iter().all(|action| action.success),
         "{test_name}: {:?}",
         result.action_results
+    );
+    assert_eq!(
+        result.ssrf_refused_urls,
+        [denied_url(&denied)],
+        "{test_name}: the result must list the refused address"
     );
     assert_refused(test_name, &denied, &result).await;
 }

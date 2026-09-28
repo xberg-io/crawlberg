@@ -113,7 +113,7 @@ async fn native_browser_fetch_inner(
         cookies: rendered.cookies.into_iter().map(cookie_info_from_native).collect(),
     };
 
-    let refused = std::mem::take(&mut *refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    let refused = crate::net::browser_policy::take_refused(&refused);
     let response = HttpResponse {
         status,
         content_type,

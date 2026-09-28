@@ -202,6 +202,7 @@ async fn run_session(
         final_url,
         screenshot,
         screenshot_base64,
+        ssrf_refused_urls: watch.refused_urls().await,
     })
 }
 
@@ -231,6 +232,7 @@ fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> Interac
         final_url: stop.url.clone(),
         screenshot: None,
         screenshot_base64: None,
+        ssrf_refused_urls: Vec::new(),
     }
 }
 

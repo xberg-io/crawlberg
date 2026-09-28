@@ -18,15 +18,15 @@ const MAX_REFUSED_URLS: usize = 256;
 /// The URLs a validator refused, credential-redacted, each once, in the order refused.
 pub(crate) type RefusedUrls = Arc<Mutex<Vec<String>>>;
 
-/// [`SsrfValidator`] backed by the crawl's configured [`SsrfPolicy`].
+/// [`SsrfValidator`] backed by the crawl's configured [`SsrfPolicy`], recording each URL it refuses.
 #[derive(Debug)]
 pub(crate) struct CoreSsrfValidator {
     policy: SsrfPolicy,
-    refused: Option<RefusedUrls>,
+    refused: RefusedUrls,
 }
 
 impl CoreSsrfValidator {
-    fn new(policy: &SsrfPolicy, refused: Option<RefusedUrls>) -> Self {
+    fn new(policy: &SsrfPolicy, refused: RefusedUrls) -> Self {
         Self {
             policy: policy.clone(),
             refused,
@@ -38,10 +38,10 @@ impl CoreSsrfValidator {
 impl SsrfValidator for CoreSsrfValidator {
     async fn validate(&self, url: &Url) -> Result<(), String> {
         let verdict = validate_url(url, &self.policy).await.map_err(|e| e.to_string());
-        if let (Err(reason), Some(refused)) = (&verdict, &self.refused) {
+        if let Err(reason) = &verdict {
             let redacted = crate::net::redact_url_credentials(url.as_str());
             tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
-            let mut refused = refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut refused = self.refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if refused.len() < MAX_REFUSED_URLS && !refused.contains(&redacted) {
                 refused.push(redacted);
             }
@@ -50,16 +50,17 @@ impl SsrfValidator for CoreSsrfValidator {
     }
 }
 
-/// Build the validator handed to `NativeBrowserConfig::ssrf`.
-pub(crate) fn validator_for(policy: &SsrfPolicy) -> Arc<dyn SsrfValidator> {
-    Arc::new(CoreSsrfValidator::new(policy, None))
-}
-
-/// Build the validator for one render, and the list it fills with every URL it refuses.
+/// Build the validator handed to `NativeBrowserConfig::ssrf` for one render or session, and
+/// the list it fills with every URL it refuses.
 pub(crate) fn recording_validator_for(policy: &SsrfPolicy) -> (Arc<dyn SsrfValidator>, RefusedUrls) {
     let refused = RefusedUrls::default();
-    let validator = Arc::new(CoreSsrfValidator::new(policy, Some(Arc::clone(&refused))));
+    let validator = Arc::new(CoreSsrfValidator::new(policy, Arc::clone(&refused)));
     (validator, refused)
+}
+
+/// Take the URLs `refused` holds, once the render or session that fills it has ended.
+pub(crate) fn take_refused(refused: &RefusedUrls) -> Vec<String> {
+    std::mem::take(&mut *refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
 #[cfg(test)]
@@ -81,7 +82,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
-        let validator = validator_for(&SsrfPolicy::default());
+        let validator = recording_validator_for(&SsrfPolicy::default()).0;
         let err = validator
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
@@ -102,7 +103,8 @@ mod tests {
             .allowlist
             .push(HostMatcher::cidr("127.0.0.0/8").expect("literal CIDR is valid"));
 
-        validator_for(&policy)
+        recording_validator_for(&policy)
+            .0
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect("an allowlisted range must be permitted through the bridge");
@@ -113,7 +115,8 @@ mod tests {
         let mut policy = SsrfPolicy::default();
         policy.scheme_allowlist.clear();
 
-        validator_for(&policy)
+        recording_validator_for(&policy)
+            .0
             .validate(&"http://1.1.1.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect_err("an empty scheme allowlist must reject every URL");

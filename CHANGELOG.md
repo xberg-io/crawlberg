@@ -33,9 +33,10 @@ All notable changes to crawlberg are documented here.
     (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
     versions.
 
-- **`ScrapeResult` and `CrawlPageResult` gained `ssrf_refused_urls`.** The field is left out when
-  it is empty, so an older crawlberg still reads a result with no refused request. A result that
-  lists one is rejected by an older reader, because both types refuse unknown fields.
+- **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
+  field is left out when it is empty, so an older crawlberg still reads a result with no refused
+  request. A scrape or page result that lists one is rejected by an older reader, because both
+  types refuse unknown fields.
 
 - **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
@@ -207,9 +208,10 @@ All notable changes to crawlberg are documented here.
   for the action that was running when the check received it from Chrome, so on a busy host it can
   count for the next action. This applies to the Chromiumoxide backend. (#167)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
-  image, script, frame or `fetch()` keeps the page, and the page result now lists each refused
-  address in `ssrf_refused_urls`, with credentials redacted. Each refusal is also logged as a
-  warning. This applies to both browser backends, for scrape and crawl.
+  image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
+  in `ssrf_refused_urls`, with credentials redacted. An `interact` result lists the refusals of
+  the whole session, the extra wait included. Each refusal is also logged as a warning. This
+  applies to both browser backends, for scrape, crawl and `interact`.
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when

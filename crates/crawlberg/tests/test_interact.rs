@@ -772,3 +772,62 @@ async fn interact_rejects_a_cloud_metadata_target_before_launching_any_browser()
         "a cloud metadata target must be rejected by SSRF policy before any browser work, got {result:?}"
     );
 }
+
+/// A script and a `fetch()` at an address the policy denies keep the native session going, and
+/// the result lists both addresses. The page is served on `localhost`, which the policy
+/// allowlists; the denied address is the literal loopback IP of a second server.
+#[cfg(feature = "browser-native")]
+#[tokio::test]
+async fn native_interact_lists_the_refused_requests() {
+    let site = MockServer::start().await;
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("// denied"))
+        .mount(&denied)
+        .await;
+    let script = format!("http://127.0.0.1:{}/denied.js", denied.address().port());
+    let fetched = format!("http://127.0.0.1:{}/secret", denied.address().port());
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!(
+                "<html><head><script src={script:?}></script></head><body><p>start</p>\
+                 <script>fetch({fetched:?}).catch(() => {{}});</script></body></html>"
+            ),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            ..BrowserConfig::default()
+        },
+        respect_robots_txt: false,
+        ..CrawlConfig::builder()
+            .ssrf_allowlist_host(crawlberg::HostMatcher::exact("localhost"))
+            .build()
+    };
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let result = interact(&engine, &seed, vec![PageAction::Scrape])
+        .await
+        .expect("the session must keep the page");
+    assert!(
+        result.final_html.contains("start"),
+        "the page must be kept: {}",
+        result.final_html
+    );
+    let mut listed = result.ssrf_refused_urls.clone();
+    listed.sort();
+    let mut expected = vec![script, fetched];
+    expected.sort();
+    assert_eq!(listed, expected, "the result must list every refused address");
+    let received = denied.received_requests().await.expect("request recording is on");
+    assert!(
+        received.is_empty(),
+        "the denied address must receive nothing: {received:?}"
+    );
+}
