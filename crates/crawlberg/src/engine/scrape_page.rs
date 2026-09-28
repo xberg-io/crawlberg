@@ -150,6 +150,8 @@ impl CrawlEngine {
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
             landed: None,
+            // ~keep The native browser backend never reads `config.user_agents`.
+            sent_user_agent: None,
         };
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
@@ -263,6 +265,8 @@ impl CrawlEngine {
             body_bytes: resp.body_bytes,
             headers: resp.headers,
             landed: None,
+            // ~keep wasm has no UA rotation layer; every fetch sends `config.user_agent`.
+            sent_user_agent: None,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

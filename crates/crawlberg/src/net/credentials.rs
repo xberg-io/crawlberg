@@ -85,6 +85,13 @@ pub(crate) fn credential_header(config: &CrawlConfig, url: &Url) -> Option<(Stri
 /// The headers a request for `url` carries: the custom headers, then the credential
 /// header, which replaces a custom header of the same name. Empty unless `url` is on the
 /// seed's host.
+///
+/// ~keep A blank `user-agent` entry is dropped here, not just at the judging side
+/// (`crate::helpers::custom_user_agent_header`): every consumer of this function (the HTTP
+/// tier's `apply_headers`, the chromiumoxide SSRF interceptor, and both native-browser
+/// `origin_headers` builders) would otherwise put an empty `User-Agent` on the wire for a
+/// caller who unset the header by emptying its value instead of removing the key
+/// (crawlberg#423).
 pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String, String)> {
     if !config.credential_scope.as_ref().is_some_and(|scope| scope.covers(url)) {
         return Vec::new();
@@ -93,6 +100,7 @@ pub(crate) fn seed_host_headers(config: &CrawlConfig, url: &Url) -> Vec<(String,
     let mut headers: Vec<(String, String)> = config
         .custom_headers
         .iter()
+        .filter(|(name, value)| !crate::helpers::is_blank_user_agent_override(name, value))
         .filter(|(name, _)| {
             credential
                 .as_ref()
@@ -258,6 +266,29 @@ mod tests {
         assert!(
             seed_host_headers(&unadmitted, &url("http://example.com/a")).is_empty(),
             "no scope means no headers"
+        );
+    }
+
+    #[test]
+    fn a_blank_user_agent_custom_header_is_dropped_not_sent_empty() {
+        let config = CrawlConfig {
+            custom_headers: std::collections::HashMap::from([
+                ("user-agent".to_owned(), "   ".to_owned()),
+                ("x-custom".to_owned(), "value".to_owned()),
+            ]),
+            ..config_with(url_scope(), None)
+        };
+
+        let seed_host = seed_host_headers(&config, &url("https://example.com:8443/a"));
+        assert!(
+            !seed_host
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("user-agent")),
+            "a blank custom user-agent must be dropped, not sent as an empty header: {seed_host:?}"
+        );
+        assert!(
+            seed_host.contains(&("x-custom".to_owned(), "value".to_owned())),
+            "every other custom header must still go through unchanged"
         );
     }
 

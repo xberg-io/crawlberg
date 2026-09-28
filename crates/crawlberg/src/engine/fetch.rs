@@ -202,9 +202,19 @@ impl CrawlEngine {
     ///
     /// This is intentionally `#[cfg(not(target_arch = "wasm32"))]`-only: wasm
     /// has its own simpler inline path inside `scrape`.
-    pub(super) async fn fetch_response(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+    /// `forced_user_agent` is the agent `RedirectPolicy::admits` chose for `url` before
+    /// admitting it, when a policy runs -- `None` for `scrape()`, which passes no policy. It is
+    /// pinned onto every attempt the Http tier makes for this call, so a retry or an escalation
+    /// resends the same request rather than letting the UA rotation layer pick a new one
+    /// (crawlberg#423). The browser and bypass tiers do not read it: neither reaches the
+    /// rotation layer today.
+    pub(super) async fn fetch_response(
+        &self,
+        url: &str,
+        forced_user_agent: Option<&str>,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
-        if matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth) {
+        if self.request_will_use_browser() {
             let pool = self.config.browser_pool.as_deref();
             #[cfg(feature = "browser-native")]
             let page = crate::browser::browser_fetch(
@@ -236,12 +246,13 @@ impl CrawlEngine {
                     body_bytes: bypass_resp.body_bytes,
                     headers: bypass_resp.headers,
                     landed: None,
+                    sent_user_agent: None,
                 },
                 false,
             ));
         }
 
-        self.run_dispatch_loop(url, &plan).await
+        self.run_dispatch_loop(url, &plan, forced_user_agent).await
     }
 
     /// Attempt the fetch, retrying and escalating tiers until the policy says stop.
@@ -249,6 +260,7 @@ impl CrawlEngine {
         &self,
         url: &str,
         plan: &DispatchPlan,
+        forced_user_agent: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let mut state = AttemptState::new();
 
@@ -266,7 +278,7 @@ impl CrawlEngine {
                 LoopStep::Done(result) => return result,
             }
 
-            let step = match self.run_tier(state.current_tier, url).await {
+            let step = match self.run_tier(state.current_tier, url, forced_user_agent).await {
                 Ok(fetched) => self.handle_tier_success(url, fetched, plan, &mut state).await,
                 Err(err) => self.handle_tier_error(url, err, plan, &mut state).await,
             };

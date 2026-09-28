@@ -311,16 +311,23 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         .get(current_url.to_string())
         .timeout(context.config.request_timeout);
 
-    if let Some(ref ua) = context.config.user_agent {
-        req = req.header(USER_AGENT, ua.as_str());
-    } else {
-        req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
-    }
+    // ~keep Reads `custom_headers["user-agent"]` ahead of `config.user_agent`, the same
+    // ~keep precedence every other sender uses (crawlberg#423); this hop's own robots.txt,
+    // ~keep sitemap and asset fetches used to read `config.user_agent` only, so a
+    // ~keep custom-header agent never reached them.
+    req = req.header(USER_AGENT, crate::helpers::default_robots_user_agent(context.config));
 
     // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
     // ~keep strip-credentials-on-cross-host behaviour never runs; asking per hop for the
     // ~keep seed-host headers replaces it, for the custom headers as well as the credential.
+    // ~keep A `user-agent` custom header is already reflected in the line above; re-adding it
+    // ~keep here would append a second, redundant `User-Agent` header line rather than
+    // ~keep replacing the first one, the same bug `tower/service.rs::apply_headers` had
+    // ~keep before it was fixed (crawlberg#423).
     for (name, value) in seed_host_headers(context.config, current_url) {
+        if name.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(name.as_str(), value.as_str());
     }
 
@@ -1343,5 +1350,47 @@ mod tests {
             panic!("the Location must be followed");
         };
         assert_eq!(next.as_str(), "http://example.com/end");
+    }
+
+    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of `http_fetch`)
+    /// must send the custom-header agent once, not append it alongside the configured one.
+    #[tokio::test]
+    async fn a_robots_or_asset_fetch_does_not_duplicate_a_custom_header_user_agent() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let seed = url::Url::parse(&mock.uri()).expect("mock URL must parse");
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            custom_headers: HashMap::from([("user-agent".to_owned(), "Custom".to_owned())]),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values.len(),
+            1,
+            "a custom_headers user-agent must replace the configured default, not duplicate it: {user_agent_values:?}"
+        );
+        assert_eq!(user_agent_values, ["Custom"]);
     }
 }
