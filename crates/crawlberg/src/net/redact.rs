@@ -8,20 +8,32 @@
 
 pub(crate) const REDACTED_PLACEHOLDER: &str = "***";
 
+/// What [`redact_url_credentials`] returns for a value it cannot read as one address.
+///
+/// Nothing of the value is kept. Without a parsed host there is no reliable way to tell where
+/// a `user:password@` ends, so any part of a value that holds an `@` can be a credential.
+const HIDDEN_ADDRESS: &str = "[address hidden: it may carry credentials]";
+
 /// Redact `user[:password]@` userinfo from a URL-like string.
 ///
 /// Parses `input` as an absolute URL; if it carries a username and/or password, both are
 /// replaced with a fixed placeholder before re-serializing, so the scheme/host/path
 /// remain useful for debugging while the credential bytes never reach the output.
 ///
-/// `input` is returned unchanged (not an error) when it does not parse as an absolute
-/// URL, or parses but carries no credentials — either way there is nothing to redact.
-/// This makes the function safe to call unconditionally on any string that *might* be a
-/// URL, such as an error message being assembled for display.
+/// Only a value that parses to a URL with a host, and has no whitespace, is read this way. A
+/// value with whitespace is a message rather than one address, even when its first word parses.
+/// Any other value that contains an `@` is replaced whole with [`HIDDEN_ADDRESS`]: a value that
+/// fails to parse (a stray space in the host), a scheme-less `user:pw@host` (which parses as
+/// scheme `user` with no host), a `mailto:` address or a message. A value without an `@` cannot
+/// carry userinfo and is returned unchanged.
+/// This makes the function safe to call unconditionally on any string that *might* be a URL,
+/// such as an error message being assembled for display.
 #[must_use]
 pub fn redact_url_credentials(input: &str) -> String {
-    let Ok(mut url) = url::Url::parse(input) else {
-        return input.to_owned();
+    let mut url = match url::Url::parse(input) {
+        Ok(url) if url.host().is_some() && !input.contains(char::is_whitespace) => url,
+        _ if input.contains('@') => return HIDDEN_ADDRESS.to_owned(),
+        _ => return input.to_owned(),
     };
     if url.username().is_empty() && url.password().is_none() {
         return input.to_owned();
@@ -43,8 +55,9 @@ pub fn redact_url_credentials(input: &str) -> String {
 /// Redact userinfo and the whole query string from a URL-like string.
 ///
 /// For an endpoint that authenticates through its query, such as a CDP WebSocket URL with
-/// a `?token=` parameter or a bypass vendor endpoint. Returns `input` unchanged when it does
-/// not parse as an absolute URL or carries neither.
+/// a `?token=` parameter or a bypass vendor endpoint. A value that does not parse as an
+/// absolute URL gets what [`redact_url_credentials`] returns for it; a URL with neither comes
+/// back unchanged.
 #[must_use]
 pub fn redact_url_secrets(input: &str) -> String {
     let redacted = redact_url_credentials(input);
@@ -58,37 +71,10 @@ pub fn redact_url_secrets(input: &str) -> String {
     url.to_string()
 }
 
-/// Redact `user[:password]@` userinfo from a URL-like string **without parsing it**.
-///
-/// [`redact_url_credentials`] returns its input unchanged when `url::Url::parse` fails, so it
-/// is a no-op in exactly the place an "invalid URL" error message is assembled — the value is
-/// unparseable, which is why the error exists. This locates the authority's userinfo span
-/// textually instead, so a malformed URL still has its credentials removed.
-///
-/// The span examined is bounded by the authority: the text after `//` (or the start of the
-/// input when there is no `//`) up to the first `/`, `?` or `#`. Only the last `@` inside that
-/// span terminates the userinfo, matching how a URL parser reads an authority, so an `@` in a
-/// path, query or fragment is never mistaken for one.
-// ~keep Retained with no production caller: #401 stopped `validate_proxy` echoing the proxy URL
-// ~keep at all, which removed the only one. `redact_url_credentials` still no-ops on a
-// ~keep scheme-less `user:pass@host:port` (it parses `user` as the scheme), and this is the only
-// ~keep thing in the tree that redacts that form, so it is kept for the next call site that
-// ~keep needs it rather than deleted. `cargo hack clippy --no-dev-deps -- -D warnings` compiles
-// ~keep without the tests, so the test-only use does not satisfy `dead_code` there.
-#[cfg_attr(not(test), allow(dead_code))]
-#[must_use]
-pub(crate) fn redact_userinfo_textually(input: &str) -> String {
-    let authority_start = input.find("//").map_or(0, |index| index + 2);
-    let authority = &input[authority_start..];
-    let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
-    let Some(at) = authority[..authority_end].rfind('@') else {
-        return input.to_owned();
-    };
-    format!(
-        "{}{REDACTED_PLACEHOLDER}{}",
-        &input[..authority_start],
-        &input[authority_start + at..]
-    )
+/// `Debug` text for a caller's script or template: the placeholder and the length, never
+/// the text. A script is a common place to embed a token.
+pub(crate) fn redacted_text(text: &str) -> String {
+    format!("{REDACTED_PLACEHOLDER} ({} bytes)", text.len())
 }
 
 /// `Debug` view of a string map that shows each key and hides each value, for maps of
@@ -164,33 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn redacts_userinfo_of_a_url_that_does_not_parse() {
-        // ~keep A space in the host makes this unparseable, so `redact_url_credentials` is a
-        // ~keep no-op on it; the textual strip is the only thing that removes the password.
-        let malformed = "http://user:hunter2@proxy internal:8080";
-        assert_eq!(
-            redact_url_credentials(malformed),
-            malformed,
-            "the parsing helper is expected to pass an unparseable URL through unchanged"
-        );
-        assert_eq!(redact_userinfo_textually(malformed), "http://***@proxy internal:8080");
-    }
-
-    #[test]
-    fn textual_userinfo_strip_ignores_an_at_sign_outside_the_authority() {
-        assert_eq!(
-            redact_userinfo_textually("http://example.com/mail/user@host?to=a@b#f@g"),
-            "http://example.com/mail/user@host?to=a@b#f@g"
-        );
-    }
-
-    #[test]
-    fn textual_userinfo_strip_handles_a_missing_scheme_and_a_plain_string() {
-        assert_eq!(redact_userinfo_textually("user:hunter2@proxy:8080"), "***@proxy:8080");
-        assert_eq!(redact_userinfo_textually("not a url at all"), "not a url at all");
-    }
-
-    #[test]
     fn leaves_non_url_input_unchanged() {
         assert_eq!(redact_url_credentials("not a url at all"), "not a url at all");
     }
@@ -203,5 +162,196 @@ mod tests {
             redact_url_credentials("evil.example: dns error"),
             "evil.example: dns error"
         );
+    }
+
+    #[test]
+    fn hides_a_value_with_an_at_sign_that_is_not_one_url() {
+        // ~keep The accepted cost of hiding the whole value: an address or message that holds an
+        // `@` which is not userinfo (a `mailto:` or `data:` value, an e-mail address in a
+        // sentence, a file name with an `@`) is hidden too.
+        for value in [
+            "https://user:pw@ex ample.com/x",
+            "user:pw@host",
+            "mailto:user@example.com",
+            "data:,foo@bar",
+            "contact admin@example.com for help",
+            "https://example.com/My Page@2x.png",
+            "u@",
+            "@host",
+        ] {
+            assert_eq!(redact_url_credentials(value), HIDDEN_ADDRESS, "input '{value}'");
+        }
+    }
+
+    #[test]
+    fn leaves_values_without_an_at_sign_unchanged() {
+        for value in [
+            "",
+            "https://ex ample.com/clean",
+            "https://example.com/My Page.html",
+            "file:///x",
+            "mailto:",
+            "connect to [2001:db8::1]:443 refused",
+            "C:\\Users\\bob\\file.txt",
+        ] {
+            assert_eq!(
+                redact_url_credentials(value),
+                value,
+                "'{value}' must come back unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_values_come_back_redacted_or_hidden() {
+        // ~keep Every credential-bearing input the reviews of this redactor probed. A value that
+        // parses with a host keeps its parsed redaction; every other one is hidden whole.
+        let parsed = [
+            ("https:/u:pw@h", "https://***:***@h/"),
+            ("https:u:pw@h", "https://***:***@h/"),
+            ("http:///u:pw@proxy", "http://***:***@proxy/"),
+            ("https://a@b@host/", "https://***@host/"),
+        ];
+        let hidden = [
+            "https://u:p@ex ample.com/a@b",
+            "u:p@host",
+            "user:pw@host/path",
+            "user:pw@host/a//b",
+            "user:pw@host//x",
+            "http://u:p@[fe80::1%eth0]/",
+            "http://u:p@[fe80::1%25eth0]:8080/x",
+            "https://u:p@ss@ex ample.com/",
+            "https://u%40x:p%40@ex ample.com/",
+            "https://user:pa/ss@ex ample.com/",
+            "https:\\\\u:p@ex ample.com\\x",
+            "HTTPS://U:P@EX AMPLE.COM/",
+            "file://u:p@ex ample/",
+            "http://u:p@ex ample.com\\x",
+            "https://u:p@ex ample.com?x=y@z",
+            "https://u:p@@ex ample.com/",
+            "u:p@",
+            "u:p@ex ample.com",
+            "user:pw@host ",
+            "connect to user:pw@proxy:8080 failed",
+            "redis://u:hunter2@ex ample.com/",
+            "socks4://u:hunter2@ex ample.com:1080",
+            "sftp://u:hunter2@ex ample.com/",
+            "file://u:hunter2@ex ample/",
+            "https:\\\\u:hunter2@ex ample.com\\x",
+            "redis://u:hunter2@ex ample",
+            "error: https://u:hunter2@ex ample.com",
+            "connect to \"user:pw@proxy:8080\" failed",
+            "proxy=http://u:pw@ex ample.com failed",
+            "(https://u:pw@ex ample.com)",
+            "a\tuser:pw@host",
+            "line1\nhttps://u:pw@ex ample.com",
+            "connect\u{00A0}user:pw@host failed",
+            "connect\u{3000}to user:pw@host",
+            "https://example.com/?q=1 via http://u:pw@proxy",
+            "https://example.com/?q=1 via user:pw@proxy",
+            "https://example.com/?q=1\tvia\tuser:pw@proxy",
+            "https://example.com/?q=1\nvia user:pw@proxy",
+            "https://example.com/?q=1\r\nvia user:pw@proxy",
+            "https://example.com/?q=1\u{00A0}via\u{00A0}user:pw@proxy",
+            "https://example.com/?q=1\u{2028}via\u{2028}user:pw@proxy",
+            "HTTPS://example.com/ user:pw@proxy",
+            "https://ex ample.com/#x then user:pw@proxy",
+            "retry https://u:pw@h1/ and https://v:hunter2@h2/ failed",
+            "git clone https://TOKEN@github.com/o/r failed: x y",
+            "https://user:p?ss@ex ample.com/",
+            "https://user:p#ss@ex ample.com/",
+            "user:p#ss@host",
+            "user:p?ss@host",
+            "connect to user:pw@ failed",
+            "failed: user:pw@/tmp/sock",
+            "user:pw@",
+            "http://user:p#ss@proxy:8080",
+            "{\"a\":\"#1\",\"proxy\":\"http://u:pw@h\"}",
+            "{\"proxy\":\"http://u:pw@h:1\",\"x\":\"#\"}",
+            "ftp://u:pw@ex ample.com/?a=b@c",
+            "socks5h://u:pw@ex ample:1080 refused",
+            "via\u{2028}user:pw@host",
+            "x https://u:pw@ex ample.com?y=1 z user:hunter2@q",
+            "user:pw@?x",
+            "user:pw@#frag",
+            "user:pw@\\\\x",
+            "in msg user:pw@?x now",
+            "in msg user:pw@#f now",
+            "https://u:p#ss@h then https://v:pw@k done",
+            "https://a.example/?x=1 then user:pw@h done",
+            "file:///x then user:pw@host",
+            "mailto:a@b then user:pw@host",
+            "data:user:pw@h",
+            "x data:user:pw@h y",
+            "sip:alice:pw@host",
+            "connect http:///u:pw@proxy failed",
+            "connect https:////u:pw@proxy failed",
+            "connect http:\\\\\\u:pw@proxy failed",
+            "http:///u:pw@proxy/a b",
+            "https:///u:pw@proxy/My Page.html",
+            "redis:///u:pw@h",
+            "connect redis:///u:pw@h failed",
+            "connect https:/u:pw@h failed",
+        ];
+        let rows = parsed
+            .into_iter()
+            .chain(hidden.into_iter().map(|input| (input, HIDDEN_ADDRESS)));
+        for (input, expected) in rows {
+            assert_eq!(redact_url_credentials(input), expected, "input '{input}'");
+        }
+    }
+
+    #[test]
+    fn a_schemeless_address_with_a_password_is_hidden() {
+        // ~keep `user:pw@host/path` parses as scheme `user` with no host, so nothing in it is
+        // read as userinfo. The password may hold `/`, `#` or `?`, which end the URL path.
+        let values = [
+            "user:hunter2@evil.example/path",
+            "user:hunter2@evil.example:8080/path",
+            "user:hunt%40er2@evil.example/path",
+            "user:hunt/er2@evil.example/path",
+            "user:hunt#er2@evil.example/path",
+            "user:hunt?er2@evil.example/path",
+        ];
+        let wrong: Vec<(&str, String)> = values
+            .iter()
+            .map(|value| (*value, redact_url_credentials(value)))
+            .filter(|(_, redacted)| redacted != HIDDEN_ADDRESS)
+            .collect();
+        assert!(wrong.is_empty(), "expected every value hidden, got {wrong:?}");
+    }
+
+    #[test]
+    fn ordinary_urls_are_redacted_exactly_as_before() {
+        // ~keep Every value here parses with a host and has no whitespace, so it is read as a
+        // URL. The expected column is the output of the parsed path alone, as before.
+        let table = [
+            ("https://example.com/", "https://example.com/"),
+            ("http://example.com", "http://example.com"),
+            ("https://example.com/a/b?c=d#e", "https://example.com/a/b?c=d#e"),
+            ("https://user:pass@example.com/x", "https://***:***@example.com/x"),
+            ("https://user@example.com/", "https://***@example.com/"),
+            ("https://:pw@example.com/", "https://:***@example.com/"),
+            ("http://127.0.0.1:8080/p", "http://127.0.0.1:8080/p"),
+            ("http://[::1]:3000/", "http://[::1]:3000/"),
+            ("https://u:p@[2001:db8::1]/x", "https://***:***@[2001:db8::1]/x"),
+            ("https://xn--nxasmq6b.com/", "https://xn--nxasmq6b.com/"),
+            ("https://例え.jp/パス", "https://例え.jp/パス"),
+            ("ftp://u:p@ftp.example.com/f.txt", "ftp://***:***@ftp.example.com/f.txt"),
+            ("ws://u:p@host:9/s", "ws://***:***@host:9/s"),
+            ("https://example.com/%7Euser", "https://example.com/%7Euser"),
+            ("https://example.com/a@b", "https://example.com/a@b"),
+            (
+                "https://example.com/?next=http://u:p@x.com",
+                "https://example.com/?next=http://u:p@x.com",
+            ),
+            ("HTTP://EXAMPLE.COM/UP", "HTTP://EXAMPLE.COM/UP"),
+            ("https://a@b@host/", "https://***@host/"),
+            ("socks5://u:p@proxy:1080", "socks5://***:***@proxy:1080"),
+            ("https://example.com:443/", "https://example.com:443/"),
+        ];
+        for (input, expected) in table {
+            assert_eq!(redact_url_credentials(input), expected, "input '{input}'");
+        }
     }
 }

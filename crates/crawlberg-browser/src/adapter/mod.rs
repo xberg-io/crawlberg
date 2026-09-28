@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
+pub use crate::net::OriginHeaders;
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
@@ -102,12 +103,19 @@ pub struct NativeBrowserConfig {
     /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
     /// not be able to point the browser at local files.
     pub allow_file_access: bool,
+    /// Headers sent only to one host, such as a credential, on every request and redirect
+    /// hop there, including a page script's `fetch()` and module imports.
+    ///
+    /// Unlike `extra_headers`, which every host receives, these never reach a third-party
+    /// subresource or a cross-host redirect target.
+    pub origin_headers: Option<OriginHeaders>,
 }
 
 impl std::fmt::Debug for NativeBrowserConfig {
     /// Redacted: `extra_headers` carries the `Authorization` header built from the crawl's
     /// auth config, `proxy_url` can carry `user:pass@` credentials, and `prior_cookies`
-    /// are session cookies. Header names stay visible; secret values print as `***`.
+    /// are session cookies. `eval_script` can embed a token, so it prints as `***` with its
+    /// length. Header names stay visible; secret values print as `***`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             user_agent,
@@ -125,6 +133,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             capture_network_events,
             ssrf,
             allow_file_access,
+            origin_headers,
         } = self;
         f.debug_struct("NativeBrowserConfig")
             .field("user_agent", user_agent)
@@ -136,12 +145,18 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("proxy_url", &proxy_url.as_ref().map(|_| REDACTED))
             .field("prior_cookies", prior_cookies)
             .field("block_url_patterns", block_url_patterns)
-            .field("eval_script", eval_script)
+            .field(
+                "eval_script",
+                &eval_script
+                    .as_ref()
+                    .map(|script| format!("{REDACTED} ({} bytes)", script.len())),
+            )
             .field("wait_selector", wait_selector)
             .field("robots_user_agent", robots_user_agent)
             .field("capture_network_events", capture_network_events)
             .field("ssrf", ssrf)
             .field("allow_file_access", allow_file_access)
+            .field("origin_headers", origin_headers)
             .finish()
     }
 }
@@ -173,6 +188,7 @@ impl Default for NativeBrowserConfig {
             capture_network_events: false,
             ssrf: None,
             allow_file_access: false,
+            origin_headers: None,
         }
     }
 }
@@ -409,6 +425,10 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
     context
         .http_client
         .set_extra_headers(config.extra_headers.clone())
+        .await;
+    context
+        .http_client
+        .set_origin_headers(config.origin_headers.clone())
         .await;
 
     for cookie in &config.prior_cookies {
