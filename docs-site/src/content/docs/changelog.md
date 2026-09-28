@@ -81,6 +81,11 @@ title: "Changelog"
   `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
   of the address, alongside the address text itself. (#338)
 
+- **`POST /v1/map`'s `search` parameter never matched a non-ASCII term either.** The REST handler
+  filtered results with its own substring check against the raw address, a second copy of the
+  same defect `map_search` had. It now routes `search` through `map_search`, so the REST endpoint
+  matches a non-ASCII term the same way the CLI and the MCP `map` tool already do. (#362)
+
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
   header, but a vendored copy ships beside a dylib from the last release, so it legitimately

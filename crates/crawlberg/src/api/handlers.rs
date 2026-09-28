@@ -347,19 +347,22 @@ pub async fn map_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let mut result = if let Some(respect_robots_txt) = req.respect_robots_txt {
+    // `search` is routed through `CrawlConfig.map_search` so the REST handler matches through
+    // the same `MapFilter` the CLI and the MCP `map` tool already use, instead of a second,
+    // raw-address-only substring check that never matched a non-ASCII term.
+    let mut result = if req.respect_robots_txt.is_some() || req.search.is_some() {
         let mut config = state.engine.config.clone();
-        config.respect_robots_txt = respect_robots_txt;
+        if let Some(respect_robots_txt) = req.respect_robots_txt {
+            config.respect_robots_txt = respect_robots_txt;
+        }
+        if req.search.is_some() {
+            config.map_search = req.search.clone();
+        }
         let engine = rebuild_engine_with_config(&state.engine, config)?;
         engine.map(&req.url).await?
     } else {
         state.engine.map(&req.url).await?
     };
-
-    if let Some(ref search) = req.search {
-        let term = search.to_lowercase();
-        result.urls.retain(|u| u.url.to_lowercase().contains(&term));
-    }
 
     if let Some(limit) = req.limit {
         result.urls.truncate(limit);
