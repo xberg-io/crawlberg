@@ -8,7 +8,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser, remove_profile_dir};
+use crate::browser_pool::{ExternalTabCleanup, ScratchProfileDir, release_browser};
 use crate::error::CrawlError;
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -39,9 +39,7 @@ async fn run_launched(
         config.browser.shutdown_timeout,
     )
     .await;
-    if let Some(dir) = data_dir {
-        remove_profile_dir(dir).await;
-    }
+    drop(data_dir);
 
     result
 }
@@ -515,13 +513,29 @@ mod tests {
             .expect("a launched Chrome must have a profile directory");
         assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
 
+        let before = crate::browser_pool::tests::profile_drops_here();
         let _ = run_launched(launched, "about:blank", &[], &config).await;
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
 
         tokio::task::spawn_blocking(move || {
             crate::browser_pool::tests::assert_profile_directory_is_gone_for_good(&path)
         })
         .await
         .expect("an interact run must stop its Chrome and remove its profile directory");
+    }
+
+    /// An interact run cut off during its launch hands its profile teardown off the executor thread.
+    ///
+    /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
+    /// ~keep directory drops on the same path.
+    #[tokio::test]
+    async fn a_cancelled_interact_run_tears_its_profile_down_off_the_executor_thread() {
+        let config = CrawlConfig::default();
+        let before = crate::browser_pool::tests::profile_drops_here();
+
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(1), run("about:blank", &[], &config)).await;
+
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
     }
 
     #[test]

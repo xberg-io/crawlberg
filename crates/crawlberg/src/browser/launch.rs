@@ -255,7 +255,10 @@ mod user_data_dir_tests {
 
         let scratch = resolved.path().to_path_buf();
         drop(resolved);
-        assert!(!scratch.exists(), "the scratch copy must be removed when it is dropped");
+        assert!(
+            crate::browser_pool::tests::wait_for_removal(&scratch),
+            "the scratch copy must be removed when it is dropped"
+        );
     }
 
     #[test]
@@ -314,7 +317,27 @@ mod tests {
 
         drop(resolved);
 
-        assert!(!path.exists(), "an unclaimed scratch profile directory must be removed");
+        assert!(
+            crate::browser_pool::tests::wait_for_removal(&path),
+            "an unclaimed scratch profile directory must be removed"
+        );
+    }
+
+    /// A one-shot launch cut off by the overall deadline hands its profile teardown off the
+    /// executor thread.
+    ///
+    /// ~keep No Chrome is needed: without one the launch fails before the deadline, and the
+    /// ~keep profile directory drops on the same path.
+    #[tokio::test]
+    async fn a_cancelled_one_shot_launch_tears_its_profile_down_off_the_executor_thread() {
+        let mut config = CrawlConfig::default();
+        config.browser.overall_timeout = std::time::Duration::from_millis(1);
+        let before = crate::browser_pool::tests::profile_drops_here();
+
+        let fetched = super::super::one_shot_fetch("about:blank", &config, None, false).await;
+
+        assert!(fetched.is_err(), "a Chrome launch cannot finish within a millisecond");
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
     }
 
     /// A saved named profile is never removed when its value drops.
