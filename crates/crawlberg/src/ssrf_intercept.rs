@@ -18,18 +18,25 @@ use std::sync::{Arc, Mutex};
 
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams,
+    FailRequestParams, HeaderEntry,
 };
-use chromiumoxide::cdp::browser_protocol::network::ErrorReason;
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers};
 use tokio_stream::StreamExt;
 
 use crate::error::CrawlError;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
+use crate::net::userinfo;
+use crate::types::CrawlConfig;
+
+/// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
+const UNPARSEABLE_URL: &str = "(unparseable URL)";
 
 /// Active CDP Fetch-domain interception that re-validates every browser-issued
-/// request against the SSRF policy. Held alive across a navigation; consuming it
-/// via [`SsrfInterceptGuard::finish`] disables interception, stops the listener,
-/// and reports the first request that was blocked.
+/// request against the SSRF policy and adds the seed-host headers. Held alive for as
+/// long as the page is in use; [`SsrfInterceptGuard::take_blocked`] reports the first
+/// blocked request so far, and [`SsrfInterceptGuard::finish`] disables interception
+/// and stops the listener when the page is released.
 pub(crate) struct SsrfInterceptGuard {
     page: chromiumoxide::Page,
     listener: tokio::task::JoinHandle<()>,
@@ -37,36 +44,74 @@ pub(crate) struct SsrfInterceptGuard {
 }
 
 impl SsrfInterceptGuard {
-    /// Disable interception, stop the listener, and return the first blocked
-    /// `(url, reason)` observed during the navigation, if any.
-    pub(crate) async fn finish(self) -> Option<(String, String)> {
-        let _ = self.page.execute(FetchDisableParams::default()).await;
-        self.listener.abort();
+    /// Take the first blocked `(url, reason)` observed so far, if any. Interception
+    /// stays on.
+    pub(crate) fn take_blocked(&self) -> Option<(String, String)> {
         match self.blocked.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         }
     }
-}
 
-/// Decide whether an intercepted request URL is permitted by the SSRF policy.
-/// Returns `Err(reason)` when the request must be failed at the CDP layer. This
-/// is the per-request decision applied to every browser-issued request.
-async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), String> {
-    match url::Url::parse(request_url) {
-        Ok(parsed) => validate_url(&parsed, policy).await.map_err(|e| e.to_string()),
-        Err(e) => Err(format!("invalid URL: {e}")),
+    /// Disable interception and stop the listener, once the page is no longer used.
+    pub(crate) async fn finish(self) {
+        let _ = self.page.execute(FetchDisableParams::default()).await;
+        self.listener.abort();
     }
 }
 
+/// Decide whether an intercepted request URL may go out.
+///
+/// Returns the parsed URL, or `Err((recorded_url, reason))` when the request must be failed
+/// at the CDP layer. A URL with userinfo is refused, as the Fetch standard does for
+/// subresources, and is recorded without it. This is the per-request decision applied to
+/// every browser-issued request.
+async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<url::Url, (String, String)> {
+    let parsed = url::Url::parse(request_url).map_err(|e| (UNPARSEABLE_URL.to_owned(), format!("invalid URL: {e}")))?;
+    if userinfo::has_userinfo(&parsed) {
+        let mut clean = parsed;
+        userinfo::strip(&mut clean);
+        return Err((clean.into(), "a URL with credentials in it is refused".to_owned()));
+    }
+    validate_url(&parsed, policy)
+        .await
+        .map_err(|e| (parsed.to_string(), e.to_string()))?;
+    Ok(parsed)
+}
+
+/// The request's own headers plus the seed-host headers `url` gets, if it gets any: the
+/// custom headers and the credential.
+///
+/// ~keep They go on this one request only, never through `Network.setExtraHTTPHeaders`,
+/// ~keep which would give them to every host the page loads from. A redirect hop is paused
+/// ~keep again and gets its own decision.
+fn headers_with_seed_host_headers(config: &CrawlConfig, url: &url::Url, headers: &Headers) -> Option<Vec<HeaderEntry>> {
+    let added = seed_host_headers(config, url);
+    if added.is_empty() {
+        return None;
+    }
+    let mut entries: Vec<HeaderEntry> = headers
+        .inner()
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(existing, _)| !added.iter().any(|(name, _)| existing.eq_ignore_ascii_case(name)))
+        .filter_map(|(existing, value)| value.as_str().map(|value| HeaderEntry::new(existing.clone(), value)))
+        .collect();
+    entries.extend(added.into_iter().map(|(name, value)| HeaderEntry::new(name, value)));
+    Some(entries)
+}
+
 /// Enable CDP Fetch interception on `page`, validating every intercepted request
-/// URL against `policy` before Chrome connects. Requests resolving to blocked
+/// URL against `config.ssrf` before Chrome connects. Requests resolving to blocked
 /// addresses (loopback, RFC1918, link-local, cloud metadata, non-http(s)
-/// schemes) are failed with `BlockedByClient` and the first one is recorded so
-/// the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
+/// schemes) or carrying userinfo are failed with `BlockedByClient` and the first one is
+/// recorded so the caller can surface a precise [`CrawlError::SsrfPolicyViolation`].
+/// A request to the seed's host is continued with the custom headers and the caller's
+/// credential header.
 pub(crate) async fn start_ssrf_interception(
     page: &chromiumoxide::Page,
-    policy: &SsrfPolicy,
+    config: &CrawlConfig,
 ) -> Result<SsrfInterceptGuard, CrawlError> {
     let mut events = page
         .event_listener::<EventRequestPaused>()
@@ -79,7 +124,7 @@ pub(crate) async fn start_ssrf_interception(
 
     let blocked: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
     let listener_page = page.clone();
-    let listener_policy = policy.clone();
+    let listener_config = config.clone();
     let listener_blocked = Arc::clone(&blocked);
 
     let listener = tokio::spawn(async move {
@@ -87,15 +132,17 @@ pub(crate) async fn start_ssrf_interception(
             let request_id = event.request_id.clone();
             let request_url = event.request.url.clone();
 
-            match ssrf_verdict(&request_url, &listener_policy).await {
-                Ok(()) => {
-                    let _ = listener_page.execute(ContinueRequestParams::new(request_id)).await;
+            match ssrf_verdict(&request_url, &listener_config.ssrf).await {
+                Ok(parsed) => {
+                    let mut params = ContinueRequestParams::new(request_id);
+                    params.headers = headers_with_seed_host_headers(&listener_config, &parsed, &event.request.headers);
+                    let _ = listener_page.execute(params).await;
                 }
-                Err(reason) => {
+                Err((recorded_url, reason)) => {
                     if let Ok(mut slot) = listener_blocked.lock()
                         && slot.is_none()
                     {
-                        *slot = Some((request_url, reason));
+                        *slot = Some((recorded_url, reason));
                     }
                     let _ = listener_page
                         .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
@@ -163,5 +210,67 @@ mod tests {
             verdict.is_ok(),
             "loopback must pass when deny_private=false: {verdict:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_and_recorded_without_it() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@example.com/a", &deny_policy()).await else {
+            panic!("a URL with userinfo must be refused");
+        };
+        assert_eq!(recorded, "http://example.com/a");
+        assert!(reason.contains("credentials"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_url_is_recorded_without_its_text() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@exa mple/", &deny_policy()).await else {
+            panic!("a malformed URL must be refused");
+        };
+        assert_eq!(recorded, "(unparseable URL)");
+        assert!(reason.contains("invalid URL"), "{reason}");
+    }
+
+    #[test]
+    fn the_seed_host_headers_replace_page_headers_of_the_same_name_and_keep_the_rest() {
+        use chromiumoxide::cdp::browser_protocol::network::Headers;
+
+        use super::headers_with_seed_host_headers;
+        use crate::types::{AuthConfig, CrawlConfig};
+
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        let config = CrawlConfig {
+            auth: Some(AuthConfig::Bearer {
+                token: "tok".to_owned(),
+            }),
+            custom_headers: std::collections::HashMap::from([("X-Custom".to_owned(), "configured".to_owned())]),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ..CrawlConfig::default()
+        };
+        let headers = Headers::new(serde_json::json!({
+            "Cookie": "a=b", "authorization": "page-value", "x-custom": "page-value"
+        }));
+
+        let entries = headers_with_seed_host_headers(&config, &seed, &headers).expect("the seed host gets the headers");
+        let pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.value.as_str()))
+            .collect();
+        assert!(
+            pairs.contains(&("Cookie", "a=b")),
+            "the page's headers are kept: {pairs:?}"
+        );
+        let authorization: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .collect();
+        assert_eq!(authorization, vec![&("Authorization", "Bearer tok")], "{pairs:?}");
+        let custom: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("x-custom"))
+            .collect();
+        assert_eq!(custom, vec![&("X-Custom", "configured")], "{pairs:?}");
+
+        let other = url::Url::parse("http://other.test/").expect("test URL must parse");
+        assert!(headers_with_seed_host_headers(&config, &other, &headers).is_none());
     }
 }
