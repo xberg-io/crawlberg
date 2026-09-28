@@ -1,10 +1,9 @@
 //! Secrets a caller puts into a config must not reach a validation error's `Display`.
 //!
 //! `CrawlError` Display text reaches logs and API error bodies, so it is as exposed as
-//! `Debug`. Both errors covered here fire *precisely* when the value cannot be parsed as a
-//! URL, which is also when the parsing redaction helpers return their input unchanged — so
-//! redaction that relies on parsing is a no-op exactly here. The `browser.endpoint` error
-//! solves that by naming only the field; the `proxy.url` error is main's `crate::proxy`
+//! `Debug`. Neither error covered here prints the rejected value, not even redacted: the
+//! `browser.endpoint` error names only the field, because the endpoint is a capability and
+//! the field name is enough to find it; the `proxy.url` error comes from the `crate::proxy`
 //! parser (#401), which never interpolates the value at all.
 
 use crawlberg::{BrowserConfig, CrawlConfig, ProxyConfig};
@@ -16,8 +15,7 @@ fn an_unparseable_proxy_url_error_hides_the_password() {
     let config = CrawlConfig {
         proxy: Some(ProxyConfig {
             // ~keep A space in the host makes this unparseable, so the error below is the
-            // ~keep `Url::parse` failure branch — the one where parsing-based redaction is
-            // ~keep a no-op. #401 made that branch omit the value instead of redacting it.
+            // ~keep `Url::parse` failure branch. #401 made that branch omit the value.
             url: format!("http://svc-account:{SECRET}@proxy internal:8080"),
             username: Some("svc-account".into()),
             password: Some(SECRET.into()),

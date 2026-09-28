@@ -439,6 +439,7 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
             secure: true,
             http_only: true,
         }],
+        eval_script: Some(format!("fetch('/api?key={SECRET}')")),
         ..NativeBrowserConfig::default()
     };
     for rendered in [format!("{config:?}"), format!("{config:#?}")] {
@@ -446,6 +447,15 @@ fn native_browser_config_debug_hides_headers_proxy_and_cookie_values() {
         assert!(rendered.contains("Authorization"), "header name missing: {rendered}");
         assert!(rendered.contains("session"), "cookie name missing: {rendered}");
     }
+    let compact = format!("{config:?}");
+    let script = format!(
+        r#"eval_script: Some("*** ({} bytes)")"#,
+        "fetch('/api?key=')".len() + SECRET.len()
+    );
+    assert!(
+        compact.contains(&script),
+        "eval_script must print as set, with its length: {compact}"
+    );
 }
 
 /// A secret every `Debug` below must hide.
