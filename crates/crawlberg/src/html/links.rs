@@ -1,12 +1,14 @@
 //! Link extraction and classification from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
 use crate::types::{LinkInfo, LinkType};
 
-use super::selectors::SEL_A_HREF;
-use super::{decode_attr_value, elements_named, get_attr};
+use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
+use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -27,40 +29,35 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
         }
     }
 
-    if let Ok(resolved) = base_url.join(href) {
-        if resolved.host_str() != base_url.host_str() {
-            return LinkType::External;
-        }
-        LinkType::Internal
-    } else if href.starts_with("http://") || href.starts_with("https://") {
-        if let Ok(u) = Url::parse(href)
-            && u.host_str() != base_url.host_str()
-        {
-            return LinkType::External;
-        }
-        LinkType::Internal
-    } else {
-        LinkType::Internal
+    if let Ok(resolved) = base_url.join(href)
+        && resolved.host_str() != base_url.host_str()
+    {
+        return LinkType::External;
     }
+    LinkType::Internal
 }
 
 /// The URL a document's relative references resolve against: the `href` of its first `<base>`
-/// that has one, decoded and joined to the document URL, or the document URL itself.
-pub(super) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
-    elements_named(dom, "base")
-        .find_map(|tag| tag.attributes().get("href"))
-        .map(|value| value.and_then(|v| v.try_as_utf8_str()).unwrap_or(""))
+/// that has one, decoded and joined to the document URL, or the document URL itself when there is
+/// none, it does not parse, or its scheme is `data` or `javascript` (the HTML frozen base URL steps).
+pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
+    let parser = dom.parser();
+    dom.query_selector(SEL_BASE_HREF)
+        .and_then(|mut iter| iter.next())
+        .and_then(|h| h.get(parser))
+        .and_then(|n| n.as_tag())
+        .map(|tag| get_attr(tag, "href").unwrap_or_default())
         // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
         // the document URL instead of requiring it to already be absolute.
-        .and_then(|href| document_url.join(&decode_attr_value(href)).ok())
+        .and_then(|href| crate::net::userinfo::resolve(document_url, &href))
+        .filter(|base| !matches!(base.scheme(), "data" | "javascript"))
         .unwrap_or_else(|| document_url.clone())
 }
 
-/// Extract all links from a parsed HTML document.
+/// Extract all links from a parsed HTML document, resolved against `base_url`, the document's base
+/// URL from [`effective_base_url`].
 pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
     let parser = dom.parser();
-    let effective_base = effective_base_url(dom, base_url);
-
     let mut links = Vec::new();
 
     if let Some(iter) = dom.query_selector(SEL_A_HREF) {
@@ -69,35 +66,29 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
                 continue;
             };
 
-            let href = get_attr(tag, "href").unwrap_or("").trim();
-            if href.is_empty() {
+            let Some(href) = get_url_attr(tag, "href") else {
                 continue;
-            }
-
-            if href.starts_with("mailto:")
-                || href.starts_with("javascript:")
-                || href.starts_with("tel:")
-                || href.starts_with("data:")
-            {
-                continue;
-            }
+            };
+            let href = href.as_ref();
 
             // ~keep `Url::join` already resolves protocol-relative ("//host/path") references
             // per the WHATWG URL spec, so no special-casing is needed here.
-            let link_type = classify_link(href, &effective_base);
-
-            let resolved_url = if let Ok(u) = effective_base.join(href) {
-                u.to_string()
-            } else {
-                href.to_owned()
+            let Some(resolved_url) = crate::net::userinfo::resolve(base_url, href) else {
+                continue;
             };
+            // ~keep The scheme comes from the parsed URL, not a prefix test: the parser matches it
+            // ~keep in any case and drops tabs and newlines, so `java&#9;script:` is `javascript:`.
+            if matches!(resolved_url.scheme(), "mailto" | "tel") || INLINE_SCHEMES.contains(&resolved_url.scheme()) {
+                continue;
+            }
 
-            let rel = get_attr(tag, "rel").map(String::from);
-            let nofollow = rel.as_ref().map(|r| r.contains("nofollow")).unwrap_or(false);
+            let link_type = classify_link(href, base_url);
+            let rel = get_attr(tag, "rel").map(Cow::into_owned);
+            let nofollow = has_link_qualifier(tag, "nofollow");
             let text = tag.inner_text(parser).trim().to_owned();
 
             links.push(LinkInfo {
-                url: resolved_url,
+                url: resolved_url.into(),
                 text,
                 link_type,
                 rel,
@@ -110,14 +101,12 @@ pub(crate) fn extract_links(dom: &VDom<'_>, base_url: &Url) -> Vec<LinkInfo> {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
-    fn extract(html: &str, base: &str) -> Vec<LinkInfo> {
-        let dom = tl::parse(html, ParserOptions::default()).expect("valid HTML");
-        let base_url = Url::parse(base).expect("valid base URL");
-        extract_links(&dom, &base_url)
+    fn extract(html: &str, document_url: &str) -> Vec<LinkInfo> {
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let document_url = Url::parse(document_url).expect("valid document URL");
+        extract_links(&dom, &effective_base_url(&dom, &document_url))
     }
 
     #[test]
@@ -169,6 +158,24 @@ mod tests {
     }
 
     #[test]
+    fn an_encoded_script_address_is_skipped_like_a_plain_one() {
+        let html = r#"<a href="&#106;avascript&#58;alert(1)">x</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
+    }
+
+    #[test]
+    fn a_skipped_scheme_is_read_as_the_url_parser_reads_it() {
+        let html = r#"<a href="JavaScript:alert(1)">a</a><a href="&#74;avascript:alert(1)">b</a>
+            <a href="java&#9;script:alert(1)">c</a><a href="MAILTO:x@example.com">d</a>
+            <a href="Tel:+1">e</a><a href="&#68;ata:text/html,x">f</a><a href="ok.html">ok</a>"#;
+        let links = extract(html, "https://example.com/dir/page");
+        let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/dir/ok.html"]);
+    }
+
+    #[test]
     fn classifies_fragment_only_href_as_anchor() {
         let base_url = Url::parse("https://example.com/page").expect("valid base URL");
         assert_eq!(
@@ -197,5 +204,52 @@ mod tests {
             "absolute base href should still resolve relative hrefs, got {}",
             links[0].url
         );
+    }
+
+    #[test]
+    fn a_data_or_javascript_base_falls_back_to_the_document_url() {
+        let document_url = Url::parse("https://example.com/dir/page.html").expect("valid document URL");
+        for (href, expected) in [
+            (" DATA:text/html,x ", "https://example.com/dir/page.html"),
+            ("\t JavaScript:alert(1)// \n", "https://example.com/dir/page.html"),
+            ("JAVASCRIPT://example.org/", "https://example.com/dir/page.html"),
+            ("/other/", "https://example.com/other/"),
+            ("https://cdn.example/assets/", "https://cdn.example/assets/"),
+        ] {
+            let html = format!(r#"<base href="{href}">"#);
+            let dom = crate::html::parse_html(&html).expect("valid HTML");
+            assert_eq!(
+                effective_base_url(&dom, &document_url).as_str(),
+                expected,
+                "for base {href:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_whose_href_does_not_resolve_is_dropped() {
+        let links = extract(
+            r#"<a href="http://[not-an-address/">broken</a><a href="/ok">ok</a>"#,
+            "https://example.com/page",
+        );
+        assert_eq!(
+            links.iter().map(|link| link.url.as_str()).collect::<Vec<_>>(),
+            ["https://example.com/ok"],
+            "only the href that resolves may be returned, got {links:?}"
+        );
+    }
+
+    #[test]
+    fn a_link_and_a_base_href_lose_their_userinfo() {
+        let links = extract(
+            r#"<a href="http://user:s3cret@example.com/a">a</a>"#,
+            "https://example.com/page",
+        );
+        assert_eq!(links[0].url, "http://example.com/a");
+
+        let html = r#"<base href="http://user:s3cret@example.com/dir/"><a href="page.html">link</a>"#;
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        let document = Url::parse("https://example.com/").expect("valid base URL");
+        assert_eq!(effective_base_url(&dom, &document).as_str(), "http://example.com/dir/");
     }
 }

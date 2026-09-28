@@ -104,6 +104,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn browser_named_schemes_match_the_core_named_schemes_apart_from_http_and_https() {
+        // ~keep The two lists must stay in lockstep apart from http and https: core also
+        // names those because a configured scheme_allowlist can refuse either, and the
+        // browser layer never refuses them. Drift here means a scheme silently stops
+        // being named on one side while the other still names it.
+        let core: Vec<&str> = crate::net::ssrf::NAMED_SCHEMES
+            .iter()
+            .copied()
+            .filter(|scheme| *scheme != "http" && *scheme != "https")
+            .collect();
+        let browser: Vec<&str> = crawlberg_browser::adapter::NAMED_SCHEMES.to_vec();
+        assert_eq!(
+            core, browser,
+            "crawlberg and crawlberg-browser named-scheme lists have drifted (apart from http/https)"
+        );
+    }
+
     #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
         let validator = recording_validator_for(&SsrfPolicy::default()).0;

@@ -86,7 +86,7 @@ pub struct InteractionResult {
     /// callers that never request a screenshot do not pay the encoding cost.
     pub screenshot_base64: Option<String>,
     /// URLs of the requests the page sent during the session that the SSRF policy refused,
-    /// including during the extra wait, with credentials redacted, each listed once.
+    /// including during the extra wait, without their credentials, each listed once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssrf_refused_urls: Vec<String>,
 }
@@ -184,8 +184,8 @@ pub struct ScrapeResult {
     /// populated when `BrowserBackend::Native` was used for this request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub browser: Option<BrowserExtras>,
-    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, with
-    /// credentials redacted, each listed once. The page is kept; only the refused requests failed.
+    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+    /// their credentials, each listed once. The page is kept; only the refused requests failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssrf_refused_urls: Vec<String>,
 }
@@ -254,8 +254,8 @@ pub struct CrawlPageResult {
     /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
     #[serde(default)]
     pub nofollow_detected: bool,
-    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, with
-    /// credentials redacted, each listed once. The page is kept; only the refused requests failed.
+    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+    /// their credentials, each listed once. The page is kept; only the refused requests failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ssrf_refused_urls: Vec<String>,
 }

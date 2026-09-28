@@ -12,7 +12,7 @@ use tower::{Layer, Service};
 use super::types::{CrawlRequest, CrawlResponse};
 use crate::error::CrawlError;
 use crate::traits::CrawlCache;
-use crate::types::CachedPage;
+use crate::types::{CachedPage, CrawlConfig};
 
 /// The subset of `Cache-Control` response directives this cache acts on.
 ///
@@ -140,11 +140,22 @@ fn apply_validators(req: &mut CrawlRequest, cached: &CachedPage) -> bool {
 /// Tower layer that caches HTTP responses using a [`CrawlCache`].
 pub struct CrawlCacheLayer {
     cache: Arc<dyn CrawlCache>,
+    config: Option<Arc<CrawlConfig>>,
 }
 
 impl CrawlCacheLayer {
     pub fn new(cache: Arc<dyn CrawlCache>) -> Self {
-        Self { cache }
+        Self { cache, config: None }
+    }
+
+    /// Pass requests that carry `config`'s credentials straight through, uncached.
+    ///
+    /// ~keep A shared cache must not reuse a response to an authorized request (RFC 9111
+    /// ~keep section 3.5), and the cache key is the URL alone, so one caller's
+    /// ~keep authenticated page would be served to the next caller of the same URL.
+    pub fn bypassing_credentials(mut self, config: Arc<CrawlConfig>) -> Self {
+        self.config = Some(config);
+        self
     }
 }
 
@@ -155,6 +166,7 @@ impl<S: Clone> Layer<S> for CrawlCacheLayer {
         CrawlCacheService {
             inner,
             cache: self.cache.clone(),
+            config: self.config.clone(),
         }
     }
 }
@@ -164,6 +176,7 @@ impl<S: Clone> Layer<S> for CrawlCacheLayer {
 pub struct CrawlCacheService<S> {
     inner: S,
     cache: Arc<dyn CrawlCache>,
+    config: Option<Arc<CrawlConfig>>,
 }
 
 impl<S> Service<CrawlRequest> for CrawlCacheService<S>
@@ -184,8 +197,14 @@ where
         let mut inner = self.inner.clone();
         std::mem::swap(&mut self.inner, &mut inner);
         let url = req.url.clone();
+        let credentialed = self.config.as_deref().is_some_and(|config| {
+            url::Url::parse(&url).is_ok_and(|parsed| crate::net::credentials::is_credentialed(config, &parsed))
+        });
 
         Box::pin(async move {
+            if credentialed {
+                return inner.call(req).await;
+            }
             let mut req = req;
 
             // ~keep A fresh entry short-circuits; a stored-but-unusable one (expired, or

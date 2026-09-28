@@ -17,6 +17,363 @@ All notable changes to crawlberg are documented here.
   response headers of the document the page shows, so a WAF block is found from the headers of a
   403 page as well as from its body. (#143)
 
+- **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
+  field is left out when it is empty, so an older crawlberg still reads a result with no refused
+  request. A scrape or page result that lists one is rejected by an older reader, because both
+  types refuse unknown fields.
+
+- **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
+  userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
+  that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
+  the userinfo: `final_url`, page and link URLs, map entries, and the URL that pairs each
+  `batch_scrape` and `batch_crawl` result. If you match batch results against your own input URLs,
+  remove the userinfo from your input first. A URL that carries userinfo is now a configuration
+  error when `auth` is also set; use one of the two.
+
+- **`auth` and `custom_headers` now go only to the seed URL's host.** A subdomain, a linked
+  document on another host or a redirect target on another host gets neither. If a crawl needs a
+  header on another host, start a separate call with that host as its seed.
+
+- **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
+  the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
+  resolved against the page's base URL and normalized as the links list is, so it gives
+  `https://example.com/en/page`, and `https://Example.com` gives `https://example.com/`. If your
+  code joins a relative canonical URL to the page URL, remove that step. If it compares the value
+  with a literal, compare with the normalized form. (#101)
+
+- **`metadata.hreflangs[].url` is now an absolute URL.** It was each alternate-language link's
+  `href` as the page wrote it, so `<link rel="alternate" hreflang="de" href="/de/">` gave `/de/`.
+  It is now resolved against the page's base URL and normalized as the canonical URL is, so it
+  gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
+  remove that step. (#126)
+
+### Fixed
+
+- **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
+  a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
+  then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
+  fetch at once with the status, final URL and empty body that HTTP mode reports. The native
+  backend already returned at once, but it reported an empty HTML skeleton as the body; it now
+  reports an empty body too. (#121)
+
+  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
+  304 against its cache entry before the response reaches this check, so what the check sees is
+  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
+  what it carries.
+
+- **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
+  chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
+  refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
+  redirect response at the limit, with the same redirect count, status and final URL that HTTP
+  mode reports, and the next hop is never requested. Only the redirects of the requested page
+  count, and this applies to the Chromiumoxide backend. (#90)
+
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
+- **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
+  `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
+  returns at once. When the navigation ends on a response without a document, `interact` reports
+  the URL that answered, empty HTML, and a failed result for each action that names the status.
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
+  on the native backend `interact` still follows every redirect a chain offers, up to the
+  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
+  stopped checking requests against the SSRF policy when the page finished loading, so a script
+  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
+  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
+  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
+  or iframe keeps the page. (#143)
+- **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
+  and stopped when the navigation finished. In `interact`, a click, a form submission, a script
+  `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
+  crawl, a popup the page opened, and a request it sent during the extra wait or while it was
+  screenshotted, did too. Each browser now has one check for every page it serves, and each
+  request is judged by the policy of the page it belongs to: the page, its frames, and the
+  popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
+  is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
+  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its
+  page and popups are closed while their requests are still refused. The check is turned off only
+  after every refusal it had started when asked to stop has been delivered; a request Chrome
+  pauses after that is not checked. In `interact`, a main-frame navigation refused before the
+  actions fails the session with the SSRF policy error, as it fails a scrape. This applies to the
+  Chromiumoxide backend. (#153, #165, #168, #281)
+- **An `interact` action whose request the SSRF check refused was reported as successful.** The
+  action now fails with the SSRF policy error that names the refused URL. A refused request counts
+  for the action that was running when the check received it from Chrome, so on a busy host it can
+  count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
+  image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
+  in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of
+  the whole session, the extra wait included. The first five refusals of a page are each logged
+  as a warning, then one warning reports the count, so a page cannot flood the log. This applies
+  to both browser backends, for scrape, crawl and `interact`.
+
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
+  message, was logged exactly as received, credentials included. Such a value is now replaced
+  whole with `[address hidden: it may carry credentials]` when it contains an `@`, and a value
+  without an `@` comes back unchanged. A URL that parses with a host and has no whitespace is
+  redacted as before. The placeholder also replaces any other value with an `@` that is not one
+  URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
+  a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
+  index depth cap, and cycle detection) also logged their address without going through the
+  redactor at all; they now do. A call that starts from an address with no host and an `@`,
+  such as `user:pass@host/path`, is now refused before any trace span or event records the
+  address, and the error names it as `(unparseable URL)`, so the password no longer reaches a log
+  field. (#236, #243, #261, #399)
+
+- **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
+  comment by searching for a literal `-->` right after the opening `<!--`, so it never
+  recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
+  `--!>` instead of `-->`; or a plain, valid, empty comment, `<!---->`, whose close sits
+  directly against the opener's own dashes. After any of these, `tl` kept reading as if
+  still inside the comment, so every link, image and base address past it was missed. The
+  raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
+
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
+- **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
+  of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
+  keys and plugin callbacks each had to redact it, and several did not. Relative links and
+  redirects also copied it to other pages. The engine now removes it at the start of each call
+  and keeps it as a credential for the seed host only. The same host rule now applies to `auth`:
+  a page, asset, robots.txt or redirect on another host gets no credentials. Both browser backends
+  now send `Basic`, `Bearer` and header credentials only to the seed host, one request at a time,
+  instead of to every host a page loads from. robots.txt and sitemaps on the seed host are now
+  fetched with the credentials. A response fetched with credentials is never stored in or served
+  from the response cache or the shared robots.txt cache. (#378, #387, #388, #389, #390)
+
+- **A page could make the browser send a URL with userinfo.** A page-supplied link, sitemap
+  entry or redirect target loses its userinfo, and in the native browser a navigation, module
+  import or `fetch()` to a URL with userinfo is refused, as the Fetch standard requires. The
+  chromiumoxide backend refuses such a request too. A URL that does not parse is reported
+  without its text. (#347, #357, #382)
+
+- **Custom headers reached every host a crawl touched.** Plain HTTP requests and both browser
+  backends sent `custom_headers` to other hosts: linked documents, third-party subresources and
+  cross-host redirect targets. They now go only to requests on the seed's host, the same as the
+  credentials. (#393)
+
+- **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
+  module import to the seed's host now carries the credentials and the custom headers, as it does
+  in Chrome. A module redirect to another host drops them, and every module redirect is now
+  checked against the SSRF policy. (#409)
+
+- **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
+  of the page's links instead of appearing with its unresolved text as its URL. (#394)
+
+- **A redirect to a non-web address failed the whole scrape.** A 3xx whose `Location` was a
+  `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
+  scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
+  with the same error and dropped such a linked page. A browser sends no request for such an
+  address. That `Location` is now no redirect target, matching how a refresh naming such an
+  address directly already was, so the 3xx response is the page. The same holds for robots.txt,
+  sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
+  the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+
+- **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
+  A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
+  target passed that check and could still resolve to a `mailto:`, `ftp:` or other non-web
+  address afterward, for example under a `<base href>` on such an address, and the fetch then hit
+  the SSRF policy. The scheme is now checked on the resolved address instead, the same way the
+  `Location` header already was, so such a target is no redirect target either, and the page is
+  kept. (#478)
+- **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
+  content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
+  path, while a browser requests `/app/next`. The target now resolves against the page's base
+  URL, the same base the links list uses. A `Refresh` HTTP header still resolves against the
+  response's own address: it arrives before any document exists to carry a base element, and
+  Chrome ignores the body's base for it too. (#300)
+- **A `data:` or `javascript:` base address was used as the page base.** With
+  `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
+  on the page resolved against the script address, and the markdown kept relative links as
+  written. The page base is now the page address when the base address has one of these schemes,
+  in any letter case and with spaces around it, as the HTML spec and browsers do. (#311)
+
+- **The browser page used an absolute subresource address without parsing it.** A `<script src>`
+  or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
+  block list and the network events exactly as written, while a relative address was parsed and
+  normalized. A script address with trailing spaces or an inner tab or newline therefore slipped
+  past a block pattern such as `*blocked.js` and was still fetched and run. A module script's
+  network event also carried the raw address. Every script and stylesheet address in the page
+  markup now goes through the URL parser against the page address, and an address that does not
+  parse is skipped. (#225)
+
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. The address in the same error goes
+  through the credential redactor, which hides such an address whole. (#329)
+
+- **A crawl of an address without a host printed its credential.** A crawl refused a seed such
+  as `user:token@host` because the seed has no host to read robots.txt from, and the reason named
+  the seed as written, so `token` reached the crawl result, the error event and the error hook.
+  Such a seed is now refused before the crawl starts and is named `(unparseable URL)`. The robots
+  refusal for an address without a host also names it through the credential redactor. (#427)
+
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. The `javascript:`, `mailto:`, `tel:` and `data:` addresses that the links list, the
+  images list and asset downloads skip are now recognised as the URL parser reads them, in any
+  letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
+  `javascript:`. (#86)
+
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
+
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. (#101)
+
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
+  without the parameters. A `type`, `name`, `property` or `http-equiv` value is also compared
+  without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
+  not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
+  spaces is a deliberate leniency for pages that add them. (#136)
+
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
+
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
+
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
+- **The Alef pin named 0.97.0, but the committed Go binding already carried 0.97.1's goroutine
+  thread pinning.** Regenerating with the pinned 0.97.0 binary drops `runtime.LockOSThread` around
+  the FFI's cgo calls; regenerating with 0.97.1 reproduces the committed binding exactly.
+  `alef verify` did not compare the Go binding with a fresh render, so it could not see the
+  mismatch. Repinned Alef to 0.97.1. Alef 0.97.1 no longer turns off the SSRF private-network
+  check in the wasm e2e tests and wasm doc snippets on its own, so `alef.toml` now asks for it with
+  `wasm_config_overrides`. The Rust mock server in `e2e/rust` and `test_apps/rust` is regenerated
+  with 0.97.1. (#412)
+
+- **Images with a script address were reported.** The images list skipped only `data:`
+  addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
+  `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
+  addresses in any case, as the links list does. Asset discovery now skips the same addresses when
+  it finds assets on the page. No asset with one of these addresses was downloaded before, because
+  the downloader accepts only `http:` and `https:`. (#276)
+
+- **Feed, favicon, canonical and hreflang links with a script address were reported.** A
+  `<link rel="icon" href="javascript:...">` came back as the page's favicon, and a `javascript:` or
+  `vbscript:` feed, canonical or hreflang link came back as an address. Feed, canonical and
+  hreflang links now skip `data:`, `javascript:` and `vbscript:` addresses in any case, as the
+  links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
+  type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
+  list, are checked on the address after it resolves against the base, so an address that resolves
+  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
+  unchanged: they still report the `content` without resolving or checking it. (#291)
+
+## [1.8.0] - 2026-09-27
+
+Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
+defects a green e2e suite could not see: the fixtures covering the affected behaviours passed with
+the bugs fully present, and the assertion vocabulary cannot express request counts or elapsed time
+at all, so the whole "how many requests did we send, and how long did we wait" class was invisible
+by construction.
+
+### Upgrading
+
 - **`CrawlPageResult` gained two fields and rejects unknown ones.** `noindex_detected` and
   `nofollow_detected` are always serialised, and `CrawlPageResult` carries
   `#[serde(deny_unknown_fields)]`, so **a page result serialised by this version is rejected by
@@ -33,29 +390,80 @@ All notable changes to crawlberg are documented here.
     (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
     versions.
 
-- **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
-  field is left out when it is empty, so an older crawlberg still reads a result with no refused
-  request. A scrape or page result that lists one is rejected by an older reader, because both
-  types refuse unknown fields.
-
 - **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
   and `nofollow_detected`. Reading a result that crawlberg returned is unaffected.
 
+
+Four changes can affect an existing setup:
+
+- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
+  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
+  relied on reaching a loopback or private address through `interact()` must now opt in
+  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
+
+- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
+  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
+  encrypted with a keychain-backed key and the mock keychain uses a different one.
+- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
+  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
+  versions. Older configurations still load unchanged.
+- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
+  originally discovered one, so it keys on where the content actually came from. This also feeds
+  `CrawlResult::unique_normalized_urls()`.
+
+### Added
+
+- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
+  the response bytes rather than the declared MIME type alone. The predicate receives the
+  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
+  decision `document_mime_types`/the built-in classification would have reached, so it can widen
+  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
+  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
+  decision is unchanged.
+
+  The predicate runs for every fetched response, an ordinary HTML page included, so one that
+  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
+  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
+  as the documents it is meant to admit. (#95)
+
+- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
+  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
+  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
+  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
+  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
+  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
+  addresses of `<graphic>`. Character references in an address are decoded first, so
+  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
+  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
+  `fit_content` can now drop a line of relative links that it kept before, the same way it
+  already treated absolute links. (#63)
+- **The markdown front matter showed the base address as written.** A page with
+  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
+  the same address that relative links resolve against. (#94)
+
+
+- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
+  to `false`. The head values remain available on `PageMetadata`, which is populated independently
+  of the converter. (#64)
+- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
+  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
+  pattern anchored with `$` changes meaning once the query joins the text. (#61)
+- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
+  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
+  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
+  from the key. (#65)
+- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
+  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
+- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
+- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
+  many hops it took. (#62)
+- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
+  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
+  (#57)
+
 ### Fixed
-
-- **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
-  a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
-  then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
-  fetch at once with the status, final URL and empty body that HTTP mode reports. The native
-  backend already returned at once, but it reported an empty HTML skeleton as the body; it now
-  reports an empty body too. (#121)
-
-  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
-  304 against its cache entry before the response reaches this check, so what the check sees is
-  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
-  what it carries.
 
 - **The vendored C header gate failed for lag rather than for a defect.** It required each
   prebuilt platform bundle's `crawlberg.h` to declare exactly the same C API as the canonical
@@ -65,6 +473,15 @@ All notable changes to crawlberg are documented here.
   declaration the vendored copy has and the canonical header does not still fails, because that
   means a prebuilt bundle promising a symbol HEAD removed or re-signed, while declarations the
   copy is merely missing are reported as lag. (#162)
+
+- **A whitespace-only favicon `href` or image `src` reported the page as its own favicon or image.**
+  The guard was `is_empty()`, which is false for `"  "`, and resolving a whitespace-only reference
+  against a base yields the base itself, so `<link rel="icon" href="  ">`, `<img src="  ">` and a
+  blank `og:image`/`twitter:image` `content` all listed the page URL. Such an address is now
+  skipped, via a shared `is_blank_address` helper. Only ASCII whitespace counts as blank, because
+  HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
+  percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
+  they do not resolve at all. (#220)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
@@ -162,57 +579,7 @@ All notable changes to crawlberg are documented here.
   browser backends now report the URL they landed on. In a crawl, that URL passes the same SSRF
   check, robots.txt, path filters and duplicate check as an HTTP redirect target, and a page whose
   landed URL is refused is dropped. (#75)
-- **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
-  chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
-  refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
-  redirect response at the limit, with the same redirect count, status and final URL that HTTP
-  mode reports, and the next hop is never requested. Only the redirects of the requested page
-  count, and this applies to the Chromiumoxide backend. (#90)
 
-  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
-  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
-  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
-  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
-  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
-  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
-  mode does not. (#117)
-- **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
-  `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
-  returns at once. When the navigation ends on a response without a document, `interact` reports
-  the URL that answered, empty HTML, and a failed result for each action that names the status.
-  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
-  on the native backend `interact` still follows every redirect a chain offers, up to the
-  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
-- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
-  stopped checking requests against the SSRF policy when the page finished loading, so a script
-  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
-  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
-  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
-  or iframe keeps the page. (#143)
-- **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
-  and stopped when the navigation finished. In `interact`, a click, a form submission, a script
-  `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
-  crawl, a popup the page opened, and a request it sent during the extra wait or while it was
-  screenshotted, did too. Each browser now has one check for every page it serves, and each
-  request is judged by the policy of the page it belongs to: the page, its frames, and the
-  popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
-  is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
-  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its
-  page and popups are closed while their requests are still refused. The check is turned off only
-  after every refusal it had started when asked to stop has been delivered; a request Chrome
-  pauses after that is not checked. In `interact`, a main-frame navigation refused before the
-  actions fails the session with the SSRF policy error, as it fails a scrape. This applies to the
-  Chromiumoxide backend. (#153, #165, #168, #281)
-- **An `interact` action whose request the SSRF check refused was reported as successful.** The
-  action now fails with the SSRF policy error that names the refused URL. A refused request counts
-  for the action that was running when the check received it from Chrome, so on a busy host it can
-  count for the next action. This applies to the Chromiumoxide backend. (#167)
-- **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
-  image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
-  in `ssrf_refused_urls`, with credentials redacted. An `interact` result lists the refusals of
-  the whole session, the extra wait included. The first five refusals of a page are each logged
-  as a warning, then one warning reports the count, so a page cannot flood the log. This applies
-  to both browser backends, for scrape, crawl and `interact`.
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when
@@ -260,102 +627,13 @@ All notable changes to crawlberg are documented here.
 - **Only the first `X-Robots-Tag` header was read.** A response that sent the header twice had a
   `nofollow` or `noindex` in the second one ignored, and `scrape()` reported only the first value.
   Every header now counts, and `x_robots_tag` reports them joined with `, `. (#135)
+- **Two IPv6 deny reasons named only the first address in their prefix.** `classify_private_ip`
+  matched `fe80::/10` and `fc00::/7` by exact first-hextet equality, so `feaa::1` and `fd12::1` were
+  reported as `private_network` rather than `link_local` and `unique_local` — and `fd12::` is the
+  common case, since RFC 4193 randomises the unique-local global id. Both prefixes are now matched
+  as ranges. These addresses were refused before and are refused now; only the reason string in the
+  error and the log field changes. (#205)
 
-### Added
-
-- `CrawlEngineBuilder::document_filter` lets a Rust consumer decide document materialization from
-  the response bytes rather than the declared MIME type alone. The predicate receives the
-  normalized MIME type, at most `document_max_size` bytes of the already bounded body, and the
-  decision `document_mime_types`/the built-in classification would have reached, so it can widen
-  that decision (`by_declared_mime || bytes.starts_with(b"%PDF")`) instead of replacing it.
-  `crawl()`, `scrape()` and the wasm crawl loop all honour it. With no predicate the declared-MIME
-  decision is unchanged.
-
-  The predicate runs for every fetched response, an ordinary HTML page included, so one that
-  returns `true` for HTML materializes every page as a `DownloadedDocument` — duplicating its whole
-  body into the result and writing it to `document_output_dir` on native targets. Keep it as narrow
-  as the documents it is meant to admit. (#95)
-
-- **Relative links in page markdown pointed nowhere.** The markdown kept each address exactly
-  as the HTML wrote it, so `rel/child.html` could not be followed outside the page, and a
-  `<base href>` had no effect. Relative addresses now resolve against the page's `<base href>`
-  or the URL that served the page, the same base the `links` list uses. This covers `<a href>`;
-  `<img>` `src`, `data-src`, `data-lazy-src`, `data-original`, `data-srcset` and `srcset`;
-  `src` on `<iframe>`, `<video>`, `<audio>` and `<source>`; `<blockquote cite>`; and the
-  addresses of `<graphic>`. Character references in an address are decoded first, so
-  `&#x2F;app` resolves to `/app`. Absolute URLs, fragment-only links and `mailto:`,
-  `javascript:` and `data:` addresses stay as written. Because resolved links are longer,
-  `fit_content` can now drop a line of relative links that it kept before, the same way it
-  already treated absolute links. (#63)
-- **The markdown front matter showed the base address as written.** A page with
-  `<base href="/other/">` got `base: /other/`. The front matter now shows the resolved base,
-  the same address that relative links resolve against. (#94)
-
-### Internal
-
-- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
-  conversion option that resolves relative addresses the same way the pre-pass above does, and the
-  caret requirement admits it on a routine `cargo update` with nothing to compile against and
-  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
-  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
-  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
-  pre-pass does. (#190)
-
-- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
-  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
-  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
-  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
-  closed as before. (#73)
-
-## [1.8.0] - 2026-09-25
-
-Twelve issues raised by an external evaluation, ten of them in the crawl path. Most were defects a
-green e2e suite could not see: the fixtures covering the affected behaviours passed with the bugs
-fully present, and the assertion vocabulary cannot express request counts or elapsed time at all,
-so the whole "how many requests did we send, and how long did we wait" class was invisible by
-construction.
-
-### Upgrading
-
-Four changes can affect an existing setup:
-
-- **`interact()` now enforces the SSRF policy.** It previously enforced none on the default browser
-  backend, so a target `ssrf.deny_private` should have rejected was fetched anyway. Code that
-  relied on reaching a loopback or private address through `interact()` must now opt in
-  deliberately, the same way `scrape()` and `crawl()` already required. (#74)
-
-- **Saved browser profiles.** Default Chrome flags now actually reach Chrome (see below), so
-  cookies in a `browser_profile` written by 1.7.2 or earlier may no longer be readable: they were
-  encrypted with a keychain-backed key and the mock keychain uses a different one.
-- **`BrowserConfig` gained two fields and rejects unknown ones.** A configuration serialised by
-  1.8.0 that carries `overall_timeout` or `shutdown_timeout` is rejected by older crawlberg
-  versions. Older configurations still load unchanged.
-- **`CrawlPageResult.normalized_url` now normalises the post-redirect URL** rather than the
-  originally discovered one, so it keys on where the content actually came from. This also feeds
-  `CrawlResult::unique_normalized_urls()`.
-
-### Added
-
-- `ContentConfig.extract_metadata` leaves the YAML frontmatter out of a page's markdown when set
-  to `false`. The head values remain available on `PageMetadata`, which is populated independently
-  of the converter. (#64)
-- `CrawlConfig.path_patterns_match_query` matches `include_paths`/`exclude_paths` against the path
-  and query (`/blog?p=42`) instead of the path alone. Path-only stays the default, because a
-  pattern anchored with `$` changes meaning once the query joins the text. (#61)
-- `CrawlConfig.dedup_include_query` keeps the query in the dedup key, with its parameters sorted,
-  so `/item?id=1` and `/item?id=2` are no longer one page. `strip_tracking_params` and
-  `tracking_params` remove tracking parameters from the URL that is fetched and reported, not only
-  from the key. (#65)
-- `CrawlConfig.retry_initial_delay_ms`, `retry_max_delay_ms` and `rate_limit_jitter_ratio` make the
-  first retry delay, the backoff ceiling and the per-domain delay jitter configurable. (#67)
-- `BrowserConfig.overall_timeout` and `shutdown_timeout` bound a browser fetch end to end. (#66)
-- `CrawlPageResult.final_url` and `redirect_count` report where a page's content came from and how
-  many hops it took. (#62)
-- The Python release now publishes a macOS x86_64 wheel, so an Intel Mac no longer falls back to
-  building the sdist. It carries a deployment target of 11.0, matching the existing arm64 wheel.
-  (#57)
-
-### Fixed
 
 - **`allow_subdomains` had no effect.** Every cross-host link was dropped as external before the
   host-scope check ran, so a link to a subdomain of the start host was never requested. The scope
@@ -424,6 +702,22 @@ Four changes can affect an existing setup:
   entries are config or log files, one is generated, and the remaining two are the same defect in
   poly's parameter counting, which counts an attribute on a parameter as a parameter. Reported as
   Goldziher/poly#28.
+
+### Internal
+
+- **A test now fails if `html-to-markdown-rs` resolves to 3.15 or newer.** 3.15 added a `base_url`
+  conversion option that resolves relative addresses the same way the pre-pass above does, and the
+  caret requirement admits it on a routine `cargo update` with nothing to compile against and
+  nothing to fail — leaving two resolvers in the crate and no sign of it. Adopting `base_url` and
+  deleting the pre-pass is the intended end state, but it is deliberately deferred: `base_url`
+  resolves an empty `src` to the page URL and rewrites fragment-only links, neither of which the
+  pre-pass does. (#190)
+
+- **Teardown no longer shuts down an external Chrome.** With `browser.endpoint` set, crawlberg
+  connects to a Chrome it did not start, and every teardown sent that Chrome a `Browser.close`: a
+  one-shot fetch, `interact()`, and a browser pool shutdown. Crawlberg now closes only the tabs it
+  opened and disconnects from a browser it connected to. A Chrome that crawlberg launched is still
+  closed as before. (#73)
 
 ## [1.7.2] - 2026-09-24
 

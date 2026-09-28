@@ -202,15 +202,7 @@ impl CrawlEngine {
     ///
     /// This is intentionally `#[cfg(not(target_arch = "wasm32"))]`-only: wasm
     /// has its own simpler inline path inside `scrape`.
-    ///
-    /// `origin_host` is the host that started the redirect chain `url` belongs to, or
-    /// `None` when `url` is itself the origin. It scopes configured credentials to that
-    /// host — see [`crate::tower::CrawlRequest::is_on_origin_host`].
-    pub(super) async fn fetch_response(
-        &self,
-        url: &str,
-        origin_host: Option<&str>,
-    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+    pub(super) async fn fetch_response(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         #[cfg(feature = "browser")]
         if matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth) {
             let pool = self.config.browser_pool.as_deref();
@@ -249,14 +241,13 @@ impl CrawlEngine {
             ));
         }
 
-        self.run_dispatch_loop(url, origin_host, &plan).await
+        self.run_dispatch_loop(url, &plan).await
     }
 
     /// Attempt the fetch, retrying and escalating tiers until the policy says stop.
     async fn run_dispatch_loop(
         &self,
         url: &str,
-        origin_host: Option<&str>,
         plan: &DispatchPlan,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let mut state = AttemptState::new();
@@ -275,7 +266,7 @@ impl CrawlEngine {
                 LoopStep::Done(result) => return result,
             }
 
-            let step = match self.run_tier(state.current_tier, url, origin_host).await {
+            let step = match self.run_tier(state.current_tier, url).await {
                 Ok(fetched) => self.handle_tier_success(url, fetched, plan, &mut state).await,
                 Err(err) => self.handle_tier_error(url, err, plan, &mut state).await,
             };

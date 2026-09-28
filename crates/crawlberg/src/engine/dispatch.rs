@@ -52,14 +52,13 @@ impl CrawlEngine {
         &self,
         tier: crate::types::Tier,
         url: &str,
-        origin_host: Option<&str>,
     ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         match tier {
             crate::types::Tier::Http => {
                 let client = crate::http::build_client(&self.config)?;
                 let mut service = self.build_service(&client);
                 use tower::Service;
-                let mut req = CrawlRequest::new(url).with_origin_host(origin_host.map(str::to_owned));
+                let mut req = CrawlRequest::new(url);
                 req.tier = Some(Self::tier_name(tier));
                 let resp = service.call(req).await?;
                 Ok((resp, false))
@@ -278,10 +277,8 @@ impl CrawlEngine {
         content_density: f32,
     ) {
         let tier_chain = tiers_attempted.join(",");
-        // ~keep The field key stays `url` — it is public, semver-relevant surface — but the
-        // value is redacted: a crawl of http://user:pass@host/ would otherwise put the
-        // credential into every dispatch event.
-        let url = crate::net::redact_url_credentials(url);
+        // ~keep The field key stays `url`: it is public, semver-relevant surface. The value
+        // ~keep never holds userinfo, which the engine takes off every URL at admission.
         tracing::info!(
             target: "crawlberg::dispatch",
             url,
