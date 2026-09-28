@@ -71,6 +71,12 @@ title: "Changelog"
 - **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
   of the page's links instead of appearing with its unresolved text as its URL. (#394)
 
+- **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
+  content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
+  path, while a browser requests `/app/next`. The target now resolves against the page's base
+  URL, the same base the links list uses. A `Refresh` HTTP header still resolves against the
+  response's own address: it arrives before any document exists to carry a base element, and
+  Chrome ignores the body's base for it too. (#300)
 - **A `data:` or `javascript:` base address was used as the page base.** With
   `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
   on the page resolved against the script address, and the markdown kept relative links as
