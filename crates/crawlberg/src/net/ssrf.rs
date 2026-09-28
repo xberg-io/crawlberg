@@ -20,10 +20,10 @@ pub use policy::SsrfPolicy;
 pub use validate::validate_url;
 
 // ~keep Each re-export is gated to its only consumer -- `net::resolver` (non-wasm only) and the
-// ~keep `net::browser_policy` deny-list parity test. Ungated, either is an unused import in the
-// ~keep builds that lack that consumer, which -D warnings rejects.
+// ~keep `net::browser_policy` deny-list and named-scheme parity tests. Ungated, either is an
+// ~keep unused import in the builds that lack that consumer, which -D warnings rejects.
 #[cfg(all(test, feature = "browser-native"))]
-pub(crate) use validate::DEFAULT_DENY_NET_CIDRS;
+pub(crate) use validate::{DEFAULT_DENY_NET_CIDRS, NAMED_SCHEMES};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use validate::{classify_private_ip, is_ip_permitted};
 

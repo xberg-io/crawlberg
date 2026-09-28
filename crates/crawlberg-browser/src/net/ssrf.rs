@@ -75,6 +75,34 @@ const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
     "multicast",
 ];
 
+/// Refused schemes a refusal names. Any other scheme is not shown: an address written without
+/// a scheme, such as `user:token@host`, parses with its user name as the scheme.
+///
+/// Kept in sync with `crawlberg::net::ssrf::NAMED_SCHEMES` apart from `http` and `https` (a
+/// configured `scheme_allowlist` can refuse either there; this validator never refuses them)
+/// by the parity test in `crawlberg::net::browser_policy`. Exported so that test can see it.
+pub const NAMED_SCHEMES: [&str; 19] = [
+    "ftp",
+    "ftps",
+    "sftp",
+    "ssh",
+    "telnet",
+    "smb",
+    "file",
+    "data",
+    "javascript",
+    "mailto",
+    "ws",
+    "wss",
+    "blob",
+    "gopher",
+    "dict",
+    "ldap",
+    "ldaps",
+    "tftp",
+    "about",
+];
+
 /// Decides whether the browser layer may fetch a URL.
 ///
 /// Errors are plain strings: naming a typed error would require pulling `crawlberg`'s
@@ -129,9 +157,12 @@ impl SsrfValidator for DefaultSsrfValidator {
         // ~keep Scheme is checked before the private-network override: allowing private
         // addresses is not a reason to start speaking ftp:// or gopher://.
         if scheme != "http" && scheme != "https" {
-            return Err(format!(
-                "Forbidden URL scheme '{scheme}' - only http and https are allowed"
-            ));
+            let shown = if NAMED_SCHEMES.contains(&scheme) {
+                format!(" '{scheme}'")
+            } else {
+                String::new()
+            };
+            return Err(format!("Forbidden URL scheme{shown} - only http and https are allowed"));
         }
 
         if !self.deny_private {
@@ -345,6 +376,83 @@ mod tests {
             assert!(
                 validate(denied, false).await.is_err(),
                 "{denied} must be denied on scheme regardless of the private-network override"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_does_not_show_a_user_name_parsed_as_the_scheme() {
+        for (target, parsed_scheme, secret) in [
+            ("user:token@host", "user", "token"),
+            ("KEY:@h:1", "key", "key"),
+            ("localhost:3128", "localhost", "3128"),
+        ] {
+            let error = validate(target, true)
+                .await
+                .expect_err("a scheme other than http or https must be denied");
+            assert!(
+                error.contains("Forbidden URL scheme"),
+                "{target} must be refused for its scheme, got: {error}"
+            );
+            let lowered = error.to_lowercase();
+            for shown in [parsed_scheme, secret, "'"] {
+                assert!(
+                    !lowered.contains(shown),
+                    "the refusal of {target} shows {shown:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_names_a_known_refused_scheme() {
+        for (target, named) in [("ftp://x", "'ftp'"), ("file:///x", "'file'")] {
+            let error = validate(target, true)
+                .await
+                .expect_err("a non-http scheme must be denied");
+            assert!(
+                error.contains(named),
+                "the refusal of {target} must name {named}, got: {error}"
+            );
+        }
+    }
+
+    /// The full [`NAMED_SCHEMES`] list, hardcoded rather than read from the const. See the
+    /// core crate's `every_listed_scheme_is_named_in_the_refusal` for why: walking the const
+    /// itself would keep passing after an entry is dropped from it, since a dropped scheme
+    /// is still refused, just no longer named.
+    const EXPECTED_NAMED_SCHEMES: [&str; 19] = [
+        "ftp",
+        "ftps",
+        "sftp",
+        "ssh",
+        "telnet",
+        "smb",
+        "file",
+        "data",
+        "javascript",
+        "mailto",
+        "ws",
+        "wss",
+        "blob",
+        "gopher",
+        "dict",
+        "ldap",
+        "ldaps",
+        "tftp",
+        "about",
+    ];
+
+    #[tokio::test]
+    async fn every_listed_scheme_is_named_in_the_browser_refusal() {
+        for scheme in EXPECTED_NAMED_SCHEMES {
+            let target = format!("{scheme}://x");
+            let error = validate(&target, true)
+                .await
+                .expect_err("a non-http scheme must be denied");
+            assert!(
+                error.contains(&format!("'{scheme}'")),
+                "{target} must name '{scheme}', got: {error}"
             );
         }
     }

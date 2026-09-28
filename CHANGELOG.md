@@ -73,6 +73,21 @@ All notable changes to crawlberg are documented here.
   allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
   `private_network`. The allow or deny decision itself was always correct.
 
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
+  message, was logged exactly as received, credentials included. Such a value is now replaced
+  whole with `[address hidden: it may carry credentials]` when it contains an `@`, and a value
+  without an `@` comes back unchanged. A URL that parses with a host and has no whitespace is
+  redacted as before. The placeholder also replaces any other value with an `@` that is not one
+  URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
+  a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
+  index depth cap, and cycle detection) also logged their address without going through the
+  redactor at all; they now do. A call that starts from an address with no host and an `@`,
+  such as `user:pass@host/path`, is now refused before any trace span or event records the
+  address, and the error names it as `(unparseable URL)`, so the password no longer reaches a log
+  field. (#236, #243, #261, #399)
+
 - **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
   comment by searching for a literal `-->` right after the opening `<!--`, so it never
   recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
@@ -80,6 +95,7 @@ All notable changes to crawlberg are documented here.
   directly against the opener's own dashes. After any of these, `tl` kept reading as if
   still inside the comment, so every link, image and base address past it was missed. The
   raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
+
 - **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
   A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
   nor nofollow, although `none` means both. A header addressed to one crawler, such as
@@ -154,6 +170,20 @@ All notable changes to crawlberg are documented here.
   network event also carried the raw address. Every script and stylesheet address in the page
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
+
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. The address in the same error goes
+  through the credential redactor, which hides such an address whole. (#329)
+
+- **A crawl of an address without a host printed its credential.** A crawl refused a seed such
+  as `user:token@host` because the seed has no host to read robots.txt from, and the reason named
+  the seed as written, so `token` reached the crawl result, the error event and the error hook.
+  Such a seed is now refused before the crawl starts and is named `(unparseable URL)`. The robots
+  refusal for an address without a host also names it through the credential redactor. (#427)
 
 - **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
   references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
@@ -267,6 +297,15 @@ All notable changes to crawlberg are documented here.
   when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
   tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
   that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
+- **The Alef pin named 0.97.0, but the committed Go binding already carried 0.97.1's goroutine
+  thread pinning.** Regenerating with the pinned 0.97.0 binary drops `runtime.LockOSThread` around
+  the FFI's cgo calls; regenerating with 0.97.1 reproduces the committed binding exactly.
+  `alef verify` did not compare the Go binding with a fresh render, so it could not see the
+  mismatch. Repinned Alef to 0.97.1. Alef 0.97.1 no longer turns off the SSRF private-network
+  check in the wasm e2e tests and wasm doc snippets on its own, so `alef.toml` now asks for it with
+  `wasm_config_overrides`. The Rust mock server in `e2e/rust` and `test_apps/rust` is regenerated
+  with 0.97.1. (#412)
 
 - **Images with a script address were reported.** The images list skipped only `data:`
   addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of

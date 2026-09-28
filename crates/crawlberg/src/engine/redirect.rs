@@ -13,6 +13,7 @@ use crate::helpers::RobotsOutcome;
 use crate::helpers::{default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
 use crate::html::{is_fetchable_scheme, is_html_content};
+use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
@@ -160,10 +161,15 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep component that decides whether a request may go out at all -- the same
         // ~keep fail-closed rule that governs `outcome_for_fetch_error`, where the catch-all
         // ~keep arm has to be the closed one for the guarantee to hold.
+        // ~keep Both refusals below name the address through the redactor: a hostless value
+        // ~keep such as `user:token@host` is exactly the one that carries a credential.
         let Ok(parsed) = Url::parse(url) else {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: cannot parse {url} to determine its origin"),
+                reason: format!(
+                    "robots_unreachable: cannot parse {} to determine its origin",
+                    redact_url_credentials(url)
+                ),
             }));
         };
         // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
@@ -171,7 +177,10 @@ impl<'a> RedirectPolicy<'a> {
         if parsed.host_str().is_none() {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: {url} has no host to read robots.txt from"),
+                reason: format!(
+                    "robots_unreachable: {} has no host to read robots.txt from",
+                    redact_url_credentials(url)
+                ),
             }));
         }
 
@@ -552,6 +561,31 @@ mod tests {
     use super::*;
 
     const MAX_REDIRECTS: usize = 5;
+
+    /// ~keep A public crawl refuses a seed that does not parse before this policy runs, so the
+    /// ~keep crawl-level test cannot reach the unparseable branch. Both branches are driven here.
+    #[tokio::test]
+    async fn a_refused_address_is_named_through_the_redactor() {
+        let config = crate::CrawlConfig::builder().allow_private_networks(false).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+        let client = crate::http::build_client(&engine.config).expect("client builds");
+        let mut policy = RedirectPolicy::new(&engine, &client, &[], &[]);
+        for (url, expected) in [
+            (
+                "alice@example.com",
+                "robots_unreachable: cannot parse [address hidden: it may carry credentials] to determine its origin",
+            ),
+            (
+                "user:token@host",
+                "robots_unreachable: [address hidden: it may carry credentials] has no host to read robots.txt from",
+            ),
+        ] {
+            let Ok(Some(PolicyRefusal::Blocked { reason, .. })) = policy.admits(url, false).await else {
+                panic!("{url} must be refused as blocked");
+            };
+            assert_eq!(reason, expected, "the refusal of {url} must not show its credential");
+        }
+    }
 
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> crate::tower::CrawlResponse {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
