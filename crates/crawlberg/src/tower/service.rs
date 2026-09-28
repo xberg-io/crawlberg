@@ -30,25 +30,41 @@ impl HttpFetchService {
     }
 }
 
+/// The `User-Agent` value this request will actually send.
+///
+/// ~keep `crawl_req.headers` wins when it already names one -- set explicitly by a caller
+/// (`RedirectPolicy::admits`, pinning the agent it picked for this hop) or by the UA rotation
+/// layer upstream of this service. Callers that need to judge robots rules against the agent a
+/// request actually sent (crawlberg#423) must read this same value back off the response
+/// (`CrawlResponse::sent_user_agent`) rather than recomputing the engine's configured default.
+fn resolved_user_agent(config: &CrawlConfig, crawl_req: &CrawlRequest) -> String {
+    crawl_req
+        .headers
+        .get("user-agent")
+        .cloned()
+        .unwrap_or_else(|| crate::helpers::default_robots_user_agent(config).to_owned())
+}
+
 /// Helper to apply auth and custom headers to a request builder.
 fn apply_headers(
     mut req: reqwest::RequestBuilder,
     config: &CrawlConfig,
     crawl_req: &CrawlRequest,
     url: &url::Url,
+    sent_user_agent: &str,
 ) -> reqwest::RequestBuilder {
     if !crawl_req.headers.contains_key("user-agent") {
-        if let Some(ref ua) = config.user_agent {
-            req = req.header(reqwest::header::USER_AGENT, ua.as_str());
-        } else {
-            req = req.header(
-                reqwest::header::USER_AGENT,
-                concat!("crawlberg/", env!("CARGO_PKG_VERSION")),
-            );
-        }
+        req = req.header(reqwest::header::USER_AGENT, sent_user_agent);
     }
 
+    // ~keep A `user-agent` custom header is already reflected in `sent_user_agent`
+    // (`default_robots_user_agent` reads it, crawlberg#423), which the branch above already
+    // set on the request; re-adding it here would append a second, redundant `User-Agent`
+    // header line rather than replacing the first one.
     for (name, value) in seed_host_headers(config, url) {
+        if name.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(name.as_str(), value.as_str());
     }
 
@@ -120,6 +136,7 @@ async fn read_redirect_response(
     status: u16,
     content_type: String,
     headers: HashMap<String, Vec<String>>,
+    sent_user_agent: String,
 ) -> CrawlResponse {
     let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
@@ -132,6 +149,7 @@ async fn read_redirect_response(
         body_bytes,
         headers,
         landed_url: None,
+        sent_user_agent: Some(sent_user_agent),
     }
 }
 
@@ -227,7 +245,8 @@ async fn do_fetch(
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
-    let http_req = apply_headers(client.get(url.to_string()), config, req, &url);
+    let sent_user_agent = resolved_user_agent(config, req);
+    let http_req = apply_headers(client.get(url.to_string()), config, req, &url, &sent_user_agent);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;
@@ -238,7 +257,7 @@ async fn do_fetch(
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if is_redirect_status(status) {
-        return Ok(read_redirect_response(resp, config, status, content_type, headers).await);
+        return Ok(read_redirect_response(resp, config, status, content_type, headers, sent_user_agent).await);
     }
 
     // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
@@ -282,6 +301,7 @@ async fn do_fetch(
         body_bytes: body_vec,
         headers,
         landed_url: None,
+        sent_user_agent: Some(sent_user_agent),
     })
 }
 
