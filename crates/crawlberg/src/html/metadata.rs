@@ -243,8 +243,9 @@ struct Refresh<'a> {
     target: Option<Cow<'a, str>>,
 }
 
-/// `value` read as a refresh directive, or `None` when it does not start with a delay or its target
-/// is a `javascript:` address, which the refresh steps ignore.
+/// `value` read as a refresh directive, or `None` when it does not start with a delay, the delay
+/// has no digit anywhere in it, or its target is a `javascript:` address, which the refresh
+/// steps ignore.
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
     let rest = value.trim_ascii_start();
@@ -255,7 +256,17 @@ fn parse_refresh(value: &str) -> Option<Refresh<'_>> {
     let delay = rest[..digits_end].bytes().fold(0_u64, |delay, digit| {
         delay.saturating_mul(10).saturating_add(u64::from(digit - b'0'))
     });
-    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+    let numeric_end = rest[digits_end..]
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .map_or(rest.len(), |offset| digits_end + offset);
+    // Read literally, the shared declarative refresh steps accept a value with no digit: when the
+    // leading digits are empty and the next character is `.`, they continue with a delay of 0, an
+    // immediate refresh to the page itself. Chrome does not: a lone `.`, or a run of only `.`,
+    // schedules no refresh (oracle case `d06_dot_only_then_longer`). This follows Chrome (#353).
+    if !rest[..numeric_end].bytes().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let rest = &rest[numeric_end..];
     if !rest.is_empty() && !rest.starts_with(|c: char| matches!(c, ';' | ',') || c.is_ascii_whitespace()) {
         return None;
     }
@@ -649,9 +660,12 @@ mod tests {
     }
 
     /// A value that is no refresh, or a `javascript:` one, takes no part in the choice (#279).
+    /// A delay written as a lone `.`, with no digit anywhere in it, is also no refresh: Chrome
+    /// leaves it unscheduled instead of treating it as a delay of zero (oracle case
+    /// `d06_dot_only_then_longer`, #353).
     #[test]
     fn meta_refresh_skips_a_tag_that_is_no_refresh() {
-        for first in ["", "x; url=/first", "0; url=javascript:void(0)"] {
+        for first in ["", "x; url=/first", "0; url=javascript:void(0)", ".; url=/first"] {
             let html = format!(
                 r#"<meta http-equiv="refresh" content="{first}"><meta http-equiv="refresh" content="3; url=/second">"#
             );
@@ -668,6 +682,21 @@ mod tests {
         assert_eq!(delay(" 12"), Some(12));
         assert_eq!(delay("999999999999999999999999999999; url=/next"), Some(u64::MAX));
         assert_eq!(delay("x; url=/next"), None);
+    }
+
+    /// A delay with no digit anywhere (a lone `.`) is no refresh, as in Chrome. The literal
+    /// refresh steps would read it as a delay of 0 (#353).
+    #[test]
+    fn parse_refresh_treats_a_delay_with_no_digit_as_no_refresh() {
+        assert!(parse_refresh(".; url=/next").is_none());
+        assert!(parse_refresh(".").is_none());
+        assert!(parse_refresh("").is_none());
+        // A dot followed by a digit still reads a delay of zero: the ignored run has a digit.
+        assert_eq!(parse_refresh(".5; url=/next").map(|r| r.delay), Some(0));
+        // A digit followed by a trailing dot, or a run of digits and dots, already reads its
+        // whole delay from the leading digits and is unaffected.
+        assert_eq!(parse_refresh("5.; url=/next").map(|r| r.delay), Some(5));
+        assert_eq!(parse_refresh("5.5.5; url=/next").map(|r| r.delay), Some(5));
     }
 
     #[test]
