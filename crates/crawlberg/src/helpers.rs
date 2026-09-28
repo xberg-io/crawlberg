@@ -8,27 +8,6 @@ use crate::http::http_fetch;
 use crate::robots::{RobotsRules, is_path_allowed, parse_robots_txt};
 use crate::types::CrawlConfig;
 
-/// Find the byte offset of `needle` (ASCII only) in `haystack` using case-insensitive matching.
-///
-/// Returns `Some(pos)` where `pos` is the byte offset in the original `haystack` string,
-/// safe for slicing because `needle` is pure ASCII.
-// ~keep Only the native crawl loop parses `Refresh:` headers, and that module is
-// wasm-gated, so this would be dead code under `-D warnings` on wasm32.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
-    let haystack_bytes = haystack.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    if needle_bytes.len() > haystack_bytes.len() {
-        return None;
-    }
-    (0..=(haystack_bytes.len() - needle_bytes.len())).find(|&i| {
-        haystack_bytes[i..i + needle_bytes.len()]
-            .iter()
-            .zip(needle_bytes.iter())
-            .all(|(h, n)| h.to_ascii_lowercase() == *n)
-    })
-}
-
 /// Compile a slice of regex pattern strings, returning an error if any pattern is invalid.
 pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlError> {
     patterns
@@ -240,7 +219,7 @@ pub(crate) async fn fetch_robots_outcome(
 ) -> RobotsOutcome {
     let Ok(parsed) = Url::parse(url) else {
         return RobotsOutcome::DisallowAll {
-            reason: format!("invalid URL: {url}"),
+            reason: format!("invalid URL: {}", crate::net::redact_url_credentials(url)),
             denial: RobotsDenial::Sustained,
         };
     };
@@ -265,6 +244,18 @@ mod tests {
 
     fn is_allow_all(outcome: &RobotsOutcome) -> bool {
         matches!(outcome, RobotsOutcome::AllowAll)
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_robots_address_is_named_through_the_redactor() {
+        let config = CrawlConfig::builder().allow_private_networks(false).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+        let outcome = fetch_robots_outcome("alice@example.com", &config, &client, "ua").await;
+        assert_eq!(
+            outcome.disallow_all_reason(),
+            Some("invalid URL: [address hidden: it may carry credentials]"),
+            "an address that does not parse must be refused without showing its credential"
+        );
     }
 
     #[test]

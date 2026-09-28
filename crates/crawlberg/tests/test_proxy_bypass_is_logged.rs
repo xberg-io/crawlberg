@@ -140,16 +140,15 @@ async fn an_unparseable_provider_proxy_url_is_reported_before_the_request_goes_d
         "the report must name the host whose request went direct, got {recorded:?}"
     );
 
-    // ~keep `redact_url_credentials` returns its input unchanged when the input does not
-    // parse — and an unparseable URL is precisely this branch's premise. Logging the URL
-    // here would therefore print any embedded `user:pass@` verbatim, so it must not be
-    // logged at all. This asserts the omission, not the redaction.
+    // ~keep An unparseable URL is precisely this branch's premise, and for such a value
+    // `redact_url_credentials` would show only a placeholder. So the URL is not logged at
+    // all. This asserts the omission, not the redaction.
     assert!(
         recorded.iter().all(|(_, value)| !value.contains(PROXY_PASSWORD)),
         "the proxy password must never reach a log field, got {recorded:?}"
     );
     assert!(
         recorded.iter().all(|(name, _)| name != "proxy_url"),
-        "an unparseable proxy URL cannot be redacted, so it must not be recorded at all, got {recorded:?}"
+        "an unparseable proxy URL must not be recorded at all, got {recorded:?}"
     );
 }
