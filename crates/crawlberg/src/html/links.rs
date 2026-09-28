@@ -9,7 +9,7 @@ use crate::types::{LinkInfo, LinkType};
 
 use super::real_tags::{self, StartTag};
 use super::selectors::{SEL_A_HREF, SEL_BASE_HREF};
-use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier};
+use super::{INLINE_SCHEMES, get_attr, get_url_attr, has_link_qualifier, mask_raw_text_markup};
 
 /// Document file extensions used for link classification.
 static DOCUMENT_EXTENSIONS: &[&str] = &[
@@ -63,7 +63,17 @@ pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
 /// ~keep differently (#294), so every real `<a>` start tag is rewritten into unambiguous form,
 /// ~keep as html5ever reads it, before tl parses it for the link's text, `rel` and qualifiers.
 /// ~keep A well-formed `<a>` tag rewrites to itself, so this changes nothing for one.
+///
+/// ~keep `html` must already be masked by [`mask_raw_text_markup`]: this function's own
+/// ~keep html5ever-driven tag scan reads a raw-text element or an abruptly closed comment the
+/// ~keep way a browser does, but it never rewrites their bytes, so an unmasked one still reaches
+/// ~keep tl unchanged and tl mis-parses it exactly as it did before this rewrite existed. Both
+/// ~keep call sites (`extract.rs`, `map.rs`) already mask before calling this.
 pub(crate) fn extract_links(html: &str, base_url: &Url) -> Vec<LinkInfo> {
+    debug_assert!(
+        mask_raw_text_markup(html).as_ref() == html,
+        "extract_links requires html already masked by mask_raw_text_markup"
+    );
     let canonical = canonicalize_anchor_tags(html);
     let Ok(dom) = super::parse_html(&canonical) else {
         return Vec::new();
@@ -238,6 +248,38 @@ mod tests {
         assert_eq!(urls, ["https://example.com/dir/b", "https://example.com/dir/y"]);
         assert_eq!(links[0].text, "one");
         assert_eq!(links[1].text, "two");
+    }
+
+    #[test]
+    fn a_malformed_attribute_name_is_left_out_of_the_rewritten_tag() {
+        // ~keep html5ever's attribute-name state treats a `"` as a parse error but still appends
+        // ~keep it to the name (only whitespace, `/`, `>` and `=` end the name), so `x"y` is a
+        // ~keep real attribute name here. Writing it back unfiltered would put an unescaped `"`
+        // ~keep inside the tag, which reopens exactly the tag-boundary ambiguity this rewrite
+        // ~keep exists to remove: tl would read the embedded `"` as starting a new attribute value.
+        let html = r#"<a x"y="1" href="/ok">z</a>"#;
+        let tags = real_tags::scan(html, |name| name == "a");
+        let tag = tags.iter().next().expect("one tag");
+        assert_eq!(
+            tag.attrs.len(),
+            2,
+            "expected html5ever to read two attributes, got {:?}",
+            tag.attrs
+                .iter()
+                .map(|a| (&*a.name.local, &*a.value))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            &*tag.attrs[0].name.local, "x\"y",
+            "the malformed name html5ever actually read"
+        );
+
+        let mut out = String::new();
+        write_anchor_tag(&mut out, &tag);
+        assert_eq!(
+            out, r#"<a href="/ok">"#,
+            "the malformed attribute name must not reach the rewritten tag"
+        );
     }
 
     #[test]
