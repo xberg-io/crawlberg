@@ -58,8 +58,8 @@ All notable changes to crawlberg are documented here.
   matches on response headers alone was enough to refuse the response: every 2xx served through one
   of them failed as `WafBlocked` with the real page already in hand. A header-only fingerprint now
   has to be corroborated by the body before a 2xx is refused, so a 200 whose only WAF evidence is
-  the CDN's presence is returned as the page it is, while a 403, a 429 or a 503 — where the status
-  is itself evidence — still blocks as before. The Tower fetch service, which is the path the
+  the CDN's presence is returned as the page it is. This change does not touch a non-2xx response:
+  a 403 behind one of those CDNs still blocks. The Tower fetch service, which is the path the
   engine's own crawl uses, shares that decision with `http_fetch` instead of classifying every 2xx
   as if it were a 403. (#231)
 
