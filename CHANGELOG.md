@@ -275,11 +275,13 @@ All notable changes to crawlberg are documented here.
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
 
-- **The bypass provider could expose a vendor API key.** It reported the vendor's API request URL
-  as the page's `final_url`, and its send and body-read errors printed the same URL. For a vendor
-  that takes its key as a query parameter, both carried the key. `final_url` is now empty, as the
-  field's contract allows when the vendor does not report the resolved URL, and the errors no
-  longer include the request URL. (#89)
+- **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
+  query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
+  URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
+  `fetch` that read `final_url` or formatted the response with `{:?}` saw the key. Crawl and scrape
+  results never carried it, because the engine does not read a bypass response's `final_url`.
+  `final_url` is now empty, as the field's contract allows when the vendor does not report the
+  resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
 
 ## [1.8.0] - 2026-09-27
 

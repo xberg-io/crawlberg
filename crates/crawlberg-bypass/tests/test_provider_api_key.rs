@@ -82,11 +82,20 @@ async fn status_error_names_only_the_vendor_and_status() {
 
 #[tokio::test]
 async fn send_error_carries_no_api_key() {
-    // Bind and drop a listener so the port is closed and the connection is refused.
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // A server that reads the request and closes the connection without a response. The listener
+    // stays bound for the whole test, so no other process can take the port and answer instead.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+        }
+    });
 
     let provider = SimpleHttpProvider::new(query_key_config(&format!("http://127.0.0.1:{port}/v1/"))).unwrap();
     let err = provider.fetch(TARGET).await.unwrap_err();
+    let _ = server.join();
 
     assert!(
         err.to_string().contains("request send failed"),
