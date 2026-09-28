@@ -64,6 +64,44 @@ async fn native_renders_simple_html() {
 }
 
 #[tokio::test]
+async fn native_runs_a_module_script_loaded_from_a_src() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body><script type=\"module\" src=\"app.js\"></script></body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/app.js"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "const p = document.createElement('p');\
+                     p.setAttribute('id', 'from-module');\
+                     p.textContent = 'module ran';\
+                     document.body.appendChild(p);",
+                )
+                .append_header("content-type", "text/javascript"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let result = scrape(&engine_with(native_config(|c| c)), &mock.uri())
+        .await
+        .expect("the scrape must succeed");
+    assert!(
+        result.html.contains("<p id=\"from-module\">module ran</p>"),
+        "the rendered page must contain the element the module adds: {}",
+        result.html
+    );
+}
+
+#[tokio::test]
 async fn native_follows_redirect() {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))

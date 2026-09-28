@@ -106,30 +106,7 @@ impl Page {
     }
 
     fn should_block_url(&self, url: &str) -> bool {
-        if !self.intercept_enabled || self.intercept_block_patterns.is_empty() {
-            return false;
-        }
-        for pattern in &self.intercept_block_patterns {
-            if pattern == "*" {
-                return true;
-            }
-            if pattern.starts_with('*') && pattern.ends_with('*') {
-                if url.contains(&pattern[1..pattern.len() - 1]) {
-                    return true;
-                }
-            } else if let Some(suffix) = pattern.strip_prefix('*') {
-                if url.ends_with(suffix) {
-                    return true;
-                }
-            } else if let Some(prefix) = pattern.strip_suffix('*') {
-                if url.starts_with(prefix) {
-                    return true;
-                }
-            } else if url.contains(pattern.as_str()) {
-                return true;
-            }
-        }
-        false
+        self.intercept_enabled && crate::net::interceptor::matches_block_pattern(&self.intercept_block_patterns, url)
     }
 
     /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
@@ -178,6 +155,9 @@ impl Page {
 
         rt.set_cookie_jar(self.context.cookie_jar.clone());
         rt.set_http_client(self.http_client.clone());
+        if self.intercept_enabled {
+            rt.set_intercept_block_patterns(self.intercept_block_patterns.clone());
+        }
 
         if let Some(tx) = &self.intercept_tx {
             rt.set_intercept_tx(tx.clone());
