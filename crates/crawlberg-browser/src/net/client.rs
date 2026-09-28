@@ -9,16 +9,39 @@ use tokio::sync::RwLock;
 use url::Url;
 
 use crate::net::cookies::CookieJar;
+use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
+use crate::redact::{RedactedHeaders, RedactedValues};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Response {
     pub url: Url,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub redirected_from: Vec<Url>,
+}
+
+impl std::fmt::Debug for Response {
+    /// Redacted: `headers` can carry `Set-Cookie`. Header names stay visible; sensitive
+    /// values print as `***`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            status,
+            headers,
+            body,
+            redirected_from,
+        } = self;
+        f.debug_struct("Response")
+            .field("url", url)
+            .field("status", status)
+            .field("headers", &RedactedHeaders(headers))
+            .field("body", body)
+            .field("redirected_from", redirected_from)
+            .finish()
+    }
 }
 
 impl Response {
@@ -39,12 +62,31 @@ impl Response {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestInfo {
     pub url: Url,
     pub method: String,
     pub headers: HashMap<String, String>,
     pub resource_type: ResourceType,
+}
+
+impl std::fmt::Debug for RequestInfo {
+    /// Redacted: `headers` is a *request* map populated from caller configuration, so every
+    /// value is hidden and only the names print.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            url,
+            method,
+            headers,
+            resource_type,
+        } = self;
+        f.debug_struct("RequestInfo")
+            .field("url", url)
+            .field("method", method)
+            .field("headers", &RedactedValues(headers))
+            .field("resource_type", resource_type)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +182,7 @@ fn resolve_redirect(current_url: &Url, location: &HeaderValue) -> Result<Url, Ne
         .map_err(|_| NetError::Network("Invalid redirect Location header".into()))?;
     current_url
         .join(location_str)
+        .map(|next_url| without_userinfo(&next_url))
         .map_err(|e| NetError::Network(format!("Invalid redirect URL: {}", e)))
 }
 
@@ -195,6 +238,8 @@ pub struct HttpClient {
     pub cookie_jar: Arc<CookieJar>,
     pub user_agent: RwLock<String>,
     pub extra_headers: RwLock<HashMap<String, String>>,
+    /// The credential header the embedder scoped to one host; sent only to that host.
+    pub origin_headers: RwLock<Option<OriginHeaders>>,
     pub interceptor: RwLock<Option<Box<dyn RequestInterceptor + Send + Sync>>>,
     pub on_request: RwLock<Vec<RequestCallback>>,
     pub on_response: RwLock<Vec<ResponseCallback>>,
@@ -233,6 +278,7 @@ impl HttpClient {
             cookie_jar,
             user_agent: RwLock::new(DEFAULT_USER_AGENT.to_string()),
             extra_headers: RwLock::new(HashMap::new()),
+            origin_headers: RwLock::new(None),
             interceptor: RwLock::new(None),
             on_request: RwLock::new(Vec::new()),
             on_response: RwLock::new(Vec::new()),
@@ -301,6 +347,7 @@ impl HttpClient {
         url: &Url,
         initial_body: Option<Vec<u8>>,
     ) -> Result<Response, NetError> {
+        refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
         if url.scheme() == "file" {
@@ -425,6 +472,14 @@ impl HttpClient {
             }
         }
 
+        if let Some(origin_headers) = self.origin_headers.read().await.as_ref() {
+            for (name, value) in origin_headers.headers_for(url) {
+                if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+                    headers.insert(name, value);
+                }
+            }
+        }
+
         headers
     }
 
@@ -463,6 +518,11 @@ impl HttpClient {
 
     pub async fn set_extra_headers(&self, headers: HashMap<String, String>) {
         *self.extra_headers.write().await = headers;
+    }
+
+    /// Scope headers, such as a credential, to one host. See [`OriginHeaders`].
+    pub async fn set_origin_headers(&self, origin_headers: Option<OriginHeaders>) {
+        *self.origin_headers.write().await = origin_headers;
     }
 
     pub fn active_requests(&self) -> u32 {
@@ -952,5 +1012,108 @@ mod tests {
             .await
             .expect("fetch must succeed");
         assert_eq!(client.active_requests(), 0);
+    }
+
+    const URL_PASSWORD: &str = "s3cret";
+
+    /// `base` with `user:s3cret@` userinfo.
+    fn with_userinfo(base: &str) -> String {
+        base.replacen("http://", &format!("http://user:{URL_PASSWORD}@"), 1)
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let (base, requests) = spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let validator = Arc::new(RecordingValidator::default());
+        let client = client_with(validator.clone());
+
+        let err = client
+            .fetch(&with_userinfo(&base).parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("a URL with userinfo must be refused");
+
+        let NetError::Blocked(message) = &err else {
+            panic!("expected NetError::Blocked, got {err:?}");
+        };
+        assert!(
+            !message.contains(URL_PASSWORD),
+            "the password must not be named, got '{message}'"
+        );
+        // ~keep Positive twin: the refusal names the URL without its userinfo, so the test
+        // ~keep cannot pass on an empty message.
+        assert!(
+            message.contains(&base),
+            "the refusal must name the clean URL, got '{message}'"
+        );
+        assert!(
+            requests.lock().expect("lock").is_empty(),
+            "nothing may reach the network"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_location_with_userinfo_is_followed_without_it() {
+        let (target, target_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let redirect: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {}/next\r\nContent-Length: 0\r\n\r\n",
+                with_userinfo(&target)
+            )
+            .into_boxed_str(),
+        );
+        let (start, _) = spawn_recording_server(vec![redirect]).await;
+
+        let response = client_with(Arc::new(RecordingValidator::default()))
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        assert_eq!(response.url.as_str(), format!("{target}/next"));
+        let requests = target_requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the redirect target must be requested once");
+        assert_eq!(
+            header_line(&requests[0], "authorization"),
+            None,
+            "a page-supplied userinfo must never become a header"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_origin_headers_reach_their_host_and_no_other() {
+        let (other, other_requests) =
+            spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]).await;
+        let other_port = other.rsplit(':').next().expect("port").to_owned();
+        let redirect: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://localhost:{other_port}/away\r\nContent-Length: 0\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let (start, start_requests) = spawn_recording_server(vec![redirect]).await;
+        let client = client_with(Arc::new(RecordingValidator::default()));
+        client
+            .set_origin_headers(Some(OriginHeaders {
+                host: "127.0.0.1".to_owned(),
+                headers: vec![("Authorization".to_owned(), "Basic dXNlcjpwdw==".to_owned())],
+            }))
+            .await;
+
+        client
+            .fetch(&start.parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the redirect must be followed");
+
+        let start_requests = start_requests.lock().expect("lock");
+        assert_eq!(
+            header_line(&start_requests[0], "authorization").as_deref(),
+            Some("Basic dXNlcjpwdw=="),
+            "the scoped host gets the header"
+        );
+        let other_requests = other_requests.lock().expect("lock");
+        assert_eq!(other_requests.len(), 1, "the cross-host redirect must be followed");
+        assert_eq!(
+            header_line(&other_requests[0], "authorization"),
+            None,
+            "a cross-host redirect target never gets the header"
+        );
     }
 }

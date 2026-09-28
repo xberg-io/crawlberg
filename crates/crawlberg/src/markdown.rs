@@ -306,15 +306,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_opaque_script_base_href_leaves_relative_links_as_written() {
+    async fn a_script_base_href_resolves_relative_links_against_the_page_url() {
         let md = markdown_at(
             r#"<html><head><base href="javascript:alert(1)"></head><body><p><a href="leaf.html">leaf</a></p></body></html>"#,
             "https://example.com/docs/index.html",
         )
         .await;
         assert!(
-            md.ends_with("\n[leaf](leaf.html)\n"),
-            "a javascript: base cannot be joined to, got: {md}"
+            md.ends_with("\n[leaf](https://example.com/docs/leaf.html)\n"),
+            "a javascript: base falls back to the page URL, got: {md}"
         );
     }
 

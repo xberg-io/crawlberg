@@ -1215,6 +1215,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmcp",
+ "rustls",
  "schemars",
  "serde",
  "serde_json",
@@ -1223,6 +1224,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "toml 1.1.6+spec-1.1.0",
  "tower",
@@ -1281,6 +1283,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "urlencoding",
  "wiremock",
 ]
@@ -1300,6 +1303,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

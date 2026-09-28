@@ -147,13 +147,13 @@ pub(crate) fn strip_fragment(url: &str) -> String {
 }
 
 /// Rewrite `url_str` onto `base`'s host when the two differ, keeping only `url_str`'s path
-/// and query. Returns the URL parser's normalized form of `url_str` when the host already
-/// matches `base`'s, not the raw input: a caller using the return value as a fetch target or
-/// a dedup key must not see two spellings of the same address. The fragment is always
-/// dropped for the same reason: it never reaches the server, so two addresses differing only
-/// by fragment are one fetch target and one dedup key, not two.
+/// and query, and drop any userinfo. Returns the URL parser's normalized form of `url_str`
+/// when the host already matches `base`'s, not the raw input: a caller using the return value
+/// as a fetch target or a dedup key must not see two spellings of the same address. The
+/// fragment is always dropped for the same reason: it never reaches the server, so two
+/// addresses differing only by fragment are one fetch target and one dedup key, not two.
 pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    let Ok(mut parsed) = Url::parse(url_str) else {
+    let Some(mut parsed) = crate::net::userinfo::parse(url_str) else {
         return url_str.to_owned();
     };
     parsed.set_fragment(None);
@@ -167,8 +167,8 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
     parsed.to_string()
 }
 
-/// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
-/// `Url::join` parses either form on its own and returns the parsed URL.
+/// Resolve a redirect target against `base_url`, without userinfo. `target` may be relative
+/// or absolute; `Url::join` parses either form on its own and returns the parsed URL.
 /// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
 /// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
 /// caller must refuse the target rather than follow or report it as raw text.
@@ -178,10 +178,10 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
 /// ~keep for a target that fails to parse.
 pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
     if let Ok(base) = Url::parse(base_url) {
-        return base.join(target).ok();
+        return crate::net::userinfo::resolve(&base, target);
     }
     // base_url itself fails to parse; a target that stands on its own can still resolve.
-    Url::parse(target).ok()
+    crate::net::userinfo::parse(target)
 }
 
 /// Human-readable form of `url_str`, for matching a caller's typed search term against an

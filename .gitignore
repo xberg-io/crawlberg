@@ -20,6 +20,12 @@ wheels/
 # C test_app downloads the FFI artefacts via download_ffi.sh at build time
 test_apps/c/ffi/include/
 test_apps/c/ffi/lib/
+# ~keep The e2e C leg stages the downloaded prebuilt library, header and version marker
+# into e2e/c/ffi/ (ci-e2e.yaml, "Stage FFI artifacts") BEFORE the fixture-freshness check
+# runs. That check reports untracked files (`git status --porcelain -uall`), so leaving these
+# unignored made the C leg fail as fixture drift on its own build output. Scoped to this
+# directory, not the basenames: test_apps/c/ffi/.alef-ffi-version is tracked.
+e2e/c/ffi/
 **/bin/
 !**/src/bin/
 **/obj/

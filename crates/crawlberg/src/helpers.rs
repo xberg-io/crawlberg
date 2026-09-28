@@ -8,27 +8,6 @@ use crate::http::http_fetch;
 use crate::robots::{RobotsRules, is_path_allowed, parse_robots_txt};
 use crate::types::CrawlConfig;
 
-/// Find the byte offset of `needle` (ASCII only) in `haystack` using case-insensitive matching.
-///
-/// Returns `Some(pos)` where `pos` is the byte offset in the original `haystack` string,
-/// safe for slicing because `needle` is pure ASCII.
-// ~keep Only the native crawl loop parses `Refresh:` headers, and that module is
-// wasm-gated, so this would be dead code under `-D warnings` on wasm32.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
-    let haystack_bytes = haystack.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    if needle_bytes.len() > haystack_bytes.len() {
-        return None;
-    }
-    (0..=(haystack_bytes.len() - needle_bytes.len())).find(|&i| {
-        haystack_bytes[i..i + needle_bytes.len()]
-            .iter()
-            .zip(needle_bytes.iter())
-            .all(|(h, n)| h.to_ascii_lowercase() == *n)
-    })
-}
-
 /// Compile a slice of regex pattern strings, returning an error if any pattern is invalid.
 pub(crate) fn compile_regexes(patterns: &[String]) -> Result<Vec<Regex>, CrawlError> {
     patterns
@@ -226,10 +205,47 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
 /// those two functions, so it is deferred out of this patch release rather than folded
 /// into a robots *correctness* fix.
 pub(crate) fn default_robots_user_agent(config: &CrawlConfig) -> &str {
+    if let Some(value) = custom_user_agent_header(config) {
+        return value;
+    }
     config
         .user_agent
         .as_deref()
         .unwrap_or(concat!("crawlberg/", env!("CARGO_PKG_VERSION")))
+}
+
+/// A `user-agent` entry in `config.custom_headers`, matched case-insensitively as HTTP
+/// header names are. Blank (empty or whitespace-only) counts as absent: a caller who unsets
+/// the header by emptying its value, rather than removing the key, gets the configured or
+/// default agent instead of an empty one (crawlberg#423).
+///
+/// ~keep `apply_headers` (tower/service.rs) always layers `custom_headers` onto the request
+/// to the seed's host, so a caller-set `user-agent` there is the agent that actually goes out
+/// on the wire, ahead of `config.user_agent` and the rotation layer's own default. Every
+/// caller of `default_robots_user_agent` -- the engine's robots.txt group selection, the
+/// header realized on the wire, and the fallback `scrape()`/crawl-loop directive matching use
+/// when no rotation pinned a value -- reads this one function, so this is the single place a
+/// custom-header agent needs to be taken into account for robots decisions to judge the agent
+/// actually sent (crawlberg#423).
+fn custom_user_agent_header(config: &CrawlConfig) -> Option<&str> {
+    config
+        .custom_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// Whether `name`/`value` is a `custom_headers` entry naming `user-agent` with no real value.
+///
+/// ~keep Shared by [`custom_user_agent_header`] (the judging side) and
+/// [`crate::net::credentials::seed_host_headers`] (the sending side, read by `apply_headers`,
+/// the chromiumoxide SSRF interceptor, and both native-browser `origin_headers` builders): a
+/// blank `user-agent` entry must be treated as absent by every one of them, or robots would
+/// judge the configured agent while a browser tier still puts an empty header on the wire
+/// (crawlberg#423).
+pub(crate) fn is_blank_user_agent_override(name: &str, value: &str) -> bool {
+    name.eq_ignore_ascii_case("user-agent") && value.trim().is_empty()
 }
 
 pub(crate) async fn fetch_robots_outcome(
@@ -240,7 +256,7 @@ pub(crate) async fn fetch_robots_outcome(
 ) -> RobotsOutcome {
     let Ok(parsed) = Url::parse(url) else {
         return RobotsOutcome::DisallowAll {
-            reason: format!("invalid URL: {url}"),
+            reason: format!("invalid URL: {}", crate::net::redact_url_credentials(url)),
             denial: RobotsDenial::Sustained,
         };
     };
@@ -265,6 +281,18 @@ mod tests {
 
     fn is_allow_all(outcome: &RobotsOutcome) -> bool {
         matches!(outcome, RobotsOutcome::AllowAll)
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_robots_address_is_named_through_the_redactor() {
+        let config = CrawlConfig::builder().allow_private_networks(false).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+        let outcome = fetch_robots_outcome("alice@example.com", &config, &client, "ua").await;
+        assert_eq!(
+            outcome.disallow_all_reason(),
+            Some("invalid URL: [address hidden: it may carry credentials]"),
+            "an address that does not parse must be refused without showing its credential"
+        );
     }
 
     #[test]
