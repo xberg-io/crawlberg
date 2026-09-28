@@ -786,3 +786,99 @@ async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
 
     drop(mock);
 }
+
+/// Whether each request `mock` received for `at` carried an `Authorization` header, in order.
+async fn authorization_sent_to(mock: &MockServer, at: &str) -> Vec<bool> {
+    let requests = mock.received_requests().await.expect("request recording must be on");
+    requests
+        .iter()
+        .filter(|request| request.url.path() == at)
+        .map(|request| request.headers.contains_key("authorization"))
+        .collect()
+}
+
+fn bearer(config: CrawlConfig) -> CrawlConfig {
+    CrawlConfig {
+        auth: Some(crate::types::AuthConfig::Bearer {
+            token: "test-fixture-bearer-token-not-a-real-secret".to_owned(),
+        }),
+        ..config
+    }
+}
+
+/// A subdomain page the crawl follows is fetched without the credentials configured for the
+/// seed host: the loop keeps the seed's credential scope for every frontier entry.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_withholds_credentials_from_a_subdomain_it_follows() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        bearer(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            ..CrawlConfig::default()
+        }),
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        authorization_sent_to(&mock, "/").await,
+        vec![true],
+        "the seed host must get the configured credentials"
+    );
+    assert_eq!(
+        authorization_sent_to(&mock, "/a").await,
+        vec![false],
+        "the subdomain page must be fetched once, without the seed host's credentials"
+    );
+}
+
+/// A cross-host document link, which a default crawl follows, is fetched without the
+/// credentials configured for the seed host.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_withholds_credentials_from_a_cross_host_document() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://other.localhost:{port}/report.pdf">pdf</a></body></html>"#),
+    )
+    .await;
+    mount_pdf(&mock, "/report.pdf", 1).await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        bearer(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        }),
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        authorization_sent_to(&mock, "/").await,
+        vec![true],
+        "the seed host must get the configured credentials"
+    );
+    assert_eq!(
+        authorization_sent_to(&mock, "/report.pdf").await,
+        vec![false],
+        "the document on another host must be fetched once, without the seed host's credentials"
+    );
+}
