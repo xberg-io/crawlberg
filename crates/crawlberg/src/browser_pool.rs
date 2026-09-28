@@ -366,6 +366,75 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
     BrowserCloseOutcome::Exited
 }
 
+/// Kill `browser`, a Chrome crawlberg launched with the throwaway profile `profile`, then remove
+/// the profile once no Chrome process uses it any more. A kill that fails falls back to
+/// [`release_browser`]'s close.
+///
+/// ~keep `Browser::kill` kills and reaps only the main process. Its renderers and helpers exit
+/// ~keep on their own a moment later and keep writing into the profile until then, so a removal
+/// ~keep right after the kill left the directory behind for about half of all sessions
+/// ~keep (xberg-io/crawlberg#468). Every Chrome process names the profile in its
+/// ~keep `--user-data-dir` argument, which is how the survivors are found and killed.
+pub(crate) async fn kill_browser(
+    mut browser: Browser,
+    handler_handle: JoinHandle<()>,
+    profile: std::path::PathBuf,
+    shutdown_timeout: Duration,
+) {
+    match browser.kill().await {
+        Some(Ok(())) => handler_handle.abort(),
+        outcome => {
+            tracing::warn!(?outcome, "failed to kill the browser; closing it instead");
+            release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+        }
+    }
+    let arg = std::ffi::OsString::from(format!("--user-data-dir={}", profile.display()));
+    let released = tokio::task::spawn_blocking(move || end_processes_using(&arg, shutdown_timeout))
+        .await
+        .unwrap_or(false);
+    if !released {
+        tracing::warn!(
+            dir = %profile.display(),
+            timeout_secs = shutdown_timeout.as_secs_f64(),
+            "Chrome processes still used the profile at the shutdown timeout"
+        );
+    }
+    remove_profile_dir(profile).await;
+}
+
+/// Kill every live process started with the argument `arg`, and wait until none is left, for at
+/// most `limit`. Returns whether none is left.
+fn end_processes_using(arg: &std::ffi::OsStr, limit: Duration) -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
+
+    let deadline = std::time::Instant::now() + limit;
+    let mut system = System::new();
+    loop {
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::OnlyIfNotSet),
+        );
+        let mut live = system
+            .processes()
+            .values()
+            .filter(|process| process.status() != ProcessStatus::Zombie && process.cmd().iter().any(|a| a == arg))
+            .peekable();
+        if live.peek().is_none() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        for process in live {
+            process.kill();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Remove a Chrome profile directory, logging rather than ignoring a failure.
 ///
 /// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread

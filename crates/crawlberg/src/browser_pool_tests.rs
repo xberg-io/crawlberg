@@ -287,6 +287,57 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
     );
 }
 
+/// A kill that cannot run falls back to releasing the browser, and the profile is still removed.
+///
+/// ~keep A browser reached through `Browser::connect` has no child process, so its kill returns
+/// ~keep nothing: that is the failed kill this drives.
+#[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+async fn kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile() {
+    let user_data_dir = std::env::temp_dir().join(format!("crawlberg-kill-fallback-test-{}", std::process::id()));
+    let launched = match build_pool_launch_builder(&user_data_dir, &[]).build() {
+        Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    let (mut owner, mut owner_handler) = match launched {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!(
+                "skipping kill_browser_releases_a_browser_it_cannot_kill_and_removes_the_profile \
+                 because no usable Chrome was found: {error}"
+            );
+            return;
+        }
+    };
+    let owner_task = tokio::spawn(async move { while owner_handler.next().await.is_some() {} });
+    let (connected, mut handler) = Browser::connect(owner.websocket_address().clone())
+        .await
+        .expect("connecting to the launched Chrome must succeed");
+    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_abort = handler_task.abort_handle();
+    let profile = std::env::temp_dir().join(format!("crawlberg-kill-fallback-profile-{}", std::process::id()));
+    std::fs::create_dir_all(profile.join("Default")).expect("the profile must be created");
+
+    kill_browser(connected, handler_task, profile.clone(), Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let released = handler_abort.is_finished();
+    let removed = !profile.exists();
+
+    let _ = owner.kill().await;
+    owner_task.abort();
+    let _ = std::fs::remove_dir_all(&user_data_dir);
+    let _ = std::fs::remove_dir_all(&profile);
+
+    assert!(
+        released,
+        "a browser the kill cannot end must be released: its handler task must stop"
+    );
+    assert!(removed, "the profile must be removed after the fallback release");
+}
+
 /// A launched browser opens no tab of its own, so nothing loads before crawlberg asks.
 #[tokio::test]
 #[allow(

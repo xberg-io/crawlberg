@@ -15,7 +15,7 @@ use tracing::Instrument as _;
 
 use self::launch::launch_or_connect;
 use self::navigation::page_fetch;
-use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
+use crate::browser_pool::{BrowserPool, ExternalTabCleanup, kill_browser, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
@@ -322,6 +322,7 @@ async fn one_shot_fetch(
     };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
     let mut session = OneShotSession {
         browser: Some(Arc::new(browser)),
         firewall: None,
@@ -329,7 +330,7 @@ async fn one_shot_fetch(
         handler_handle: Some(handler_handle),
         data_dir,
         shutdown_timeout: config.browser.shutdown_timeout,
-        origin: BrowserOrigin::of_session(config.browser.endpoint.as_deref()),
+        origin,
     };
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -344,9 +345,9 @@ async fn one_shot_fetch(
     // ~keep `session` is dropped as this function returns, after the result below is computed,
     // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
     // ~keep behind a blocking OS dialog (the originally reported case: a macOS keychain prompt)
-    // ~keep must not hold up delivery of a result that was already computed. A launched Chrome
-    // ~keep is killed, and `release_browser` bounds its work on a `browser.endpoint` Chrome by
-    // ~keep `shutdown_timeout`, so that background task always finishes.
+    // ~keep must not hold up delivery of a result that was already computed. `kill_browser` and
+    // ~keep `release_browser` both bound their work by `shutdown_timeout` (a launched Chrome is
+    // ~keep force-killed on expiry), so that background task always finishes.
     fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
 }
 
@@ -418,18 +419,23 @@ impl Drop for OneShotSession {
                         firewall.stop().await;
                     }
                     // ~keep The stopped firewall held the only other reference, so this is the
-                    // ~keep browser itself. A launched one is killed with interception still on,
-                    // ~keep as `interact` does (xberg-io/crawlberg#468).
-                    match Arc::into_inner(browser) {
-                        Some(mut browser) if origin == BrowserOrigin::Killed => {
-                            let _ = browser.kill().await;
-                            handler_handle.abort();
+                    // ~keep browser itself. One launched with a throwaway profile is killed with
+                    // ~keep interception still on, as `interact` does (xberg-io/crawlberg#468).
+                    match (Arc::into_inner(browser), data_dir) {
+                        (Some(browser), Some(profile)) if origin == BrowserOrigin::Killed => {
+                            kill_browser(browser, handler_handle, profile, shutdown_timeout).await;
                         }
-                        Some(browser) => release_browser(browser, handler_handle, cleanup, shutdown_timeout).await,
-                        None => handler_handle.abort(),
-                    }
-                    if let Some(dir) = data_dir {
-                        let _ = tokio::fs::remove_dir_all(&dir).await;
+                        (browser, profile) => {
+                            match browser {
+                                Some(browser) => {
+                                    release_browser(browser, handler_handle, cleanup, shutdown_timeout).await
+                                }
+                                None => handler_handle.abort(),
+                            }
+                            if let Some(dir) = profile {
+                                let _ = tokio::fs::remove_dir_all(&dir).await;
+                            }
+                        }
                     }
                 });
             }

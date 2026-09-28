@@ -165,11 +165,12 @@ impl BrowserOrigin {
         }
     }
 
-    /// The origin of a browser that serves one fetch or session: one crawlberg launches for it is
-    /// killed at its end.
-    pub(crate) fn of_session(endpoint: Option<&str>) -> Self {
+    /// The origin of a browser that serves one fetch or session: one crawlberg launches for it
+    /// with a throwaway profile is killed at its end. A saved profile is closed, so Chrome
+    /// writes it out.
+    pub(crate) fn of_session(endpoint: Option<&str>, throwaway_profile: bool) -> Self {
         match Self::of_endpoint(endpoint) {
-            Self::Launched => Self::Killed,
+            Self::Launched if throwaway_profile => Self::Killed,
             origin => origin,
         }
     }

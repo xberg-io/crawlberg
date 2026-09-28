@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
-use crate::browser_pool::{ExternalTabCleanup, release_browser};
+use crate::browser_pool::{ExternalTabCleanup, kill_browser, release_browser};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
 use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
@@ -24,12 +24,12 @@ pub(super) async fn run(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let browser = Arc::new(browser);
-    // ~keep A launched browser is killed with interception still on, never turned off, not even
-    // ~keep once the page is closed. Under load Chrome can take longer than the watch's close
-    // ~keep bound to destroy a page or popup, and a page can still send just after Chrome reports
-    // ~keep it destroyed. Turning interception off, or a graceful `Browser.close` (which ends the
+    // ~keep A launched browser (always with a throwaway profile here) is killed with interception
+    // ~keep still on, never turned off, not even once the page is closed. Under load Chrome can
+    // ~keep take longer than the watch's close bound to destroy a page or popup, and a page can
+    // ~keep still send just after Chrome reports it destroyed. Turning interception off, or a graceful `Browser.close` (which ends the
     // ~keep DevTools session first), lets those requests out (xberg-io/crawlberg#468).
-    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref());
+    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
     let result = match BrowserFirewall::start(Arc::clone(&browser), origin).await {
         Ok(firewall) => {
             let result = run_with_browser(&browser, &firewall, url, actions, config).await;
@@ -40,24 +40,22 @@ pub(super) async fn run(
     };
 
     // ~keep The stopped firewall held the only other reference, so this is the browser itself.
-    match Arc::into_inner(browser) {
-        Some(mut browser) if origin == BrowserOrigin::Killed => {
-            let _ = browser.kill().await;
-            handler_handle.abort();
+    let shutdown_timeout = config.browser.shutdown_timeout;
+    match (Arc::into_inner(browser), data_dir) {
+        (Some(browser), Some(profile)) if origin == BrowserOrigin::Killed => {
+            kill_browser(browser, handler_handle, profile, shutdown_timeout).await;
         }
-        Some(browser) => {
-            release_browser(
-                browser,
-                handler_handle,
-                ExternalTabCleanup::default(),
-                config.browser.shutdown_timeout,
-            )
-            .await;
+        (browser, profile) => {
+            match browser {
+                Some(browser) => {
+                    release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
+                }
+                None => handler_handle.abort(),
+            }
+            if let Some(dir) = profile {
+                let _ = std::fs::remove_dir_all(dir);
+            }
         }
-        None => handler_handle.abort(),
-    }
-    if let Some(dir) = data_dir {
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     result

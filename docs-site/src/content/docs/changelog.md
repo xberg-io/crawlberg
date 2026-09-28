@@ -211,10 +211,12 @@ title: "Changelog"
   busy host.** Under load Chrome can take longer than the close limit to destroy a page or a popup,
   and a page can still send just after Chrome reports it destroyed. The check then turned
   interception off, or closed the browser, while they were still sending, and their requests went
-  out. A browser crawlberg launches for one `interact` session or one scrape now keeps interception
-  on until it is killed, so its requests stay paused until the process is gone. A scrape through a
-  `BrowserPool`, and a session or scrape on a `browser.endpoint` browser, end as before. This
-  applies to the Chromiumoxide backend. (#468)
+  out. A browser crawlberg launches with a throwaway profile, for one `interact` session or one
+  scrape, now keeps interception on until it is killed, so its requests stay paused until the
+  process is gone. crawlberg then ends every Chrome process that still uses the profile and removes
+  the profile. A scrape with a saved `browser_profile`, a scrape through a `BrowserPool`, and a
+  session or scrape on a `browser.endpoint` browser end as before. This applies to the Chromiumoxide
+  backend. (#468)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, with credentials redacted. An `interact` result lists the refusals of
