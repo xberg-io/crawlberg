@@ -39,8 +39,15 @@ title: "Changelog"
   single configured agent. A site's rule for the agent that made the request was ignored, and a
   rule for the configured agent applied even to a request that used a different one. Every
   robots decision now reads the agent the request actually sent; a crawl that does not rotate
-  sees no change. (#423)
-
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. (#423)
+- **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
+  comment by searching for a literal `-->` right after the opening `<!--`, so it never
+  recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
+  `--!>` instead of `-->`; or a plain, valid, empty comment, `<!---->`, whose close sits
+  directly against the opener's own dashes. After any of these, `tl` kept reading as if
+  still inside the comment, so every link, image and base address past it was missed. The
+  raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
 - **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
   A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
   nor nofollow, although `none` means both. A header addressed to one crawler, such as
