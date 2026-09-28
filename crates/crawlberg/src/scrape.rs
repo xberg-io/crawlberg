@@ -5,10 +5,10 @@ use url::Url;
 use crate::assets;
 use crate::browser_detect;
 use crate::error::CrawlError;
-use crate::helpers::{RobotsOutcome, fetch_robots_outcome};
+use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    detect_charset, detect_nofollow, detect_noindex, extract_page_data, is_binary_content_type, is_binary_url,
-    is_html_content, is_pdf_content, mask_raw_text_markup,
+    detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content, is_pdf_content,
+    mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
 use crate::robots::is_path_allowed;
@@ -18,9 +18,10 @@ use crate::types::{CrawlConfig, ScrapeResult};
 /// the raw value is reported on `ScrapeResult` while the directives gate link following.
 fn header_robots_directives(
     headers: &std::collections::HashMap<String, Vec<String>>,
+    user_agent: &str,
 ) -> (Option<String>, RobotsDirectives) {
     let value = x_robots_tag(headers);
-    let directives = RobotsDirectives::from_header(value.as_deref());
+    let directives = RobotsDirectives::from_header_values(headers.get("x-robots-tag"), user_agent);
     (value, directives)
 }
 
@@ -46,7 +47,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let content_type = resp.content_type.clone();
     let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
 
-    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers);
+    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers, default_robots_user_agent(config));
 
     let downloaded_document = crate::document::build_downloaded_document_with_filter(
         url,
@@ -127,7 +128,7 @@ fn extract_from_body(
     let parsed_html = mask_raw_text_markup(&decoded.body);
     let doc =
         crate::html::parse_html(&parsed_html).map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-    let page_robots = header_robots.with_meta_tags(&doc);
+    let page_robots = header_robots.with_meta_tags(&doc, default_robots_user_agent(config));
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
     Ok(BodyExtraction {
@@ -261,28 +262,85 @@ pub(crate) struct RobotsDirectives {
     pub(crate) nofollow: bool,
 }
 
+/// Directive keys that carry their own `key: value` argument, so a leading one in an
+/// `X-Robots-Tag` value is a directive and not a crawler name.
+const VALUE_BEARING_DIRECTIVES: [&str; 4] = [
+    "unavailable_after",
+    "max-snippet",
+    "max-image-preview",
+    "max-video-preview",
+];
+
 impl RobotsDirectives {
-    pub(crate) fn from_header(x_robots_tag: Option<&str>) -> Self {
-        let Some(value) = x_robots_tag else {
-            return Self {
-                noindex: false,
-                nofollow: false,
-            };
+    /// Parse the `X-Robots-Tag` values a response sent, dropping any addressed to another crawler.
+    ///
+    /// ~keep Each header value is parsed on its own rather than from the `, `-joined string
+    /// `x_robots_tag` reports: joining loses the header boundaries, so a `googlebot: noindex` in
+    /// one header would swallow the next header's unscoped directives into googlebot's scope.
+    pub(crate) fn from_header_values(values: Option<&Vec<String>>, user_agent: &str) -> Self {
+        let ua_lower = user_agent.to_lowercase();
+        let mut directives = Self {
+            noindex: false,
+            nofollow: false,
         };
-        let lower = value.to_lowercase();
-        Self {
-            noindex: lower.contains("noindex"),
-            nofollow: lower.contains("nofollow"),
+        for value in values.into_iter().flatten() {
+            if let Some(unscoped) = strip_crawler_scope(value, &ua_lower) {
+                directives.apply_directives(unscoped);
+            }
         }
+        directives
     }
 
     /// Add the directives from the document's robots meta tags.
-    pub(crate) fn with_meta_tags(self, doc: &tl::VDom<'_>) -> Self {
-        Self {
-            noindex: self.noindex || detect_noindex(doc),
-            nofollow: self.nofollow || detect_nofollow(doc),
+    pub(crate) fn with_meta_tags(mut self, doc: &tl::VDom<'_>, user_agent: &str) -> Self {
+        for content in robots_meta_contents(doc, user_agent) {
+            self.apply_directives(&content);
+        }
+        self
+    }
+
+    /// Fold one directive list into `self`.
+    ///
+    /// ~keep Split on whitespace as well as commas: a page that writes `content="noindex nofollow"`
+    /// without the comma is read by every other crawler, and was read here too while this parsed by
+    /// substring search.
+    fn apply_directives(&mut self, value: &str) {
+        for token in value.split(|c: char| c == ',' || c.is_whitespace()) {
+            match token.to_lowercase().as_str() {
+                // ~keep `none` is defined as `noindex, nofollow`, and a page that says only
+                // `none` was previously read as neither.
+                "none" => {
+                    self.noindex = true;
+                    self.nofollow = true;
+                }
+                "noindex" => self.noindex = true,
+                "nofollow" => self.nofollow = true,
+                _ => {}
+            }
         }
     }
+}
+
+/// Strip a leading `crawler:` scope from an `X-Robots-Tag` value.
+///
+/// Returns the directives that bind us: `value` unchanged when it names no crawler, the
+/// remainder when it names ours, and `None` when it names another crawler.
+fn strip_crawler_scope<'a>(value: &'a str, ua_lower: &str) -> Option<&'a str> {
+    let Some((head, rest)) = value.split_once(':') else {
+        return Some(value);
+    };
+    let head_lower = head.trim().to_lowercase();
+    // ~keep A crawler name is a bare product token and comes first, so anything carrying a comma
+    // or whitespace -- `nofollow, unavailable_after: <date>` -- is a directive list, not a scope.
+    // Dropping such a value as another crawler's would discard directives addressed to everyone.
+    let is_product_token = !head_lower.contains(',') && !head_lower.contains(char::is_whitespace);
+    if !is_product_token || VALUE_BEARING_DIRECTIVES.contains(&head_lower.as_str()) {
+        return Some(value);
+    }
+    if crate::robots::product_token_addresses_us(&head_lower, ua_lower) {
+        return Some(rest);
+    }
+    None
 }
 
 /// Asset references to download for this page, if asset downloading is enabled.
@@ -410,6 +468,117 @@ mod tests {
         assert_eq!(result.x_robots_tag.as_deref(), Some("noarchive, nofollow"));
     }
 
+    /// ~keep A guard, not evidence the fix works: the pre-fix substring parse read this too. It
+    /// exists to catch the plausible mis-implementation of splitting the directive list on commas
+    /// alone, which would stop reading a comma-less `content` every other crawler honours.
+    #[tokio::test]
+    async fn scrape_reads_a_space_separated_directive_list() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="robots" content="noindex nofollow"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "a space-separated list must still be read");
+        assert!(result.nofollow_detected, "a space-separated list must still be read");
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_none_as_both_noindex_and_nofollow() {
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="robots" content="None"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(result.noindex_detected, "`none` must be read as noindex");
+        assert!(result.nofollow_detected, "`none` must be read as nofollow");
+    }
+
+    #[tokio::test]
+    async fn scrape_ignores_an_x_robots_tag_addressed_to_another_crawler() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["googlebot: noindex, nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(!result.noindex_detected, "googlebot's noindex does not bind us");
+        assert!(!result.nofollow_detected, "googlebot's nofollow does not bind us");
+        assert_eq!(
+            result.x_robots_tag.as_deref(),
+            Some("googlebot: noindex, nofollow"),
+            "the raw header is still reported verbatim"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_directives_from_a_header_beside_one_scoped_to_another_crawler() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["googlebot: noindex".to_owned(), "nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            !result.noindex_detected,
+            "the scoped header binds googlebot only, and its scope must not reach the next header"
+        );
+        assert!(result.nofollow_detected, "the unscoped header binds every crawler");
+    }
+
+    /// ~keep A guard, not evidence the fix works: it passes with the pre-fix substring parse too.
+    /// It exists to catch the plausible mis-implementation of reading the text before the first
+    /// `:` as a crawler name even when it holds a comma, which would discard the whole value's
+    /// directives. The next test covers a value-bearing key in first place.
+    #[tokio::test]
+    async fn scrape_reads_a_directive_beside_a_value_bearing_one() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["nofollow, unavailable_after: 25 Jun 2010 15:00:00 PST".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.nofollow_detected,
+            "`unavailable_after` names a directive, not a crawler, so the value still binds us"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_a_directive_after_a_leading_value_bearing_one() {
+        let mut resp = response("text/html", "<html><body>plain</body></html>");
+        resp.headers.insert(
+            "x-robots-tag".to_owned(),
+            vec!["unavailable_after: 25 Jun 2010 15:00:00 PST, nofollow".to_owned()],
+        );
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.nofollow_detected,
+            "a leading `unavailable_after:` is a directive, not a crawler name, so the trailing nofollow binds us"
+        );
+    }
+
     #[tokio::test]
     async fn scrape_reads_noindex_from_the_document_when_the_header_is_absent() {
         let resp = response(
@@ -423,6 +592,26 @@ mod tests {
         assert!(result.noindex_detected, "a meta robots noindex must be detected");
         assert!(!result.nofollow_detected);
         assert_eq!(result.x_robots_tag, None);
+    }
+
+    #[tokio::test]
+    async fn scrape_reads_a_meta_tag_named_for_our_own_user_agent() {
+        // ~keep The generic `<meta name="robots">` case above passes the product-token check
+        // ~keep unconditionally (`name_lower == ROBOTS_META_NAME`), so it never observes the
+        // ~keep user agent `scrape_from_crawl_response` passes to `with_meta_tags`. This test
+        // ~keep uses a name scoped to crawlberg's own product token instead.
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            result.noindex_detected,
+            "a meta tag naming our own product token must be honoured"
+        );
     }
 
     #[tokio::test]
@@ -663,6 +852,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scrape_uses_the_page_url_as_the_base_for_a_data_or_javascript_base_href() {
+        for (base, dir) in [
+            (" DATA:text/html,x ", "https://example.com/dir/"),
+            (" JavaScript:alert(1)// ", "https://example.com/dir/"),
+            ("JAVASCRIPT://example.org/", "https://example.com/dir/"),
+            ("/other/", "https://example.com/other/"),
+            ("https://cdn.example/", "https://cdn.example/"),
+        ] {
+            let resp = response(
+                "text/html",
+                &format!(
+                    r#"<html><head><base href="{base}">
+                    <link rel="alternate" type="application/rss+xml" href="feed.xml">
+                    <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head>
+                    <body><p><a href="leaf.html">leaf</a><img src="logo.png"></p></body></html>"#
+                ),
+            );
+            let result =
+                scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
+                    .await
+                    .expect("scrape should succeed");
+
+            assert_eq!(
+                urls(&result.links, |l| &l.url),
+                [format!("{dir}leaf.html")],
+                "for {base:?}"
+            );
+            assert_eq!(
+                urls(&result.images, |i| &i.url),
+                [format!("{dir}logo.png")],
+                "for {base:?}"
+            );
+            assert_eq!(
+                urls(&result.feeds, |f| &f.url),
+                [format!("{dir}feed.xml")],
+                "for {base:?}"
+            );
+            let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+            assert_eq!(urls(favicons, |f| &f.url), [format!("{dir}fav.ico")], "for {base:?}");
+            assert_eq!(
+                result.metadata.canonical_url,
+                Some(format!("{dir}c.html")),
+                "for {base:?}"
+            );
+            let markdown = result.markdown.expect("markdown").content;
+            assert!(
+                markdown.contains(&format!("[leaf]({dir}leaf.html)")),
+                "for {base:?}, got: {markdown}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn scrape_trims_attribute_values_and_reads_a_type_by_its_mime_essence() {
         let resp = response(
             "text/html",
@@ -725,6 +967,185 @@ mod tests {
             ]
         );
         assert_eq!(urls(hreflangs, |h| &h.lang), ["de", "fr", "en-GB"]);
+    }
+
+    async fn scrape_head(head: &str) -> ScrapeResult {
+        let resp = response("text/html", &format!("<html><head>{head}</head><body></body></html>"));
+        scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed")
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_feeds_with_an_inline_address() {
+        let result = scrape_head(
+            "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"JavaScript:alert(1)\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"VBScript:msgbox(1)\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"java&#9;script:x\">\
+             <link rel=\"alternate\" type=\"application/feed+json\" href=\"DATA:application/json,{}\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"feed.xml\">",
+        )
+        .await;
+        assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/feed.xml"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_hreflangs_with_an_inline_address() {
+        let result = scrape_head(
+            "<link rel=\"alternate\" hreflang=\"de\" href=\"javascript:alert(1)\">\
+             <link rel=\"alternate\" hreflang=\"fr\" href=\"VBSCRIPT:x\">\
+             <link rel=\"alternate\" hreflang=\"es\" href=\"data:text/html,x\">\
+             <link rel=\"alternate\" hreflang=\"en\" href=\"en.html\">",
+        )
+        .await;
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(urls(hreflangs, |h| &h.url), ["https://example.com/en.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_script_favicons_and_keeps_a_data_favicon() {
+        let result = scrape_head(
+            "<link rel=\"icon\" href=\"javascript:alert(1)\">\
+             <link rel=\"shortcut icon\" href=\"VBScript:msgbox(1)\">\
+             <link rel=\"apple-touch-icon\" href=\"JAVASCRIPT:x\">\
+             <link rel=\"icon\" href=\"data:image/png;base64,iVBORw0KGgo=\">\
+             <link rel=\"icon\" href=\"fav.ico\">",
+        )
+        .await;
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_reports_no_canonical_url_for_an_inline_address() {
+        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+            let result = scrape_head(&format!("<link rel=\"canonical\" href=\"{href}\">")).await;
+            assert_eq!(result.metadata.canonical_url, None, "for {href}");
+        }
+        let result = scrape_head("<link rel=\"canonical\" href=\"c.html\">").await;
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/c.html")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_takes_the_canonical_url_from_the_first_canonical_link_only() {
+        for href in ["javascript:alert(1)", "VBScript:msgbox(1)", "Data:text/html,x"] {
+            let result = scrape_head(&format!(
+                "<link rel=\"canonical\" href=\"{href}\"><link rel=\"canonical\" href=\"c.html\">"
+            ))
+            .await;
+            assert_eq!(result.metadata.canonical_url, None, "for {href} first");
+            let result = scrape_head(&format!(
+                "<link rel=\"canonical\" href=\"c.html\"><link rel=\"canonical\" href=\"{href}\">"
+            ))
+            .await;
+            assert_eq!(
+                result.metadata.canonical_url.as_deref(),
+                Some("https://example.com/c.html"),
+                "for {href} second"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_relative_head_links_to_the_page_under_a_script_base() {
+        let result = scrape_head(
+            "<base href=\"javascript:alert(1)//\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"#feed\">\
+             <link rel=\"alternate\" hreflang=\"de\" href=\"#de\">\
+             <link rel=\"icon\" href=\"#icon\">\
+             <link rel=\"canonical\" href=\"#top\">\
+             <link rel=\"alternate\" type=\"application/rss+xml\" href=\"https://example.com/feed.xml\">\
+             <link rel=\"alternate\" hreflang=\"en\" href=\"https://example.com/en/\">\
+             <link rel=\"icon\" href=\"https://example.com/fav.ico\">\
+             <link rel=\"alternate\" type=\"application/atom+xml\" href=\"javascript:alert(2)\">\
+             <link rel=\"alternate\" hreflang=\"fr\" href=\"data:text/html,x\">\
+             <link rel=\"icon\" href=\"VBScript:msgbox(1)\">",
+        )
+        .await;
+        // A script base is ignored (the HTML frozen base URL steps), so a relative address
+        // resolves against the page; an absolute script or data address still names itself
+        // and is still dropped, even under the same base.
+        assert_eq!(
+            urls(&result.feeds, |f| &f.url),
+            ["https://example.com/page#feed", "https://example.com/feed.xml"]
+        );
+        let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(hreflangs, |h| &h.url),
+            ["https://example.com/page#de", "https://example.com/en/"]
+        );
+        let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
+        assert_eq!(
+            urls(favicons, |f| &f.url),
+            ["https://example.com/page#icon", "https://example.com/fav.ico"]
+        );
+        assert_eq!(
+            result.metadata.canonical_url.as_deref(),
+            Some("https://example.com/page#top")
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_resolves_relative_images_to_the_page_under_a_script_or_data_base() {
+        // A script or data base is ignored (the HTML frozen base URL steps), so a relative
+        // image address resolves against the page and is kept. `vbscript:` is not one of the
+        // frozen-base schemes, so its base still stands and a relative address under it still
+        // names an absolute script address and is still dropped, same as before #450. The last
+        // case is a literal absolute script address: it names itself under any base and stays
+        // dropped.
+        for (base, image, resolved) in [
+            ("javascript:alert(1)//", "#x", Some("https://example.com/page#x")),
+            ("JavaScript://host/", "x.png", Some("https://example.com/x.png")),
+            ("vbscript://host/", "x.png", None),
+            ("data:text/html,x", "#x", Some("https://example.com/page#x")),
+            ("javascript:alert(1)//", "javascript:evil()", None),
+        ] {
+            let resp = response(
+                "text/html",
+                &format!(
+                    "<html><head><base href=\"{base}\">\
+                     <meta property=\"og:image\" content=\"{image}\">\
+                     <meta name=\"twitter:image\" content=\"{image}\">\
+                     <meta property=\"og:image\" content=\"https://example.com/og.png\">\
+                     <meta name=\"twitter:image\" content=\"https://example.com/tw.png\"></head><body>\
+                     <img src=\"{image}\"><img src=\"https://example.com/i.png\">\
+                     <picture><source srcset=\"{image} 1x\"></picture>\
+                     <picture><source srcset=\"https://example.com/s.png 1x\"></picture></body></html>"
+                ),
+            );
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+                .await
+                .expect("scrape should succeed");
+            let expected: Vec<&str> = match resolved {
+                Some(resolved) => vec![
+                    resolved,
+                    "https://example.com/i.png",
+                    resolved,
+                    "https://example.com/s.png",
+                    resolved,
+                    "https://example.com/og.png",
+                    resolved,
+                    "https://example.com/tw.png",
+                ],
+                None => vec![
+                    "https://example.com/i.png",
+                    "https://example.com/s.png",
+                    "https://example.com/og.png",
+                    "https://example.com/tw.png",
+                ],
+            };
+            assert_eq!(
+                urls(&result.images, |i| &i.url),
+                expected,
+                "for {image:?} against {base:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -865,6 +1286,23 @@ mod tests {
             .expect("scrape should succeed");
 
         assert_eq!(urls(&result.links, |l| &l.url), ["https://example.com/next.html"]);
+    }
+
+    #[tokio::test]
+    async fn scrape_skips_script_image_sources_in_any_case() {
+        let resp = response(
+            "text/html",
+            "<html><head>\
+             <meta property=\"og:image\" content=\"JavaScript:alert(1)\">\
+             <meta name=\"twitter:image\" content=\"vbscript:x\"></head><body>\
+             <img src=\"javascript:alert(1)\"><img src=\"VBScript:msgbox(1)\"><img src=\"i.png\">\
+             <picture><source srcset=\"JAVASCRIPT:alert(1) 1x\"></picture></body></html>",
+        );
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            .await
+            .expect("scrape should succeed");
+
+        assert_eq!(urls(&result.images, |i| &i.url), ["https://example.com/i.png"]);
     }
 
     #[tokio::test]

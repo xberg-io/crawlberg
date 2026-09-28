@@ -1076,7 +1076,8 @@ class CrawlConfig {
   /// enabled.
   final List<String> trackingParams;
 
-  /// Custom HTTP headers to send with each request.
+  /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+  /// does not carry them.
   final Map<String, String> customHeaders;
 
   /// Timeout for individual HTTP requests (in milliseconds when serialized).

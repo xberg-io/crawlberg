@@ -31,9 +31,13 @@ pub(super) static FALLBACK_URL: std::sync::LazyLock<Url> =
 pub(super) struct LoopContext<'a> {
     /// ~keep `Arc` rather than a borrowed slice: `fetch_and_extract` is spawned into a
     /// ~keep `JoinSet` and must own a redirect-hop policy of its own (see `FetchResult`'s
-    /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of the exclude list.
+    /// ~keep `final_url`), so each spawn needs a cheap, `'static` clone of these lists.
+    ///
+    /// ~keep `regex::Regex::clone` allocates a fresh, cold cache pool per copy, so holding
+    /// these as slices and rebuilding an `Arc` per spawn rebuilt every pattern's cache
+    /// once per fetch.
     pub(super) exclude_regexes: Arc<[Regex]>,
-    pub(super) include_regexes: &'a [Regex],
+    pub(super) include_regexes: Arc<[Regex]>,
     pub(super) robots: &'a RobotsOutcome,
     pub(super) base_host: &'a str,
     pub(super) base_host_suffix: &'a str,
@@ -201,7 +205,8 @@ impl CrawlState {
 pub(super) fn blocking_extract_page(
     url: &str,
     content_type: &str,
-    x_robots_tag: Option<&str>,
+    header_robots: RobotsDirectives,
+    user_agent: &str,
     body: String,
     body_bytes: Vec<u8>,
 ) -> PageExtraction {
@@ -217,14 +222,13 @@ pub(super) fn blocking_extract_page(
     let is_pdf = is_pdf_content(content_type, &body) || is_pdf_url(url);
     let is_html = is_html_content(content_type, &body);
 
-    let header_robots = RobotsDirectives::from_header(x_robots_tag);
     // ~keep Parse the masked source, never `body`: `tl` reads the contents of raw-text elements
     // ~keep as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&body);
     let (extraction, robots) = if let Ok(doc) = crate::html::parse_html(&parsed_html) {
         (
             extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false),
-            header_robots.with_meta_tags(&doc),
+            header_robots.with_meta_tags(&doc, user_agent),
         )
     } else {
         let extraction = HtmlExtraction {

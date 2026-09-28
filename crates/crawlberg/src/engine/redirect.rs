@@ -186,7 +186,13 @@ impl<'a> RedirectPolicy<'a> {
         let origin = RobotsCacheKey::new(&parsed, user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
-            let outcome = if self.engine.config.respect_robots_txt {
+            // ~keep A robots.txt read with the caller's credentials is theirs alone: the
+            // ~keep shared cache would hand it to the next crawl of the same origin.
+            let outcome = if self.engine.config.respect_robots_txt
+                && crate::net::credentials::is_credentialed(&self.engine.config, &parsed)
+            {
+                Arc::new(fetch_robots_outcome(url, &self.engine.config, self.client, user_agent).await)
+            } else if self.engine.config.respect_robots_txt {
                 self.engine
                     .robots_cache
                     .get_or_fetch(origin.clone(), || {
@@ -317,12 +323,6 @@ pub(crate) async fn follow_redirects(
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
-    // ~keep Scopes configured credentials to the host the chain started on; hops that leave
-    // ~keep it must not carry the caller's Authorization header to a redirect target.
-    let origin_host = url::Url::parse(initial_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned));
-
     let mut browser_used = false;
     loop {
         if let Some(policy) = policy.as_deref_mut()
@@ -338,10 +338,7 @@ pub(crate) async fn follow_redirects(
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&chain.current_url);
-        let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url, origin_host.as_deref())
-            .await
-        {
+        let (resp, hop_browser_used) = match hop_engine.fetch_response(&chain.current_url).await {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -508,14 +505,14 @@ fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    resolve_redirect(current_url, location)
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
 fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
     let target = refresh_target(refresh)?;
-    Some(resolve_redirect(current_url, &target))
+    resolve_redirect(current_url, &target)
 }
 
 /// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
@@ -529,7 +526,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     let target = crate::html::parse_html(&parsed_html)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+    resolve_redirect(current_url, &target)
 }
 
 #[cfg(test)]

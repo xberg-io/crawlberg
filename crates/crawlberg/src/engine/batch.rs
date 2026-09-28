@@ -14,7 +14,8 @@ use crate::error::CrawlError;
 use crate::telemetry::attributes::{CRAWL_SEED_COUNT, URL_FULL};
 use crate::types::*;
 
-use super::CrawlEngine;
+use super::admission::admission_key;
+use super::{CrawlEngine, SeedUrl};
 
 /// Default concurrency limit when `max_concurrent` is not set.
 const DEFAULT_MAX_CONCURRENT: usize = 10;
@@ -44,21 +45,30 @@ impl CrawlEngine {
     /// Uses the engine's [`CrawlStrategy`](crate::traits::CrawlStrategy) and
     /// [`Frontier`](crate::traits::Frontier) traits to control URL selection order
     /// and deduplication.
-    #[tracing::instrument(name = "crawl.engine.crawl", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
-        self.with_isolated_frontier().crawl_with_sender(url, None).await
+        let (engine, seed) = self.admit(url)?;
+        engine.crawl_seed(&seed).await
+    }
+
+    /// Crawl an admitted seed URL. See [`CrawlEngine::crawl`].
+    #[tracing::instrument(name = "crawl.engine.crawl", skip_all, fields(url.full = %seed))]
+    async fn crawl_seed(&self, seed: &SeedUrl) -> Result<CrawlResult, CrawlError> {
+        self.with_isolated_frontier().crawl_with_sender(seed, None).await
     }
 
     /// Crawl a website and return a stream of events as pages are processed.
     ///
     /// Uses the engine's trait implementations (strategy, frontier, etc.) for the crawl.
     pub fn crawl_stream(&self, url: &str) -> ReceiverStream<CrawlEvent> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        let span = tracing::info_span!("crawl.engine.crawl_stream", { URL_FULL } = %redacted_url);
-        let url = url.to_owned();
-        let engine = self.with_isolated_frontier();
+        let admitted = self
+            .admit(url)
+            .map(|(engine, seed)| (engine.with_isolated_frontier(), seed));
+        let span = match &admitted {
+            Ok((_, seed)) => tracing::info_span!("crawl.engine.crawl_stream", { URL_FULL } = %seed),
+            Err(_) => tracing::info_span!("crawl.engine.crawl_stream"),
+        };
+        let error_url = admission_key(url, admitted.as_ref().ok().map(|(_, seed)| seed));
+        let event_sink = self.event_sink.clone();
 
         // ~keep The fallback must match `DEFAULT_MAX_CONCURRENT`, which is what the crawl loop
         // actually uses when `max_concurrent` is unset. A hardcoded 4 here sized this channel for a
@@ -68,22 +78,23 @@ impl CrawlEngine {
 
         tokio::spawn(
             async move {
-                match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                    Ok(_result) => {}
-                    Err(e) => {
-                        let error_event = CrawlEvent::Error {
-                            url: url.clone(),
-                            error: e.to_string(),
-                        };
-                        let _ = tx.send(error_event.clone()).await;
-                        if let Some(ref sink) = engine.event_sink {
-                            sink.emit(error_event).await;
-                        }
-                        let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
-                        let _ = tx.send(complete_event.clone()).await;
-                        if let Some(ref sink) = engine.event_sink {
-                            sink.emit(complete_event).await;
-                        }
+                let outcome = match admitted {
+                    Ok((engine, seed)) => engine.crawl_with_sender(&seed, Some(tx.clone())).await.map(|_| ()),
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = outcome {
+                    let error_event = CrawlEvent::Error {
+                        url: error_url,
+                        error: e.to_string(),
+                    };
+                    let _ = tx.send(error_event.clone()).await;
+                    if let Some(ref sink) = event_sink {
+                        sink.emit(error_event).await;
+                    }
+                    let complete_event = CrawlEvent::Complete { pages_crawled: 0 };
+                    let _ = tx.send(complete_event.clone()).await;
+                    if let Some(ref sink) = event_sink {
+                        sink.emit(complete_event).await;
                     }
                 }
             }
@@ -93,15 +104,17 @@ impl CrawlEngine {
         ReceiverStream::new(rx)
     }
 
-    /// Run `operation(engine, url)` for each of `urls` with bounded concurrency, pairing
-    /// every result with its originating URL — including when a spawned task panics.
+    /// Admit each of `urls` and run `operation(engine, seed)` for it with bounded concurrency,
+    /// pairing every result with its admitted URL — including when a spawned task panics.
+    ///
+    /// A URL that admission refuses is reported with its refusal and never runs.
     ///
     /// ~keep `JoinError` carries a task id but not the URL the task was processing, so a
     /// naive panic handler loses the URL entirely (returns `String::new()`). Task ids are
     /// recorded at spawn time and used to recover the URL on panic instead.
     async fn run_batch<T, F, Fut>(&self, urls: &[&str], operation: F) -> Vec<(String, Result<T, CrawlError>)>
     where
-        F: Fn(CrawlEngine, String) -> Fut,
+        F: Fn(CrawlEngine, SeedUrl) -> Fut,
         Fut: Future<Output = Result<T, CrawlError>> + Send + 'static,
         T: Send + 'static,
     {
@@ -109,23 +122,29 @@ impl CrawlEngine {
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut join_set: JoinSet<Result<T, CrawlError>> = JoinSet::new();
         let mut url_by_task: HashMap<tokio::task::Id, String> = HashMap::with_capacity(urls.len());
+        let mut results = Vec::with_capacity(urls.len());
 
         for url in urls {
-            let url_owned = url.to_string();
-            let engine = self.clone();
+            let (engine, seed) = match self.admit(url) {
+                Ok(admitted) => admitted,
+                Err(e) => {
+                    results.push((admission_key(url, None), Err(e)));
+                    continue;
+                }
+            };
             let permit = match semaphore.clone().acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => break,
             };
-            let task = operation(engine, url_owned.clone());
+            let key = seed.as_str().to_owned();
+            let task = operation(engine, seed);
             let abort_handle = join_set.spawn(async move {
                 let _permit = permit;
                 task.await
             });
-            url_by_task.insert(abort_handle.id(), url_owned);
+            url_by_task.insert(abort_handle.id(), key);
         }
 
-        let mut results = Vec::with_capacity(urls.len());
         while let Some(joined) = join_set.join_next_with_id().await {
             let (task_id, outcome) = match joined {
                 Ok((id, out)) => (id, out),
@@ -153,7 +172,7 @@ impl CrawlEngine {
     /// through the engine's middleware chain, rate limiter, and cache.
     #[tracing::instrument(name = "crawl.engine.batch_scrape", skip(self, urls), fields(url_count = urls.len()))]
     pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
-        self.run_batch(urls, |engine, url| async move { engine.scrape(&url).await })
+        self.run_batch(urls, |engine, seed| async move { engine.scrape_seed(&seed).await })
             .await
     }
 
@@ -167,7 +186,7 @@ impl CrawlEngine {
     }
 
     async fn batch_crawl_inner(&self, urls: &[&str]) -> Vec<(String, Result<CrawlResult, CrawlError>)> {
-        self.run_batch(urls, |engine, url| async move { engine.crawl(&url).await })
+        self.run_batch(urls, |engine, seed| async move { engine.crawl_seed(&seed).await })
             .await
     }
 
@@ -201,22 +220,27 @@ impl CrawlEngine {
                             Err(_) => break,
                         },
                     };
-                    let engine = engine.with_isolated_frontier();
+                    let admitted = engine
+                        .admit(&url)
+                        .map(|(engine, seed)| (engine.with_isolated_frontier(), seed));
+                    let error_url = admission_key(&url, admitted.as_ref().ok().map(|(_, seed)| seed));
+                    let event_sink = engine.event_sink.clone();
                     let tx = tx.clone();
 
                     join_set.spawn(async move {
                         let _permit = permit;
-                        match engine.crawl_with_sender(&url, Some(tx.clone())).await {
-                            Ok(_result) => {}
-                            Err(e) => {
-                                let error_event = CrawlEvent::Error {
-                                    url: url.clone(),
-                                    error: e.to_string(),
-                                };
-                                let _ = tx.send(error_event.clone()).await;
-                                if let Some(ref sink) = engine.event_sink {
-                                    sink.emit(error_event).await;
-                                }
+                        let outcome = match admitted {
+                            Ok((engine, seed)) => engine.crawl_with_sender(&seed, Some(tx.clone())).await.map(|_| ()),
+                            Err(e) => Err(e),
+                        };
+                        if let Err(e) = outcome {
+                            let error_event = CrawlEvent::Error {
+                                url: error_url,
+                                error: e.to_string(),
+                            };
+                            let _ = tx.send(error_event.clone()).await;
+                            if let Some(ref sink) = event_sink {
+                                sink.emit(error_event).await;
                             }
                         }
                     });
@@ -245,8 +269,8 @@ mod tests {
         let results = engine
             .run_batch(
                 &["https://ok.example/", "https://panics.example/"],
-                |_engine, url| async move {
-                    if url == "https://panics.example/" {
+                |_engine, seed| async move {
+                    if seed.as_str() == "https://panics.example/" {
                         panic!("simulated task panic");
                     }
                     Ok::<u32, CrawlError>(42)

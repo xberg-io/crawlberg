@@ -7,8 +7,10 @@ use url::Url;
 
 use crate::types::{ArticleMetadata, PageMetadata};
 
-use super::selectors::{META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE};
-use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_rel, resolve_url};
+use super::selectors::{
+    META_RE_CONTENT_NAME, META_RE_NAME_CONTENT, ROBOTS_META_NAME, SEL_HTML, SEL_LINK_REL, SEL_META, SEL_TITLE,
+};
+use super::{attr_eq, decode_attr_value, get_attr, get_url_attr, has_inline_scheme, has_rel, resolve_url};
 
 /// Extract metadata name-value pairs from raw HTML using regex (fallback for malformed HTML).
 fn extract_metadata_from_raw(body: &str) -> Vec<(String, String)> {
@@ -142,7 +144,8 @@ fn apply_raw_meta_fallback(md: &mut PageMetadata, raw_body: &str) {
 /// Extract metadata from a parsed HTML document, with regex fallback for malformed content.
 ///
 /// The canonical URL resolves against `base_url`, the document's base URL. A blank `href` gives no
-/// canonical URL: it points at the page itself.
+/// canonical URL: it points at the page itself. Nor does one that resolves to an inline `data:` or
+/// script address.
 pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -> PageMetadata {
     let parser = dom.parser();
 
@@ -157,6 +160,7 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
             .find(|tag| has_rel(tag, "canonical"))
             .and_then(|tag| get_url_attr(tag, "href"))
             .map(|href| resolve_url(&href, base_url))
+            .filter(|url| !has_inline_scheme(url))
     });
 
     let mut md = PageMetadata {
@@ -190,31 +194,30 @@ pub(crate) fn extract_metadata(dom: &VDom<'_>, raw_body: &str, base_url: &Url) -
     md
 }
 
-/// Check whether a meta robots directive contains the given keyword.
-fn has_robots_directive(dom: &VDom<'_>, directive: &str) -> bool {
-    let parser = dom.parser();
-    if let Some(iter) = dom.query_selector(SEL_META) {
-        for handle in iter {
-            if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
-                && attr_eq(tag, "name", "robots")
-                && let Some(content) = get_attr(tag, "content")
-                && content.to_lowercase().contains(directive)
-            {
-                return true;
-            }
+/// The `content` of every robots meta tag whose directives address this crawler.
+///
+/// ~keep A `<meta name="...">` robots tag may be addressed either to every crawler, through the
+/// generic `robots` name, or to one named crawler. A tag naming another crawler is not ours to
+/// obey, so it is dropped here rather than folded in with everyone else's.
+pub(crate) fn robots_meta_contents(dom: &VDom<'_>, user_agent: &str) -> Vec<String> {
+    // ~keep HTML compares `name` without case, but only ASCII case (selectors.rs:20-22): a
+    // ~keep Unicode fold would turn some non-ASCII letters into an ASCII one (U+212A KELVIN SIGN
+    // ~keep folds to `k`) and let a page bind a crawler its markup never actually named.
+    let ua_lower = user_agent.to_ascii_lowercase();
+    let mut contents = Vec::new();
+    super::query_tags(dom, SEL_META, |tag, _parser| {
+        let Some(name) = get_attr(tag, "name") else {
+            return;
+        };
+        let name_lower = name.trim_ascii().to_ascii_lowercase();
+        if name_lower != ROBOTS_META_NAME && !crate::robots::product_token_addresses_us(&name_lower, &ua_lower) {
+            return;
         }
-    }
-    false
-}
-
-/// Detect whether a page has a `noindex` robots directive in its meta tags.
-pub(crate) fn detect_noindex(dom: &VDom<'_>) -> bool {
-    has_robots_directive(dom, "noindex")
-}
-
-/// Detect whether a page has a `nofollow` robots directive in its meta tags.
-pub(crate) fn detect_nofollow(dom: &VDom<'_>) -> bool {
-    has_robots_directive(dom, "nofollow")
+        if let Some(content) = get_attr(tag, "content") {
+            contents.push(content.into_owned());
+        }
+    });
+    contents
 }
 
 /// The target of a refresh directive, a `<meta http-equiv="refresh">` `content` value or an HTTP
@@ -520,22 +523,66 @@ mod tests {
         assert_eq!(md.description.as_deref(), Some("from-dom"));
     }
 
-    #[test]
-    fn robots_directives_are_detected_case_insensitively() {
-        let dom = crate::html::parse_html(r#"<meta name="robots" content="NoIndex, NoFollow">"#).expect("valid HTML");
-        assert!(detect_noindex(&dom));
-        assert!(detect_nofollow(&dom));
+    fn robots_contents(html: &str, user_agent: &str) -> Vec<String> {
+        let dom = crate::html::parse_html(html).expect("valid HTML");
+        robots_meta_contents(&dom, user_agent)
+    }
 
-        let plain = crate::html::parse_html(r#"<meta name="robots" content="all">"#).expect("valid HTML");
-        assert!(!detect_noindex(&plain));
-        assert!(!detect_nofollow(&plain));
+    #[test]
+    fn the_generic_robots_meta_tag_is_read_for_every_user_agent() {
+        assert_eq!(
+            robots_contents(r#"<meta name="robots" content="NoIndex, NoFollow">"#, "crawlberg/1.0"),
+            vec!["NoIndex, NoFollow".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_meta_tag_naming_our_product_token_is_read_and_another_crawlers_is_not() {
+        assert_eq!(
+            robots_contents(
+                r#"<meta name="googlebot" content="noindex"><meta name="Crawlberg" content="nofollow">"#,
+                "crawlberg/1.0",
+            ),
+            vec!["nofollow".to_owned()],
+            "only the tag addressed to this crawler binds it"
+        );
+    }
+
+    #[test]
+    fn a_non_robots_meta_tag_is_not_read_as_a_directive() {
+        assert!(robots_contents(r#"<meta name="description" content="hi">"#, "crawlberg/1.0").is_empty());
+    }
+
+    #[test]
+    fn a_robots_name_is_trimmed_of_ascii_whitespace_only() {
+        assert_eq!(
+            robots_contents("<meta name=\" robots\t\" content=\"noindex\">", "crawlberg/1.0"),
+            vec!["noindex".to_owned()]
+        );
+        assert!(
+            robots_contents("<meta name=\"\u{a0}robots\" content=\"noindex\">", "crawlberg/1.0").is_empty(),
+            "a no-break space is not ASCII whitespace, so the name is not `robots`"
+        );
+    }
+
+    #[test]
+    fn a_robots_name_is_folded_in_ascii_case_only() {
+        // ~keep U+212A KELVIN SIGN lower-cases to `k` under Unicode rules, but HTML's `name`
+        // ~keep comparison is ASCII-only case-insensitive (selectors.rs:20-22). A page using it
+        // ~keep must not bind a crawler whose user agent starts with `k`, which a Unicode fold
+        // ~keep would let it do.
+        assert!(
+            robots_contents("<meta name=\"\u{212a}bot\" content=\"noindex\">", "kbot/1.0").is_empty(),
+            "a Unicode-only case fold must not let a KELVIN SIGN name match `kbot`"
+        );
     }
 
     #[test]
     fn robots_and_refresh_names_match_in_any_case() {
-        let dom = crate::html::parse_html(r#"<meta name="Robots" content="noindex, nofollow">"#).expect("valid HTML");
-        assert!(detect_noindex(&dom));
-        assert!(detect_nofollow(&dom));
+        assert_eq!(
+            robots_contents(r#"<meta name="Robots" content="noindex, nofollow">"#, "crawlberg/1.0"),
+            vec!["noindex, nofollow".to_owned()]
+        );
         assert_eq!(
             meta_refresh(r#"<META HTTP-EQUIV="Refresh" CONTENT="0; url=/next">"#),
             Some("/next".to_owned())
