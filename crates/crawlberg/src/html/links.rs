@@ -38,7 +38,8 @@ pub(crate) fn classify_link(href: &str, base_url: &Url) -> LinkType {
 }
 
 /// The URL a document's relative references resolve against: the `href` of its first `<base>`
-/// that has one, decoded and joined to the document URL, or the document URL itself.
+/// that has one, decoded and joined to the document URL, or the document URL itself when there is
+/// none, it does not parse, or its scheme is `data` or `javascript` (the HTML frozen base URL steps).
 pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
     let parser = dom.parser();
     dom.query_selector(SEL_BASE_HREF)
@@ -49,6 +50,7 @@ pub(crate) fn effective_base_url(dom: &VDom<'_>, document_url: &Url) -> Url {
         // ~keep A `<base href>` is often site-relative (e.g. "/en/"); resolve it against
         // the document URL instead of requiring it to already be absolute.
         .and_then(|href| crate::net::userinfo::resolve(document_url, &href))
+        .filter(|base| !matches!(base.scheme(), "data" | "javascript"))
         .unwrap_or_else(|| document_url.clone())
 }
 
@@ -202,6 +204,26 @@ mod tests {
             "absolute base href should still resolve relative hrefs, got {}",
             links[0].url
         );
+    }
+
+    #[test]
+    fn a_data_or_javascript_base_falls_back_to_the_document_url() {
+        let document_url = Url::parse("https://example.com/dir/page.html").expect("valid document URL");
+        for (href, expected) in [
+            (" DATA:text/html,x ", "https://example.com/dir/page.html"),
+            ("\t JavaScript:alert(1)// \n", "https://example.com/dir/page.html"),
+            ("JAVASCRIPT://example.org/", "https://example.com/dir/page.html"),
+            ("/other/", "https://example.com/other/"),
+            ("https://cdn.example/assets/", "https://cdn.example/assets/"),
+        ] {
+            let html = format!(r#"<base href="{href}">"#);
+            let dom = crate::html::parse_html(&html).expect("valid HTML");
+            assert_eq!(
+                effective_base_url(&dom, &document_url).as_str(),
+                expected,
+                "for base {href:?}"
+            );
+        }
     }
 
     #[test]

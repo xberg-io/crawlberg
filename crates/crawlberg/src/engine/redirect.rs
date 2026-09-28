@@ -610,6 +610,24 @@ mod tests {
         assert_eq!(target, "https://example.com/from-meta");
     }
 
+    /// A `Refresh` header whose delay is a lone `.`, with no digit anywhere in it, names no
+    /// refresh: the shared refresh parser rejects it exactly as it does for the meta tag, so it
+    /// falls through to the meta refresh in the body (oracle case `d06_dot_only_then_longer`,
+    /// #353).
+    #[test]
+    fn a_refresh_header_with_a_dot_only_delay_falls_through_to_the_meta_refresh() {
+        let resp = response(
+            200,
+            &[("refresh", ".; url=/from-header")],
+            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the meta refresh must still be consulted");
+        assert_eq!(target, "https://example.com/from-meta");
+    }
+
     /// A `<meta http-equiv="refresh">` written inside script text is script source, not a
     /// redirect a browser would follow. ~keep
     #[test]
