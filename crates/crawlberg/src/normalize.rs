@@ -146,32 +146,27 @@ pub(crate) fn strip_fragment(url: &str) -> String {
     }
 }
 
+/// Move `url_str` onto `base`'s host, keeping its path and query, and drop any userinfo.
 pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    if let Ok(parsed) = Url::parse(url_str)
-        && parsed.host_str() != base.host_str()
-    {
+    let Some(parsed) = crate::net::userinfo::parse(url_str) else {
+        return url_str.to_owned();
+    };
+    if parsed.host_str() != base.host_str() {
         let mut resolved = base.clone();
         resolved.set_path(parsed.path());
         resolved.set_query(parsed.query());
         return resolved.to_string();
     }
-    url_str.to_owned()
+    parsed.to_string()
 }
 
-/// Resolve a redirect target against a base URL.
+/// Resolve a page-supplied redirect target against a base URL, without userinfo.
 ///
-/// If the target is already absolute, returns it as-is. Otherwise, resolves
-/// it relative to the base URL.
-pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> String {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return target.to_owned();
-    }
-    if let Ok(base) = Url::parse(base_url)
-        && let Ok(resolved) = base.join(target)
-    {
-        return resolved.to_string();
-    }
-    target.to_owned()
+/// Returns `None` when the target does not resolve to a URL, so a caller never follows or
+/// reports text that is not one.
+pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<String> {
+    let base = Url::parse(base_url).ok()?;
+    crate::net::userinfo::resolve(&base, target).map(String::from)
 }
 
 #[cfg(test)]
