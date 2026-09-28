@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crawlberg::{BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, batch_scrape, create_engine, scrape};
+use crawlberg::{
+    BrowserBackend, BrowserConfig, BrowserWait, CrawlConfig, HostMatcher, batch_scrape, create_engine, scrape,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wiremock::matchers::{header, method, path};
@@ -410,4 +412,69 @@ impl TestServer {
             max_in_flight,
         }
     }
+}
+
+/// A script and a `fetch()` at an address the policy denies keep the page, and the result
+/// lists both addresses. The page is served on `localhost`, which the policy allowlists; the
+/// denied address is the literal loopback IP of a second server.
+#[tokio::test]
+async fn native_keeps_the_page_and_lists_the_refused_requests() {
+    let site = MockServer::start().await;
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("// denied"))
+        .mount(&denied)
+        .await;
+    let script = format!("http://127.0.0.1:{}/denied.js", denied.address().port());
+    let fetched = format!("http://127.0.0.1:{}/secret", denied.address().port());
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!(
+                    "<html><head><script src={script:?}></script></head><body><p>start</p>\
+                     <script>fetch({fetched:?}).catch(() => {{}});</script></body></html>"
+                ))
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: crawlberg::BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            extra_wait: Some(Duration::from_millis(500)),
+            ..BrowserConfig::default()
+        },
+        respect_robots_txt: false,
+        max_depth: Some(0),
+        ..CrawlConfig::builder()
+            .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+            .build()
+    };
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let engine = engine_with(config);
+    let mut expected = vec![script, fetched];
+    expected.sort();
+    let result = scrape(&engine, &seed).await.expect("the page must be kept");
+    assert!(result.html.contains("start"), "the page must be kept: {}", result.html);
+    let mut listed = result.ssrf_refused_urls.clone();
+    listed.sort();
+    assert_eq!(listed, expected, "the scrape result must list every refused address");
+    let crawled = crawlberg::crawl(&engine, &seed)
+        .await
+        .expect("the crawl must keep the page");
+    let page = crawled.pages.first().expect("the crawl must return the page");
+    let mut listed = page.ssrf_refused_urls.clone();
+    listed.sort();
+    assert_eq!(
+        listed, expected,
+        "the crawl page result must list every refused address"
+    );
+    let received = denied.received_requests().await.expect("request recording is on");
+    assert!(
+        received.is_empty(),
+        "the denied address must receive nothing: {received:?}"
+    );
 }

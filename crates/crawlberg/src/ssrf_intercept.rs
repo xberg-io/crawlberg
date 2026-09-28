@@ -42,11 +42,6 @@ use crate::net::ssrf::{SsrfPolicy, validate_url};
 /// How long closing a watched page and its popups may take before the watch ends anyway.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How many times a request whose frame is not known yet is looked up again, and the pause
-/// between lookups, before it is refused.
-const ATTRIBUTION_RETRIES: usize = 3;
-const ATTRIBUTION_RETRY_DELAY: Duration = Duration::from_millis(15);
-
 /// How long after an action returns a request it started still counts as its own: for a
 /// script, a scroll or a wait, and for input (a click, a key press, typing) that can start a
 /// navigation or submit a form.
@@ -68,7 +63,8 @@ const DISABLE_DRAIN: Duration = Duration::from_millis(100);
 /// The longest an action waits for the requests it started to be judged.
 const ACTION_SETTLE_LIMIT: Duration = Duration::from_secs(1);
 
-/// The most refused requests a page keeps for attribution to an action.
+/// The most refused requests a page keeps for attribution to an action, and the most refused
+/// URLs it reports.
 const MAX_REFUSALS: usize = 256;
 
 /// What the interception observed for one watched page.
@@ -192,6 +188,8 @@ struct WatchedPage {
     redirect_limit: usize,
     outcome: Mutex<InterceptOutcome>,
     refusals: Mutex<Vec<Refusal>>,
+    /// Every URL the SSRF policy refused for the page, credential-redacted, each once.
+    refused_urls: Mutex<Vec<String>>,
     /// Set when the watch ends: from then on every request of the page is refused.
     ending: AtomicBool,
     /// Requests of the page that are paused and whose answer has not been sent yet.
@@ -275,6 +273,8 @@ struct TestDelays {
     verdict: Duration,
     /// Between a request's verdict and the answer that delivers it to Chrome.
     deliver: Duration,
+    /// Before the listener takes in a paused request, as a busy host holds it.
+    receive: Duration,
 }
 
 enum Command {
@@ -373,9 +373,10 @@ impl BrowserFirewall {
         self.handle.clone()
     }
 
-    /// Turn interception off once every paused request the check has taken is answered, stop
-    /// the listener, and release its reference to the browser, so the owner can close it. Call
-    /// it once no page of the browser needs the check any more.
+    /// Turn interception off once every answer the check had started when asked to stop is
+    /// delivered, stop the listener, and release its reference to the browser, so the owner can
+    /// close it. A request Chrome pauses after the stop is not waited for, and the disable can let
+    /// it through. Call it once no page of the browser needs the check any more.
     ///
     /// ~keep The disable is not left to the listener's own idle disable. `End` acks from
     /// ~keep `serve`'s `Done::Ended` arm, before the loop head next evaluates `idle`, and a refusal
@@ -436,6 +437,7 @@ impl FirewallHandle {
             redirect_limit,
             outcome: Mutex::new(InterceptOutcome::default()),
             refusals: Mutex::new(Vec::new()),
+            refused_urls: Mutex::new(Vec::new()),
             ending: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
         });
@@ -485,23 +487,38 @@ impl Watch {
     }
 
     /// The first main-frame document request the check refused since the watch began.
-    #[cfg(feature = "browser")]
     pub(crate) fn blocked_navigation(&self) -> Option<(String, String)> {
         lock(&self.page.outcome).blocked_navigation.clone()
+    }
+
+    /// Wait until every request of the page the check has taken is judged, for at most
+    /// `ACTION_SETTLE_LIMIT`.
+    pub(crate) async fn settle(&self) {
+        let deadline = Instant::now() + ACTION_SETTLE_LIMIT;
+        while self.page.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
+    /// Every URL the SSRF policy refused for the page so far, once the requests the check has
+    /// taken are judged: credential-redacted, each once, in the order they were refused.
+    #[cfg(feature = "browser")]
+    pub(crate) async fn refused_urls(&self) -> Vec<String> {
+        self.settle().await;
+        lock(&self.page.refused_urls).clone()
     }
 
     /// The first request refused among those the page sent from `started` until `grace`
     /// after the action that began then returned, once they are all judged.
     ///
-    /// ~keep A request counts by the time it was paused, not the time its refusal was recorded
-    /// ~keep after a DNS lookup. Refusals up to the cutoff are dropped, so each is reported once.
+    /// ~keep A request counts by the time the listener received its pause, not the time its
+    /// ~keep refusal was recorded after a DNS lookup. A pause the listener receives after the
+    /// ~keep cutoff, as on a busy host, counts for the next action. Refusals up to the cutoff are
+    /// ~keep dropped, so each is reported once.
     pub(crate) async fn refusal_during(&self, started: Instant, grace: Duration) -> Option<(String, String)> {
         let cutoff = Instant::now() + grace;
         tokio::time::sleep_until(cutoff.into()).await;
-        let deadline = cutoff + ACTION_SETTLE_LIMIT;
-        while self.page.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        self.settle().await;
         let mut refusals = lock(&self.page.refusals);
         let first = refusals
             .iter()
@@ -656,6 +673,8 @@ async fn serve(
                     while let Some(Some((page, navigated))) = navigations.next().now_or_never() {
                         record_commit(&page, &navigated);
                     }
+                    #[cfg(test)]
+                    tokio::time::sleep(shared.delays.receive).await;
                     unanswered += 1;
                     let paused_at = Instant::now();
                     running.push(Box::pin(async move {
@@ -801,10 +820,8 @@ async fn end_watch(
             if open.is_empty() {
                 break;
             }
-            // ~keep Popups close before the page that opened them: closing the opener first let a
-            // ~keep popup's request through the check in some runs. A popup opened meanwhile is
-            // ~keep closed as it appears.
-            for target in open.iter().rev() {
+            // ~keep A popup opened meanwhile is closed as it appears.
+            for target in &open {
                 let _ = browser.execute(CloseTargetParams::new(target.clone())).await;
             }
             if lock(&shared.registry).owns_live_target(&page, keep_root) {
@@ -820,37 +837,32 @@ async fn end_watch(
 }
 
 /// Who a request belongs to, found through the frame that sent it. A frame not known yet is
-/// looked up in the frame trees of the live pages, a few times, since Chrome can pause a new
-/// frame's first request before its page reports the frame. `None` when it cannot be placed.
+/// looked up in the frame trees of the live pages. `None` when it cannot be placed, and the
+/// request is then refused.
 async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Option<Owner> {
-    for attempt in 0..=ATTRIBUTION_RETRIES {
-        if let Some(owner) = lock(&shared.registry).owner_of_frame(frame) {
-            return Some(owner);
-        }
-        let live: Vec<(TargetId, Option<Arc<WatchedPage>>)> = {
-            let registry = lock(&shared.registry);
-            let owned = registry
-                .targets
-                .iter()
-                .map(|(id, page)| (id.clone(), Some(Arc::clone(page))));
-            owned
-                .chain(registry.others.iter().map(|id| (id.clone(), None)))
-                .collect()
+    if let Some(owner) = lock(&shared.registry).owner_of_frame(frame) {
+        return Some(owner);
+    }
+    let live: Vec<(TargetId, Option<Arc<WatchedPage>>)> = {
+        let registry = lock(&shared.registry);
+        let owned = registry
+            .targets
+            .iter()
+            .map(|(id, page)| (id.clone(), Some(Arc::clone(page))));
+        owned
+            .chain(registry.others.iter().map(|id| (id.clone(), None)))
+            .collect()
+    };
+    for (target, owner) in live {
+        let Ok(page) = browser.get_page(target).await else {
+            continue;
         };
-        for (target, owner) in live {
-            let Ok(page) = browser.get_page(target).await else {
-                continue;
-            };
-            let Ok(frames) = page.frames().await else {
-                continue;
-            };
-            if frames.contains(frame) {
-                lock(&shared.registry).frames.insert(frame.clone(), owner.clone());
-                return Some(owner.map_or(Owner::Other, Owner::Watched));
-            }
-        }
-        if attempt < ATTRIBUTION_RETRIES {
-            tokio::time::sleep(ATTRIBUTION_RETRY_DELAY).await;
+        let Ok(frames) = page.frames().await else {
+            continue;
+        };
+        if frames.contains(frame) {
+            lock(&shared.registry).frames.insert(frame.clone(), owner.clone());
+            return Some(owner.map_or(Owner::Other, Owner::Watched));
         }
     }
     None
@@ -933,6 +945,14 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
         return true;
     };
     let url = event.request.url.clone();
+    let redacted = crate::net::redact_url_credentials(&url);
+    tracing::warn!(url = %redacted, %reason, "the SSRF policy refused a request the page sent");
+    {
+        let mut refused = lock(&page.refused_urls);
+        if refused.len() < MAX_REFUSALS && !refused.contains(&redacted) {
+            refused.push(redacted);
+        }
+    }
     {
         let mut outcome = lock(&page.outcome);
         if event.frame_id == page.main_frame
@@ -1791,6 +1811,189 @@ mod race_tests {
         assert!(
             error.contains("cannot apply the redirect limit"),
             "{test_name}: a page with no readable main frame must be refused, got {error:?}"
+        );
+    }
+
+    /// Close `browser` once the test is done with it.
+    async fn close(browser: Arc<Browser>) {
+        if let Some(mut browser) = Arc::into_inner(browser) {
+            let _ = browser.close().await;
+            let _ = browser.wait().await;
+        }
+    }
+
+    /// A page parked while it keeps sending stays refused for as long as it sends, and reaches
+    /// the network once it has stopped: interception stays on until refusals stop.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_parked_page_that_keeps_sending_stays_refused_until_it_stops() {
+        let test_name = "a_parked_page_that_keeps_sending_stays_refused_until_it_stops";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let (firewall, page, watch) = watched_page(&browser, TestDelays::default()).await;
+        let (denied, denied_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "window.__probe = setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 60); 1"
+            ))
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        watch.park().await;
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let reached_while_sending = denied_hits.load(Ordering::SeqCst);
+        let _ = page.evaluate("clearInterval(window.__probe); 1").await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let (after, after_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "setInterval(() => fetch({after:?}, {{ mode: 'no-cors' }}).catch(() => 0), 50); 1"
+            ))
+            .await;
+        let reached_after = served(&after_hits).await;
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert_eq!(
+            reached_while_sending, 0,
+            "{test_name}: a parked page's requests must be refused while it keeps sending"
+        );
+        assert!(
+            reached_after,
+            "{test_name}: once the page has stopped sending, interception must turn off"
+        );
+    }
+
+    /// A watch dropped without being closed, as by a cancelled fetch, closes its page.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dropped_watch_closes_its_page() {
+        use chromiumoxide::cdp::browser_protocol::target::GetTargetsParams;
+
+        let test_name = "a_dropped_watch_closes_its_page";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let (firewall, page, watch) = watched_page(&browser, TestDelays::default()).await;
+        let target = page.target_id().clone();
+        let open = |browser: Arc<Browser>, target: chromiumoxide::cdp::browser_protocol::target::TargetId| async move {
+            browser
+                .execute(GetTargetsParams::default())
+                .await
+                .map(|response| response.result.target_infos.iter().any(|info| info.target_id == target))
+                .unwrap_or(false)
+        };
+        let open_while_watched = open(Arc::clone(&browser), target.clone()).await;
+        drop(watch);
+        let mut still_open = true;
+        for _ in 0..50 {
+            still_open = open(Arc::clone(&browser), target.clone()).await;
+            if !still_open {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert!(
+            open_while_watched,
+            "{test_name}: the page must be open while it is watched"
+        );
+        assert!(!still_open, "{test_name}: a dropped watch must close its page");
+    }
+
+    /// A stop waits only for the answers it found started, so a page that keeps sending cannot
+    /// hold it off.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_page_that_keeps_sending_does_not_hold_the_stop_off() {
+        let test_name = "a_page_that_keeps_sending_does_not_hold_the_stop_off";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            deliver: Duration::from_millis(300),
+            ..TestDelays::default()
+        };
+        let (firewall, page, watch) = watched_page(&browser, delays).await;
+        let (denied, _hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 5); 1"
+            ))
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let stopped = tokio::time::timeout(Duration::from_secs(5), firewall.stop()).await;
+        drop((watch, page));
+        close(browser).await;
+        assert!(
+            stopped.is_ok(),
+            "{test_name}: the stop must finish while the page keeps sending"
+        );
+    }
+
+    /// A refusal counts by the time the listener receives the pause. When the listener takes a
+    /// pause in only after the action's grace, as on a busy host, the refusal counts for the
+    /// next action, not the one that sent the request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pause_the_listener_receives_late_counts_for_the_next_action() {
+        let test_name = "a_pause_the_listener_receives_late_counts_for_the_next_action";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            receive: Duration::from_millis(300),
+            ..TestDelays::default()
+        };
+        let (firewall, page, watch) = watched_page(&browser, delays).await;
+        let (denied, _hits) = denied_listener().await;
+        let sent = Instant::now();
+        let _ = page
+            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        let for_the_sender = watch.refusal_during(sent, ACTION_GRACE).await;
+        let next = Instant::now();
+        let for_the_next = watch.refusal_during(next, Duration::from_millis(600)).await;
+        watch.close().await;
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert_eq!(
+            for_the_sender, None,
+            "{test_name}: a pause received after the grace must not count for the action that sent it"
+        );
+        assert!(
+            for_the_next.is_some_and(|(url, _)| url == denied),
+            "{test_name}: the late pause must count for the next action"
+        );
+    }
+
+    /// The refused URLs are read once the requests the check has taken are judged, so a request
+    /// whose DNS lookup is still running is listed.
+    #[cfg(feature = "browser")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_refused_urls_include_a_request_still_being_judged() {
+        let test_name = "the_refused_urls_include_a_request_still_being_judged";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            verdict: Duration::from_millis(400),
+            ..TestDelays::default()
+        };
+        let (firewall, page, watch) = watched_page(&browser, delays).await;
+        let (denied, _hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let refused = watch.refused_urls().await;
+        watch.close().await;
+        firewall.stop().await;
+        drop(page);
+        close(browser).await;
+        assert_eq!(
+            refused,
+            [denied],
+            "{test_name}: the request being judged must be listed"
         );
     }
 }

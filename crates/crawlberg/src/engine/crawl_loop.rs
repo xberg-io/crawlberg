@@ -896,6 +896,7 @@ async fn fetch_and_extract(
         }
     };
 
+    let ssrf_refused_urls = resp.landed.map(|landed| landed.refused).unwrap_or_default();
     let status_code = resp.status;
     let content_type = resp.content_type;
     let headers = resp.headers;
@@ -936,5 +937,6 @@ async fn fetch_and_extract(
         final_url,
         redirect_count,
         browser_used,
+        ssrf_refused_urls,
     })))
 }

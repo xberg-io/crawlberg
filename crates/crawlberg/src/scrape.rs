@@ -102,6 +102,11 @@ pub(crate) async fn scrape_from_crawl_response(
         screenshot_base64: None,
         downloaded_document,
         browser: None,
+        ssrf_refused_urls: resp
+            .landed
+            .as_ref()
+            .map(|landed| landed.refused.clone())
+            .unwrap_or_default(),
     })
 }
 

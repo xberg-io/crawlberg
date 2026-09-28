@@ -61,10 +61,14 @@ pub(super) async fn page_fetch(
     apply_prior_cookies(page, prior_cookies).await;
     apply_extra_headers(page, config).await?;
 
-    let rendered = render(url, config, page, watch, want_screenshot).await?;
+    let mut rendered = render(url, config, page, watch, want_screenshot).await?;
+    // ~keep Read once the requests the check has taken are judged, so a request sent at the end
+    // ~keep of `extra_wait` is not missed while its DNS lookup runs.
+    rendered.refused = watch.refused_urls().await;
     // ~keep A main-frame navigation the policy refused leaves Chrome's error page in place of
     // ~keep the page, so it fails the fetch even when the navigation `goto` waited for succeeded:
-    // ~keep the refused one can come during the load or after it, during `extra_wait`.
+    // ~keep the refused one can come during the load or after it, during `extra_wait`. Any other
+    // ~keep refused request keeps the page and is listed on it.
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::SsrfPolicyViolation {
             url: blocked_url,
@@ -112,6 +116,7 @@ async fn render(
         return Ok(BrowserPage {
             response: stopped_response(stop),
             redirects: intercepted.redirects_followed,
+            refused: Vec::new(),
         });
     }
     resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
@@ -149,6 +154,7 @@ async fn render(
             screenshot,
         },
         redirects: intercepted.redirects_followed,
+        refused: Vec::new(),
     })
 }
 

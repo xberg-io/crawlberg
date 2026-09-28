@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use crawlberg::{
     BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, HostMatcher,
-    ScrapeResult, create_engine, scrape,
+    ScrapeResult, crawl, create_engine, scrape,
 };
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -516,4 +516,125 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         0,
         "{test_name}: crawlberg's popup must be refused"
     );
+}
+
+/// A page with an image at a denied address and a `fetch()` to one during the extra wait.
+fn refused_image_and_late_fetch(denied: &MockServer) -> (String, String, String) {
+    let image = format!("{}?image", denied_url(denied));
+    let late = format!("{}?late", denied_url(denied));
+    let body = format!("<p>start</p><img src={image:?}>{}", fetch_after(&late, 700));
+    (body, image, late)
+}
+
+/// Assert `listed` names exactly `expected`, in any order.
+fn assert_listed(test_name: &str, mut listed: Vec<String>, mut expected: Vec<String>) {
+    listed.sort();
+    expected.sort();
+    assert_eq!(
+        listed, expected,
+        "{test_name}: the result must list every refused address"
+    );
+}
+
+/// A refused image and a refused `fetch()` during the extra wait keep the page, and the result
+/// lists both addresses.
+#[tokio::test]
+async fn scrape_keeps_the_page_and_lists_the_refused_requests() {
+    let test_name = "scrape_keeps_the_page_and_lists_the_refused_requests";
+    let denied = denied_server().await;
+    let (body, image, late) = refused_image_and_late_fetch(&denied);
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1500));
+    let Some(result) = run(test_name, &seed, config).await else {
+        return;
+    };
+    assert!(
+        result.html.contains("start"),
+        "{test_name}: the page must be kept: {}",
+        result.html
+    );
+    assert_listed(test_name, result.ssrf_refused_urls, vec![image, late]);
+    assert_refused(test_name, &denied).await;
+}
+
+/// A page that sends nothing to a denied address lists nothing.
+#[tokio::test]
+async fn scrape_lists_nothing_when_nothing_is_refused() {
+    let test_name = "scrape_lists_nothing_when_nothing_is_refused";
+    let (_site, seed) = seed_site(r#"<p>start</p><img src="/allowed">"#).await;
+    let Some(result) = run(test_name, &seed, config()).await else {
+        return;
+    };
+    assert!(
+        result.ssrf_refused_urls.is_empty(),
+        "{test_name}: nothing was refused, got {:?}",
+        result.ssrf_refused_urls
+    );
+}
+
+/// A crawl in browser mode lists the refused addresses on the page result.
+#[tokio::test]
+async fn crawl_lists_the_refused_requests_on_the_page() {
+    let test_name = "crawl_lists_the_refused_requests_on_the_page";
+    let denied = denied_server().await;
+    let (body, image, late) = refused_image_and_late_fetch(&denied);
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1500));
+    config.max_depth = Some(0);
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let result = match crawl(&engine, &seed).await {
+        Ok(result) => result,
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            return;
+        }
+        Err(error) => panic!("{test_name}: crawl must succeed: {error:?}"),
+    };
+    let page = result
+        .pages
+        .first()
+        .unwrap_or_else(|| panic!("{test_name}: no page: {result:?}"));
+    assert!(
+        page.html.contains("start"),
+        "{test_name}: the page must be kept: {}",
+        page.html
+    );
+    assert_listed(test_name, page.ssrf_refused_urls.clone(), vec![image, late]);
+    assert_refused(test_name, &denied).await;
+}
+
+/// A dedicated worker's request to a denied address is refused and listed, while its request
+/// to an allowed address still leaves.
+#[tokio::test]
+async fn scrape_refuses_a_worker_request_to_a_denied_address() {
+    let test_name = "scrape_refuses_a_worker_request_to_a_denied_address";
+    let denied = denied_server().await;
+    let worker = format!(
+        "fetch(self.location.origin + '/allowed?worker').catch(() => {{}}); fetch({:?}, {{ mode: 'no-cors' }}).catch(() => {{}});",
+        denied_url(&denied)
+    );
+    let body = format!(
+        "<p>start</p><script>new Worker(URL.createObjectURL(new Blob([{worker:?}], {{ type: 'text/javascript' }})));</script>"
+    );
+    let (site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1000));
+    let Some(result) = run(test_name, &seed, config).await else {
+        return;
+    };
+    let requested: Vec<String> = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .filter_map(|request| request.url.query().map(str::to_owned))
+        .collect();
+    assert!(
+        requested.iter().any(|query| query == "worker"),
+        "{test_name}: the worker's allowed request must leave: {requested:?}"
+    );
+    assert_listed(test_name, result.ssrf_refused_urls, vec![denied_url(&denied)]);
+    assert_refused(test_name, &denied).await;
 }

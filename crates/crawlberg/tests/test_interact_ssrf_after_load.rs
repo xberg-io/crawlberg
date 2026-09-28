@@ -434,3 +434,38 @@ async fn interact_actions_that_send_nothing_add_little_time() {
         ten[1]
     );
 }
+
+/// A main-frame navigation refused during the extra wait, before any action, leaves Chrome's
+/// error page in place of the page, so the session fails with the SSRF policy error.
+#[tokio::test]
+async fn interact_fails_when_the_page_navigates_to_a_denied_address_before_the_actions() {
+    let test_name = "interact_fails_when_the_page_navigates_to_a_denied_address_before_the_actions";
+    let denied = denied_server().await;
+    let body = format!(
+        "<p>start</p><script>setTimeout(() => {{ location.href = {:?}; }}, 500);</script>",
+        denied_url(&denied)
+    );
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1500));
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let outcome = interact(&engine, &seed, vec![execute_js("return 1")]).await;
+    let received = denied.received_requests().await.expect("request recording is on");
+    match outcome {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(CrawlError::SsrfPolicyViolation { url, .. }) => {
+            assert_eq!(
+                url,
+                denied_url(&denied),
+                "{test_name}: the error must name the refused address"
+            );
+            assert!(
+                received.is_empty(),
+                "{test_name}: the denied address must receive nothing"
+            );
+        }
+        other => panic!("{test_name}: the session must fail with the SSRF policy error, got {other:?}"),
+    }
+}

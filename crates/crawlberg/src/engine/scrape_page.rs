@@ -134,7 +134,8 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let http_resp = crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
+        let (http_resp, ssrf_refused_urls) =
+            crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
         let redirected = http_resp.final_url != url;
         let mut http_resp = crate::http::rendered_status_outcome(http_resp, redirected, &self.config)?;
         let raw_extras = http_resp.browser_extras.take();
@@ -154,6 +155,7 @@ impl CrawlEngine {
         )
         .await?;
         result.browser_used = true;
+        result.ssrf_refused_urls = ssrf_refused_urls;
         if let Some(ex) = raw_extras {
             result.browser = Some(crate::types::BrowserExtras {
                 eval_result: ex.eval_result,
@@ -236,6 +238,7 @@ impl CrawlEngine {
             screenshot_base64: None,
             downloaded_document: None,
             browser: None,
+            ssrf_refused_urls: Vec::new(),
         }
     }
 

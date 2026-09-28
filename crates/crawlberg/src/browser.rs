@@ -36,6 +36,8 @@ pub(crate) struct BrowserPage {
     /// HTTP redirects the browser followed. The native backend does not report its chain,
     /// so for it a landing on another URL counts as one.
     pub(crate) redirects: usize,
+    /// The URLs the SSRF policy refused for requests the page sent, credential-redacted.
+    pub(crate) refused: Vec<String>,
 }
 
 /// Fetch a URL using a headless Chrome browser via CDP.
@@ -69,18 +71,20 @@ pub(crate) async fn browser_fetch(
                 );
             }
             #[cfg(feature = "browser-native")]
-            let response = native_fetch(url, config, prior_cookies, native_executor).await?;
+            let (response, refused) = native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
-            let response = native_fetch(url, config, prior_cookies).await?;
+            let (response, refused) = native_fetch(url, config, prior_cookies).await?;
             BrowserPage {
                 redirects: usize::from(response.final_url != url),
                 response,
+                refused,
             }
         }
     };
     Ok(BrowserPage {
         response: crate::http::rendered_status_outcome(page.response, page.redirects > 0, config)?,
         redirects: page.redirects,
+        refused: page.refused,
     })
 }
 
@@ -441,7 +445,7 @@ async fn native_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     let native_executor = native_executor.ok_or_else(|| {
         CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
@@ -453,7 +457,7 @@ async fn native_fetch(
     _url: &str,
     _config: &CrawlConfig,
     _prior_cookies: Option<&[CookieInfo]>,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
     ))

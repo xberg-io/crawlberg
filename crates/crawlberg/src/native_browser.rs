@@ -21,7 +21,7 @@ pub(crate) async fn native_browser_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -51,7 +51,7 @@ async fn native_browser_fetch_inner(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<(HttpResponse, Vec<String>), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -68,7 +68,8 @@ async fn native_browser_fetch_inner(
         );
     }
 
-    let native_config = build_native_config(config, prior_cookies);
+    let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
+    let native_config = build_native_config(config, prior_cookies, ssrf);
 
     let timeout = config.browser.timeout;
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
@@ -112,7 +113,8 @@ async fn native_browser_fetch_inner(
         cookies: rendered.cookies.into_iter().map(cookie_info_from_native).collect(),
     };
 
-    Ok(HttpResponse {
+    let refused = std::mem::take(&mut *refused.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    let response = HttpResponse {
         status,
         content_type,
         body,
@@ -128,7 +130,8 @@ async fn native_browser_fetch_inner(
         // ~keep crate and is out of scope here; `browser::browser_fetch` warns the caller
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
-    })
+    };
+    Ok((response, refused))
 }
 
 /// Content type assumed when the render reports none.
@@ -205,6 +208,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 fn build_native_config(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
+    ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
 ) -> crawlberg_browser::adapter::NativeBrowserConfig {
     crawlberg_browser::adapter::NativeBrowserConfig {
         user_agent: config.user_agent.clone(),
@@ -220,7 +224,7 @@ fn build_native_config(
         wait_selector: config.browser.wait_selector.clone(),
         robots_user_agent: config.browser.robots_user_agent.clone(),
         capture_network_events: config.browser.capture_network_events,
-        ssrf: Some(crate::net::browser_policy::validator_for(&config.ssrf)),
+        ssrf: Some(ssrf),
         allow_file_access: false,
     }
 }

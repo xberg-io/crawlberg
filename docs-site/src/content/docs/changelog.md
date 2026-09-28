@@ -33,6 +33,10 @@ title: "Changelog"
     (`cberg_crawl_page_result_from_json`), where the core and the binding can be at different
     versions.
 
+- **`ScrapeResult` and `CrawlPageResult` gained `ssrf_refused_urls`.** The field is left out when
+  it is empty, so an older crawlberg still reads a result with no refused request. A result that
+  lists one is rejected by an older reader, because both types refuse unknown fields.
+
 - **The regenerated bindings add two required `CrawlPageResult` constructor arguments.** Code that
   constructs a `CrawlPageResult` by hand — Swift's `init`, Dart's `const CrawlPageResult({...})`,
   Ruby's `initialize`, the Java constructor, the Python signature — must pass `noindex_detected`
@@ -193,13 +197,19 @@ title: "Changelog"
   popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
   is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
   alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its
-  page and popups are closed while their requests are still refused, and the check is turned off
-  only after every request it refused has been failed. This applies to the Chromiumoxide backend.
-  (#153, #165, #168, #281)
+  page and popups are closed while their requests are still refused. The check is turned off only
+  after every refusal it had started when asked to stop has been delivered; a request Chrome
+  pauses after that is not checked. In `interact`, a main-frame navigation refused before the
+  actions fails the session with the SSRF policy error, as it fails a scrape. This applies to the
+  Chromiumoxide backend. (#153, #165, #168, #281)
 - **An `interact` action whose request the SSRF check refused was reported as successful.** The
-  action now fails with the SSRF policy error that names the refused URL. A refused request never
-  counts for an action other than the one that was running when Chrome paused it. This applies to
-  the Chromiumoxide backend. (#167)
+  action now fails with the SSRF policy error that names the refused URL. A refused request counts
+  for the action that was running when the check received it from Chrome, so on a busy host it can
+  count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
+  image, script, frame or `fetch()` keeps the page, and the page result now lists each refused
+  address in `ssrf_refused_urls`, with credentials redacted. Each refusal is also logged as a
+  warning. This applies to both browser backends, for scrape and crawl.
 - **Dropping a crawl stream did not stop the crawl at once.** The crawl noticed the dropped
   receiver only when it next sent a page, so failed fetches kept it starting requests, a fetch in
   flight went on to retry, and a seed still resolving retried to the end. The crawl now stops when

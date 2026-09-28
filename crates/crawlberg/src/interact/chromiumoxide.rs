@@ -274,6 +274,8 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 
 /// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
 /// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
+/// Fails with the SSRF policy error when a main-frame navigation was refused, during the load
+/// or the extra wait.
 // ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows
 // ~keep redirects/client-side navigations internally, so `watch` checks every request the
 // ~keep navigation makes, the same way the scrape/crawl path does (xberg-io/crawlberg#74).
@@ -306,6 +308,13 @@ async fn navigate_and_wait(
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
+    }
+    // ~keep A main-frame navigation the policy refused before the actions leaves Chrome's error
+    // ~keep page in place of the page, so the session fails as a scrape does. One an action
+    // ~keep starts fails that action instead.
+    watch.settle().await;
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
 
     Ok(None)

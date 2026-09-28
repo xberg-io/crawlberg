@@ -180,6 +180,10 @@ pub struct ScrapeResult {
     /// populated when `BrowserBackend::Native` was used for this request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub browser: Option<BrowserExtras>,
+    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, with
+    /// credentials redacted, each listed once. The page is kept; only the refused requests failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssrf_refused_urls: Vec<String>,
 }
 
 /// The result of crawling a single page during a crawl operation.
@@ -246,6 +250,10 @@ pub struct CrawlPageResult {
     /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
     #[serde(default)]
     pub nofollow_detected: bool,
+    /// URLs of the requests the page sent in browser mode that the SSRF policy refused, with
+    /// credentials redacted, each listed once. The page is kept; only the refused requests failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssrf_refused_urls: Vec<String>,
 }
 
 /// The result of a multi-page crawl operation.

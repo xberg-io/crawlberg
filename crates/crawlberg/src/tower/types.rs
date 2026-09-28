@@ -127,7 +127,8 @@ pub struct CrawlResponse {
     /// Where the content came from, when the fetcher followed redirects itself (the
     /// browser tier). `None` when the response belongs to the requested URL.
     ///
-    /// ~keep Read only by the native redirect chain; wasm has no browser tier to set it.
+    /// ~keep Read by the native redirect chain and by the page results; wasm has no browser
+    /// ~keep tier to set it.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub landed: Option<Landing>,
 }
@@ -140,4 +141,6 @@ pub struct CrawlResponse {
 pub struct Landing {
     pub url: String,
     pub redirects: usize,
+    /// The URLs the browser's SSRF check refused for requests the page sent, credential-redacted.
+    pub refused: Vec<String>,
 }

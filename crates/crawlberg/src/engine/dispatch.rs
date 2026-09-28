@@ -147,6 +147,7 @@ impl CrawlEngine {
                 landed: Some(crate::tower::Landing {
                     url: r.final_url,
                     redirects: page.redirects,
+                    refused: page.refused,
                 }),
             },
             extras,
@@ -313,7 +314,11 @@ mod tests {
             screenshot: None,
         };
 
-        let page = crate::browser::BrowserPage { response, redirects: 0 };
+        let page = crate::browser::BrowserPage {
+            response,
+            redirects: 0,
+            refused: vec!["http://127.0.0.1/secret".to_owned()],
+        };
         let (crawl, _extras) = CrawlEngine::browser_http_to_crawl(page);
 
         let etag = crawl.headers.get("etag").expect("a browser fetch must report its ETag");
@@ -324,5 +329,10 @@ mod tests {
             .expect("a browser fetch must report its X-Robots-Tag");
         assert_eq!(robots.as_slice(), ["noindex"]);
         assert_eq!(crawl.status, 304, "the status must survive the conversion too");
+        assert_eq!(
+            crawl.landed.map(|landed| landed.refused),
+            Some(vec!["http://127.0.0.1/secret".to_owned()]),
+            "the refused requests must survive the conversion"
+        );
     }
 }
