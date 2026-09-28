@@ -456,7 +456,8 @@ title: "Changelog"
 - **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
   answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
   `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
-  the sitemap's URL after redirects. (#339)
+  the sitemap's URL after redirects. A redirected index that lists its own address, the one it
+  answered from, is no longer fetched a second time. (#339, #374)
 
 - **A sitemap index's children on other hosts were fetched from the index's own host.** An index
   at `https://example.com/sitemap.xml` that listed `https://blog.example.com/sitemap.xml` and

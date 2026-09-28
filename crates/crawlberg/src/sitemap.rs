@@ -426,7 +426,8 @@ fn log_unparseable_loc(source_url: &str, source_url_parses: bool, loc_len: usize
 fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::HashSet<String>) -> bool {
     // ~keep `visited` holds every document the walk has committed to fetching, root
     // included, and is shared across the whole recursion — so its length is the
-    // running total this cap is expressed in.
+    // running total this cap is expressed in. An index that answered from another address
+    // after a redirect counts twice, once for each address.
     if visited.len() < MAX_SITEMAP_DOCUMENTS {
         return false;
     }
@@ -520,6 +521,10 @@ async fn process_sitemap_response_inner(
     if !is_sitemap_index(xml_body) {
         return collect_urlset_entries(document.final_url, xml_body, context, limit);
     }
+
+    // ~keep An index reached through a redirect is also recorded under the address that served
+    // ~keep it, so a child naming that address is a cycle rather than a second fetch.
+    visited.insert(document.final_url.to_owned());
 
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
         tracing::warn!(

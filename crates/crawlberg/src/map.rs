@@ -1412,6 +1412,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_fetches_a_redirected_index_that_lists_itself_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/index.xml").await;
+        mount_body(
+            &mock,
+            "/nested/index.xml",
+            "application/xml",
+            sitemap_index(&["index.xml", "child.xml"]),
+        )
+        .await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+        let requests = mock.received_requests().await.expect("wiremock records requests");
+        let index_gets = requests.iter().filter(|r| r.url.path() == "/nested/index.xml").count();
+        assert_eq!(index_gets, 1, "the index that served the redirect must be fetched once");
+    }
+
+    #[tokio::test]
     async fn map_resolves_a_redirected_index_child_against_the_url_after_the_redirect() {
         let mock = MockServer::start().await;
         let base = mock.uri();
