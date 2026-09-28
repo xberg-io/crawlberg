@@ -437,8 +437,13 @@ async fn too_many_redirects_refused() {
 /// The placeholder the credential redactor puts in place of an address it cannot read as one URL.
 const HIDDEN: &str = "[address hidden: it may carry credentials]";
 
+/// What the engine names a caller's address that does not parse, in place of its text.
+const UNPARSEABLE: &str = "(unparseable URL)";
+
 /// Credential-bearing addresses a caller can pass: `(address, secrets, url field, reason)`.
-/// The url field and reason are what a scrape's SSRF refusal must carry.
+/// The url field and reason are what a scrape's SSRF refusal must carry. The engine takes the
+/// userinfo off an address that parses with a host before any check, so such a row names the
+/// address without it, and an address that does not parse is named as [`UNPARSEABLE`].
 const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
     // Opaque: parses as scheme `user` with no host.
     ("user:token@host", &["token"], HIDDEN, "disallowed scheme: unrecognized"),
@@ -447,14 +452,14 @@ const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
     (
         "foo://alice:hunter2@example.com/",
         &["alice", "hunter2"],
-        "foo://***:***@example.com/",
+        "foo://example.com/",
         "disallowed scheme: unrecognized",
     ),
     // No scheme at all: the address fails to parse.
     (
         "alice@example.com",
         &["alice"],
-        HIDDEN,
+        UNPARSEABLE,
         "invalid URL: relative URL without a base",
     ),
     // A percent-encoded `@` inside the password.
@@ -467,7 +472,7 @@ const CREDENTIAL_ROWS: [(&str, &[&str], &str, &str); 6] = [
     (
         "foo://alice:hunt%40er2@example.com/",
         &["alice", "hunt", "er2"],
-        "foo://***:***@example.com/",
+        "foo://example.com/",
         "disallowed scheme: unrecognized",
     ),
 ];
@@ -567,20 +572,20 @@ const CRAWL_ROWS: [(&str, &[&str], &str, bool); 6] = [
     (
         "foo://alice:hunter2@example.com/",
         &["alice", "hunter2"],
-        "ssrf_policy_violation: foo://***:***@example.com/ - disallowed scheme: unrecognized",
+        "ssrf_policy_violation: foo://example.com/ - disallowed scheme: unrecognized",
         true,
     ),
     (
         "alice@example.com",
         &["alice"],
-        "other: invalid URL: relative URL without a base",
+        "ssrf_policy_violation: (unparseable URL) - invalid URL: relative URL without a base",
         false,
     ),
     ("user:hunt%40er2@host", &["hunt", "er2"], NO_HOST, true),
     (
         "foo://alice:hunt%40er2@example.com/",
         &["alice", "hunt", "er2"],
-        "ssrf_policy_violation: foo://***:***@example.com/ - disallowed scheme: unrecognized",
+        "ssrf_policy_violation: foo://example.com/ - disallowed scheme: unrecognized",
         true,
     ),
 ];
