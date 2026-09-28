@@ -3,6 +3,12 @@
 //! These types represent the schema loaded from per-vendor YAML files.
 //! See `loader.rs` for the parsing logic and `configs/` for example files.
 
+/// Placeholder every `Debug` impl in this module prints in place of a secret.
+///
+/// Must equal `crawlberg`'s own placeholder, so one redacted rendering is recognisable
+/// wherever it comes from. `redaction_placeholder_matches_crawlbergs` pins that.
+pub(crate) const REDACTED_PLACEHOLDER: &str = "***";
+
 /// HTTP method for the vendor's extraction endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -34,7 +40,7 @@ impl std::fmt::Debug for AuthScheme {
     // ~keep field carries the vendor API key (Zyte sends the key as the Basic username),
     // ~keep whereas `AuthConfig::Basic.username` is an account name.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let redacted = |secret: &String| (!secret.is_empty()).then_some("***");
+        let redacted = |secret: &String| (!secret.is_empty()).then_some(REDACTED_PLACEHOLDER);
         match self {
             Self::None => f.write_str("None"),
             Self::Bearer { token } => f.debug_struct("Bearer").field("token", &redacted(token)).finish(),
@@ -77,7 +83,7 @@ impl std::fmt::Debug for RequestBody {
     /// Redacted: a `${ENV}` value substituted into the template can be a vendor key.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Json { template: _ } => f.debug_struct("Json").field("template", &"***").finish(),
+            Self::Json { template: _ } => f.debug_struct("Json").field("template", &REDACTED_PLACEHOLDER).finish(),
         }
     }
 }
@@ -101,7 +107,10 @@ impl std::fmt::Debug for RequestShape {
             .field("body", body)
             .field(
                 "query",
-                &query.iter().map(|(name, _)| (name, "***")).collect::<Vec<_>>(),
+                &query
+                    .iter()
+                    .map(|(name, _)| (name, REDACTED_PLACEHOLDER))
+                    .collect::<Vec<_>>(),
             )
             .field("url_param", url_param)
             .finish()
@@ -190,8 +199,10 @@ pub struct ProviderConfig {
 }
 
 impl std::fmt::Debug for ProviderConfig {
-    /// Redacted: the endpoint prints without its userinfo and query, which can carry a vendor key.
-    /// The auth scheme and request shape redact their own secrets.
+    /// Redacted: the endpoint prints as its origin only, through the shared
+    /// `crawlberg::net::redact::redact_url_to_origin`, because its userinfo, path, query and
+    /// fragment can each carry a vendor key. The auth scheme and request shape redact their
+    /// own secrets.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             vendor_name,
@@ -204,12 +215,73 @@ impl std::fmt::Debug for ProviderConfig {
         } = self;
         f.debug_struct("ProviderConfig")
             .field("vendor_name", vendor_name)
-            .field("endpoint", &crawlberg::net::redact::redact_url_secrets(endpoint))
+            .field("endpoint", &crawlberg::net::redact::redact_url_to_origin(endpoint))
             .field("method", method)
             .field("auth", auth)
             .field("request", request)
             .field("response", response)
             .field("status_mapping", status_mapping)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A redacted value must render identically whichever crate produced it.
+    #[test]
+    fn redaction_placeholder_matches_crawlbergs() {
+        // ~keep crawlberg's `REDACTED_PLACEHOLDER` is crate-private, so pin against the one
+        // ~keep public function whose documented fail-closed return value *is* that
+        // ~keep placeholder. An input with no host takes that path.
+        assert_eq!(
+            REDACTED_PLACEHOLDER,
+            crawlberg::net::redact::redact_url_to_origin("not a url at all"),
+            "this crate's placeholder has drifted from crawlberg's"
+        );
+    }
+
+    /// Every secret-bearing field of a provider config prints the placeholder, not the value.
+    #[test]
+    fn provider_config_debug_prints_the_placeholder_for_every_secret() {
+        const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+        let config = ProviderConfig {
+            vendor_name: "querykey".into(),
+            endpoint: format!("https://api.vendor.example:8443/v1/{SECRET}?key={SECRET}"),
+            method: HttpMethod::Post,
+            auth: AuthScheme::BasicUsername {
+                username: SECRET.into(),
+            },
+            request: RequestShape {
+                body: Some(RequestBody::Json {
+                    template: format!(r#"{{"key":"{SECRET}","url":"{{{{url}}}}"}}"#),
+                }),
+                query: vec![("api_key".into(), SECRET.into())],
+                url_param: UrlParamLocation::BodyField,
+            },
+            response: ResponseShape {
+                kind: ResponseKind::RawBody,
+                cost_extraction: CostExtraction::None,
+                fallback_cost_usd: None,
+            },
+            status_mapping: vec![],
+        };
+
+        for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+            assert!(!rendered.contains(SECRET), "a secret printed: {rendered}");
+            assert!(
+                rendered.contains(REDACTED_PLACEHOLDER),
+                "the placeholder is missing: {rendered}"
+            );
+            assert!(
+                rendered.contains("https://api.vendor.example:8443"),
+                "the endpoint origin must stay visible: {rendered}"
+            );
+            assert!(
+                rendered.contains("api_key"),
+                "a query parameter name must stay visible: {rendered}"
+            );
+        }
     }
 }
