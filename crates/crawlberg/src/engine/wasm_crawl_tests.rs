@@ -719,6 +719,41 @@ async fn sequential_crawl_honours_nofollow_when_respecting_robots() {
     drop(mock);
 }
 
+/// The sequential loop reads each page through `CrawlEngine::scrape`, the same entry point
+/// `scrape()` uses, so a meta tag named for crawlberg's own product token (not only the generic
+/// `robots` name) must bind a page here too.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_honours_a_meta_tag_named_for_our_own_user_agent() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
+    )
+    .await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        respect_robots_txt: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert!(
+        result.pages[0].noindex_detected,
+        "a meta tag naming our own product token must be honoured by the sequential crawl loop"
+    );
+    drop(mock);
+}
+
 /// With robots not respected, the same links are all followed.
 ///
 /// ~keep A guard, not evidence the fix works: `CrawlConfig::default()` leaves
