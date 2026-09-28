@@ -228,32 +228,65 @@ pub(crate) mod tests {
         assert_eq!(seen.lock().expect("lock").len(), 1, "the request goes to the proxy");
     }
 
-    #[tokio::test]
-    async fn the_default_resolve_checks_every_address_through_validate() {
-        #[derive(Debug)]
-        struct DenyLoopback;
+    /// Permits the host name `localhost` and refuses every other host, by name only.
+    #[derive(Debug)]
+    struct OnlyTheNameLocalhost;
 
-        #[async_trait::async_trait]
-        impl SsrfValidator for DenyLoopback {
-            async fn validate(&self, url: &Url) -> Result<(), String> {
-                match url.host() {
-                    Some(url::Host::Ipv4(ip)) if ip.is_loopback() => Err(format!("loopback {ip}")),
-                    Some(url::Host::Ipv6(ip)) if ip.is_loopback() => Err(format!("loopback {ip}")),
-                    _ => Ok(()),
-                }
+    #[async_trait::async_trait]
+    impl SsrfValidator for OnlyTheNameLocalhost {
+        async fn validate(&self, url: &Url) -> Result<(), String> {
+            match url.host() {
+                Some(url::Host::Domain("localhost")) => Ok(()),
+                _ => Err(format!("{url} is not the name localhost")),
             }
         }
+    }
 
-        let error = DenyLoopback
+    #[tokio::test]
+    async fn a_validator_that_decides_by_name_connects_to_what_the_system_resolves() {
+        let (port, seen) = denied_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+        let ssrf: Arc<dyn SsrfValidator> = Arc::new(OnlyTheNameLocalhost);
+        let client = with_policy_resolver(reqwest::Client::builder(), false, &ssrf)
+            .build()
+            .expect("client");
+
+        // ~keep The default `resolve` does not check the addresses: this validator refuses every
+        // ~keep literal address, so a check there would refuse the name it permits.
+        let body = client
+            .get(format!("http://localhost:{port}/"))
+            .send()
+            .await
+            .expect("the name the validator permits must be connected to")
+            .text()
+            .await
+            .expect("body");
+
+        assert_eq!(body, "ok");
+        assert_eq!(seen.lock().expect("lock").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_default_validator_refuses_a_name_that_resolves_into_private_space() {
+        use crate::net::ssrf::DefaultSsrfValidator;
+
+        let denying: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::with_deny_private(true));
+        let error = denying
             .resolve("localhost")
             .await
-            .expect_err("localhost resolves to loopback, which validate refuses");
-        assert!(error.starts_with("loopback "), "the refusal is validate's: {error}");
+            .expect_err("localhost resolves to loopback, which the deny-list refuses");
+        assert!(
+            error.starts_with("localhost resolves to the private/internal address "),
+            "the refusal names the host and the address: {error}"
+        );
 
-        let error = DenyLoopback
-            .resolve("no-such-host.invalid")
+        let permitting: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::with_deny_private(false));
+        let addresses = permitting
+            .resolve("localhost")
             .await
-            .expect_err("an unresolvable host has no address to connect to");
-        assert!(error.starts_with("dns resolution failed"), "{error}");
+            .expect("with private networks allowed, loopback is permitted");
+        assert!(
+            !addresses.is_empty() && addresses.iter().all(IpAddr::is_loopback),
+            "{addresses:?}"
+        );
     }
 }

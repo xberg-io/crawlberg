@@ -37,8 +37,11 @@ title: "Changelog"
   a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
   to connect. A DNS answer that changed between the two lookups reached an address the policy
   denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
-  only to the addresses the policy checked, as the HTTP path already does. With a proxy, the
-  proxy resolves the target. (#451)
+  only to the addresses the policy checked, as the HTTP path already does. With a configured
+  proxy, the proxy resolves the target. Two setups that worked before are now refused, as on the
+  HTTP path: a proxy set by the `HTTP_PROXY` environment variable whose host name resolves to a
+  private address, and, when `crawlberg-browser` is used directly with its default policy, a host name
+  that resolves to a private address. A refusal now names the policy's reason. (#451)
 
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a

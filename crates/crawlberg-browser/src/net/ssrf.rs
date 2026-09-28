@@ -90,29 +90,25 @@ pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Resolve `host` and return the addresses a connection to it may use.
     ///
     /// The native clients connect only to the addresses this returns (see
-    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so the policy decision and
-    /// the connection share one lookup. `validate` alone cannot give that: its lookup is gone by
-    /// the time the client resolves the host again, and a rebinding DNS answer differs.
+    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so a validator that checks
+    /// resolved addresses does it here, on the lookup the connection uses. A check in `validate`
+    /// alone is lost: its lookup is gone by the time the client resolves the host again, and a
+    /// rebinding DNS answer differs.
     ///
-    /// The default resolves with the system resolver and passes each address through
-    /// [`validate`](Self::validate) as a literal-address URL. Override it when the policy also
-    /// decides by host name.
+    /// The default is the system lookup with no check, for a validator that decides by the URL
+    /// alone.
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
-        let addresses: Vec<IpAddr> = tokio::net::lookup_host((host, 0))
-            .await
-            .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
-            .map(|address| address.ip())
-            .collect();
-        if addresses.is_empty() {
-            return Err(format!("dns resolution failed: no addresses resolved for {host}"));
-        }
-        for ip in &addresses {
-            let mut literal = Url::parse("http://0.0.0.0/").expect("literal URL");
-            literal.set_ip_host(*ip).expect("an http URL accepts an IP host");
-            self.validate(&literal).await?;
-        }
-        Ok(addresses)
+        system_lookup(host).await
     }
+}
+
+/// Resolve `host` with the system resolver.
+async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
+    Ok(tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
+        .map(|address| address.ip())
+        .collect())
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -142,6 +138,14 @@ impl DefaultSsrfValidator {
         Self {
             deny_private: !parse_allow_private(raw.as_deref()),
         }
+    }
+}
+
+#[cfg(test)]
+impl DefaultSsrfValidator {
+    /// Build a validator with an explicit setting, independent of the environment.
+    pub(crate) fn with_deny_private(deny_private: bool) -> Self {
+        Self { deny_private }
     }
 }
 
@@ -184,6 +188,19 @@ impl SsrfValidator for DefaultSsrfValidator {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Refuses the host when any address it resolves to is in the deny-list.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        let addresses = system_lookup(host).await?;
+        if self.deny_private
+            && let Some(ip) = addresses.iter().find(|ip| is_ip_denied(**ip))
+        {
+            return Err(format!(
+                "{host} resolves to the private/internal address {ip}, which is not allowed"
+            ));
+        }
+        Ok(addresses)
     }
 }
 

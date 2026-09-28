@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
 use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
@@ -705,7 +706,7 @@ async fn send_preflight(
         )
         .send()
         .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", error_with_causes(&e))))?;
 
     let allowed_origin = preflight
         .headers()
@@ -843,7 +844,7 @@ async fn send_one_hop(
         if let Some(ref counter) = context.in_flight {
             counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
-        deno_error::JsErrorBox::generic(e.to_string())
+        deno_error::JsErrorBox::generic(error_with_causes(&e))
     })?;
     if let Some(ref counter) = context.in_flight {
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);

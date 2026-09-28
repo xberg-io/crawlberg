@@ -10,6 +10,7 @@ use url::Url;
 
 use crate::net::cookies::CookieJar;
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
+use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
 use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
@@ -470,7 +471,7 @@ impl HttpClient {
         self.in_flight.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let response = req_builder.send().await.map_err(|e| {
             self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            NetError::Network(format!("{}: {}", url, e))
+            NetError::Network(format!("{}: {}", url, error_with_causes(&e)))
         })?;
         self.in_flight.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         Ok(response)
@@ -981,6 +982,7 @@ mod tests {
     #[tokio::test]
     async fn a_rebinding_host_never_reaches_the_address_the_policy_denies() {
         use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+        use crate::page::PageError;
 
         let (port, seen) =
             denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
@@ -992,9 +994,18 @@ mod tests {
             .await
             .expect_err("the connection's lookup answers a denied address");
 
+        let NetError::Network(message) = &err else {
+            panic!("expected a refused connection, got {err:?}");
+        };
         assert!(
-            matches!(err, NetError::Network(_)),
-            "expected a refused connection, got {err:?}"
+            message.contains("denied by the test policy: 127.0.0.1"),
+            "the refusal must carry the policy's reason: {message}"
+        );
+        assert!(
+            !PageError::from(err)
+                .to_string()
+                .contains("Network error: Network error"),
+            "a page error names the network once"
         );
         assert!(
             seen.lock().expect("lock").is_empty(),

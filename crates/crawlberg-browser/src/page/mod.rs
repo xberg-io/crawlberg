@@ -492,6 +492,10 @@ pub enum PageError {
 
 impl From<NetError> for PageError {
     fn from(e: NetError) -> Self {
-        PageError::NetworkError(e.to_string())
+        match e {
+            // ~keep Both variants print "Network error: "; keep one.
+            NetError::Network(message) => PageError::NetworkError(message),
+            other => PageError::NetworkError(other.to_string()),
+        }
     }
 }
