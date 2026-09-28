@@ -24,10 +24,11 @@ title: "Changelog"
 - **Feeds, hreflang alternates, canonical links and icons reported `file:` and `blob:` addresses.**
   They still used the older check from #307, which drops only `data:`, `javascript:` and
   `vbscript:` addresses, so a `file:///etc/passwd` feed, hreflang or canonical link, or a `file:` or
-  `blob:` icon, was still reported, though the crawler can never fetch it. All four now use the
-  same rule as the links list, images and asset discovery: only `http` and `https` addresses are
-  reported. An icon with an inline `data:` address, kept before as a deliberate exception, is no
-  longer reported either. (#472)
+  `blob:` icon, was still reported, though the crawler can never fetch it. Feeds, hreflang
+  alternates and canonical links now use the same rule as the links list, images and asset
+  discovery: only `http` and `https` addresses are reported. Icons use that rule too, but keep
+  #307's exception for an inline `data:` address: a `data:` icon is a real, usable icon that needs
+  no fetch, unlike a `file:` or `blob:` address, so it still comes back. (#472)
 
 - **The links list, images and asset discovery reported `file:` and `blob:` addresses.** A
   `file:///etc/passwd` link, a `<img src="file:///x.png">`, or a stylesheet or script with a

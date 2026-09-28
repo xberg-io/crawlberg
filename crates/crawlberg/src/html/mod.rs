@@ -106,10 +106,11 @@ pub(crate) fn is_fetchable_scheme(url: &Url) -> bool {
 }
 
 /// Whether `address` parses as an absolute URL whose scheme [`is_fetchable_scheme`] rejects. The
-/// links list, image discovery, asset discovery, the feed, hreflang, favicon and canonical links
-/// report only addresses the crawler can act on, so they all skip these. An address that does not
-/// parse has no scheme and is not judged here: the call sites that reach this keep the raw,
-/// unresolved href instead.
+/// links list, image discovery, asset discovery, the feed, hreflang and canonical links report
+/// only addresses the crawler can act on, so they all skip these. Favicons skip these too, except
+/// an inline `data:` icon, kept as a deliberate exception: it is a real, usable icon that needs no
+/// fetch, unlike a `file:` or `blob:` address. An address that does not parse has no scheme and is
+/// not judged here: the call sites that reach this keep the raw, unresolved href instead.
 pub(crate) fn has_unfetchable_scheme(address: &str) -> bool {
     Url::parse(address).is_ok_and(|url| !is_fetchable_scheme(&url))
 }

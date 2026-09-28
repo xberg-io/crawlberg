@@ -8,7 +8,7 @@ use url::Url;
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
 use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
-use super::{get_attr, get_url_attr, has_rel, has_unfetchable_scheme, mime_essence, resolve_url};
+use super::{get_attr, get_url_attr, has_rel, has_scheme, has_unfetchable_scheme, mime_essence, resolve_url};
 
 /// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
 /// document's base URL. A link with a blank `href`, or one whose address the crawler cannot
@@ -94,7 +94,8 @@ const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 
 /// Extract favicon and icon links from a parsed HTML document, resolved against the document's
 /// base URL. A link with a blank `href`, or one whose address the crawler cannot fetch, is
-/// skipped.
+/// skipped; an inline `data:` icon is kept, since it is a real, usable icon that needs no fetch,
+/// unlike a `file:` or `blob:` address.
 pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let parser = dom.parser();
     let mut favicons = Vec::new();
@@ -111,7 +112,7 @@ pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInf
                 continue;
             };
             let url = resolve_url(&raw_href, base_url);
-            if has_unfetchable_scheme(&url) {
+            if has_unfetchable_scheme(&url) && !has_scheme(&url, "data") {
                 continue;
             }
             let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
@@ -247,10 +248,11 @@ mod tests {
     }
 
     #[test]
-    fn skips_a_favicon_with_a_file_or_blob_address() {
+    fn skips_a_favicon_with_a_file_or_blob_address_but_keeps_a_data_icon() {
         let dom = parse(concat!(
             r#"<link rel="icon" href="file:///etc/passwd">"#,
             r#"<link rel="icon" href="blob:https://example.com/x">"#,
+            r#"<link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">"#,
             r#"<link rel="icon" href="fav.ico">"#,
         ));
         let base = Url::parse("https://example.com/").unwrap();
@@ -258,8 +260,9 @@ mod tests {
         let urls: Vec<&str> = favicons.iter().map(|f| f.url.as_str()).collect();
         assert_eq!(
             urls,
-            ["https://example.com/fav.ico"],
-            "a file: or blob: icon must be dropped, the crawler can never fetch it, got {favicons:?}"
+            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"],
+            "a file: or blob: icon must be dropped, the crawler can never fetch it, but a data: \
+             icon is a real, usable icon and must be kept, got {favicons:?}"
         );
     }
 

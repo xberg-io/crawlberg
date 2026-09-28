@@ -765,7 +765,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scrape_skips_favicons_with_an_unfetchable_address() {
+    async fn scrape_skips_script_favicons_and_keeps_a_data_favicon() {
         let result = scrape_head(
             "<link rel=\"icon\" href=\"javascript:alert(1)\">\
              <link rel=\"shortcut icon\" href=\"VBScript:msgbox(1)\">\
@@ -779,8 +779,9 @@ mod tests {
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
         assert_eq!(
             urls(favicons, |f| &f.url),
-            ["https://example.com/fav.ico"],
-            "an inline data: icon is no longer kept: only http and https addresses are fetchable"
+            ["data:image/png;base64,iVBORw0KGgo=", "https://example.com/fav.ico"],
+            "a data: icon is a real, usable icon and stays; a file: or blob: icon names \
+             something the crawler can never fetch and is dropped"
         );
     }
 
