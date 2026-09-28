@@ -30,6 +30,9 @@ impl Page {
         body: &str,
     ) -> Result<(), PageError> {
         let url = Url::parse(url_str).map_err(|e| PageError::InvalidUrl(e.to_string()))?;
+        // ~keep Refused before robots.txt or the document is fetched, and before the URL is
+        // ~keep recorded as the page's own, so nothing downstream sees the userinfo.
+        crate::net::credential::refuse_userinfo(&url).map_err(|e| PageError::NetworkError(e.to_string()))?;
 
         self.lifecycle = LifecycleState::Loading;
         self.url = Some(url.clone());

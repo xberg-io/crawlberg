@@ -11,8 +11,9 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::html::selectors::{SEL_IMG_SRC, SEL_LINK_REL, SEL_SCRIPT_SRC};
-use crate::html::{effective_base_url, get_url_attr, has_rel};
+use crate::html::{INLINE_SCHEMES, effective_base_url, get_url_attr, has_rel};
 use crate::http::http_fetch;
+use crate::net::userinfo::resolve;
 use crate::types::{AssetCategory, CrawlConfig, DownloadedAsset};
 
 /// A reference to an asset discovered in an HTML page.
@@ -33,7 +34,8 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && has_rel(tag, "stylesheet")
                 && let Some(href) = get_url_attr(tag, "href")
-                && let Ok(url) = base_url.join(&href)
+                && let Some(url) = resolve(base_url, &href)
+                && !INLINE_SCHEMES.contains(&url.scheme())
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -48,7 +50,8 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Ok(url) = base_url.join(&src)
+                && let Some(url) = resolve(base_url, &src)
+                && !INLINE_SCHEMES.contains(&url.scheme())
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -63,8 +66,8 @@ pub(crate) fn discover_assets(dom: &VDom<'_>, document_url: &Url) -> Vec<AssetRe
         for handle in iter {
             if let Some(tag) = handle.get(parser).and_then(|n| n.as_tag())
                 && let Some(src) = get_url_attr(tag, "src")
-                && let Ok(url) = base_url.join(&src)
-                && url.scheme() != "data"
+                && let Some(url) = resolve(base_url, &src)
+                && !INLINE_SCHEMES.contains(&url.scheme())
             {
                 assets.push(AssetRef {
                     url: url.to_string(),
@@ -223,6 +226,32 @@ mod tests {
     }
 
     #[test]
+    fn script_image_sources_are_skipped_in_any_spelling() {
+        assert_eq!(
+            discovered(
+                r#"<img src="JavaScript:alert(1)"><img src="vbscript:msgbox(1)"><img src="java&#9;script:x">
+                <img src="i.png">"#,
+                "https://example.com/page"
+            ),
+            ["https://example.com/i.png"]
+        );
+    }
+
+    #[test]
+    fn inline_and_script_stylesheets_and_scripts_are_skipped() {
+        assert_eq!(
+            discovered(
+                r#"<link rel="stylesheet" href="JavaScript:alert(1)"><link rel="stylesheet" href="data:text/css,a{}">
+                <link rel="stylesheet" href="s.css"><script src="vbscript:msgbox(1)"></script>
+                <script src="DATA:text/javascript,x"></script><script src="java&#9;script:x"></script>
+                <script src="j.js"></script>"#,
+                "https://example.com/page"
+            ),
+            ["https://example.com/s.css", "https://example.com/j.js"]
+        );
+    }
+
+    #[test]
     fn assets_resolve_against_the_base_href() {
         assert_eq!(
             discovered(
@@ -245,5 +274,24 @@ mod tests {
         let base_url = Url::parse("https://example.com/page").expect("valid base URL");
         let urls: Vec<String> = discover_assets(&dom, &base_url).into_iter().map(|a| a.url).collect();
         assert_eq!(urls, ["https://example.com/i.png"]);
+    }
+
+    #[test]
+    fn a_discovered_asset_url_loses_its_userinfo() {
+        assert_eq!(
+            discovered(
+                r#"<base href="http://user:s3cret@example.com/b/">
+                <link rel="stylesheet" href="http://user:s3cret@example.com/a.css">
+                <script src="http://user:s3cret@example.com/a.js"></script>
+                <img src="http://user:s3cret@example.com/a.png"><img src="i.png">"#,
+                "https://example.com/"
+            ),
+            [
+                "http://example.com/a.css",
+                "http://example.com/a.js",
+                "http://example.com/a.png",
+                "http://example.com/b/i.png"
+            ]
+        );
     }
 }
