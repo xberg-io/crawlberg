@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, SsrfValidator};
+pub use crate::net::OriginHeaders;
+pub use crate::net::ssrf::{DEFAULT_DENY_NET_CIDRS, DefaultSsrfValidator, NAMED_SCHEMES, SsrfValidator};
 pub use crate::page::PageError;
 
 use crate::context::BrowserContext;
@@ -102,6 +103,12 @@ pub struct NativeBrowserConfig {
     /// Whether `file://` URLs may be fetched. Off by default: a remote CDP client must
     /// not be able to point the browser at local files.
     pub allow_file_access: bool,
+    /// Headers sent only to one host, such as a credential, on every request and redirect
+    /// hop there, including a page script's `fetch()` and module imports.
+    ///
+    /// Unlike `extra_headers`, which every host receives, these never reach a third-party
+    /// subresource or a cross-host redirect target.
+    pub origin_headers: Option<OriginHeaders>,
 }
 
 impl std::fmt::Debug for NativeBrowserConfig {
@@ -125,6 +132,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             capture_network_events,
             ssrf,
             allow_file_access,
+            origin_headers,
         } = self;
         f.debug_struct("NativeBrowserConfig")
             .field("user_agent", user_agent)
@@ -142,6 +150,7 @@ impl std::fmt::Debug for NativeBrowserConfig {
             .field("capture_network_events", capture_network_events)
             .field("ssrf", ssrf)
             .field("allow_file_access", allow_file_access)
+            .field("origin_headers", origin_headers)
             .finish()
     }
 }
@@ -173,6 +182,7 @@ impl Default for NativeBrowserConfig {
             capture_network_events: false,
             ssrf: None,
             allow_file_access: false,
+            origin_headers: None,
         }
     }
 }
@@ -409,6 +419,10 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
     context
         .http_client
         .set_extra_headers(config.extra_headers.clone())
+        .await;
+    context
+        .http_client
+        .set_origin_headers(config.origin_headers.clone())
         .await;
 
     for cookie in &config.prior_cookies {

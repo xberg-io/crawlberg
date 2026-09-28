@@ -150,7 +150,8 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request.
+    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+    /// does not carry them.
     #[serde(default)]
     pub custom_headers: HashMap<String, String>,
     /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -318,6 +319,14 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub dispatch: Option<DispatchProfile>,
+    /// The seed host that credentials are scoped to, and the credentials the seed URL carried.
+    ///
+    /// Set by the engine when it admits a seed URL; a caller cannot build one and leaves it
+    /// `None`.
+    #[doc(hidden)]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub credential_scope: Option<crate::net::CredentialScope>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -403,6 +412,7 @@ impl std::fmt::Debug for CrawlConfig {
             ssrf,
             ssrf_deny_private_explicit,
             dispatch,
+            credential_scope,
             #[cfg(feature = "browser")]
             browser_pool,
             proxy_provider,
@@ -465,6 +475,7 @@ impl std::fmt::Debug for CrawlConfig {
         debug.field("ssrf", ssrf);
         debug.field("ssrf_deny_private_explicit", ssrf_deny_private_explicit);
         debug.field("dispatch", dispatch);
+        debug.field("credential_scope", credential_scope);
         #[cfg(feature = "browser")]
         debug.field("browser_pool", browser_pool);
         debug.field("proxy_provider", proxy_provider);
@@ -532,6 +543,7 @@ impl Default for CrawlConfig {
             ssrf: SsrfPolicy::from_env(),
             ssrf_deny_private_explicit: None,
             dispatch: None,
+            credential_scope: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]
