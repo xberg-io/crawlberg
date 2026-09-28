@@ -33,6 +33,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
 - **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
   of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
   keys and plugin callbacks each had to redact it, and several did not. Relative links and
