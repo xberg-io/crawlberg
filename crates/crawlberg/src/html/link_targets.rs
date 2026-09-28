@@ -55,7 +55,7 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ];
 
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
-/// base URL (its first `<base href>`, else `document_url`), using WHATWG URL parsing.
+/// base URL (see [`effective_base_url`]), using WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
 /// the address the links resolve against.
