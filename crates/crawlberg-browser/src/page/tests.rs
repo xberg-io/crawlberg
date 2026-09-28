@@ -345,27 +345,18 @@ async fn a_module_src_blocked_by_interception_is_not_run() {
     assert_eq!(event_urls(&page, "Script"), vec![format!("{origin}/ok.js")]);
 }
 
-/// Navigates to `html` with interception blocking every address that ends in `blocked.js`, and
-/// returns the page with the request lines the server saw.
+/// Navigates to `html` with interception blocking every address that ends in `blocked.js`, serving
+/// each `(path, body)` as JavaScript, and returns the page with the request lines the server saw.
 async fn navigate_intercepted_recording(html: &str, extra: &[(&str, &str)]) -> (Page, Vec<String>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let mut entries = vec![("/".to_string(), ok_response("text/html", html))];
-    entries.extend(
-        extra
-            .iter()
-            .map(|(path, body)| ((*path).to_string(), ok_response("text/javascript", body))),
-    );
-    let requests = serve_raw_recording(listener, entries.into_iter().collect());
-
-    let mut page = test_page();
-    page.intercept_enabled = true;
-    page.intercept_block_patterns = vec!["*blocked.js".to_string()];
-    page.navigate(&format!("http://{addr}/"))
-        .await
-        .expect("navigation must succeed");
-    let requests = requests.lock().expect("lock").clone();
-    (page, requests)
+    let responses: Vec<(&str, String)> = extra
+        .iter()
+        .map(|(path, body)| (*path, ok_response("text/javascript", body)))
+        .collect();
+    let responses: Vec<(&str, &str)> = responses
+        .iter()
+        .map(|(path, response)| (*path, response.as_str()))
+        .collect();
+    navigate_intercepted_raw(html, &responses).await
 }
 
 fn requested(requests: &[String], path: &str) -> bool {
@@ -415,6 +406,79 @@ async fn an_inline_module_import_blocked_by_interception_is_not_fetched() {
     assert!(
         !requested(&requests, "/blocked.js"),
         "a blocked import is never requested: {requests:?}"
+    );
+}
+
+/// Serves `responses` beside the page `html`, navigates with interception blocking every address
+/// that ends in `blocked.js`, and returns the page with the request lines the server saw.
+async fn navigate_intercepted_raw(html: &str, responses: &[(&str, &str)]) -> (Page, Vec<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let page_response = ok_response("text/html", html);
+    let mut entries = vec![("/", page_response.as_str())];
+    entries.extend_from_slice(responses);
+    let requests = serve_raw_recording(listener, raw(&entries));
+
+    let mut page = test_page();
+    page.intercept_enabled = true;
+    page.intercept_block_patterns = vec!["*blocked.js".to_string()];
+    page.navigate(&format!("http://{addr}/"))
+        .await
+        .expect("navigation must succeed");
+    let requests = requests.lock().expect("lock").clone();
+    (page, requests)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_redirect_to_a_blocked_address_is_not_fetched() {
+    let html = "<html><body><script type=\"module\" src=\"/hop.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let redirect = "HTTP/1.1 302 Found\r\nLocation: /x/blocked.js\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let (mut page, requests) = navigate_intercepted_raw(
+        html,
+        &[
+            ("/hop.js", redirect),
+            ("/x/blocked.js", &ok_response("text/javascript", &push("blocked"))),
+            ("/ok.js", &ok_response("text/javascript", &push("ok"))),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["ok"]);
+    assert!(requested(&requests, "/hop.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/x/blocked.js"),
+        "a redirect to a blocked address is never followed: {requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_dynamic_import_of_a_blocked_address_is_not_fetched() {
+    let html = "<html><body><script>\
+                import('/fine.js').then(() => { globalThis.fine = true; });\
+                import('/blocked.js').then(() => { globalThis.blocked = 'loaded'; }, () => { globalThis.blocked = 'refused'; });\
+                </script></body></html>";
+    let (mut page, requests) = navigate_intercepted_raw(
+        html,
+        &[
+            ("/fine.js", &ok_response("text/javascript", "export {};")),
+            ("/blocked.js", &ok_response("text/javascript", "export {};")),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        global(
+            &mut page,
+            "JSON.stringify([!!globalThis.fine, globalThis.blocked || null])"
+        ),
+        serde_json::json!("[true,\"refused\"]"),
+        "the allowed import loads and the blocked one is refused"
+    );
+    assert!(requested(&requests, "/fine.js"), "{requests:?}");
+    assert!(
+        !requested(&requests, "/blocked.js"),
+        "a blocked import() is never requested: {requests:?}"
     );
 }
 

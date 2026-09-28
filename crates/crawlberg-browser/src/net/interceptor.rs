@@ -16,7 +16,8 @@ pub trait RequestInterceptor {
 
 /// Whether `url` matches one of the interception block patterns: `*` blocks everything,
 /// `*text*` matches a URL containing `text`, `*suffix` and `prefix*` match its end and start,
-/// and a pattern without `*` matches a URL containing it.
+/// and any other pattern, including one with `*` only in the middle such as `a*b`, matches a URL
+/// that contains it literally, star included.
 pub(crate) fn matches_block_pattern(patterns: &[String], url: &str) -> bool {
     patterns.iter().any(|pattern| {
         if pattern == "*" {
