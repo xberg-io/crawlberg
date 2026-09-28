@@ -11,6 +11,7 @@ mod link_targets;
 mod links;
 mod metadata;
 mod raw_text;
+mod real_tags;
 pub(crate) mod selectors;
 
 use std::borrow::Cow;

@@ -155,35 +155,57 @@ pub struct BrowserConfig {
     pub session_affinity: bool,
 }
 
-// ~keep Manual, not derived: `endpoint` may carry userinfo (ws://user:pass@host/), and this
-// config reaches `tracing::debug!(?config, ...)` and any `{:?}` capture of a `CrawlConfig`
-// (whose derived `Debug` calls this one), so a derived impl here would put the password
-// wherever a debug print of the crawl configuration reaches. xberg-io/crawlberg#473.
 impl std::fmt::Debug for BrowserConfig {
+    /// Redacted: a CDP `endpoint` is itself the capability (the GUID in
+    /// `ws://host:9222/devtools/browser/<GUID>` drives the browser), so only its scheme, host
+    /// and port print, and an endpoint that does not parse prints as `***`. `eval_script`
+    /// prints as `***` with its length, because a script can embed a token. `proxy` redacts
+    /// its own secrets. The exhaustive destructure makes a new field a compile error here,
+    /// not a silent gap.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
-    // lossy_sanitized_surface. The derived Debug this replaced emitted no method at all.
+    // lossy_sanitized_surface.
     #[cfg_attr(alef, alef(skip))]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            mode,
+            backend,
+            endpoint,
+            timeout,
+            overall_timeout,
+            shutdown_timeout,
+            wait,
+            wait_selector,
+            extra_wait,
+            proxy,
+            block_url_patterns,
+            eval_script,
+            robots_user_agent,
+            capture_network_events,
+            session_affinity,
+        } = self;
         f.debug_struct("BrowserConfig")
-            .field("mode", &self.mode)
-            .field("backend", &self.backend)
+            .field("mode", mode)
+            .field("backend", backend)
             .field(
                 "endpoint",
-                &self.endpoint.as_deref().map(crate::net::redact_url_credentials),
+                &endpoint.as_deref().map(crate::net::redact::redact_url_to_origin),
             )
-            .field("timeout", &self.timeout)
-            .field("overall_timeout", &self.overall_timeout)
-            .field("shutdown_timeout", &self.shutdown_timeout)
-            .field("wait", &self.wait)
-            .field("wait_selector", &self.wait_selector)
-            .field("extra_wait", &self.extra_wait)
-            .field("proxy", &self.proxy)
-            .field("block_url_patterns", &self.block_url_patterns)
-            .field("eval_script", &self.eval_script)
-            .field("robots_user_agent", &self.robots_user_agent)
-            .field("capture_network_events", &self.capture_network_events)
-            .field("session_affinity", &self.session_affinity)
+            .field("timeout", timeout)
+            .field("overall_timeout", overall_timeout)
+            .field("shutdown_timeout", shutdown_timeout)
+            .field("wait", wait)
+            .field("wait_selector", wait_selector)
+            .field("extra_wait", extra_wait)
+            .field("proxy", proxy)
+            .field("block_url_patterns", block_url_patterns)
+            .field(
+                "eval_script",
+                &eval_script.as_deref().map(crate::net::redact::redacted_text),
+            )
+            .field("robots_user_agent", robots_user_agent)
+            .field("capture_network_events", capture_network_events)
+            .field("session_affinity", session_affinity)
             .finish()
     }
 }

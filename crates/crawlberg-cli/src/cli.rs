@@ -102,12 +102,10 @@ pub fn parse_browser_endpoint(value: &str) -> Result<String, String> {
     if crawlberg::net::is_websocket_scheme(value) {
         Ok(value.to_owned())
     } else {
-        // ~keep `value` may carry userinfo (ws://user:pass@host/); redact before it reaches
-        // this error, which clap prints to the terminal and which callers may log.
-        let redacted = crawlberg::net::redact_url_credentials(value);
-        Err(format!(
-            "browser endpoint must be a WebSocket URL starting with ws:// or wss://, got: {redacted:?}"
-        ))
+        // ~keep Do not echo the value, not even redacted: the same rule as the library's own
+        // ~keep `browser.endpoint` check. The endpoint is a capability (its userinfo, path or
+        // ~keep `?token=` drives the browser), and callers may log this error.
+        Err("browser endpoint must be a WebSocket URL starting with ws:// or wss://".to_owned())
     }
 }
 
@@ -481,11 +479,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_browser_endpoint_error_never_contains_a_password() {
-        let err = parse_browser_endpoint("http://user:hunter2@127.0.0.1:9222").unwrap_err();
+    fn parse_browser_endpoint_error_does_not_echo_the_endpoint() {
+        let err = parse_browser_endpoint("http://user:hunter2@127.0.0.1:9222/devtools?token=abc123").unwrap_err();
         assert!(
             !err.contains("hunter2"),
             "password must not survive into the error, got: {err}"
+        );
+        assert!(
+            !err.contains("abc123"),
+            "the endpoint token must not survive into the error, got: {err}"
         );
     }
 

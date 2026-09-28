@@ -611,7 +611,7 @@ mod tests {
         let dom = crate::html::parse_html(&masked).expect("valid HTML");
         let document_url = url::Url::parse("https://example.com/page").expect("valid document URL");
         let base_url = crate::html::effective_base_url(&dom, &document_url);
-        crate::html::extract_links(&dom, &base_url)
+        crate::html::extract_links(&masked, &base_url)
             .into_iter()
             .map(|link| link.url)
             .collect()

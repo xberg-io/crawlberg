@@ -6,6 +6,17 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
+  The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
+  ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
+  carry, so an allowlist entry for such an address has to name that IPv4 range instead of the
+  IPv6 one. IPv4-mapped and `64:ff9b::/96` addresses already behaved this way.
+
+- **The browser crate's fallback validator names the denial reason.** `DefaultSsrfValidator`
+  messages now end with the reason the core policy reports (`loopback`, `private_network`,
+  `link_local`, `unspecified`, `multicast`, `unique_local`). Code that compares the whole message
+  must allow for the new suffix.
+
 - **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
   userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
   that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
@@ -33,6 +44,56 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
+  within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
+  before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
+  all reached the private host 10.0.0.5 with `deny_private` on. The IPv4-compatible (`::/96`),
+  IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
+  `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
+  address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
+  connect-time resolver and the browser crate's fallback validator apply the same rules. An
+  address that only has the shape of one of these forms is refused for the address it seems to
+  carry: `2001:db8::5efe:1:1` reads as `0.1.0.1` and is refused. (#109)
+
+- **A Teredo address reached the private IPv4 address it carries.** A `2001:0::/32` address
+  stores the client's IPv4 address inverted in its last 32 bits, and nothing decoded it, so
+  `http://[2001:0:4136:e378:0:ffff:5601:5601]/` reached 169.254.169.254 with `deny_private` on.
+  The address is now decoded and checked like the other embedded forms, so a Teredo address that
+  carries a public IPv4 address still works. (#196)
+
+- **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
+  The IPv4 address in the last 32 bits, where a /96 network puts it, is now checked, so
+  `http://[64:ff9b:1::a00:5]/` is refused. A /48, /56 or /64 network puts the address elsewhere
+  and its unused bits read as zeros at that position, so a reading whose last three octets are
+  zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
+  network sizes are checked as IPv6 only, as before. (#108)
+
+- **A denial reason could name an address the allowlist permits.** The reason was classified from
+  the first deny-listed candidate rather than the first one the allowlist did not admit, so an
+  allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
+  `private_network`. The allow or deny decision itself was always correct.
+
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
@@ -134,20 +195,17 @@ All notable changes to crawlberg are documented here.
 - **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
   address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
   scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, so
-  a websocket endpoint with no host is still refused, and a rejection error redacts any
-  `user:pass@` credentials the address carries instead of printing them in full. (#343)
+  a websocket endpoint with no host is still refused. The CLI's rejection error no longer prints
+  the address, the same as the config check. (#343)
 
 - **A failed connection to a remote browser printed its password.** When crawlberg could not
-  connect to a `browser.endpoint` carrying `user:pass@` credentials, the connect error and the
-  browser pool's debug output both showed the address as configured, password included. Both
-  now redact any credentials from the address first, the same way the config and CLI checks
-  already do. (#424)
+  connect to a `browser.endpoint`, the connect error showed the address as configured, with its
+  `user:pass@` credentials and its CDP path token. The error now prints only the scheme, the host
+  and the port. (#424)
 
-- **Two more places printed a browser endpoint's password.** The interact backend built the
-  same connect error as the launch path, without redacting the address, and the browser
-  configuration's debug output showed `endpoint` as configured, so any debug print of a crawl
-  configuration carried the password. Both now redact credentials the same way the launch path
-  and the config and CLI checks already do. (#473)
+- **The interact backend's connect error printed a browser endpoint's password.** It built the
+  same connect error as the launch path, without redacting the address. It now prints only the
+  origin, the same as the launch path. (#473)
 
 - **The SSRF check could print a credential as the refused scheme.** An address written without
   a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
@@ -301,6 +359,74 @@ All notable changes to crawlberg are documented here.
   list, are checked on the address after it resolves against the base, so an address that resolves
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
+
+- **Link extraction could disagree with the markdown about the same tag.** Link extraction read
+  every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
+  could read a different tag boundary than the page's real structure, so the links list showed no
+  link, or the wrong address, for a link the markdown still carried. Each real `<a>` start tag is
+  now rewritten into unambiguous form first -- one copy of each attribute, double-quoted, as
+  html5ever's tokenizer reads it -- so link extraction and the markdown agree on the same tag. This
+  reads every page's links a second time and is slower on a link-heavy page; a well-formed `<a>`
+  tag is rewritten to itself. (#294)
+- **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
+  query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
+  URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
+  `fetch` that read `final_url` or formatted the response with `{:?}` saw the key. Crawl and scrape
+  results never carried it, because the engine does not read a bypass response's `final_url`.
+  `final_url` is now empty, as the field's contract allows when the vendor does not report the
+  resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
+
+- **A caller's debug output of a config printed its secrets.** Crawlberg does not log these types,
+  but a caller that formats one with `{:?}`, such as `tracing::debug!(?config)`, a panic or an
+  `expect` message, printed a bypass provider config's API key, token or auth header value. The
+  same held for custom request headers, a CDP endpoint token, proxy credentials in a browser session
+  key, the REST API token, cookie values and the native browser's proxy URL. Each now prints `***`
+  in place of the secret and keeps the non-secret fields. A browser `eval_script` prints as `***`
+  with its length, because a script can embed a token. This covers the Rust types only: the
+  language bindings define their own config types, and their `repr` and `inspect` output is
+  unchanged. (#118, #290)
+- **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
+  whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached the error
+  text and, through it, an API error body. The error now names only the field and prints no part
+  of the value, not even redacted: the endpoint is a capability, and the field name is enough to
+  find it. The `proxy.url` error has not carried the value since #401. (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
+
+- **A caller's debug output of a bypass provider config printed `${ENV}` values.** Crawlberg
+  prints only the vendor name for a provider, but a caller that formats a loaded `ProviderConfig`
+  with `{:?}` saw a secret substituted into the endpoint, a fixed query value or the JSON body
+  template. The endpoint now prints as its origin only: the scheme, the host and a non-default
+  port, or `***` when it does not parse as an absolute URL or has no host. Each query value prints
+  as `***`. The body template prints as `***` with its length, and with whether it holds the
+  `{{url}}` marker. (#144, #152)
+- **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
+  `ws://host:9222/devtools/browser/<GUID>`, and the GUID in the path is the capability that drives
+  the browser. Redaction covered only the userinfo and the query, so the debug output of
+  `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
+  that did not parse printed whole. Both now print through
+  `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
+  uses, which prints `***` for a value without a host. A proxy URL now prints as its origin too,
+  in a `ProxyConfig`, a browser session key and a static proxy provider. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  no more secret than the host. Two pooled endpoints on the same host and port now print the same.
+  (#152)
+- **A failed bypass request logs its cause.** The send and body-read errors carry only the error
+  kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
+  chain when a send or a body read fails. (#89)
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
 
 ## [1.8.0] - 2026-09-27
 

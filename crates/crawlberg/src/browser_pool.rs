@@ -161,19 +161,26 @@ pub struct BrowserPoolConfig {
     pub launch_timeout: Duration,
 }
 
-// ~keep Manual, not derived: `browser_endpoint` may carry userinfo (ws://user:pass@host/),
-// and `BrowserPool`'s own `Debug` impl below prints this config wholesale, so a derived
-// impl here would put the password wherever that reaches a log or an error's Debug output.
 impl std::fmt::Debug for BrowserPoolConfig {
+    /// Redacted: a CDP `browser_endpoint` is itself the capability, so only its scheme, host
+    /// and port print. See `crate::net::redact::redact_url_to_origin`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            max_pages,
+            browser_endpoint,
+            chrome_args,
+            launch_timeout,
+        } = self;
         f.debug_struct("BrowserPoolConfig")
-            .field("max_pages", &self.max_pages)
+            .field("max_pages", max_pages)
             .field(
                 "browser_endpoint",
-                &self.browser_endpoint.as_deref().map(crate::net::redact_url_credentials),
+                &browser_endpoint
+                    .as_deref()
+                    .map(crate::net::redact::redact_url_to_origin),
             )
-            .field("chrome_args", &self.chrome_args)
-            .field("launch_timeout", &self.launch_timeout)
+            .field("chrome_args", chrome_args)
+            .field("launch_timeout", launch_timeout)
             .finish()
     }
 }

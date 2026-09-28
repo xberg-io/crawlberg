@@ -6,7 +6,9 @@
 //! since both are routinely shipped to logs, OTLP collectors, and issue trackers. This
 //! module centralizes that redaction so every call site applies the same rule.
 
-const REDACTED_PLACEHOLDER: &str = "***";
+/// The text every redacting `Debug` impl and helper here prints in place of a secret.
+#[doc(hidden)]
+pub const REDACTED_PLACEHOLDER: &str = "***";
 
 /// What [`redact_url_credentials`] returns for a value it cannot read as one address.
 ///
@@ -52,6 +54,103 @@ pub fn redact_url_credentials(input: &str) -> String {
     url.to_string()
 }
 
+/// Redact a URL down to its origin: scheme, host and non-default port.
+///
+/// For an endpoint whose *capability is the URL itself*. The canonical CDP endpoint is
+/// `ws://host:9222/devtools/browser/<GUID>`: the GUID in the **path** is the bearer token
+/// (anyone holding it drives the browser), and a proxied endpoint may instead carry a
+/// `?token=`. Neither the path, the query, the fragment nor the userinfo may be printed, so
+/// this keeps only the origin, which is the part an operator needs to tell one endpoint from
+/// another.
+///
+/// The port is kept deliberately. It is the field that distinguishes a container-mapped CDP
+/// port from the default 9222, which is what makes a connection failure diagnosable, and it
+/// is no more secret than the host it belongs to. `url::Url::port` reports `None` for a
+/// scheme's default port, so `wss://host:443` prints as `wss://host`.
+///
+/// Fails **closed**: returns the placeholder when `input` does not parse as an absolute URL
+/// or carries no host, so an endpoint the parser rejects is never echoed.
+#[must_use]
+pub fn redact_url_to_origin(input: &str) -> String {
+    let Ok(url) = url::Url::parse(input) else {
+        return REDACTED_PLACEHOLDER.to_owned();
+    };
+    let Some(host) = url.host() else {
+        return REDACTED_PLACEHOLDER.to_owned();
+    };
+    // ~keep `host` is formatted through `url::Host`, not `host_str`, so an IPv6 literal keeps
+    // ~keep its brackets and the `:port` suffix below stays unambiguous.
+    match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    }
+}
+
+/// `Debug` text for a caller's script or template: the placeholder and the length, never
+/// the text. A script is a common place to embed a token.
+pub(crate) fn redacted_text(text: &str) -> String {
+    format!("{REDACTED_PLACEHOLDER} ({} bytes)", text.len())
+}
+
+/// `Debug` view of a string map that shows each key and hides each value, for maps of
+/// header values or cookie values set by the caller.
+pub(crate) struct RedactedValues<'a>(pub(crate) &'a std::collections::HashMap<String, String>);
+
+impl std::fmt::Debug for RedactedValues<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|key| (key, REDACTED_PLACEHOLDER)))
+            .finish()
+    }
+}
+
+/// A denylist of response header names whose values are credentials: an `Authorization` or
+/// `Proxy-Authorization` a server echoes, session cookies in either direction, the
+/// `Authentication-Info` a server returns after a login, and the vendor tokens a server echoes
+/// back (`X-Api-Key`, `X-Amz-Security-Token`). Names are lowercase and matched without case.
+///
+/// A response header outside this list prints in full. The list leaves out the challenge
+/// headers `WWW-Authenticate` and `Proxy-Authenticate`, which carry no secret, the obsolete
+/// `Set-Cookie2`, and any vendor token header it does not name. Request header maps do not use
+/// it: they hide every value.
+pub(crate) const SENSITIVE_HEADERS: [&str; 7] = [
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-amz-security-token",
+    "authentication-info",
+];
+
+/// Whether `name` is one of [`SENSITIVE_HEADERS`], in any case.
+pub(crate) fn is_sensitive_header(name: &str) -> bool {
+    SENSITIVE_HEADERS
+        .iter()
+        .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+}
+
+/// `Debug` view of a header map that shows every name and every value, except the value
+/// of a [`SENSITIVE_HEADERS`] entry, which prints as the placeholder.
+pub(crate) struct RedactedHeaders<'a, K, V>(pub(crate) &'a std::collections::HashMap<K, V>);
+
+impl<K: AsRef<str> + std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for RedactedHeaders<'_, K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.iter().map(|(name, value)| {
+                // ~keep The placeholder replaces the whole value, a list of values included, so a
+                // ~keep sensitive multi-value header prints as one string on purpose.
+                let value: &dyn std::fmt::Debug = if is_sensitive_header(name.as_ref()) {
+                    &REDACTED_PLACEHOLDER
+                } else {
+                    value
+                };
+                (name, value)
+            }))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +191,108 @@ mod tests {
             redact_url_credentials("https://example.com/path?query=1"),
             "https://example.com/path?query=1"
         );
+    }
+
+    #[test]
+    fn redact_url_to_origin_hides_the_path_query_fragment_and_userinfo() {
+        // ~keep This is the canonical CDP endpoint shape. The GUID in the path IS the
+        // ~keep capability, so it must not survive; an earlier version of this test pinned
+        // ~keep the opposite, asserting the whole path printed unchanged.
+        assert_eq!(
+            redact_url_to_origin("ws://127.0.0.1:9222/devtools/browser/b1946ac9-2d2e-4f1f"),
+            "ws://127.0.0.1:9222"
+        );
+        assert_eq!(
+            redact_url_to_origin("wss://user:pw@chrome.example:3000/devtools?token=abc123#frag"),
+            "wss://chrome.example:3000"
+        );
+    }
+
+    #[test]
+    fn redact_url_to_origin_omits_a_default_port_and_brackets_ipv6() {
+        assert_eq!(
+            redact_url_to_origin("wss://chrome.example:443/devtools"),
+            "wss://chrome.example"
+        );
+        assert_eq!(
+            redact_url_to_origin("ws://[::1]:9222/devtools/browser/42"),
+            "ws://[::1]:9222"
+        );
+    }
+
+    #[test]
+    fn redact_url_to_origin_fails_closed() {
+        for hostless in [
+            "not a url at all",
+            "/devtools/browser/b1946ac9-2d2e-4f1f",
+            "ws://:9222/devtools/browser/42",
+            "data:text/plain,secret",
+        ] {
+            assert_eq!(
+                redact_url_to_origin(hostless),
+                "***",
+                "an endpoint with no parseable host must never be echoed, got input '{hostless}'"
+            );
+        }
+    }
+
+    #[test]
+    fn redacted_values_shows_keys_only() {
+        let map = std::collections::HashMap::from([("Authorization".to_owned(), "Bearer abc123".to_owned())]);
+        assert_eq!(format!("{:?}", RedactedValues(&map)), r#"{"Authorization": "***"}"#);
+    }
+
+    #[test]
+    fn redacted_headers_hide_only_sensitive_values_in_any_case() {
+        let map = std::collections::HashMap::from([
+            ("Authorization".to_owned(), vec!["Bearer abc123".to_owned()]),
+            ("set-cookie".to_owned(), vec!["sid=s3cr3t".to_owned()]),
+            ("content-type".to_owned(), vec!["text/html".to_owned()]),
+        ]);
+        let debug = format!("{:?}", RedactedHeaders(&map));
+        assert!(!debug.contains("abc123") && !debug.contains("s3cr3t"), "got {debug}");
+        assert!(debug.contains(r#""Authorization": "***""#), "got {debug}");
+        assert!(debug.contains(r#""set-cookie": "***""#), "got {debug}");
+        assert!(debug.contains(r#""content-type": ["text/html"]"#), "got {debug}");
+    }
+
+    #[test]
+    fn redacted_headers_hide_echoed_vendor_tokens_and_login_info() {
+        for name in ["X-Api-Key", "x-amz-security-token", "Authentication-Info"] {
+            let map = std::collections::HashMap::from([(name.to_owned(), vec!["s3cr3t".to_owned()])]);
+            let debug = format!("{:?}", RedactedHeaders(&map));
+            assert_eq!(debug, format!(r#"{{"{name}": "***"}}"#));
+        }
+    }
+
+    #[cfg(feature = "browser-native")]
+    #[test]
+    fn header_redaction_renders_the_same_in_the_native_browser_crate() {
+        // ~keep One header per event, so the text compared does not depend on map order.
+        for name in SENSITIVE_HEADERS
+            .iter()
+            .chain(crawlberg_browser::redact::SENSITIVE_HEADERS.iter())
+            .map(|name| name.to_ascii_uppercase())
+            .chain(["Content-Type".to_owned(), "Server".to_owned()])
+        {
+            let headers = std::collections::HashMap::from([(name.clone(), "v4lue".to_owned())]);
+            let ours = format!("{:?}", RedactedHeaders(&headers));
+            let event = crawlberg_browser::adapter::NativeNetworkEvent {
+                url: String::new(),
+                method: String::new(),
+                resource_type: String::new(),
+                status: 200,
+                request_headers: std::collections::HashMap::new(),
+                response_headers: headers,
+                body_size: 0,
+                timestamp_ms: 0,
+            };
+            let theirs = format!("{event:?}");
+            assert!(
+                theirs.contains(&format!("response_headers: {ours}")),
+                "header {name} renders differently: crawlberg {ours}, native browser {theirs}"
+            );
+        }
     }
 
     #[test]

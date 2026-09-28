@@ -23,6 +23,21 @@ impl UaRotationLayer {
             index: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    /// Advance the round-robin counter and return the next configured agent, or `None` when no
+    /// rotation list is configured.
+    ///
+    /// ~keep The single place that decides which agent a rotating request gets. A caller that
+    /// must judge robots rules before the request goes out (`RedirectPolicy::admits`) calls this
+    /// once per request and pins the result onto the `CrawlRequest`, so the request this policy
+    /// admits and the request the service below actually sends are the same one (crawlberg#423).
+    pub(crate) fn choose_next(&self) -> Option<String> {
+        if self.user_agents.is_empty() {
+            return None;
+        }
+        let idx = self.index.fetch_add(1, Ordering::Relaxed) % self.user_agents.len();
+        Some(self.user_agents[idx].clone())
+    }
 }
 
 impl<S: Clone> Layer<S> for UaRotationLayer {
@@ -31,8 +46,7 @@ impl<S: Clone> Layer<S> for UaRotationLayer {
     fn layer(&self, inner: S) -> Self::Service {
         UaRotationService {
             inner,
-            user_agents: self.user_agents.clone(),
-            index: self.index.clone(),
+            rotation: self.clone(),
         }
     }
 }
@@ -41,8 +55,7 @@ impl<S: Clone> Layer<S> for UaRotationLayer {
 #[derive(Clone)]
 pub struct UaRotationService<S> {
     inner: S,
-    user_agents: Arc<Vec<String>>,
-    index: Arc<AtomicUsize>,
+    rotation: UaRotationLayer,
 }
 
 impl<S> Service<CrawlRequest> for UaRotationService<S>
@@ -59,10 +72,14 @@ where
     }
 
     fn call(&mut self, mut req: CrawlRequest) -> Self::Future {
-        if !self.user_agents.is_empty() {
-            let idx = self.index.fetch_add(1, Ordering::Relaxed) % self.user_agents.len();
-            req.headers
-                .insert("user-agent".to_owned(), self.user_agents[idx].clone());
+        // ~keep A request that already names a `user-agent` chose it upstream (a robots
+        // ~keep decision was made for that exact agent, or a caller wants a fixed one) and must
+        // ~keep not be overwritten here, or the agent robots rules were checked against and the
+        // ~keep agent this layer sends would diverge (crawlberg#423).
+        if !req.headers.contains_key("user-agent")
+            && let Some(ua) = self.rotation.choose_next()
+        {
+            req.headers.insert("user-agent".to_owned(), ua);
         }
         self.inner.call(req)
     }
@@ -92,6 +109,7 @@ mod tests {
                     body_bytes: vec![],
                     headers: std::collections::HashMap::new(),
                     landed_url: None,
+                    sent_user_agent: None,
                 })
             })
         }

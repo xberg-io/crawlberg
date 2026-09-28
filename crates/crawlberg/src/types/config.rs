@@ -47,6 +47,7 @@ fn default_tracking_params() -> Vec<String> {
     ]
 }
 mod credentials;
+mod debug;
 mod primitives;
 mod sections;
 
@@ -62,7 +63,7 @@ pub use sections::{BrowserConfig, ContentConfig};
 pub(crate) use primitives::duration_ms;
 
 /// Configuration for crawl, scrape, and map operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct CrawlConfig {
     /// Maximum crawl depth (number of link hops from the start URL).
@@ -575,12 +576,13 @@ impl CrawlConfig {
         if let Some(ref endpoint) = self.browser.endpoint
             && !crate::net::is_websocket_scheme(endpoint)
         {
-            // ~keep `endpoint` may carry userinfo (ws://user:pass@host/); redact before it
-            // reaches this error, which flows into API error bodies and MCP error payloads.
-            let redacted = crate::net::redact_url_credentials(endpoint);
-            return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {redacted:?}"
-            )));
+            // ~keep Do not echo the value, not even redacted. The endpoint is a capability
+            // ~keep (its path or `?token=` grants control of the browser), this error's
+            // ~keep Display reaches logs and API error bodies, and the field name is enough
+            // ~keep for the caller to find it.
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint must start with ws:// or wss://",
+            ));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
             return Err(CrawlError::invalid_config(
