@@ -296,6 +296,10 @@ impl TreeSink for Names {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    use proptest::prelude::*;
+
     use super::*;
 
     /// The start and end of each `<a>` start tag in `html`.
@@ -326,6 +330,134 @@ mod tests {
     #[test]
     fn a_tag_inside_title_text_is_not_a_real_tag() {
         assert_eq!(link_spans("<title><a href=1></title><a href=2>x</a>"), [(25, 35)]);
+    }
+
+    /// A start tag as html5ever reads it: name, attributes and whether it is self-closing.
+    type Read = (String, Vec<(String, String)>, bool);
+
+    /// Each start tag html5ever's tokenizer reads in `fragment` on its own, with the offset just
+    /// past it.
+    fn read_alone(fragment: &str) -> Vec<(usize, Read)> {
+        struct Tags {
+            fed: Cell<usize>,
+            tags: RefCell<Vec<(usize, Read)>>,
+        }
+        impl TokenSink for Tags {
+            type Handle = ();
+            fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
+                if let Token::TagToken(tag) = token
+                    && tag.kind == TagKind::StartTag
+                {
+                    let attrs = tag
+                        .attrs
+                        .iter()
+                        .map(|attr| (attr.name.local.to_string(), attr.value.to_string()))
+                        .collect();
+                    let read = (tag.name.to_string(), attrs, tag.self_closing);
+                    self.tags.borrow_mut().push((self.fed.get(), read));
+                }
+                TokenSinkResult::Continue
+            }
+        }
+        let tokenizer = Tokenizer::new(
+            Tags {
+                fed: Cell::new(0),
+                tags: RefCell::new(Vec::new()),
+            },
+            TokenizerOpts::default(),
+        );
+        let input = BufferQueue::default();
+        for piece in fragment.split_inclusive('>') {
+            tokenizer.sink.fed.set(tokenizer.sink.fed.get() + piece.len());
+            input.push_back(StrTendril::from(piece));
+            let _ = tokenizer.feed(&input);
+        }
+        tokenizer.end();
+        tokenizer.sink.tags.into_inner()
+    }
+
+    /// The `<a>` start tags [`scan`] reports whose span, read on its own, is not exactly the one
+    /// whole start tag [`scan`] itself says is there.
+    ///
+    /// ~keep Ported from the html5ever tag-scan stack's own review corpus (#123's review), which
+    /// ~keep this module's span-finding (`Recorder::next_start`, `keep_start_tag`) matches.
+    fn misread_spans(html: &str) -> Vec<(Range<usize>, String)> {
+        // ~keep Only `<a>` is kept: this module's `StartTag` does not carry a name (every
+        // ~keep production caller already knows it, from the one name it asked `scan` to keep),
+        // ~keep so a generic multi-element corpus would have nothing to compare a found tag's
+        // ~keep name against.
+        scan(html, |name| name == "a")
+            .iter()
+            .filter(|tag| {
+                let attrs = tag
+                    .attrs
+                    .iter()
+                    .map(|attr| (attr.name.local.to_string(), attr.value.to_string()))
+                    .collect();
+                let read = (String::from("a"), attrs, tag.self_closing);
+                read_alone(&html[tag.span.clone()]) != [(tag.span.len(), read)]
+            })
+            .map(|tag| (tag.span.clone(), html[tag.span].to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn should_find_where_each_start_tag_begins() {
+        let wrong = [
+            ("\u{feff}<a href=1>", vec![(3, 13)]),
+            ("x&amp<a href=1>", vec![(5, 15)]),
+            ("&amp<<a href=1>", vec![(5, 15)]),
+            ("<!--<a --><a href=1>", vec![(10, 20)]),
+            ("a <3 <a href=1>", vec![(5, 15)]),
+            ("<title><a </title><a href=1>", vec![(18, 28)]),
+            (r#"<a title="<a href=x>">"#, vec![(0, 22)]),
+            (r#"<a href=b ="x>z</a><a href="y">"#, vec![(0, 14), (19, 31)]),
+        ]
+        .into_iter()
+        .filter(|(html, spans)| link_spans(html) != *spans)
+        .collect::<Vec<_>>();
+        assert!(wrong.is_empty(), "not read as expected: {wrong:?}");
+    }
+
+    #[test]
+    fn should_read_each_tag_of_the_review_corpus_where_it_stands() {
+        // ~keep The corpus from the review of #123, to four bytes: `<a href=1 {s}>` with `s` over
+        // ~keep the bytes that move a tag's end, after a character reference and a comment that
+        // ~keep each hold a `<a`. (#123's own corpus also covers CDATA inside `<svg>`, which this
+        // ~keep module never sees the tag of, since it only ever scans for `<a>`.)
+        let alphabet = ['a', '=', '"', '\'', ' ', '/', '>', '\t'];
+        let mut suffixes = vec![String::new()];
+        for _ in 0..4 {
+            let longer: Vec<String> = suffixes
+                .iter()
+                .filter(|s| s.len() == suffixes.last().map_or(0, String::len))
+                .flat_map(|s| alphabet.iter().map(move |c| format!("{s}{c}")))
+                .collect();
+            suffixes.extend(longer);
+        }
+        assert_eq!(suffixes.len(), 4681, "every suffix up to four bytes");
+        let misread: Vec<_> = suffixes
+            .iter()
+            .flat_map(|s| misread_spans(&format!("x&amp<a href=1 {s}>z</a><!--<a -->&#<a href=2>w</a>")))
+            .collect();
+        assert!(
+            misread.is_empty(),
+            "{} tags misread, first: {:?}",
+            misread.len(),
+            misread.first()
+        );
+    }
+
+    proptest! {
+        /// Each `<a>` start tag the scan reports is, read on its own, one whole start tag with
+        /// the same attributes and self-closing flag.
+        #[test]
+        fn each_start_tag_reads_alone_as_the_same_tag(
+            html in r#"(<a href=x>|<a b=c ="d>|<a title="<a x>">|<title>|</title>|&amp|&#|&|<3|<<|[a-z0-9 <>"'/=\t-]){0,40}"#
+        ) {
+            let misread = misread_spans(&html);
+            prop_assert!(misread.is_empty(), "misread: {:?}", misread);
+        }
     }
 
     #[test]

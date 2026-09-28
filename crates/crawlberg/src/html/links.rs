@@ -199,6 +199,16 @@ mod tests {
     }
 
     #[test]
+    fn a_decoded_quote_in_the_value_does_not_break_the_rewritten_tag() {
+        // ~keep `&quot;` decodes to a literal `"`; writing it back unencoded into the new double
+        // ~keep quotes would end the value there and truncate the address, losing what follows.
+        let html = r#"<a href="a&quot;b">x</a>"#;
+        let links = extract(html, "https://example.com/");
+        assert_eq!(links.len(), 1, "expected exactly one link, got {links:?}");
+        assert_eq!(links[0].url, "https://example.com/a%22b");
+    }
+
+    #[test]
     fn finds_a_link_an_unterminated_quote_hid_from_the_raw_tl_parse() {
         // ~keep #294's reproduction (bank/triage-op4/report.md): the unterminated `href="broken`
         // ~keep makes tl read everything up to the next literal `"` -- the second link's own
