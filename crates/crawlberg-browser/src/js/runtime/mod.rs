@@ -68,7 +68,7 @@ impl BrowserJsRuntime {
         state.borrow_mut().ssrf = ssrf.clone();
         let state_clone = state.clone();
 
-        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf));
+        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf, state.clone()));
 
         // ~keep deno_core captures `Handle::try_current().ok()` when it registers the isolate
         // ~keep and, if that handle is `None`, calls `std::process::abort()` from a V8
