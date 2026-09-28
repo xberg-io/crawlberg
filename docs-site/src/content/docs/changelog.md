@@ -33,6 +33,27 @@ title: "Changelog"
 
 ### Fixed
 
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer

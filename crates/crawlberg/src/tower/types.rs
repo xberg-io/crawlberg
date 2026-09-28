@@ -79,6 +79,7 @@ mod tests {
                 ("server".to_owned(), vec!["nginx".to_owned()]),
             ]),
             landed_url: None,
+            sent_user_agent: None,
         };
         for text in [format!("{request:?}"), format!("{response:#?}")] {
             assert!(!text.contains(SECRET), "secret printed: {text}");
@@ -136,6 +137,15 @@ pub struct CrawlResponse {
     /// ~keep Read only by the native redirect chain; wasm has no browser tier to set it.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub landed_url: Option<String>,
+    /// The `User-Agent` header value this response's request actually sent, when known.
+    ///
+    /// ~keep Only the native HTTP tier (`tower::service::do_fetch`) sets this, because it is
+    /// the only tier the UA rotation layer reaches. `None` means the caller should fall back
+    /// to the configured default -- true for the browser tier, wasm, the bypass tier, and any
+    /// synthetic response, none of which rotate. Robots decisions (group selection, meta and
+    /// header directive matching) must read this instead of recomputing the engine's default,
+    /// or they judge a page against an agent a rotating crawl never sent (crawlberg#423).
+    pub sent_user_agent: Option<String>,
 }
 
 impl std::fmt::Debug for CrawlResponse {
@@ -149,6 +159,7 @@ impl std::fmt::Debug for CrawlResponse {
             body_bytes,
             headers,
             landed_url,
+            sent_user_agent,
         } = self;
         f.debug_struct("CrawlResponse")
             .field("status", status)
@@ -157,6 +168,7 @@ impl std::fmt::Debug for CrawlResponse {
             .field("body_bytes", body_bytes)
             .field("headers", &crate::net::redact::RedactedHeaders(headers))
             .field("landed_url", landed_url)
+            .field("sent_user_agent", sent_user_agent)
             .finish()
     }
 }
