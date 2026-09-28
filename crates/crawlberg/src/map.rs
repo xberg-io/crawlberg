@@ -70,8 +70,8 @@ async fn sitemap_urls_from_robots(
     // `DisallowAll` therefore mean "no sitemap hints", falling through to /sitemap.xml.
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
-    let crate::helpers::RobotsOutcome::Rules(rules) =
-        crate::helpers::fetch_robots_outcome(url, config, client, ua).await
+    let (crate::helpers::RobotsOutcome::Rules(rules), Some(robots_url)) =
+        crate::helpers::fetch_robots_document(url, config, client, ua).await
     else {
         return Vec::new();
     };
@@ -86,7 +86,7 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let Some(resolved) = resolve_sitemap_directive(url, sitemap_ref) else {
+        let Some(resolved) = resolve_sitemap_directive(&robots_url, sitemap_ref) else {
             continue;
         };
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
@@ -95,16 +95,17 @@ async fn sitemap_urls_from_robots(
     all_urls
 }
 
-/// The URL to fetch for one robots.txt `Sitemap:` directive. `None` when `sitemap_ref` cannot
-/// be resolved against `url` at all, which the caller skips rather than fetching as raw text.
+/// The URL to fetch for one robots.txt `Sitemap:` directive, resolved against `robots_url`, the
+/// address that served robots.txt after redirects. `None` when `sitemap_ref` cannot be resolved
+/// against it at all, which the caller skips rather than fetching as raw text.
 ///
 /// ~keep A directive on another host is fetched from that host: the sitemaps.org protocol lets
 /// ~keep robots.txt name a sitemap on another host. The SSRF policy gates the fetch, and seed
 /// ~keep credentials go only to the seed host.
-fn resolve_sitemap_directive(url: &str, sitemap_ref: &str) -> Option<String> {
-    let Some(resolved) = resolve_redirect(url, sitemap_ref) else {
+fn resolve_sitemap_directive(robots_url: &str, sitemap_ref: &str) -> Option<String> {
+    let Some(resolved) = resolve_redirect(robots_url, sitemap_ref) else {
         tracing::debug!(
-            url = %crate::net::redact_url_credentials(url),
+            url = %crate::net::redact_url_credentials(robots_url),
             target_len = sitemap_ref.len(),
             "robots.txt Sitemap: directive failed to parse; skipping it"
         );
@@ -1372,6 +1373,41 @@ mod tests {
         let urls = map_urls(&base, &config).await;
 
         assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_robots_sitemap_against_the_robots_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/robots.txt", "/moved/robots.txt").await;
+        mount_body(
+            &mock,
+            "/moved/robots.txt",
+            "text/plain",
+            "User-agent: *\nSitemap: s.xml\n".to_owned(),
+        )
+        .await;
+        for (route, page) in [("/moved/s.xml", "from-moved"), ("/s.xml", "from-seed-path")] {
+            mount_body(
+                &mock,
+                route,
+                "application/xml",
+                urlset(&[format!("https://example.com/{page}")]),
+            )
+            .await;
+        }
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&base, &config).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-moved".to_owned()],
+            "a relative Sitemap: line must resolve against the robots.txt address after its redirect"
+        );
     }
 
     #[tokio::test]

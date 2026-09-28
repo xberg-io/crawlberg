@@ -472,7 +472,8 @@ title: "Changelog"
   `https://example.com/sitemap.xml` instead, which is another document or none. The sitemaps.org
   protocol lets robots.txt name a sitemap on another host, so the line is now fetched from the
   host it names. The SSRF policy checks the fetch, and the seed's credentials and custom headers
-  go only to the seed host. (#268)
+  go only to the seed host. A relative `Sitemap:` line now resolves against the address that
+  served robots.txt after its redirects, not the address being mapped. (#268, #349)
 
 - **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
   returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
