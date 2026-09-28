@@ -498,18 +498,27 @@ fn next_redirect_target(
 /// Statuses whose `Location` header this crawl follows.
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
-/// The `Location` target of an HTTP 3xx, resolved against `current_url`, or `None` when it has a
-/// scheme the crawl cannot fetch (`mailto:`, `data:`, `file:`, ...). A browser sends no request
-/// for one, so it is no target, as a refresh to one is none.
+/// `target` resolved against `base`, or `None` when it does not resolve or resolves to a scheme
+/// the crawl cannot fetch (`mailto:`, `data:`, `file:`, `ftp:`, ...). A browser sends no request
+/// for one, so it is no redirect target.
+///
+/// ~keep The scheme is checked on the resolved address, never on `target` itself: a relative
+/// ~keep target has no scheme of its own to check before it resolves, so checking it there let a
+/// ~keep target that takes a non-web scheme from what it resolves against through unchecked (#478).
+fn fetchable_target(base: &str, target: &str) -> Option<String> {
+    let resolved = resolve_redirect(base, target)?;
+    Url::parse(&resolved)
+        .is_ok_and(|parsed| is_fetchable_scheme(&parsed))
+        .then_some(resolved)
+}
+
+/// The `Location` target of an HTTP 3xx, resolved against `current_url`, if the crawl can fetch it.
 fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     if !REDIRECT_STATUSES.contains(&resp.status) {
         return None;
     }
     let location = resp.headers.get("location").and_then(|v| v.first())?;
-    let target = resolve_redirect(current_url, location)?;
-    Url::parse(&target)
-        .is_ok_and(|parsed| is_fetchable_scheme(&parsed))
-        .then_some(target)
+    fetchable_target(current_url, location)
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
@@ -519,7 +528,8 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
     resolve_redirect(current_url, &target)
 }
 
-/// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
+/// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`, if the
+/// crawl can fetch it.
 fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
     if !is_html_content(&resp.content_type, &resp.body) {
         return None;
@@ -530,7 +540,7 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     let target = crate::html::parse_html(&parsed_html)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))?;
-    resolve_redirect(current_url, &target)
+    fetchable_target(current_url, &target)
 }
 
 #[cfg(test)]
@@ -683,6 +693,24 @@ mod tests {
             meta_refresh_target(&resp, "https://example.com/start"),
             Some("https://example.com/real".to_owned()),
             "a real meta refresh after a script must still be found"
+        );
+    }
+
+    /// A relative meta refresh target is checked for scheme AFTER it resolves, not before: it
+    /// takes `current_url`'s scheme, and a `current_url` with a scheme the crawl cannot fetch
+    /// makes the resolved target one too, so it is no redirect target (#478).
+    #[test]
+    fn a_relative_meta_refresh_is_no_target_when_it_resolves_to_a_scheme_it_cannot_fetch() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+
+        assert_eq!(
+            meta_refresh_target(&resp, "ftp://files.example/start"),
+            None,
+            "a relative target under a non-web current_url must not be treated as a redirect"
         );
     }
 

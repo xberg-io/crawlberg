@@ -67,10 +67,18 @@ All notable changes to crawlberg are documented here.
   `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
   scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
   with the same error and dropped such a linked page. A browser sends no request for such an
-  address. That `Location` is now no redirect target, as a refresh to such an address already was,
-  so the 3xx response is the page. The same holds for robots.txt, sitemap and asset fetches: a
-  robots.txt that redirected to such an address made the crawl refuse the whole site. Redirects to
-  `http` and `https` addresses still pass the SSRF check. (#361)
+  address. That `Location` is now no redirect target, matching how a refresh naming such an
+  address directly already was, so the 3xx response is the page. The same holds for robots.txt,
+  sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
+  the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+
+- **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
+  A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
+  target passed that check and could still resolve to a `mailto:`, `ftp:` or other non-web
+  address afterward, for example under a `<base href>` on such an address, and the fetch then hit
+  the SSRF policy. The scheme is now checked on the resolved address instead, the same way the
+  `Location` header already was, so such a target is no redirect target either, and the page is
+  kept. (#478)
 
 - **The browser page used an absolute subresource address without parsing it.** A `<script src>`
   or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
