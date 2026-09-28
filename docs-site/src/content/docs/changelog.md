@@ -355,6 +355,15 @@ title: "Changelog"
 - **A failed bypass request logs its cause.** The send and body-read errors carry only the error
   kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
   chain when a send or a body read fails. (#89)
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
 
 ## [1.8.0] - 2026-09-27
 
