@@ -1460,3 +1460,112 @@ async fn a_module_redirect_loop_stops_after_ten_redirects() {
         .count();
     assert_eq!(loops, 11, "the first request and ten redirects, then the load stops");
 }
+
+/// A page on 127.0.0.1 whose context scopes `X-Api-Key: k3y` to that host, served by `listener`.
+async fn credentialed_page(
+    listener: TcpListener,
+    html: &str,
+    extra: &[(&str, &str)],
+) -> (Page, Arc<std::sync::Mutex<Vec<String>>>) {
+    let addr = listener.local_addr().expect("addr");
+    let mut entries = vec![("/", ok_response("text/html", html))];
+    entries.extend(extra.iter().map(|(path, response)| (*path, (*response).to_string())));
+    let responses = entries
+        .iter()
+        .map(|(path, response)| ((*path).to_string(), response.clone()))
+        .collect();
+    let requests = serve_raw_recording(listener, responses);
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, Arc::new(AllowAll), false);
+    context
+        .http_client
+        .set_origin_headers(Some(crate::net::OriginHeaders {
+            host: "127.0.0.1".to_owned(),
+            headers: vec![("X-Api-Key".to_owned(), "k3y".to_owned())],
+        }))
+        .await;
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+    page.navigate(&format!("http://{addr}/")).await.expect("navigate");
+    (page, requests)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_carries_the_credential_only_on_its_host() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let other = format!("http://localhost:{}", listener.local_addr().expect("addr").port());
+    let html = format!(
+        "<html><body><script type=\"module\" src=\"/near.js\"></script>\
+         <script type=\"module\" src=\"{other}/far.js\"></script></body></html>"
+    );
+    let (mut page, requests) = credentialed_page(
+        listener,
+        &html,
+        &[
+            ("/near.js", &ok_response("text/javascript", "globalThis.near = true;")),
+            ("/far.js", &ok_response("text/javascript", "globalThis.far = true;")),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        global(&mut page, "JSON.stringify([!!globalThis.near, !!globalThis.far])"),
+        serde_json::json!("[true,true]"),
+        "both module scripts must run"
+    );
+    let requests = requests.lock().expect("lock");
+    let request_for = |path: &str| {
+        requests
+            .iter()
+            .find(|request| request.starts_with(&format!("GET {path} ")))
+            .unwrap_or_else(|| panic!("{path} must have been requested: {requests:?}"))
+            .to_lowercase()
+    };
+    assert!(
+        request_for("/near.js").contains("x-api-key: k3y"),
+        "a module on the credential's host carries it: {}",
+        request_for("/near.js")
+    );
+    assert!(
+        !request_for("/far.js").contains("x-api-key"),
+        "a module on another host carries no credential: {}",
+        request_for("/far.js")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_fails_to_load_names_no_credential_in_its_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (mut page, requests) = credentialed_page(listener, "<html><body><p>page</p></body></html>", &[]).await;
+    let js = page.js.as_mut().expect("the page has a JS realm");
+
+    let missing = js
+        .load_module(&format!("http://{addr}/missing.js"))
+        .await
+        .expect_err("a 404 module must fail to load");
+    assert!(missing.contains("404"), "{missing}");
+    assert!(
+        !missing.contains("k3y"),
+        "the scoped credential must not reach the error: {missing}"
+    );
+
+    let with_userinfo = js
+        .load_module(&format!("http://user:s3cret@{addr}/secret.js"))
+        .await
+        .expect_err("a module address with userinfo must be refused");
+    assert!(!with_userinfo.contains("s3cret"), "{with_userinfo}");
+    assert!(
+        with_userinfo.contains(&format!("http://{addr}/secret.js")),
+        "{with_userinfo}"
+    );
+
+    let requests = requests.lock().expect("lock");
+    assert!(
+        requests.iter().any(|request| request.starts_with("GET /missing.js ")),
+        "the 404 module was requested: {requests:?}"
+    );
+    assert!(
+        !requests.iter().any(|request| request.starts_with("GET /secret.js ")),
+        "a module address with userinfo is never requested: {requests:?}"
+    );
+    assert!(rendered_html(&page).contains("<p>page</p>"));
+}
