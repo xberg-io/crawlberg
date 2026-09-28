@@ -1107,7 +1107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_keeps_absolute_index_children_on_the_host_the_index_redirected_to() {
+    async fn map_fetches_an_absolute_index_child_from_its_own_host_after_the_index_redirected() {
         let requested = MockServer::start().await;
         let serving = MockServer::start().await;
         let requested_base = requested.uri();
@@ -1118,7 +1118,7 @@ mod tests {
             &serving,
             "/index.xml",
             "application/xml",
-            sitemap_index(&["https://example.com/child.xml"]),
+            sitemap_index(&[&format!("{requested_base}/child.xml")]),
         )
         .await;
         mount_body(
@@ -1140,8 +1140,169 @@ mod tests {
 
         assert_eq!(
             urls,
-            vec!["https://example.com/from-serving-host".to_owned()],
-            "an absolute index child must be fetched from the host that served the index"
+            vec!["https://example.com/from-requested-host".to_owned()],
+            "an absolute index child must be fetched from its own host, not the host that served the index"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    fn map_fetches_index_children_on_three_other_hosts_from_their_own_hosts() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime must build");
+        let index_server = runtime.block_on(MockServer::start());
+        let children: Vec<MockServer> = (0..3).map(|_| runtime.block_on(MockServer::start())).collect();
+        // ~keep The index host is `localhost`, each child a distinct `127.0.0.1` port, so every
+        // ~keep child is on another host than the index.
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        let child_locs: Vec<String> = children.iter().map(|c| format!("{}/sitemap.xml", c.uri())).collect();
+        let child_refs: Vec<&str> = child_locs.iter().map(String::as_str).collect();
+        runtime.block_on(mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&child_refs),
+        ));
+        runtime.block_on(mount_body(&index_server, "/", "text/html", "<html></html>".to_owned()));
+        let mut expected = Vec::new();
+        for (i, child) in children.iter().enumerate() {
+            let page = format!("https://example.com/from-child-{i}");
+            runtime.block_on(mount_body(
+                child,
+                "/sitemap.xml",
+                "application/xml",
+                urlset(std::slice::from_ref(&page)),
+            ));
+            expected.push(page);
+        }
+
+        let (result, fields) = capture_events(|| runtime.block_on(map(&index_base, &local_test_config())));
+
+        let urls: Vec<String> = result
+            .expect("map should succeed")
+            .urls
+            .into_iter()
+            .map(|u| u.url)
+            .collect();
+        assert_eq!(
+            urls, expected,
+            "each cross-host index child must be fetched from its own host"
+        );
+        for (i, child) in children.iter().enumerate() {
+            let hits = runtime
+                .block_on(child.received_requests())
+                .expect("wiremock records requests")
+                .len();
+            assert_eq!(hits, 1, "child server {i} must get exactly one GET, got {hits}");
+        }
+        let cycles: Vec<&(String, String)> = fields.iter().filter(|(_, v)| v.contains("cycle detected")).collect();
+        assert!(cycles.is_empty(), "no child may be skipped as a cycle, got {cycles:?}");
+    }
+
+    #[tokio::test]
+    async fn map_refuses_a_cross_host_index_child_the_ssrf_policy_denies_and_fetches_its_allowed_sibling() {
+        let index_server = MockServer::start().await;
+        let denied = MockServer::start().await;
+        let allowed = MockServer::start().await;
+        // ~keep Only the host name `localhost` is allowlisted, so the literal `127.0.0.1` child is
+        // ~keep refused before any connection while the `localhost` sibling is fetched.
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        let allowed_base = allowed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[
+                &format!("{}/sitemap.xml", denied.uri()),
+                &format!("{allowed_base}/sitemap.xml"),
+            ]),
+        )
+        .await;
+        for (server, page) in [(&denied, "from-denied"), (&allowed, "from-allowed")] {
+            mount_body(
+                server,
+                "/sitemap.xml",
+                "application/xml",
+                urlset(&[format!("https://example.com/{page}")]),
+            )
+            .await;
+        }
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
+                .build()
+        };
+
+        let urls = map_urls(&index_base, &config).await;
+
+        // ~keep GUARD: green before the cross-host change too, where the denied child was moved
+        // ~keep onto the index host; it pins that the SSRF policy still gates each child fetch.
+        assert_eq!(urls, vec!["https://example.com/from-allowed".to_owned()]);
+        let denied_hits = denied
+            .received_requests()
+            .await
+            .expect("wiremock records requests")
+            .len();
+        assert_eq!(denied_hits, 0, "a child the SSRF policy denies must never be requested");
+    }
+
+    #[tokio::test]
+    async fn map_sends_seed_credentials_to_the_index_host_but_not_to_a_cross_host_child() {
+        let index_server = MockServer::start().await;
+        let child = MockServer::start().await;
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[&format!("{}/sitemap.xml", child.uri())]),
+        )
+        .await;
+        mount_body(
+            &child,
+            "/sitemap.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+        let seed = Url::parse(&index_base).expect("mock URL must parse");
+        let config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&index_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
+        let authorized = |requests: Vec<wiremock::Request>| {
+            requests
+                .iter()
+                .filter(|request| request.headers.contains_key("authorization"))
+                .count()
+        };
+        let index_requests = index_server
+            .received_requests()
+            .await
+            .expect("wiremock records requests");
+        assert_eq!(
+            authorized(index_requests),
+            1,
+            "the index host must get the seed credentials"
+        );
+        // ~keep GUARD: the seed-host scope keeps credentials off every other host; it passed before
+        // ~keep the cross-host change too, where no request left the seed host.
+        let child_requests = child.received_requests().await.expect("wiremock records requests");
+        assert_eq!(child_requests.len(), 1, "the child must be fetched once");
+        assert_eq!(
+            authorized(child_requests),
+            0,
+            "a cross-host child must not get the seed credentials"
         );
     }
 

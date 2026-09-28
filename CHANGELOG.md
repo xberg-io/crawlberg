@@ -449,14 +449,22 @@ All notable changes to crawlberg are documented here.
 - **A sitemap-index child differing only by a URL fragment was fetched twice.** The
   fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
   `rewrite_url_host` kept the fragment on a same-host child address before it was fetched
-  and used as the duplicate key. The fragment is now dropped there, so both addresses fetch
-  and dedupe as one document. (#324)
+  and used as the duplicate key. A relative child address such as `a.xml#x` kept its fragment
+  too. The fragment is now dropped from every child address, so both addresses fetch and dedupe
+  as one document. (#324, #363)
 
 - **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
   answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
   `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
-  the sitemap's URL after redirects. An absolute index child is fetched from the host that served
-  the index, which after a redirect to another host is the redirect's target host. (#339)
+  the sitemap's URL after redirects. (#339)
+
+- **A sitemap index's children on other hosts were fetched from the index's own host.** An index
+  at `https://example.com/sitemap.xml` that listed `https://blog.example.com/sitemap.xml` and
+  `https://shop.example.com/sitemap.xml` had each child moved onto `example.com` with its path
+  kept, so both became `https://example.com/sitemap.xml`, the index itself, and were skipped as a
+  cycle. Their pages were missing from the result. Each child is now fetched from its own host,
+  as the sitemaps.org protocol allows. The SSRF policy checks every child fetch, and the seed's
+  credentials and custom headers still go only to the seed host. (#398)
 
 - **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
   returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
