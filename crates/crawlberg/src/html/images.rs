@@ -51,12 +51,12 @@ fn collect_img_elements(dom: &VDom<'_>, base_url: &Url, images: &mut Vec<ImageIn
         let Some(src) = get_url_attr(tag, "src") else {
             continue;
         };
-        let resolved = base_url.join(&src);
-        if resolved.as_ref().is_ok_and(|u| INLINE_SCHEMES.contains(&u.scheme())) {
+        let resolved = crate::net::userinfo::resolve(base_url, &src);
+        if resolved.as_ref().is_some_and(|u| INLINE_SCHEMES.contains(&u.scheme())) {
             continue;
         }
         images.push(ImageInfo {
-            url: resolved.map_or_else(|_| src.into_owned(), String::from),
+            url: resolved.map_or_else(|| src.into_owned(), String::from),
             alt: get_attr(tag, "alt").map(Cow::into_owned),
             width: get_attr(tag, "width").and_then(|w| w.parse::<u32>().ok()),
             height: get_attr(tag, "height").and_then(|h| h.parse::<u32>().ok()),
@@ -190,6 +190,24 @@ mod tests {
         assert_eq!(
             extract(r#"<img src="data:image/png;base64,iVBOR" alt="inline">"#),
             Vec::<Flat>::new()
+        );
+    }
+
+    #[test]
+    fn every_image_source_loses_its_userinfo() {
+        assert_eq!(
+            extract(
+                r#"<img src="http://user:s3cret@example.com/a.png">
+                <picture><source srcset="http://user:s3cret@example.com/b.png 2x"></picture>
+                <meta property="og:image" content="http://user:s3cret@example.com/c.png">
+                <meta name="twitter:image" content="http://user:s3cret@example.com/d.png">"#
+            ),
+            vec![
+                flat("http://example.com/a.png", "img"),
+                flat("http://example.com/b.png", "picture_source"),
+                flat("http://example.com/c.png", "og:image"),
+                flat("http://example.com/d.png", "twitter:image"),
+            ]
         );
     }
 
