@@ -33,12 +33,13 @@ title: "Changelog"
 
 ### Fixed
 
-- **Links after an abruptly closed comment were not extracted.** `tl` ends a comment by
-  searching for a literal `-->` right after the opening `<!--`, so it never recognized
-  `<!-->` or `<!--->`, which close before any `-->` exists, or a comment closed with
-  `--!>` instead of `-->`. After any of the three, `tl` kept reading as if still inside
-  the comment, so every link, image and base address past it was missed. The raw-text
-  masking pass now neutralizes these three forms before `tl` parses the page. (#212)
+- **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
+  comment by searching for a literal `-->` right after the opening `<!--`, so it never
+  recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
+  `--!>` instead of `-->`; or a plain, valid, empty comment, `<!---->`, whose close sits
+  directly against the opener's own dashes. After any of these, `tl` kept reading as if
+  still inside the comment, so every link, image and base address past it was missed. The
+  raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
 
 - **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
   of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
