@@ -247,6 +247,26 @@ mod tests {
     }
 
     #[test]
+    fn a_schemeless_address_with_a_password_is_hidden() {
+        // ~keep `user:pw@host/path` parses as scheme `user` with no host, so nothing in it is
+        // read as userinfo. The password may hold `/`, `#` or `?`, which end the URL path.
+        let values = [
+            "user:hunter2@evil.example/path",
+            "user:hunter2@evil.example:8080/path",
+            "user:hunt%40er2@evil.example/path",
+            "user:hunt/er2@evil.example/path",
+            "user:hunt#er2@evil.example/path",
+            "user:hunt?er2@evil.example/path",
+        ];
+        let wrong: Vec<(&str, String)> = values
+            .iter()
+            .map(|value| (*value, redact_url_credentials(value)))
+            .filter(|(_, redacted)| redacted != HIDDEN_ADDRESS)
+            .collect();
+        assert!(wrong.is_empty(), "expected every value hidden, got {wrong:?}");
+    }
+
+    #[test]
     fn ordinary_urls_are_redacted_exactly_as_before() {
         // ~keep Every value here parses with a host and has no whitespace, so it is read as a
         // URL. The expected column is the output of the parsed path alone, as before.

@@ -110,6 +110,17 @@ impl RobotsParseState {
     }
 }
 
+/// Whether a robots product token addresses the crawler running as `ua_lower`.
+///
+/// ~keep RFC 9309 §2.2.1 matches in one direction only: the token must prefix our user-agent
+/// (so `crawlberg` matches the default `crawlberg/1.2.1`). Accepting the reverse let UA
+/// `crawlberg` claim rules written for a different, more specific bot such as `crawlberg-news`.
+/// Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule decides which
+/// crawler a named directive binds, wherever that name appears.
+pub(crate) fn product_token_addresses_us(token_lower: &str, ua_lower: &str) -> bool {
+    !token_lower.is_empty() && ua_lower != "*" && ua_lower.starts_with(token_lower)
+}
+
 /// Pick the last block written for `ua_lower` specifically and the last `*` block.
 ///
 /// Returns `(specific, wildcard)`; either may be absent.
@@ -125,14 +136,9 @@ fn select_rule_blocks<'a>(
         let mut matches_wildcard = false;
 
         for agent in agents {
-            // ~keep RFC 9309 §2.2.1 matches in one direction only: the group's product token
-            // ~keep must prefix our user-agent (so `User-agent: crawlberg` matches the default
-            // ~keep `crawlberg/1.2.1`). Also accepting the reverse let UA `crawlberg` claim a
-            // ~keep group written for a different, more specific bot such as `crawlberg-news`,
-            // ~keep silently substituting that bot's rules for the `*` block the site meant for us.
             if agent == "*" {
                 matches_wildcard = true;
-            } else if ua_lower != "*" && ua_lower.starts_with(agent.as_str()) {
+            } else if product_token_addresses_us(agent, ua_lower) {
                 matches_specific = true;
             }
         }
