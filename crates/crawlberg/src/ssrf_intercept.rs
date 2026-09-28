@@ -118,7 +118,8 @@ pub(crate) struct DocumentResponse {
 /// that answers every paused request of every target in that browser. Pages register with
 /// [`FirewallHandle::watch`]. Each request is judged by the policy of the watched page it
 /// belongs to: the page itself, a frame in it, or a popup it opened, directly or through
-/// another popup. Interception is on while at least one page is watched.
+/// another popup. Interception is on while at least one page is watched, and on a browser that
+/// is killed at the end, from the first watch until the kill.
 ///
 /// A request that belongs to another client's page of an external browser is continued
 /// untouched. Any other request that belongs to no watched page is refused: on a browser
@@ -139,11 +140,16 @@ pub(crate) struct BrowserFirewall {
     stopped: bool,
 }
 
-/// Whether crawlberg launched the browser or connected to one through `browser.endpoint`.
+/// Whether crawlberg launched the browser, and kills it at the end, or connected to one through
+/// `browser.endpoint`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BrowserOrigin {
     /// crawlberg started the process, so every page in it is crawlberg's.
     Launched,
+    /// crawlberg started the process and kills it when done with it. Interception is never
+    /// turned off, so a page or popup still open when the check stops keeps its requests paused
+    /// until the process is gone.
+    Killed,
     /// Another program owns the browser, and its other pages are that program's.
     External,
 }
@@ -155,6 +161,15 @@ impl BrowserOrigin {
             Self::External
         } else {
             Self::Launched
+        }
+    }
+
+    /// The origin of a browser that serves one fetch or session: one crawlberg launches for it is
+    /// killed at its end.
+    pub(crate) fn of_session(endpoint: Option<&str>) -> Self {
+        match Self::of_endpoint(endpoint) {
+            Self::Launched => Self::Killed,
+            origin => origin,
         }
     }
 }
@@ -292,7 +307,8 @@ enum Command {
         done: Option<oneshot::Sender<()>>,
     },
     /// Turn interception off once every answer and every watch end already started has
-    /// finished, then stop the listener. `done` is told when interception is off.
+    /// finished, unless the browser is to be killed, then stop the listener. `done` is told when
+    /// the listener is done.
     Stop(Option<oneshot::Sender<()>>),
 }
 
@@ -375,8 +391,9 @@ impl BrowserFirewall {
 
     /// Turn interception off once every answer the check had started when asked to stop is
     /// delivered, stop the listener, and release its reference to the browser, so the owner can
-    /// close it. A request Chrome pauses after the stop is not waited for, and the disable can let
-    /// it through. Call it once no page of the browser needs the check any more.
+    /// close it. On a [`BrowserOrigin::Killed`] browser interception is left on. A request Chrome
+    /// pauses after the stop is not waited for, and the disable can let it through. Call it once
+    /// no page of the browser needs the check any more.
     ///
     /// ~keep The disable is not left to the listener's own idle disable. `End` acks from
     /// ~keep `serve`'s `Done::Ended` arm, before the loop head next evaluates `idle`, and a refusal
@@ -401,7 +418,8 @@ impl Drop for BrowserFirewall {
     // ~keep The stop repeats `stop`'s for the path that never reaches it: a cancelled fetch
     // ~keep future drops the firewall without stopping it, and interception left on with no
     // ~keep listener pauses the whole browser. The listener keeps answering until it has turned
-    // ~keep interception off, then ends and lets go of the browser.
+    // ~keep interception off, then ends and lets go of the browser. A `Killed` browser keeps it on:
+    // ~keep chromiumoxide kills the process it launched when the last reference goes.
     fn drop(&mut self) {
         if !self.stopped {
             let _ = self.handle.commands.send(Command::Stop(None));
@@ -587,7 +605,8 @@ struct Events {
 /// owns, and answers the paused requests concurrently, so a slow DNS lookup for one page
 /// does not hold up the others. Interception is turned off only once no page is watched
 /// and no paused request is left unanswered, or on a stop, once every answer and every watch
-/// end already started has finished.
+/// end already started has finished. On a [`BrowserOrigin::Killed`] browser it is never turned
+/// off.
 async fn serve(
     browser: Arc<Browser>,
     shared: Shared,
@@ -610,13 +629,16 @@ async fn serve(
         if draining.is_empty()
             && let Some(stopped) = stopping.take()
         {
-            disable_fetch(browser).await;
+            if shared.origin != BrowserOrigin::Killed {
+                disable_fetch(browser).await;
+            }
             for done in stopped {
                 let _ = done.send(());
             }
             break;
         }
-        let idle = enabled && unanswered == 0 && lock(&shared.registry).is_idle();
+        let idle =
+            enabled && shared.origin != BrowserOrigin::Killed && unanswered == 0 && lock(&shared.registry).is_idle();
         let drained = lock(&shared.last_refused).is_none_or(|at| at.elapsed() >= DISABLE_DRAIN);
         if idle && drained {
             disable_fetch(browser).await;
@@ -1242,7 +1264,7 @@ mod race_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_stream::StreamExt;
 
-    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, TestDelays};
+    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, DISABLE_DRAIN, FetchDisableParams, TestDelays};
     use crate::net::ssrf::SsrfPolicy;
 
     #[allow(
@@ -1399,6 +1421,73 @@ mod race_tests {
             reached,
             "{test_name}: the parked page must still reach the network after the check is stopped; \
              interception was left on with no listener answering, so its requests are paused for good"
+        );
+    }
+
+    /// On a browser that is killed when done, a page still sending after its watch ended and the
+    /// check stopped stays refused: interception stays on with nothing answering, so its requests
+    /// wait paused until the browser is gone. Turning interception off afterwards lets them out,
+    /// which shows the page was sending all along.
+    ///
+    /// ~keep The parked page stands in for a page or popup Chrome has not destroyed yet when the
+    /// ~keep session ends, as under load (xberg-io/crawlberg#468). The page is quiet for a second
+    /// ~keep after its first refused request, so with no page watched and no recent refusal the
+    /// ~keep listener's idle disable would fire before it starts sending again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_killed_browser_keeps_refusing_a_page_still_sending_after_the_check_stops() {
+        let test_name = "a_killed_browser_keeps_refusing_a_page_still_sending_after_the_check_stops";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::Killed)
+            .await
+            .expect("the listener must start");
+        let page = browser.new_page("about:blank").await.expect("page");
+        let watch = firewall
+            .handle()
+            .watch(&page, &policy(), 0)
+            .await
+            .expect("the watch must start");
+        open_blank_site(&page).await;
+        let (denied, denied_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!(
+                "fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); \
+                 setTimeout(() => setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 10), 1000); 1"
+            ))
+            .await;
+        let mut refused = false;
+        for _ in 0..50 {
+            refused = !super::lock(&watch.page.refusals).is_empty();
+            if refused {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        watch.park().await;
+        tokio::time::sleep(DISABLE_DRAIN * 3).await;
+        firewall.stop().await;
+        let reached_before_kill = served(&denied_hits).await;
+
+        let mut browser = Arc::into_inner(browser).expect("the stopped check lets go of the browser");
+        let _ = browser.execute(FetchDisableParams::default()).await;
+        let reached_once_off = served(&denied_hits).await;
+        let _ = browser.kill().await;
+
+        assert!(
+            refused,
+            "{test_name}: the watched page's requests must be refused before the park"
+        );
+        assert!(
+            !reached_before_kill,
+            "{test_name}: a page still sending after the check stopped before a kill must not reach \
+             the denied address, got {} requests",
+            denied_hits.load(Ordering::SeqCst)
+        );
+        assert!(
+            reached_once_off,
+            "{test_name}: the page must reach the denied address once interception is off, or it \
+             was never sending and the first assertion proves nothing"
         );
     }
 

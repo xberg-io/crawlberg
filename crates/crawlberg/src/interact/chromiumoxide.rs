@@ -24,12 +24,13 @@ pub(super) async fn run(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     let browser = Arc::new(browser);
-    let result = match BrowserFirewall::start(
-        Arc::clone(&browser),
-        BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
-    )
-    .await
-    {
+    // ~keep A launched browser is killed with interception still on, never turned off, not even
+    // ~keep once the page is closed. Under load Chrome can take longer than the watch's close
+    // ~keep bound to destroy a page or popup, and a page can still send just after Chrome reports
+    // ~keep it destroyed. Turning interception off, or a graceful `Browser.close` (which ends the
+    // ~keep DevTools session first), lets those requests out (xberg-io/crawlberg#468).
+    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref());
+    let result = match BrowserFirewall::start(Arc::clone(&browser), origin).await {
         Ok(firewall) => {
             let result = run_with_browser(&browser, &firewall, url, actions, config).await;
             firewall.stop().await;
@@ -40,6 +41,10 @@ pub(super) async fn run(
 
     // ~keep The stopped firewall held the only other reference, so this is the browser itself.
     match Arc::into_inner(browser) {
+        Some(mut browser) if origin == BrowserOrigin::Killed => {
+            let _ = browser.kill().await;
+            handler_handle.abort();
+        }
         Some(browser) => {
             release_browser(
                 browser,

@@ -329,6 +329,7 @@ async fn one_shot_fetch(
         handler_handle: Some(handler_handle),
         data_dir,
         shutdown_timeout: config.browser.shutdown_timeout,
+        origin: BrowserOrigin::of_session(config.browser.endpoint.as_deref()),
     };
 
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -343,9 +344,9 @@ async fn one_shot_fetch(
     // ~keep `session` is dropped as this function returns, after the result below is computed,
     // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
     // ~keep behind a blocking OS dialog (the originally reported case: a macOS keychain prompt)
-    // ~keep must not hold up delivery of a result that was already computed. `release_browser`
-    // ~keep bounds its work by `shutdown_timeout` and force-kills a launched Chrome on expiry,
-    // ~keep so that background task always finishes.
+    // ~keep must not hold up delivery of a result that was already computed. A launched Chrome
+    // ~keep is killed, and `release_browser` bounds its work on a `browser.endpoint` Chrome by
+    // ~keep `shutdown_timeout`, so that background task always finishes.
     fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
 }
 
@@ -369,6 +370,7 @@ struct OneShotSession {
     handler_handle: Option<JoinHandle<()>>,
     data_dir: Option<std::path::PathBuf>,
     shutdown_timeout: Duration,
+    origin: BrowserOrigin,
 }
 
 impl OneShotSession {
@@ -376,11 +378,7 @@ impl OneShotSession {
     /// hand back a handle to it with its watch.
     async fn open_watched_page(&mut self, config: &CrawlConfig) -> Result<(chromiumoxide::Page, Watch), CrawlError> {
         let browser = self.browser.as_ref().expect("browser is taken only by Drop");
-        let firewall = BrowserFirewall::start(
-            Arc::clone(browser),
-            BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
-        )
-        .await?;
+        let firewall = BrowserFirewall::start(Arc::clone(browser), self.origin).await?;
         let firewall = self.firewall.insert(firewall);
         let page = browser
             .new_page("about:blank")
@@ -411,6 +409,7 @@ impl Drop for OneShotSession {
         let firewall = self.firewall.take();
         let data_dir = self.data_dir.take();
         let shutdown_timeout = self.shutdown_timeout;
+        let origin = self.origin;
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
@@ -419,8 +418,13 @@ impl Drop for OneShotSession {
                         firewall.stop().await;
                     }
                     // ~keep The stopped firewall held the only other reference, so this is the
-                    // ~keep browser itself.
+                    // ~keep browser itself. A launched one is killed with interception still on,
+                    // ~keep as `interact` does (xberg-io/crawlberg#468).
                     match Arc::into_inner(browser) {
+                        Some(mut browser) if origin == BrowserOrigin::Killed => {
+                            let _ = browser.kill().await;
+                            handler_handle.abort();
+                        }
                         Some(browser) => release_browser(browser, handler_handle, cleanup, shutdown_timeout).await,
                         None => handler_handle.abort(),
                     }
