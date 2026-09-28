@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::dom::{DomTree, parse_html};
 use crate::js::runtime::BrowserJsRuntime;
 use crate::net::{HttpClient, NetError, Response};
+use crate::redact::{RedactedHeaders, RedactedValues};
 use url::Url;
 
 use crate::context::BrowserContext;
@@ -25,7 +26,7 @@ use security::cross_scheme_to_file;
 /// operator/config-supplied scripts, independent of any caller-configured, potentially
 /// unbounded timeout.
 const PRELOAD_SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkEvent {
     pub request_id: String,
     pub url: String,
@@ -36,6 +37,36 @@ pub struct NetworkEvent {
     pub response_headers: Arc<std::collections::HashMap<String, String>>,
     pub body_size: usize,
     pub timestamp: f64,
+}
+
+impl std::fmt::Debug for NetworkEvent {
+    /// Redacted: names stay visible throughout. `headers` is the *request* map, so every
+    /// value is hidden; `response_headers` keeps every value but those of the credential
+    /// denylist, `SENSITIVE_HEADERS`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            request_id,
+            url,
+            method,
+            resource_type,
+            status,
+            headers,
+            response_headers,
+            body_size,
+            timestamp,
+        } = self;
+        f.debug_struct("NetworkEvent")
+            .field("request_id", request_id)
+            .field("url", url)
+            .field("method", method)
+            .field("resource_type", resource_type)
+            .field("status", status)
+            .field("headers", &RedactedValues(headers))
+            .field("response_headers", &RedactedHeaders(response_headers))
+            .field("body_size", body_size)
+            .field("timestamp", timestamp)
+            .finish()
+    }
 }
 
 pub struct Page {
@@ -67,11 +98,20 @@ impl Page {
             // ~keep `wreq` cannot speak SOCKS5; validate schemes instead of rewriting `socks5://` to `http://`.
             // ~keep Share the plain client's SSRF policy: the stealth path is an
             // alternate transport, not an alternate policy.
-            Some(Arc::new(StealthHttpClient::with_ssrf(
+            let stealth = StealthHttpClient::with_ssrf(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
                 http_client.ssrf.clone(),
-            )))
+            );
+            // ~keep The scoped headers are set on the context's client before any page exists,
+            // ~keep so they are already there to copy; the stealth client must scope them the same way.
+            if let (Ok(source), Ok(mut target)) = (
+                http_client.origin_headers.try_read(),
+                stealth.origin_headers.try_write(),
+            ) {
+                target.clone_from(&source);
+            }
+            Some(Arc::new(stealth))
         } else {
             None
         };
@@ -97,45 +137,18 @@ impl Page {
     }
 
     fn should_block_url(&self, url: &str) -> bool {
-        if !self.intercept_enabled || self.intercept_block_patterns.is_empty() {
-            return false;
-        }
-        for pattern in &self.intercept_block_patterns {
-            if pattern == "*" {
-                return true;
-            }
-            if pattern.starts_with('*') && pattern.ends_with('*') {
-                if url.contains(&pattern[1..pattern.len() - 1]) {
-                    return true;
-                }
-            } else if let Some(suffix) = pattern.strip_prefix('*') {
-                if url.ends_with(suffix) {
-                    return true;
-                }
-            } else if let Some(prefix) = pattern.strip_suffix('*') {
-                if url.starts_with(prefix) {
-                    return true;
-                }
-            } else if url.contains(pattern.as_str()) {
-                return true;
-            }
-        }
-        false
+        self.intercept_enabled && crate::net::interceptor::matches_block_pattern(&self.intercept_block_patterns, url)
     }
 
-    /// Resolve a sub-resource reference against the page URL, leaving absolute http(s)
-    /// references and unjoinable references untouched.
-    fn resolve_subresource_url(&self, reference: &str) -> String {
-        if reference.starts_with("http://") || reference.starts_with("https://") {
-            return reference.to_string();
-        }
-        match &self.url {
-            Some(base) => base
-                .join(reference)
-                .map(|url| url.to_string())
-                .unwrap_or_else(|_| reference.to_string()),
-            None => reference.to_string(),
-        }
+    /// Parse a sub-resource reference against the page URL; `None` when it does not parse or
+    /// carries userinfo, which is refused before anything logs or fetches it.
+    fn resolve_subresource_url(&self, reference: &str) -> Option<String> {
+        Url::options()
+            .base_url(self.url.as_ref())
+            .parse(reference)
+            .ok()
+            .filter(|url| !crate::net::credential::has_userinfo(url))
+            .map(String::from)
     }
 
     async fn do_fetch(&self, url: &Url) -> Result<Response, NetError> {
@@ -173,6 +186,9 @@ impl Page {
 
         rt.set_cookie_jar(self.context.cookie_jar.clone());
         rt.set_http_client(self.http_client.clone());
+        if self.intercept_enabled {
+            rt.set_intercept_block_patterns(self.intercept_block_patterns.clone());
+        }
 
         if let Some(tx) = &self.intercept_tx {
             rt.set_intercept_tx(tx.clone());
