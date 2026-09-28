@@ -381,6 +381,7 @@ pub(crate) async fn kill_browser(
     profile: std::path::PathBuf,
     shutdown_timeout: Duration,
 ) {
+    let deadline = tokio::time::Instant::now() + shutdown_timeout;
     match browser.kill().await {
         Some(Ok(())) => handler_handle.abort(),
         outcome => {
@@ -388,8 +389,9 @@ pub(crate) async fn kill_browser(
             release_browser(browser, handler_handle, ExternalTabCleanup::default(), shutdown_timeout).await;
         }
     }
-    let arg = std::ffi::OsString::from(format!("--user-data-dir={}", profile.display()));
-    let released = tokio::task::spawn_blocking(move || end_processes_using(&arg, shutdown_timeout))
+    let arg = format!("--user-data-dir={}", profile.display());
+    let limit = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let released = tokio::task::spawn_blocking(move || end_processes_using(&arg, limit))
         .await
         .unwrap_or(false);
     if !released {
@@ -399,12 +401,43 @@ pub(crate) async fn kill_browser(
             "Chrome processes still used the profile at the shutdown timeout"
         );
     }
-    remove_profile_dir(profile).await;
+    remove_profile_until_gone(&profile, deadline).await;
+}
+
+/// Whether the command-line argument `argument` is `arg`, or a space-joined command line that holds
+/// it as one of its words.
+fn names(argument: &std::ffi::OsStr, arg: &str) -> bool {
+    argument.to_string_lossy().split(' ').any(|word| word == arg)
+}
+
+/// Remove `profile`, retrying until it is gone or `deadline` passes, and log each retry and a
+/// final failure.
+///
+/// ~keep A Chrome child that exits as its parent is killed can still flush a file into the
+/// ~keep profile after the lookup found no process left, which makes one removal miss it.
+async fn remove_profile_until_gone(profile: &std::path::Path, deadline: tokio::time::Instant) {
+    loop {
+        let error = match tokio::fs::remove_dir_all(profile).await {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => error,
+        };
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!(dir = %profile.display(), %error, "failed to remove the Chrome profile directory");
+            return;
+        }
+        tracing::debug!(dir = %profile.display(), %error, "retrying the removal of the Chrome profile directory");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// Kill every live process started with the argument `arg`, and wait until none is left, for at
 /// most `limit`. Returns whether none is left.
-fn end_processes_using(arg: &std::ffi::OsStr, limit: Duration) -> bool {
+///
+/// ~keep Chrome rewrites its processes' titles, so on Linux each one's command line reads back as a
+/// ~keep single string with the arguments joined by spaces, not as separate arguments: matching
+/// ~keep whole arguments found none of them (measured on Chrome 154).
+fn end_processes_using(arg: &str, limit: Duration) -> bool {
     use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
     let deadline = std::time::Instant::now() + limit;
@@ -420,7 +453,7 @@ fn end_processes_using(arg: &std::ffi::OsStr, limit: Duration) -> bool {
         let mut live = system
             .processes()
             .values()
-            .filter(|process| process.status() != ProcessStatus::Zombie && process.cmd().iter().any(|a| a == arg))
+            .filter(|process| process.status() != ProcessStatus::Zombie && process.cmd().iter().any(|a| names(a, arg)))
             .peekable();
         if live.peek().is_none() {
             return true;

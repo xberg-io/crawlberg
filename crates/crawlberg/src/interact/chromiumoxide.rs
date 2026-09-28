@@ -27,8 +27,9 @@ pub(super) async fn run(
     // ~keep A launched browser (always with a throwaway profile here) is killed with interception
     // ~keep still on, never turned off, not even once the page is closed. Under load Chrome can
     // ~keep take longer than the watch's close bound to destroy a page or popup, and a page can
-    // ~keep still send just after Chrome reports it destroyed. Turning interception off, or a graceful `Browser.close` (which ends the
-    // ~keep DevTools session first), lets those requests out (xberg-io/crawlberg#468).
+    // ~keep still send just after Chrome reports it destroyed. Turning interception off, or a
+    // ~keep graceful `Browser.close` (which ends the DevTools session first), lets those requests
+    // ~keep out (xberg-io/crawlberg#468).
     let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
     let result = match BrowserFirewall::start(Arc::clone(&browser), origin).await {
         Ok(firewall) => {

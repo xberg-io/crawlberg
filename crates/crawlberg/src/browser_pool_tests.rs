@@ -287,6 +287,24 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
     );
 }
 
+/// A process is found by its profile argument both as a separate argument and inside the single
+/// space-joined command line Chrome's rewritten process titles read back as.
+#[test]
+fn a_profile_argument_is_found_in_a_joined_command_line() {
+    let arg = "--user-data-dir=/tmp/crawlberg-interact-1-0";
+    assert!(names(std::ffi::OsStr::new(arg), arg));
+    assert!(names(
+        std::ffi::OsStr::new(
+            "/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/crawlberg-interact-1-0 --lang=en"
+        ),
+        arg
+    ));
+    assert!(!names(
+        std::ffi::OsStr::new("/opt/google/chrome/chrome --user-data-dir=/tmp/crawlberg-interact-1-01"),
+        arg
+    ));
+}
+
 /// A kill that cannot run falls back to releasing the browser, and the profile is still removed.
 ///
 /// ~keep A browser reached through `Browser::connect` has no child process, so its kill returns
