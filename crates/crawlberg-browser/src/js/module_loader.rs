@@ -15,6 +15,7 @@ use deno_core::error::ModuleLoaderError;
 use crate::js::ops::{JsOpState, SharedState};
 use crate::net::credential::{has_userinfo, without_userinfo};
 use crate::net::interceptor::matches_block_pattern;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
@@ -130,7 +131,7 @@ impl ModuleLoader for BrowserModuleLoader {
                     }
                 }
             }
-            let client = builder
+            let client = with_policy_resolver(builder, proxy_url.is_some(), &ssrf)
                 .build()
                 .map_err(|e| io_err(format!("HTTP client error: {}", e)))?;
 

@@ -86,6 +86,33 @@ pub const NAMED_SCHEMES: [&str; 19] = [
 pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Return `Ok(())` if `url` may be fetched.
     async fn validate(&self, url: &Url) -> Result<(), String>;
+
+    /// Resolve `host` and return the addresses a connection to it may use.
+    ///
+    /// The native clients connect only to the addresses this returns (see
+    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so the policy decision and
+    /// the connection share one lookup. `validate` alone cannot give that: its lookup is gone by
+    /// the time the client resolves the host again, and a rebinding DNS answer differs.
+    ///
+    /// The default resolves with the system resolver and passes each address through
+    /// [`validate`](Self::validate) as a literal-address URL. Override it when the policy also
+    /// decides by host name.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        let addresses: Vec<IpAddr> = tokio::net::lookup_host((host, 0))
+            .await
+            .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
+            .map(|address| address.ip())
+            .collect();
+        if addresses.is_empty() {
+            return Err(format!("dns resolution failed: no addresses resolved for {host}"));
+        }
+        for ip in &addresses {
+            let mut literal = Url::parse("http://0.0.0.0/").expect("literal URL");
+            literal.set_ip_host(*ip).expect("an http URL accepts an IP host");
+            self.validate(&literal).await?;
+        }
+        Ok(addresses)
+    }
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -143,9 +170,8 @@ impl SsrfValidator for DefaultSsrfValidator {
             return Ok(());
         }
 
-        // ~keep Localhost names are blocked before DNS to close rebinding gaps between
-        // validation and request time. This validator does not resolve; the injected
-        // crawlberg one does, and closes the gap properly.
+        // ~keep Localhost names are blocked before DNS. `validate` does not resolve; the
+        // connect-time `resolve` checks every address the connection will use.
         match url.host() {
             Some(url::Host::Ipv4(ip)) if is_ip_denied(ip.into()) => {
                 Err(format!("Access to private/internal IP address {ip} is not allowed"))

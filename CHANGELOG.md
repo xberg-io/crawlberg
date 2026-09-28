@@ -33,6 +33,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The native browser backend connected to a rebinding host's second DNS answer.** It checked
+  a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
+  to connect. A DNS answer that changed between the two lookups reached an address the policy
+  denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
+  only to the addresses the policy checked, as the HTTP path already does. With a proxy, the
+  proxy resolves the target. (#451)
+
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
