@@ -394,7 +394,7 @@ fn has_sitemap_shape(xml: &str) -> bool {
             Ok(Event::Start(_)) => depth += 1,
             Ok(Event::End(_)) => depth = depth.saturating_sub(1),
             Ok(Event::Empty(_)) if depth == 0 => return false,
-            Ok(Event::GeneralRef(_)) if depth < FIELD_DEPTH => return false,
+            Ok(Event::GeneralRef(_) | Event::CData(_)) if depth < FIELD_DEPTH => return false,
             Ok(Event::Text(ref e))
                 if depth < FIELD_DEPTH && !e.xml_content(XmlVersion::default()).trim().is_empty() =>
             {
@@ -736,6 +736,16 @@ mod tests {
             (
                 "a text block page that names urlset",
                 "Access blocked: <urlset><url><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a CDATA section of block text before the root",
+                "<![CDATA[Access blocked]]><urlset><url><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an entry that holds a CDATA section of block text",
+                "<urlset><url><![CDATA[Access blocked]]><loc>/a</loc></url></urlset>".to_owned(),
                 false,
             ),
             (
