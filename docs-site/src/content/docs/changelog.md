@@ -44,6 +44,11 @@ title: "Changelog"
 
 ### Fixed
 
+- **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
+  caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
+  and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
+  case-insensitive. Both entry points now parse the address and read the parsed scheme instead. (#221)
+
 - **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
   request sent the fixed default agent, and robots.txt was judged for that same default agent.
   Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
