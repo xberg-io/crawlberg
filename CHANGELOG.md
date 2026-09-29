@@ -44,6 +44,13 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
+  crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
+  page followed under `allow_subdomains` or a document link on another host got the credentials
+  set for the seed host. Each page now keeps the seed's credential scope, as the native crawl
+  already did. The same loop also dropped the user name and password written into a seed URL, so
+  no page got them, not even the seed; every page on the seed host now gets them. (#404)
+
 - **The native browser backend connected to a rebinding host's second DNS answer.** It checked
   a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
   to connect. A DNS answer that changed between the two lookups reached an address the policy

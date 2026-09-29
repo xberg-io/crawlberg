@@ -24,9 +24,17 @@ impl CrawlEngine {
     }
 
     /// Scrape an admitted seed URL. See [`CrawlEngine::scrape`].
-    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %seed))]
     pub(crate) async fn scrape_seed(&self, seed: &SeedUrl) -> Result<ScrapeResult, CrawlError> {
-        let url = seed.as_str();
+        self.scrape_in_scope(seed.as_str()).await
+    }
+
+    /// Scrape `url` under the credential scope this engine's seed admission set.
+    ///
+    /// The sequential crawl loop scrapes each frontier entry through this, not through
+    /// [`CrawlEngine::scrape`], which would admit the entry as a new seed and scope the
+    /// credentials to the entry's host.
+    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %url))]
+    pub(super) async fn scrape_in_scope(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         self.config.validate()?;
 
         #[cfg(not(target_arch = "wasm32"))]
