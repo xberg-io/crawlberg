@@ -499,11 +499,16 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         }
     };
     tokio::spawn(async move { while handler.next().await.is_some() {} });
+    // ~keep The tab keeps its own tally in sessionStorage, which lasts across its reloads: a
+    // ~keep fetch the check refuses rejects, one it continues resolves. The next reload waits
+    // ~keep for the fetch to settle, so no fetch is cut off by its own page's unload.
     let (_other_site, other_seed) = seed_site(&format!(
-        "<script>fetch({d:?} + '?other', {{ mode: 'no-cors' }}).catch(() => {{}}); setTimeout(() => location.reload(), 100);</script>"
+        "<script>const tally = (key) => sessionStorage.setItem(key, Number(sessionStorage.getItem(key) || 0) + 1); \
+         fetch({d:?} + '?other', {{ mode: 'no-cors' }}).then(() => tally('continued'), () => tally('refused')) \
+         .finally(() => setTimeout(() => location.reload(), 100));</script>"
     ))
     .await;
-    let _other_tab = other_client
+    let other_tab = other_client
         .new_page(other_seed.as_str())
         .await
         .expect("the other client's tab must open");
@@ -525,11 +530,30 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         return;
     }
     let during = count(&received, "other") - before;
-    // ~keep The other tab reloads every 100 ms, so its requests come from documents loaded
-    // ~keep while crawlberg's check is on; a document loaded before that is never paused.
+    let mut refused = None;
+    for _ in 0..50 {
+        if let Ok(value) = other_tab
+            .evaluate("Number(sessionStorage.getItem('refused') || 0)")
+            .await
+            .and_then(|result| result.into_value::<u64>().map_err(Into::into))
+        {
+            refused = Some(value);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // ~keep The other tab reloads 100 ms after each fetch settles, so its requests come from
+    // ~keep documents loaded while crawlberg's check is on; a document loaded before that is
+    // ~keep never paused. No count of them is asserted beyond one: load decides how many fit
+    // ~keep in the scrape. The property is that none is refused.
     assert!(
-        during >= 5,
-        "{test_name}: the other client's requests must keep reaching its address, got {during}"
+        during >= 1,
+        "{test_name}: the other client's requests must keep reaching its address during the scrape, got {during}"
+    );
+    assert_eq!(
+        refused,
+        Some(0),
+        "{test_name}: the check must refuse none of the other client's requests"
     );
     assert_eq!(
         count(&received, "popup"),
