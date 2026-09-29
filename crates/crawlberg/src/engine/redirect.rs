@@ -519,6 +519,51 @@ fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) ->
     chain.unseen_key(landed).map(|key| (parsed, key))
 }
 
+/// The parts of a fetched response the redirect sources read.
+///
+/// ~keep Implemented by the crawl's response and by the plain HTTP fetch's, so `map()` reads a
+/// ~keep refresh with the same code the crawl does rather than a second reader (#502).
+pub(crate) trait RedirectSignals {
+    fn status(&self) -> u16;
+    /// The first value of the header `name`, given in lower case.
+    fn header(&self, name: &str) -> Option<&str>;
+    fn content_type(&self) -> &str;
+    fn body(&self) -> &str;
+}
+
+impl RedirectSignals for crate::tower::CrawlResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+impl RedirectSignals for crate::http::HttpResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+/// One place a response can name the next URL: `Location`, a `Refresh` header or a meta refresh.
+type RedirectSource<R> = fn(&R, &str) -> Option<Url>;
+
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
 ///
 /// ~keep The three sources are tried in order, and a target the chain has already visited
@@ -534,19 +579,46 @@ fn next_redirect_target(
     if chain.redirect_count >= max_redirects {
         return None;
     }
+    first_unseen_target(
+        resp,
+        &chain.current_url,
+        &[http_redirect_target, refresh_header_target, meta_refresh_target],
+        |target| chain.unseen_key(target),
+    )
+}
 
-    let sources: [fn(&crate::tower::CrawlResponse, &str) -> Option<Url>; 3] =
-        [http_redirect_target, refresh_header_target, meta_refresh_target];
+/// The next unvisited URL a `Refresh` header or a `<meta http-equiv="refresh">` in `resp` points
+/// at, paired with its cycle key. `unseen_key` returns that key for a URL the caller has not
+/// visited yet, and `None` for one it has.
+///
+/// ~keep For a fetch that follows its HTTP 3xx itself (`http::http_fetch_with`):
+/// ~keep these are the sources the crawl consults after `Location`, in the same order and with
+/// ~keep the same fall-through past a visited target, so `map()` follows what the crawl follows.
+pub(crate) fn refresh_redirect_target<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    unseen_key: impl Fn(&str) -> Option<String>,
+) -> Option<(Url, String)> {
+    first_unseen_target(
+        resp,
+        current_url,
+        &[refresh_header_target, meta_refresh_target],
+        unseen_key,
+    )
+}
 
-    for source in sources {
-        if let Some(target) = source(resp, &chain.current_url)
-            && let Some(target_key) = chain.unseen_key(target.as_str())
-        {
-            return Some((target, target_key));
-        }
-    }
-
-    None
+/// The first target one of `sources` names in `resp` that `unseen_key` gives a key for.
+fn first_unseen_target<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    sources: &[RedirectSource<R>],
+    unseen_key: impl Fn(&str) -> Option<String>,
+) -> Option<(Url, String)> {
+    sources.iter().find_map(|source| {
+        let target = source(resp, current_url)?;
+        let key = unseen_key(target.as_str())?;
+        Some((target, key))
+    })
 }
 
 /// Statuses whose `Location` header this crawl follows.
@@ -580,17 +652,17 @@ fn fetchable_target(base: &str, target: &str, source: &'static str) -> Option<Ur
 }
 
 /// The `Location` target of an HTTP 3xx, resolved against `current_url`, if the crawl can fetch it.
-fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
-    if !REDIRECT_STATUSES.contains(&resp.status) {
+fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    if !REDIRECT_STATUSES.contains(&resp.status()) {
         return None;
     }
-    let location = resp.headers.get("location").and_then(|v| v.first())?;
+    let location = resp.header("location")?;
     fetchable_target(current_url, location, "Location")
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
-fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
-    let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
+fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    let refresh = resp.header("refresh")?;
     let target = refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
@@ -599,13 +671,13 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
 /// (its `<base href>`, from [`effective_base_url`], the same base every other consumer uses), if
 /// the crawl can fetch it. The `Refresh` header has no document to carry a base, so it resolves
 /// against the response's own address instead (see [`refresh_header_target`]).
-fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
-    if !is_html_content(&resp.content_type, &resp.body) {
+fn meta_refresh_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    if !is_html_content(resp.content_type(), resp.body()) {
         return None;
     }
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
-    let parsed_html = mask_raw_text_markup(&resp.body);
+    let parsed_html = mask_raw_text_markup(resp.body());
     let doc = crate::html::parse_html(&parsed_html).ok()?;
     let target = detect_meta_refresh(&doc)?;
     let base = Url::parse(current_url)

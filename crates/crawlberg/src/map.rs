@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::error::CrawlError;
 use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
-use crate::http::{build_client, fetch_with_retry, http_fetch};
+use crate::http::{RefreshRedirects, build_client, fetch_with_retry, http_fetch};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
@@ -47,7 +47,16 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
         return Ok(filter_map_result(urls, &filter, config.map_limit));
     }
 
-    let resp = fetch_with_retry(url, config, &std::collections::HashMap::new(), &client).await?;
+    // ~keep The direct fetch follows a refresh as the crawl does, so a page that forwards through
+    // ~keep one is mapped from the page it lands on (#502).
+    let resp = fetch_with_retry(
+        url,
+        config,
+        &std::collections::HashMap::new(),
+        &client,
+        RefreshRedirects::Follow,
+    )
+    .await?;
     let urls = urls_from_direct_response(url, &parsed_url, &resp, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
@@ -166,7 +175,9 @@ async fn urls_from_direct_response(
 
     if is_xml {
         if is_sitemap_index(&resp.body) {
-            return fetch_sitemap_tree(url, context, config.map_limit).await;
+            // ~keep Walked from the URL that served it: a refresh that led here is not followed
+            // ~keep again by the sitemap fetch, so the requested URL would give back the page.
+            return fetch_sitemap_tree(&resp.final_url, context, config.map_limit).await;
         }
         let urls = collect_urlset_entries(&resp.final_url, &resp.body, context, config.map_limit);
         if !urls.is_empty() {
@@ -177,7 +188,11 @@ async fn urls_from_direct_response(
     if is_html_content(&resp.content_type, &resp.body) {
         let parsed_html = mask_raw_text_markup(&resp.body);
         if let Ok(doc) = crate::html::parse_html(&parsed_html) {
-            return links_as_sitemap_urls(&doc, &parsed_html, parsed_url);
+            // ~keep The page's links resolve against the URL that served it, not the one
+            // ~keep requested, matching the crawl engine (`crawl_loop.rs`'s `url_for_extract`)
+            // ~keep and the gzip, urlset and sitemap index branches above.
+            let base_url = Url::parse(&resp.final_url).unwrap_or_else(|_| parsed_url.clone());
+            return links_as_sitemap_urls(&doc, &parsed_html, &base_url);
         }
     }
 
@@ -1125,6 +1140,236 @@ mod tests {
     async fn map_urls(url: &str, config: &CrawlConfig) -> Vec<String> {
         let result = map(url, config).await.expect("map should succeed");
         result.urls.into_iter().map(|u| u.url).collect()
+    }
+
+    /// An HTML page whose only content is a `<meta http-equiv="refresh">` with `content`.
+    fn meta_refresh_page(content: &str) -> String {
+        format!(r#"<html><head><meta http-equiv="refresh" content="{content}"></head><body></body></html>"#)
+    }
+
+    /// An HTML page with one link to `href`.
+    fn page_linking_to(href: &str) -> String {
+        format!(r#"<html><body><a href="{href}">next</a></body></html>"#)
+    }
+
+    async fn request_count(mock: &MockServer, route: &str) -> usize {
+        mock.received_requests()
+            .await
+            .expect("wiremock records requests")
+            .iter()
+            .filter(|request| request.url.path() == route)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn map_follows_a_meta_refresh_and_resolves_links_against_the_page_it_lands_on() {
+        // ~keep The crawl has no delay cap: it follows a refresh whatever its delay, so map does too.
+        for delay in ["0", "300"] {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            let refresh = meta_refresh_page(&format!("{delay}; url=/dir/page.html"));
+            mount_body(&mock, "/start", "text/html", refresh).await;
+            mount_body(&mock, "/dir/page.html", "text/html", page_linking_to("x.html")).await;
+
+            let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+            assert_eq!(
+                urls,
+                vec![format!("{base}/dir/x.html")],
+                "a meta refresh with delay {delay} must be followed, and the link resolved against the page it lands on"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_follows_a_refresh_header_the_way_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<html><body></body></html>")
+                    .append_header("content-type", "text/html")
+                    .append_header("refresh", "0; url=/dir/page.html"),
+            )
+            .mount(&mock)
+            .await;
+        mount_body(&mock, "/dir/page.html", "text/html", page_linking_to("x.html")).await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/dir/x.html")]);
+    }
+
+    #[tokio::test]
+    async fn map_stops_a_meta_refresh_loop_at_the_first_page_it_would_revisit() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        // ~keep /a -> /b -> /c -> /b: the loop returns to a page reached by a refresh, not to
+        // ~keep the one requested first, so every hop must be remembered, not only the first.
+        mount_body(&mock, "/a", "text/html", meta_refresh_page("0; url=/b")).await;
+        mount_body(&mock, "/b", "text/html", meta_refresh_page("0; url=/c")).await;
+        let c = r#"<html><head><meta http-equiv="refresh" content="0; url=/b"></head>
+            <body><a href="/from-c">c</a></body></html>"#;
+        mount_body(&mock, "/c", "text/html", c.to_owned()).await;
+
+        let urls = map_urls(&format!("{base}/a"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/from-c")]);
+        assert_eq!(request_count(&mock, "/b").await, 1, "the loop must not return to /b");
+        assert_eq!(request_count(&mock, "/c").await, 1);
+    }
+
+    #[tokio::test]
+    async fn map_stops_a_refresh_chain_at_the_redirect_limit_counting_http_redirects_too() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        // ~keep /r0 -meta-> /r1 -301-> /r2 -meta-> /r3 -meta-> /r4: with a limit of 3 the chain
+        // ~keep takes the 301 as one of its hops, as the crawl does, and stops on /r3.
+        mount_body(&mock, "/r0", "text/html", meta_refresh_page("0; url=/r1")).await;
+        mount_redirect(&mock, "/r1", "/r2").await;
+        for (page, next) in [("/r2", "/r3"), ("/r3", "/r4"), ("/r4", "/r5")] {
+            let body = format!(
+                r#"<html><head><meta http-equiv="refresh" content="0; url={next}"></head>
+                <body><a href="/link{page}">l</a></body></html>"#
+            );
+            mount_body(&mock, page, "text/html", body).await;
+        }
+        let config = CrawlConfig {
+            max_redirects: 3,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&format!("{base}/r0"), &config).await;
+
+        assert_eq!(urls, vec![format!("{base}/link/r3")]);
+        assert_eq!(request_count(&mock, "/r3").await, 1);
+        assert_eq!(
+            request_count(&mock, "/r4").await,
+            0,
+            "a hop past the limit must not be requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_refuses_a_meta_refresh_to_an_address_the_ssrf_policy_denies() {
+        let seed = MockServer::start().await;
+        let denied = MockServer::start().await;
+        // ~keep Only the host name `localhost` is allowlisted, so the literal `127.0.0.1` target
+        // ~keep is refused before any connection.
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        let refresh = meta_refresh_page(&format!("0; url={}/page.html", denied.uri()));
+        mount_body(&seed, "/start", "text/html", refresh).await;
+        mount_body(&denied, "/page.html", "text/html", page_linking_to("x.html")).await;
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
+                .build()
+        };
+
+        let result = map(&format!("{seed_base}/start"), &config).await;
+
+        assert!(
+            matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
+            "a refresh to a denied address must be refused, got {result:?}"
+        );
+        assert_eq!(request_count(&seed, "/start").await, 1, "the seed itself is fetched");
+        assert_eq!(
+            request_count(&denied, "/page.html").await,
+            0,
+            "the denied target is never requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_does_not_follow_a_meta_refresh_the_crawl_would_not_follow() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        // ~keep GUARD: a later 0-second reload with no target replaces the 5-second refresh, as in
+        // ~keep a browser, so the crawl stays on the page; map must stay too.
+        let start = r#"<html><head>
+            <meta http-equiv="refresh" content="5; url=/dir/page.html">
+            <meta http-equiv="refresh" content="0">
+            </head><body><a href="/stay">stay</a></body></html>"#;
+        mount_body(&mock, "/start", "text/html", start.to_owned()).await;
+        mount_body(&mock, "/dir/page.html", "text/html", page_linking_to("x.html")).await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/stay")]);
+        assert_eq!(request_count(&mock, "/dir/page.html").await, 0);
+    }
+
+    #[tokio::test]
+    async fn map_sends_the_seed_credential_only_to_the_seed_host_along_a_meta_refresh() {
+        let seed = MockServer::start().await;
+        let other = MockServer::start().await;
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        let refresh = meta_refresh_page(&format!("0; url={}/page.html", other.uri()));
+        mount_body(&seed, "/start", "text/html", refresh).await;
+        mount_body(&other, "/page.html", "text/html", page_linking_to("x.html")).await;
+        let seed_url = Url::parse(&seed_base).expect("mock URL must parse");
+        let config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed_url,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&format!("{seed_base}/start"), &config).await;
+
+        assert_eq!(urls, vec![format!("{}/x.html", other.uri())]);
+        let authorized = |requests: Vec<wiremock::Request>, route: &str| {
+            requests
+                .iter()
+                .filter(|r| r.url.path() == route && r.headers.contains_key("authorization"))
+                .count()
+        };
+        let seed_requests = seed.received_requests().await.expect("wiremock records requests");
+        let other_requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            authorized(seed_requests, "/start"),
+            1,
+            "the seed page gets the credential"
+        );
+        assert_eq!(
+            authorized(other_requests, "/page.html"),
+            0,
+            "the refresh target on another host must not"
+        );
+        assert_eq!(
+            request_count(&other, "/page.html").await,
+            1,
+            "the refresh target is fetched"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_walks_a_sitemap_index_it_reaches_through_a_meta_refresh() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/start", "text/html", meta_refresh_page("0; url=/dir/index.xml")).await;
+        mount_body(
+            &mock,
+            "/dir/index.xml",
+            "application/xml",
+            sitemap_index(&["child.xml"]),
+        )
+        .await;
+        mount_body(
+            &mock,
+            "/dir/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
     #[tokio::test]

@@ -172,6 +172,17 @@ impl ResponseHead {
     }
 }
 
+/// Whether a fetch follows a `Refresh` header or a `<meta http-equiv="refresh">` the way it
+/// follows an HTTP 3xx.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshRedirects {
+    /// Follow them as the crawl does. Native only: wasm has no refresh reader, and its crawl
+    /// follows no refresh either.
+    Follow,
+    /// Return the response that names them.
+    Ignore,
+}
+
 /// Perform a single HTTP GET request with the given configuration.
 ///
 /// Handles user-agent, authentication, custom headers, error status codes,
@@ -185,6 +196,23 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
+    http_fetch_with(url, config, extra_headers, client, RefreshRedirects::Ignore).await
+}
+
+/// [`http_fetch`], following a refresh as well when `refresh` says so.
+///
+/// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
+/// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
+/// ~keep `send_hop_request`. As in the crawl's chain, a refresh is followed only while a hop is
+/// ~keep left and never to a URL this fetch already requested; either way the page naming it is
+/// ~keep the response.
+pub(crate) async fn http_fetch_with(
+    url: &str,
+    config: &CrawlConfig,
+    extra_headers: &std::collections::HashMap<String, String>,
+    client: &reqwest::Client,
+    refresh: RefreshRedirects,
+) -> Result<HttpResponse, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
@@ -197,13 +225,22 @@ pub(crate) async fn http_fetch(
         extra_headers,
         client,
     };
+    let mut visited = VisitedUrls::new(refresh, &initial_url);
     let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
         let next_url = match fetch_one_hop(&context, &current_url).await? {
-            HopOutcome::Complete(response) => return Ok(response),
             HopOutcome::Redirect(next_url) => next_url,
+            HopOutcome::Complete(response) => {
+                if redirects_followed >= config.max_redirects {
+                    return Ok(response);
+                }
+                match visited.refresh_target(&response, &current_url) {
+                    Some(next_url) => next_url,
+                    None => return Ok(response),
+                }
+            }
         };
 
         if let Err(e) = validate_url(&next_url, &config.ssrf).await {
@@ -222,7 +259,44 @@ pub(crate) async fn http_fetch(
             return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
         }
 
+        visited.insert(&next_url);
         current_url = next_url;
+    }
+}
+
+/// The URLs one fetch has requested, kept only when it follows refreshes.
+///
+/// ~keep A parsed URL's serialization is already the crawl's cycle key for it
+/// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
+/// ~keep serialization is stored and compared directly.
+struct VisitedUrls(Option<std::collections::HashSet<String>>);
+
+impl VisitedUrls {
+    fn new(refresh: RefreshRedirects, initial_url: &url::Url) -> Self {
+        let mut visited = Self((refresh == RefreshRedirects::Follow).then(std::collections::HashSet::new));
+        visited.insert(initial_url);
+        visited
+    }
+
+    fn insert(&mut self, url: &url::Url) {
+        if let Some(seen) = self.0.as_mut() {
+            seen.insert(url.as_str().to_owned());
+        }
+    }
+
+    /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_target(&self, response: &HttpResponse, current_url: &url::Url) -> Option<url::Url> {
+        let seen = self.0.as_ref()?;
+        crate::engine::redirect::refresh_redirect_target(response, current_url.as_str(), |target| {
+            (!seen.contains(target)).then(|| target.to_owned())
+        })
+        .map(|(target, _)| target)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn refresh_target(&self, _response: &HttpResponse, _current_url: &url::Url) -> Option<url::Url> {
+        None
     }
 }
 

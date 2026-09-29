@@ -44,6 +44,12 @@ title: "Changelog"
 
 ### Fixed
 
+- **`map()` did not follow a meta refresh.** A page that forwards with a
+  `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
+  followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
+  each hop counts toward `max_redirects`, each hop passes the SSRF policy, and the seed's
+  credentials go only to the seed host. The links come from the page it lands on. (#502)
+
 - **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
   crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
   page followed under `allow_subdomains` or a document link on another host got the credentials
