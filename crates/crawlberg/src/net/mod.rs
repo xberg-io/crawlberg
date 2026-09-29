@@ -21,24 +21,75 @@ pub use credentials::CredentialScope;
 pub use redact::redact_url_credentials;
 pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 
-/// Parse `url` as a WebSocket address (`ws` or `wss` scheme), or `None` when it is not one.
+/// Parse `url` and confirm its scheme is one of `schemes`.
 ///
-/// A URL scheme is case-insensitive (RFC 3986 §3.1), so `WS://host` and `Wss://host` parse
-/// the same as `ws://host`. The returned URL is in normalized form: a lower-case scheme, no
-/// surrounding spaces, and the `//` before the host. The endpoint checks and the browser
-/// connect both use this one parse, so a spelling a check accepts is the address the
-/// connect uses.
-pub(crate) fn parse_websocket_url(url: &str) -> Option<url::Url> {
+/// A URL scheme is case-insensitive (RFC 3986 §3.1); the `url` crate lower-cases the scheme
+/// while parsing, so this reads the parsed scheme instead of testing the raw text for a
+/// lower-case prefix. Every entry in `schemes` must already be lower case. The HTTP check and
+/// the WebSocket check both go through this one parse, so a spelling either accepts is the
+/// address the other treats the same way.
+fn parse_url_with_scheme(url: &str, schemes: &[&str]) -> Option<url::Url> {
     url::Url::parse(url)
         .ok()
-        .filter(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
+        .filter(|parsed| schemes.contains(&parsed.scheme()))
+}
+
+/// Confirm `url` parses as an address with an `http` or `https` scheme.
+// ~keep Both callers (the REST handler, the MCP tool) live behind the `api`/`mcp` features;
+// gate this the same way, or a default-feature build (neither on) sees no caller and denies
+// it as dead code.
+#[cfg(any(feature = "api", feature = "mcp"))]
+pub(crate) fn has_http_scheme(url: &str) -> bool {
+    parse_url_with_scheme(url, &["http", "https"]).is_some()
+}
+
+/// Parse `url` as a WebSocket address (`ws` or `wss` scheme), or `None` when it is not one.
+///
+/// The returned URL is in normalized form: a lower-case scheme, no surrounding spaces, and the
+/// `//` before the host. The endpoint checks and the browser connect both use this one parse,
+/// so a spelling a check accepts is the address the connect uses.
+pub(crate) fn parse_websocket_url(url: &str) -> Option<url::Url> {
+    parse_url_with_scheme(url, &["ws", "wss"])
 }
 
 /// True when `url` parses as a WebSocket address (`ws` or `wss` scheme).
-///
-/// A URL scheme is case-insensitive, so `WS://host` is accepted the same as `ws://host`.
 pub fn is_websocket_scheme(url: &str) -> bool {
     parse_websocket_url(url).is_some()
+}
+
+#[cfg(all(test, any(feature = "api", feature = "mcp")))]
+mod scheme_tests {
+    use super::has_http_scheme;
+
+    #[test]
+    fn accepts_lower_case_scheme() {
+        assert!(has_http_scheme("http://example.com/"));
+        assert!(has_http_scheme("https://example.com/"));
+    }
+
+    #[test]
+    fn accepts_upper_case_scheme() {
+        assert!(has_http_scheme("HTTP://example.com/"));
+        assert!(has_http_scheme("HTTPS://example.com/"));
+    }
+
+    #[test]
+    fn accepts_mixed_case_scheme() {
+        assert!(has_http_scheme("HtTp://example.com/"));
+        assert!(has_http_scheme("HtTpS://example.com/"));
+    }
+
+    #[test]
+    fn rejects_non_http_scheme() {
+        assert!(!has_http_scheme("ftp://example.com/"));
+        assert!(!has_http_scheme("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn rejects_unparseable_url() {
+        assert!(!has_http_scheme("not a url"));
+        assert!(!has_http_scheme(""));
+    }
 }
 
 #[cfg(test)]
