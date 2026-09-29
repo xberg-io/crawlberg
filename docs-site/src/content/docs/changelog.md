@@ -55,6 +55,19 @@ title: "Changelog"
   runs on a background thread, so it does not stall other tasks or hold the browser pool's lock.
   A saved `browser_profile` is never removed; only the temporary copy of it is. (#415)
 
+- **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
+  caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
+  and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
+  case-insensitive. Both entry points now parse the address and read the parsed scheme instead. (#221)
+
+- **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
+  request sent the fixed default agent, and robots.txt was judged for that same default agent.
+  Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
+  judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
+  behavior the native crawl loop already had. A page on another origin, such as a subdomain
+  under `allow_subdomains`, is now judged by that origin's own robots.txt, as on native. Before,
+  every page was judged by the seed origin's robots.txt, so such a page can now be refused. (#483)
+
 - **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
   crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
   page followed under `allow_subdomains` or a document link on another host got the credentials
@@ -536,6 +549,12 @@ title: "Changelog"
   its own lower-case substring check against the returned address, so `café` never found
   `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
   a term the same way as the CLI and the MCP `map` tool. (#362)
+
+- **`map()` resolved a redirected HTML page's links against the address it requested, not the
+  one that answered.** When `/start` redirected to `/dir/page.html`, a link to `x.html` on that
+  page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
+  fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
+  redirects; the HTML link branch now does too, matching the crawl engine. (#360)
 
 ## [1.8.0] - 2026-09-27
 
