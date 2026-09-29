@@ -6,6 +6,27 @@ title: "Changelog"
 
 ### Upgrading
 
+- **`BrowserConfig` gained two fields and rejects unknown ones.** `chrome_path` and `chrome_args`
+  are always serialised, and `BrowserConfig` rejects unknown fields, so **a browser configuration
+  serialised by this version is rejected by every older crawlberg**, even when both are unset.
+  The break is one-directional: an older configuration still loads here, because both fields
+  have defaults. (#79, #80)
+
+- **`BrowserPoolConfig.chrome_args` now refuses entries that the pool used to launch with.** The
+  pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
+  without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
+  (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
+  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
+  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
+  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
+  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
+  `--enable-features` values with commas. (#79, #80)
+
+- **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
+  constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
+  to Swift's `init` and the Java record constructor, and `chromeArgs` to Dart's constructor. The
+  Java builder and the other bindings give both settings defaults. (#79, #80)
+
 - **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
   `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
   iterates it does not.
@@ -62,6 +83,21 @@ title: "Changelog"
   value, as their other error cases already have: Swift code that matches
   `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
   `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
+
+### Added
+
+- **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
+  Chrome or Chromium executable a browser-mode fetch launches; a missing or non-executable path is
+  an error that names it, never a fallback to another Chrome. `BrowserConfig.chrome_args` adds
+  Chrome flags, each written as `--flag` or `--flag=value` with a lowercase flag name, and a flag
+  that names one of crawlberg's defaults replaces that default. The Rust `BrowserPoolConfig`
+  applies the same checks to its own `chrome_args` when it launches Chrome. Both settings reach
+  every Chrome that crawlberg launches, and both are ignored with a warning, and not checked,
+  when `browser.endpoint` is set or the native backend is in use. Flags such as
+  `--proxy-server` and `--host-resolver-rules` route around the SSRF policy, so set
+  `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
+  warning give the number of flags, not their values, because a flag value can carry a
+  credential. (#79, #80)
 
 ### Fixed
 
