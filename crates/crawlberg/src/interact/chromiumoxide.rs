@@ -525,6 +525,32 @@ mod tests {
         .expect("an interact run must stop its Chrome and remove its profile directory");
     }
 
+    /// A launch that fails removes its profile directory, off the executor thread.
+    ///
+    /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any
+    /// ~keep Chrome runs. This exercises `launch_or_connect`'s own launch-error path, not just
+    /// ~keep the shared teardown `browser_pool` already covers.
+    #[tokio::test]
+    async fn a_failed_interact_launch_removes_its_profile_directory() {
+        let dir = ScratchProfileDir::create("crawlberg-interact-failed-launch-test-")
+            .expect("the directory must be creatable");
+        let path = dir.path().to_path_buf();
+        let config = build_interact_launch_builder(&path, None)
+            .chrome_executable(path.join("no-such-chrome"))
+            .build()
+            .expect("a config naming its executable must build");
+        let before = crate::browser_pool::tests::profile_drops_here();
+
+        let launched = dir.launch(config).await;
+
+        assert!(launched.is_err(), "a launch of a missing executable must fail");
+        crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
+        assert!(
+            crate::browser_pool::tests::wait_for_removal(&path),
+            "the directory must be removed"
+        );
+    }
+
     /// An interact run cut off during its launch hands its profile teardown off the executor thread.
     ///
     /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile

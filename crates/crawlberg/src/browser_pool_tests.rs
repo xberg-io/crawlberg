@@ -311,6 +311,19 @@ async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
         eprintln!("skipping a_pool_dropped_without_shutdown_leaves_no_profile_directory: no usable Chrome: {error}");
         return;
     }
+    let path = pool_profile_dir(&pool).await;
+
+    let before = profile_drops_here();
+    drop(pool);
+    assert_profile_teardown_left_this_thread(before);
+
+    tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&path))
+        .await
+        .expect("a pool dropped without shutdown must stop its Chrome and remove its profile directory");
+}
+
+/// The profile directory of the Chrome `pool` runs, which must exist.
+async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
     let path = pool
         .state
         .lock()
@@ -320,14 +333,86 @@ async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
         .map(|dir| dir.path().to_path_buf())
         .expect("a launched pool must own a profile directory");
     assert!(path.is_dir(), "the profile directory must exist while Chrome runs");
+    path
+}
+
+/// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
+#[tokio::test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_pool_shut_down_leaves_no_profile_directory() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if let Err(error) = pool.warm().await {
+        eprintln!("skipping a_pool_shut_down_leaves_no_profile_directory: no usable Chrome: {error}");
+        return;
+    }
+    let path = pool_profile_dir(&pool).await;
 
     let before = profile_drops_here();
-    drop(pool);
+    pool.shutdown().await;
     assert_profile_teardown_left_this_thread(before);
 
     tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&path))
         .await
-        .expect("a pool dropped without shutdown must stop its Chrome and remove its profile directory");
+        .expect("a pool shut down must stop its Chrome and remove its profile directory");
+}
+
+/// A pool that relaunches a Chrome whose handler ended removes the old Chrome's profile directory.
+#[tokio::test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    if let Err(error) = pool.warm().await {
+        eprintln!("skipping a_relaunched_pool_removes_the_old_chromes_profile_directory: no usable Chrome: {error}");
+        return;
+    }
+    let old = pool_profile_dir(&pool).await;
+    // ~keep A relaunch replaces only a Chrome whose handler has ended.
+    if let Some(state) = pool.state.lock().await.as_ref() {
+        state.handler_handle.abort();
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !pool
+        .state
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|state| state.handler_handle.is_finished())
+    {
+        assert!(tokio::time::Instant::now() < deadline, "the aborted handler must end");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let before = profile_drops_here();
+    let relaunched = pool.relaunch_browser().await;
+    assert_profile_teardown_left_this_thread(before);
+    let new = pool_profile_dir(&pool).await;
+    pool.shutdown().await;
+
+    assert!(relaunched.is_ok(), "the relaunch must succeed: {relaunched:?}");
+    assert_ne!(old, new, "the relaunched Chrome must use a new profile directory");
+    tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&old))
+        .await
+        .expect("a relaunch must stop the old Chrome and remove its profile directory");
+}
+
+/// A launch that fails removes its profile directory, off the executor thread.
+///
+/// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome runs.
+#[tokio::test]
+async fn a_failed_launch_removes_its_profile_directory() {
+    let dir = ScratchProfileDir::create("crawlberg-failed-launch-test-").expect("the directory must be creatable");
+    let path = dir.path().to_path_buf();
+    let config = build_pool_launch_builder(&path, &[])
+        .chrome_executable(path.join("no-such-chrome"))
+        .build()
+        .expect("a config naming its executable must build");
+    let before = profile_drops_here();
+
+    let launched = dir.launch(config).await;
+
+    assert!(launched.is_err(), "a launch of a missing executable must fail");
+    assert_profile_teardown_left_this_thread(before);
+    assert!(wait_for_removal(&path), "the directory must be removed");
 }
 
 /// A pool launch that times out hands its profile teardown off the executor thread, which holds
