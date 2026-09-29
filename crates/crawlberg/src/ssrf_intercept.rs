@@ -223,15 +223,17 @@ struct WatchedPage {
 #[derive(Default)]
 struct Registry {
     pages: Vec<Arc<WatchedPage>>,
-    /// Every live target a watched page owns, in the order they were created: its own, its
-    /// out-of-process frames, and the popups it opened. A target of an ended watch stays
-    /// until Chrome destroys it, its requests refused, and interception stays on until then.
+    /// Every live target a watched page owns, in the order they were created: its own and the
+    /// popups it opened. A target of an ended watch stays until Chrome destroys it, its
+    /// requests refused, and interception stays on until then.
     targets: Vec<(TargetId, Arc<WatchedPage>)>,
     /// Every live target no watched page owns: another client's page on an external browser,
     /// or a browser's own tab.
     others: HashSet<TargetId>,
-    /// In-process frames, filled in as requests name them: the watched page that owns the
-    /// frame, or `None` for a frame of another target.
+    /// Frames, keyed by frame id: an in-process frame as a request names it, and a frame Chrome
+    /// hosts in a target of its own as that target is created. The value is the watched page
+    /// that owns the frame, or `None` for a frame of another target. A page's frames go when
+    /// its watch is released.
     frames: HashMap<FrameId, Option<Arc<WatchedPage>>>,
 }
 
@@ -775,24 +777,39 @@ fn settle(shared: &Shared, done: Done, unanswered: &mut usize) {
     }
 }
 
-/// Record a new target that belongs to a watched page: a popup it opened, directly or through
-/// another popup, or one of its out-of-process frames. Returns the target when its page's
-/// watch is ending, so it is closed at once.
+/// Record a new target that belongs to a watched page. A popup it opened, directly, through
+/// another popup or from one of its frames, is one of its targets; a frame of it that Chrome
+/// hosts in a target of its own is one of its frames. Returns a popup to close at once when its
+/// page's watch is ending.
+///
+/// ~keep A frame's target is not closed on its own: Chrome closes the whole page for a
+/// ~keep `Target.closeTarget` on it (measured on Chrome 154), so a park that closed the page's
+/// ~keep other targets closed the page it was keeping. Recorded as a frame, it is attributed
+/// ~keep like an in-process frame and neither closed nor waited for; it goes with its page.
+/// ~keep A popup opened from inside that frame names the page's target as its opener and the
+/// ~keep frame only as `openerFrameId` (measured on Chrome 154), so the opener is found among
+/// ~keep the targets as before.
 fn adopt_target(shared: &Shared, event: &EventTargetCreated) -> Option<TargetId> {
     let info = &event.target_info;
     let mut registry = lock(&shared.registry);
-    let owner = match (&info.opener_id, &info.parent_frame_id) {
-        (Some(opener), _) => registry.owner_of_target(opener.inner()),
+    let (owner, frame) = match (&info.opener_id, &info.parent_frame_id) {
+        (Some(opener), _) => (registry.owner_of_target(opener.inner()), false),
         (None, Some(parent)) => match registry.owner_of_frame(parent) {
-            Some(Owner::Watched(page)) => Some(page),
-            _ => None,
+            Some(Owner::Watched(page)) => (Some(page), true),
+            _ => (None, false),
         },
-        (None, None) => None,
+        (None, None) => (None, false),
     };
     let Some(owner) = owner else {
         registry.others.insert(info.target_id.clone());
         return None;
     };
+    if frame {
+        registry
+            .frames
+            .insert(FrameId::new(info.target_id.inner()), Some(owner));
+        return None;
+    }
     let ending = owner.ending.load(Ordering::Acquire);
     registry.targets.push((info.target_id.clone(), owner));
     ending.then(|| info.target_id.clone())
@@ -1204,7 +1221,16 @@ mod tests {
     //! and scheme rejections that require no DNS resolution or network.
     use std::sync::Mutex;
 
-    use super::{EventRequestPaused, FrameId, InterceptOutcome, main_frame_verdict, require_main_frame, ssrf_verdict};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use tokio::sync::Notify;
+
+    use super::{
+        BrowserOrigin, EventRequestPaused, EventTargetCreated, FrameId, InterceptOutcome, Owner, Registry, Shared,
+        TargetId, TestDelays, WatchedPage, adopt_target, lock, main_frame_verdict, release, require_main_frame,
+        ssrf_verdict,
+    };
     use crate::net::ssrf::SsrfPolicy;
 
     fn deny_policy() -> SsrfPolicy {
@@ -1248,6 +1274,159 @@ mod tests {
         assert!(
             verdict.is_ok(),
             "loopback must pass when deny_private=false: {verdict:?}"
+        );
+    }
+
+    /// A watched page whose own target is `root`.
+    fn watched(root: &str) -> Arc<WatchedPage> {
+        Arc::new(WatchedPage {
+            root: TargetId::new(root),
+            main_frame: FrameId::new(root),
+            policy: deny_policy(),
+            redirect_limit: 0,
+            outcome: Mutex::new(InterceptOutcome::default()),
+            refusals: Mutex::new(Vec::new()),
+            refused_urls: Mutex::new(Vec::new()),
+            refused_count: AtomicUsize::new(0),
+            ending: AtomicBool::new(false),
+            closing: AtomicBool::new(false),
+            in_flight: AtomicUsize::new(0),
+        })
+    }
+
+    /// The listener's state on an external browser with `page` watched and another client's
+    /// target `other` open.
+    fn shared_with(page: &Arc<WatchedPage>, other: &str) -> Shared {
+        Shared {
+            registry: Mutex::new(Registry {
+                pages: vec![Arc::clone(page)],
+                targets: vec![(page.root.clone(), Arc::clone(page))],
+                others: std::iter::once(TargetId::new(other)).collect(),
+                frames: Default::default(),
+            }),
+            destroyed: Notify::new(),
+            origin: BrowserOrigin::External,
+            last_refused: Mutex::new(None),
+            delays: TestDelays::default(),
+        }
+    }
+
+    /// Chrome's report of a new target `id` of type `kind`: a frame of `parent`, or a popup that
+    /// `opener` opened from its frame `opener_frame`.
+    ///
+    /// ~keep A popup opened from inside a frame names the page's target as `openerId` and the
+    /// ~keep frame as `openerFrameId` (measured on Chrome 154); the fixtures use that shape.
+    fn target_created(
+        id: &str,
+        kind: &str,
+        opener: Option<&str>,
+        opener_frame: Option<&str>,
+        parent: Option<&str>,
+    ) -> EventTargetCreated {
+        serde_json::from_value(serde_json::json!({
+            "targetInfo": {
+                "targetId": id,
+                "type": kind,
+                "title": "",
+                "url": "http://a.localhost/frame",
+                "attached": false,
+                "canAccessOpener": false,
+                "openerId": opener,
+                "openerFrameId": opener_frame,
+                "parentFrameId": parent,
+            }
+        }))
+        .expect("a target created event")
+    }
+
+    /// The ids of the targets the registry holds for watched pages, in order.
+    fn owned(registry: &Registry) -> Vec<&str> {
+        registry.targets.iter().map(|(id, _)| id.inner().as_str()).collect()
+    }
+
+    /// A frame of a watched page that Chrome hosts in a target of its own is one of the page's
+    /// frames, not a target to close; a popup opened from inside that frame is the page's popup,
+    /// kept while the page is watched and closed at once once the page is ending; and the frame
+    /// goes with the page's watch.
+    #[test]
+    fn a_frame_target_of_a_page_is_its_frame_and_not_a_target_to_close() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let frame = adopt_target(&shared, &target_created("FRAME", "iframe", None, None, Some("ROOT")));
+        let popup = adopt_target(
+            &shared,
+            &target_created("POPUP", "page", Some("ROOT"), Some("FRAME"), None),
+        );
+        page.ending.store(true, Ordering::Release);
+        let late = adopt_target(
+            &shared,
+            &target_created("LATE", "page", Some("ROOT"), Some("FRAME"), None),
+        );
+        let (owned_now, others_now, frame_owner_is_page) = {
+            let registry = lock(&shared.registry);
+            (
+                owned(&registry).into_iter().map(String::from).collect::<Vec<_>>(),
+                registry.others.iter().map(|id| id.inner().clone()).collect::<Vec<_>>(),
+                matches!(registry.owner_of_frame(&FrameId::new("FRAME")), Some(Owner::Watched(owner)) if Arc::ptr_eq(&owner, &page)),
+            )
+        };
+        release(&shared, &page, true);
+        let frame_after_release = lock(&shared.registry).frames.contains_key(&FrameId::new("FRAME"));
+
+        assert!(frame.is_none(), "a frame target is never closed on its own");
+        assert!(frame_owner_is_page, "the frame's requests are judged as the page's");
+        assert_eq!(
+            owned_now,
+            ["ROOT", "POPUP", "LATE"],
+            "the page's targets are its own and the popups opened from its frame, never the frame"
+        );
+        assert_eq!(
+            others_now,
+            ["OTHER"],
+            "nothing of the page passes as another client's target"
+        );
+        assert!(popup.is_none(), "a popup of a page still watched is kept");
+        assert_eq!(
+            late.as_ref().map(|id| id.inner().as_str()),
+            Some("LATE"),
+            "a popup opened once the page is ending is closed at once"
+        );
+        assert!(!frame_after_release, "the frame goes with the page's watch");
+    }
+
+    /// A frame target and a popup of another client's page stay that client's: neither is adopted.
+    #[test]
+    fn a_frame_and_a_popup_of_another_client_s_page_stay_that_client_s() {
+        let page = watched("ROOT");
+        let shared = shared_with(&page, "OTHER");
+        let frame = adopt_target(
+            &shared,
+            &target_created("OTHER-FRAME", "iframe", None, None, Some("OTHER")),
+        );
+        let popup = adopt_target(
+            &shared,
+            &target_created("OTHER-POPUP", "page", Some("OTHER"), Some("OTHER-FRAME"), None),
+        );
+        let registry = lock(&shared.registry);
+
+        assert!(
+            frame.is_none() && popup.is_none(),
+            "nothing of another client is closed"
+        );
+        assert_eq!(owned(&registry), ["ROOT"], "nothing of another client is adopted");
+        assert!(
+            matches!(
+                registry.owner_of_frame(&FrameId::new("OTHER-FRAME")),
+                Some(Owner::Other)
+            ),
+            "the other client's frame is judged as that client's"
+        );
+        assert!(
+            matches!(
+                registry.owner_of_frame(&FrameId::new("OTHER-POPUP")),
+                Some(Owner::Other)
+            ),
+            "the other client's popup is judged as that client's"
         );
     }
 
@@ -1342,7 +1521,7 @@ mod race_tests {
     use super::{
         ACTION_GRACE, BrowserFirewall, BrowserOrigin, CLOSE_TIMEOUT, DISABLE_DRAIN, FetchDisableParams, TestDelays,
     };
-    use crate::net::ssrf::SsrfPolicy;
+    use crate::net::ssrf::{HostMatcher, SsrfPolicy};
 
     #[allow(
         clippy::print_stderr,
@@ -1734,6 +1913,128 @@ mod race_tests {
         );
         assert!(!popup_open, "{test_name}: the park must close the popup");
         assert!(root_open, "{test_name}: the stop must leave the parked page open");
+    }
+
+    /// The id of the frame target whose URL starts with `prefix`, if `browser` has one.
+    async fn frame_target_of(browser: &Browser, prefix: &str) -> Option<TargetId> {
+        browser
+            .execute(GetTargetsParams::default())
+            .await
+            .ok()?
+            .result
+            .target_infos
+            .into_iter()
+            .find(|info| info.r#type == "iframe" && info.url.starts_with(prefix))
+            .map(|info| info.target_id)
+    }
+
+    /// A loopback server on `a.localhost` answering every request with `body` as HTML, counting
+    /// the requests for `/ok`.
+    async fn frame_site(body: String) -> (String, Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!(
+            "http://a.localhost:{}/frame",
+            listener.local_addr().expect("addr").port()
+        );
+        let ok_hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&ok_hits);
+        let body = Arc::new(body);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let counter = Arc::clone(&counter);
+                let body = Arc::clone(&body);
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 1024];
+                    let _ = stream.read(&mut buffer).await;
+                    if buffer.starts_with(b"GET /ok") {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (url, ok_hits)
+    }
+
+    /// A page keeps a cross-site frame Chrome hosts in a target of its own: the frame's requests
+    /// are judged by the page's policy, the park closes the page's popups and not the frame, and
+    /// a stop of an external browser does not wait for it. The parked page is still open after
+    /// both.
+    ///
+    /// ~keep The frame is on `a.localhost`, a different site from the page's `localhost`, so
+    /// ~keep Chrome gives it a target of its own. Closing that target closes the page (measured on
+    /// ~keep Chrome 154), which is what the park did to the page it was keeping.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_parked_page_keeps_its_cross_site_frame_and_stays_open() {
+        let test_name = "a_parked_page_keeps_its_cross_site_frame_and_stays_open";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let firewall = BrowserFirewall::start(Arc::clone(&browser), BrowserOrigin::External)
+            .await
+            .expect("the listener must start");
+        let page = browser.new_page("about:blank").await.expect("page");
+        let root = page.target_id().clone();
+        let mut allowing = policy();
+        allowing.allowlist.push(HostMatcher::exact("a.localhost"));
+        let watch = firewall
+            .handle()
+            .watch(&page, &allowing, 0)
+            .await
+            .expect("the watch must start");
+        open_blank_site(&page).await;
+        let (denied, denied_hits) = denied_listener().await;
+        let (frame_url, ok_hits) = frame_site(format!(
+            "<script>setInterval(() => {{ fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); \
+             fetch('/ok?' + Math.random()).catch(() => 0); }}, 50);</script>"
+        ))
+        .await;
+        let _ = page
+            .evaluate(format!(
+                "const frame = document.createElement('iframe'); frame.src = {frame_url:?}; \
+                 document.body.appendChild(frame); 1"
+            ))
+            .await;
+        let mut frame_target = None;
+        for _ in 0..50 {
+            frame_target = frame_target_of(&browser, "http://a.localhost").await;
+            if frame_target.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let frame_allowed = served(&ok_hits).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let frame_refused = denied_hits.load(Ordering::SeqCst) == 0;
+        watch.park().await;
+        let open_after_park = open_targets(&browser).await.contains(&root);
+        let stopped = tokio::time::timeout(Duration::from_secs(15), firewall.stop())
+            .await
+            .is_ok();
+        let open_after_stop = open_targets(&browser).await.contains(&root);
+        if let Some(mut browser) = Arc::into_inner(browser) {
+            let _ = browser.kill().await;
+        }
+
+        assert!(
+            frame_target.is_some(),
+            "{test_name}: the cross-site frame must get a target of its own"
+        );
+        assert!(
+            frame_allowed,
+            "{test_name}: the frame's request to its own site must be allowed through"
+        );
+        assert!(
+            frame_refused,
+            "{test_name}: the frame's request to the denied address must be refused"
+        );
+        assert!(open_after_park, "{test_name}: parking must leave the page open");
+        assert!(stopped, "{test_name}: the stop must not wait for a parked page's frame");
+        assert!(open_after_stop, "{test_name}: the stop must leave the parked page open");
     }
 
     /// A page watched while interception is still being turned on for another page waits until
