@@ -87,6 +87,9 @@ html-to-markdown-rs = { version = "3.14", features = ["full"] }
 # Before that it pinned 0.39 and the graph carried two copies of the html5ever/markup5ever/
 # string_cache/web_atoms stack; matching majors is what collapses them to one.
 html5ever = "0.40"
+icu_casemap = { version = "2.3", default-features = false, features = ["compiled_data"] }
+icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+idna = "1"
 ipnet = "2"
 itertools = "0.15"
 libc = "0.2"
@@ -123,6 +126,7 @@ opentelemetry = { version = "0.33", features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.33", features = ["grpc-tonic", "trace", "metrics"] }
 opentelemetry-semantic-conventions = "0.33"
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
+percent-encoding = "2"
 png = "0.18"
 precomputed-hash = "0.1"
 proptest = "1"

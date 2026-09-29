@@ -4,16 +4,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::helpers::PathPattern;
-use tl::ParserOptions;
 use url::Url;
 
 use super::CrawlEngine;
 use super::robots_cache::RobotsCacheKey;
 use crate::error::CrawlError;
+use crate::helpers::fetch_robots_outcome;
 use crate::helpers::{PathPatternTarget, RobotsOutcome};
-use crate::helpers::{default_robots_user_agent, fetch_robots_outcome, find_ascii_case_insensitive};
-use crate::html::is_html_content;
-use crate::html::{detect_meta_refresh, mask_raw_text_markup};
+use crate::html::{PageScan, detect_meta_refresh, effective_base_url, mask_raw_text_markup, refresh_target};
+use crate::html::{is_fetchable_scheme, is_html_content};
+use crate::net::redact_url_credentials;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 use crate::normalize::{normalize_url_for_dedup, resolve_redirect};
 
@@ -30,6 +30,9 @@ pub(crate) struct RedirectOutcome {
     pub(crate) intermediate_headers: Vec<(String, HashMap<String, Vec<String>>)>,
     /// Whether headless-browser fetch was used for the final hop.
     pub(crate) browser_used: bool,
+    /// The meta refresh check's read of `final_response`'s body, when it read one, so extraction
+    /// does not read the page again.
+    pub(crate) page_scan: Option<PageScan>,
 }
 
 /// Best-effort host extraction for `Set-Cookie` `Domain=` validation.
@@ -47,7 +50,7 @@ pub(super) fn url_host(url: &str) -> String {
 /// What a [`follow_redirects`] call produced.
 pub(crate) enum RedirectResolution {
     /// The chain ended on a response.
-    Fetched(RedirectOutcome),
+    Fetched(Box<RedirectOutcome>),
     /// The policy refused a URL in the chain, so it was never requested.
     Refused {
         /// Why the URL was refused.
@@ -119,6 +122,14 @@ pub(crate) struct RedirectPolicy<'a> {
     pub(super) last_origin: Option<RobotsCacheKey>,
     /// URLs this policy rejected, folded into `CrawlState::urls_filtered`.
     pub(super) urls_filtered: usize,
+    /// The agent [`Self::admits`] chose for the most recently admitted URL.
+    ///
+    /// ~keep Set once per hop, by the same call that used it for robots.txt group selection.
+    /// `follow_redirects` reads this after a successful `admits()` and pins it onto that hop's
+    /// `CrawlRequest`, so the request the robots decision was made for and the request that
+    /// actually goes out (including its retries and escalations, which re-send the same
+    /// request rather than starting a new one) are the same agent (crawlberg#423).
+    pub(super) pending_user_agent: Option<String>,
 }
 
 impl<'a> RedirectPolicy<'a> {
@@ -137,6 +148,7 @@ impl<'a> RedirectPolicy<'a> {
             outcomes: HashMap::new(),
             last_origin: None,
             urls_filtered: 0,
+            pending_user_agent: None,
         }
     }
 
@@ -161,10 +173,15 @@ impl<'a> RedirectPolicy<'a> {
         // ~keep component that decides whether a request may go out at all -- the same
         // ~keep fail-closed rule that governs `outcome_for_fetch_error`, where the catch-all
         // ~keep arm has to be the closed one for the guarantee to hold.
+        // ~keep Both refusals below name the address through the redactor: a hostless value
+        // ~keep such as `user:token@host` is exactly the one that carries a credential.
         let Ok(parsed) = Url::parse(url) else {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: cannot parse {url} to determine its origin"),
+                reason: format!(
+                    "robots_unreachable: cannot parse {} to determine its origin",
+                    redact_url_credentials(url)
+                ),
             }));
         };
         // ~keep `robots_origin_key` falls back to an empty host, so every hostless URL would
@@ -172,7 +189,10 @@ impl<'a> RedirectPolicy<'a> {
         if parsed.host_str().is_none() {
             return Ok(Some(PolicyRefusal::Blocked {
                 url: url.to_owned(),
-                reason: format!("robots_unreachable: {url} has no host to read robots.txt from"),
+                reason: format!(
+                    "robots_unreachable: {} has no host to read robots.txt from",
+                    redact_url_credentials(url)
+                ),
             }));
         }
 
@@ -183,20 +203,16 @@ impl<'a> RedirectPolicy<'a> {
             return Ok(Some(refusal));
         }
 
-        let user_agent = default_robots_user_agent(&self.engine.config);
-        let origin = RobotsCacheKey::new(&parsed, user_agent);
+        // ~keep Chosen once per hop, here, before robots.txt is even read: the same call that
+        // ~keep advances the UA rotation counter, so this hop's robots decision and the agent
+        // ~keep `follow_redirects` pins onto its `CrawlRequest` afterward are the same pick
+        // ~keep (crawlberg#423). Without a configured rotation list this is exactly
+        // ~keep `default_robots_user_agent`, so a non-rotating crawl sees no change.
+        let user_agent = self.engine.choose_request_user_agent();
+        let origin = RobotsCacheKey::new(&parsed, &user_agent);
         let first_visit = !self.outcomes.contains_key(&origin);
         if first_visit {
-            let outcome = if self.engine.config.respect_robots_txt {
-                self.engine
-                    .robots_cache
-                    .get_or_fetch(origin.clone(), || {
-                        fetch_robots_outcome(url, &self.engine.config, self.client, user_agent)
-                    })
-                    .await
-            } else {
-                Arc::new(RobotsOutcome::AllowAll)
-            };
+            let outcome = resolve_robots_outcome(self.engine, self.client, &parsed, url, &user_agent).await;
             self.outcomes.insert(origin.clone(), outcome);
         }
         let outcome = self
@@ -224,6 +240,7 @@ impl<'a> RedirectPolicy<'a> {
             self.engine.apply_crawl_delay(outcome, &parsed).await?;
         }
         self.last_origin = Some(origin);
+        self.pending_user_agent = Some(user_agent);
         Ok(None)
     }
 
@@ -265,8 +282,44 @@ impl<'a> RedirectPolicy<'a> {
     }
 }
 
+/// Resolve the robots.txt outcome `agent` sees at `parsed`'s origin: the shared cache when
+/// `respect_robots_txt` is on and the request carries no credentials, a direct fetch for a
+/// credentialed request (never shared with another caller of the same origin), and
+/// `AllowAll` when robots.txt is off.
+///
+/// ~keep `pub(super)`: the one place that resolves a robots.txt outcome for an agent, shared by
+/// `admits` (judging the agent chosen for the current tier) and
+/// `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm (re-judging the browser's own agent on
+/// escalation), so the two can never resolve the same `(origin, agent)` two different ways
+/// (crawlberg#423).
+pub(super) async fn resolve_robots_outcome(
+    engine: &CrawlEngine,
+    client: &reqwest::Client,
+    parsed: &Url,
+    url: &str,
+    agent: &str,
+) -> Arc<RobotsOutcome> {
+    if !engine.config.respect_robots_txt {
+        return Arc::new(RobotsOutcome::AllowAll);
+    }
+    // ~keep A robots.txt read with the caller's credentials is theirs alone: the shared cache
+    // ~keep would hand it to the next crawl of the same origin.
+    if crate::net::credentials::is_credentialed(&engine.config, parsed) {
+        return Arc::new(fetch_robots_outcome(url, &engine.config, client, agent).await);
+    }
+    let key = RobotsCacheKey::new(parsed, agent);
+    engine
+        .robots_cache
+        .get_or_fetch(key, || fetch_robots_outcome(url, &engine.config, client, agent))
+        .await
+}
+
 /// The reason robots.txt forbids fetching `parsed` at all, if it does.
-fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
+///
+/// ~keep `pub(super)`: also read by `engine/dispatch.rs::run_tier`'s `Tier::Browser` arm, which
+/// judges the same outcome shape against the browser's own agent right before it fetches
+/// (crawlberg#423).
+pub(super) fn robots_block_reason(robots: &RobotsOutcome, parsed: &Url) -> Option<String> {
     if let Some(reason) = robots.disallow_all_reason() {
         return Some(format!("robots_unreachable: {reason}"));
     }
@@ -310,19 +363,20 @@ fn canonical_redirect_key(url: &str) -> String {
 /// surface a soft `state.error` rather than aborting the request.
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
 /// cannot reach a URL the configuration forbids, whatever order it does its own work in.
+///
+/// `override_user_agent` pins the agent every hop sends, ahead of whatever `policy` would have
+/// picked. `scrape()` passes `None` for both, unchanged; the wasm crawl loop passes
+/// `Some(agent)` with no policy, so the one pick its own per-page robots check already made is
+/// the one that reaches the wire here too (crawlberg#483) -- native's own frontier loop still
+/// picks entirely through `policy`, so passing `None` here changes nothing for it.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
     max_redirects: usize,
     mut policy: Option<&mut RedirectPolicy<'_>>,
+    override_user_agent: Option<&str>,
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
-
-    // ~keep Scopes configured credentials to the host the chain started on; hops that leave
-    // ~keep it must not carry the caller's Authorization header to a redirect target.
-    let origin_host = url::Url::parse(initial_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned));
 
     let mut browser_used = false;
     loop {
@@ -335,21 +389,33 @@ pub(crate) async fn follow_redirects(
                 intermediate_headers: chain.intermediate_headers,
             });
         }
+        // ~keep The agent `admits()` just chose (for robots.txt group selection) and this hop's
+        // ~keep fetch must send are the same one: pinned onto the request below so every retry
+        // ~keep or tier escalation of this hop reuses it rather than picking a new one
+        // ~keep (crawlberg#423). `override_user_agent` outranks it when the caller already made
+        // ~keep its own pick outside any policy (crawlberg#483); both are `None` for `scrape()`,
+        // ~keep which leaves the UA rotation layer free to pick per its own default behaviour,
+        // ~keep unchanged.
+        let forced_user_agent = override_user_agent
+            .map(str::to_owned)
+            .or_else(|| policy.as_deref().and_then(|p| p.pending_user_agent.clone()));
 
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
         let hop_engine = engine.clone_for_url(&chain.current_url);
         let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url, origin_host.as_deref())
+            .fetch_response(&chain.current_url, forced_user_agent.as_deref())
             .await
         {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
             Err(CrawlError::NotFound { .. }) if chain.redirect_count > 0 => {
-                return Ok(RedirectResolution::Fetched(
-                    chain.into_outcome(synthetic_not_found(), browser_used),
-                ));
+                return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
+                    synthetic_not_found(),
+                    None,
+                    browser_used,
+                ))));
             }
             Err(e) => return Err(e),
         };
@@ -373,8 +439,13 @@ pub(crate) async fn follow_redirects(
             }
         }
 
-        let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects) else {
-            return Ok(RedirectResolution::Fetched(chain.into_outcome(resp, browser_used)));
+        let mut page_scan = None;
+        let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects, &mut page_scan) else {
+            return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
+                resp,
+                page_scan,
+                browser_used,
+            ))));
         };
 
         chain
@@ -413,36 +484,43 @@ impl RedirectChain {
 
     /// Move the chain to `target`, recording `headers` as the hop it is leaving.
     ///
+    /// ~keep `target` is a parsed URL, so every target reaches the SSRF check: a string that
+    /// ~keep fails to parse cannot be passed here at all.
+    ///
     /// # Errors
     ///
-    /// Returns [`CrawlError::SsrfViolation`] when `target` fails the SSRF policy, so a
+    /// Returns [`CrawlError::SsrfPolicyViolation`] when `target` fails the SSRF policy, so a
     /// redirect can never reach a URL the configuration forbids.
     async fn advance_to(
         &mut self,
-        target: String,
+        target: Url,
         target_key: String,
         headers: HashMap<String, Vec<String>>,
         ssrf: &SsrfPolicy,
     ) -> Result<(), CrawlError> {
-        if let Ok(parsed_target) = url::Url::parse(&target)
-            && let Err(e) = validate_url(&parsed_target, ssrf).await
-        {
+        if let Err(e) = validate_url(&target, ssrf).await {
             return Err(CrawlError::ssrf_violation(target, e.to_string()));
         }
         self.intermediate_headers.push((url_host(&self.current_url), headers));
         self.seen.insert(target_key);
         self.redirect_count += 1;
-        self.current_url = target;
+        self.current_url = target.into();
         Ok(())
     }
 
-    fn into_outcome(self, final_response: crate::tower::CrawlResponse, browser_used: bool) -> RedirectOutcome {
+    fn into_outcome(
+        self,
+        final_response: crate::tower::CrawlResponse,
+        page_scan: Option<PageScan>,
+        browser_used: bool,
+    ) -> RedirectOutcome {
         RedirectOutcome {
             final_url: self.current_url,
             final_response,
             redirect_count: self.redirect_count,
             intermediate_headers: self.intermediate_headers,
             browser_used,
+            page_scan,
         }
     }
 }
@@ -456,18 +534,58 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         body_bytes: Vec::new(),
         headers: HashMap::new(),
         landed_url: None,
+        sent_user_agent: None,
     }
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
 /// the one requested, paired with the cycle key it will occupy.
-fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(String, String)> {
+fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(Url, String)> {
     let landed = resp.landed_url.as_deref()?;
-    let parsed = Url::parse(landed).ok()?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return None;
+    let parsed = Url::parse(landed).ok().filter(is_fetchable_scheme)?;
+    chain.unseen_key(landed).map(|key| (parsed, key))
+}
+
+/// The parts of a fetched response the redirect sources read.
+///
+/// ~keep Implemented by the crawl's response and by the plain HTTP fetch's, so `map()` reads a
+/// ~keep refresh with the same code the crawl does rather than a second reader (#502).
+pub(crate) trait RedirectSignals {
+    fn status(&self) -> u16;
+    /// The first value of the header `name`, given in lower case.
+    fn header(&self, name: &str) -> Option<&str>;
+    fn content_type(&self) -> &str;
+    fn body(&self) -> &str;
+}
+
+impl RedirectSignals for crate::tower::CrawlResponse {
+    fn status(&self) -> u16 {
+        self.status
     }
-    chain.unseen_key(landed).map(|key| (landed.to_owned(), key))
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+impl RedirectSignals for crate::http::HttpResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
 }
 
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
@@ -477,71 +595,148 @@ fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) ->
 /// ~keep loops back can still be superseded by a `Refresh` header or a meta refresh. Each
 /// ~keep source runs only once the earlier ones yield nothing usable, so an ordinary 3xx
 /// ~keep never pays to parse the body looking for a meta refresh.
+///
+/// The meta refresh check leaves its read of the body in `page_scan`.
 fn next_redirect_target(
     resp: &crate::tower::CrawlResponse,
     chain: &RedirectChain,
     max_redirects: usize,
-) -> Option<(String, String)> {
+    page_scan: &mut Option<PageScan>,
+) -> Option<(Url, String)> {
     if chain.redirect_count >= max_redirects {
         return None;
     }
-
-    let sources: [fn(&crate::tower::CrawlResponse, &str) -> Option<String>; 3] =
-        [http_redirect_target, refresh_header_target, meta_refresh_target];
-
-    for source in sources {
-        if let Some(target) = source(resp, &chain.current_url)
-            && let Some(target_key) = chain.unseen_key(&target)
-        {
-            return Some((target, target_key));
-        }
-    }
-
-    None
+    let unseen = |target: Url| chain.unseen_key(target.as_str()).map(|key| (target, key));
+    http_redirect_target(resp, &chain.current_url)
+        .and_then(unseen)
+        .or_else(|| refresh_redirect_target(resp, &chain.current_url, |target| chain.unseen_key(target), page_scan))
 }
 
-/// Statuses whose `Location` header this crawl follows.
-const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+/// The next unvisited URL a `Refresh` header or a `<meta http-equiv="refresh">` in `resp` points
+/// at, paired with its cycle key. `unseen_key` returns that key for a URL the caller has not
+/// visited yet, and `None` for one it has. The meta refresh check leaves its read of the body in
+/// `page_scan`.
+///
+/// ~keep For a fetch that follows its HTTP 3xx itself (`http::http_fetch_with`):
+/// ~keep these are the sources the crawl consults after `Location`, in the same order and with
+/// ~keep the same fall-through past a visited target, so `map()` follows what the crawl follows.
+pub(crate) fn refresh_redirect_target<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    unseen_key: impl Fn(&str) -> Option<String>,
+    page_scan: &mut Option<PageScan>,
+) -> Option<(Url, String)> {
+    let unseen = |target: Url| unseen_key(target.as_str()).map(|key| (target, key));
+    refresh_header_target(resp, current_url)
+        .and_then(&unseen)
+        .or_else(|| meta_refresh_target(resp, current_url, page_scan).and_then(&unseen))
+}
 
-/// The `url=` marker inside a `Refresh` header's value.
-const REFRESH_URL_MARKER: &str = "url=";
+/// `target` resolved against `base`, or `None` when it does not resolve. `source` names the
+/// redirect source for the debug log a target that fails to parse gets; the log carries the
+/// target's length only, never its text.
+fn resolved_target(base: &str, target: &str, source: &'static str) -> Option<Url> {
+    let resolved = resolve_redirect(base, target);
+    if resolved.is_none() {
+        tracing::debug!(
+            current_url = %redact_url_credentials(base),
+            target_len = target.len(),
+            source,
+            "redirect target failed to parse; this source contributes nothing"
+        );
+    }
+    resolved
+}
 
-/// The `Location` target of an HTTP 3xx, resolved against `current_url`.
-fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
-    if !REDIRECT_STATUSES.contains(&resp.status) {
+/// `target` resolved against `base`, or `None` when it does not resolve or resolves to a scheme
+/// the crawl cannot fetch (`mailto:`, `data:`, `file:`, `ftp:`, ...). A browser sends no request
+/// for one, so it is no redirect target.
+///
+/// ~keep The scheme is checked on the resolved address, never on `target` itself: a relative
+/// ~keep target has no scheme of its own to check before it resolves, so checking it there let a
+/// ~keep target that takes a non-web scheme from what it resolves against through unchecked (#478).
+fn fetchable_target(base: &str, target: &str, source: &'static str) -> Option<Url> {
+    resolved_target(base, target, source).filter(is_fetchable_scheme)
+}
+
+/// The `Location` target of an HTTP 3xx, resolved against `current_url`, if the crawl can fetch it.
+fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    if !crate::http::REDIRECT_STATUSES.contains(&resp.status()) {
         return None;
     }
-    let location = resp.headers.get("location").and_then(|v| v.first())?;
-    Some(resolve_redirect(current_url, location))
+    let location = resp.header("location")?;
+    fetchable_target(current_url, location, "Location")
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
-fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
-    let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
-    let pos = find_ascii_case_insensitive(refresh, REFRESH_URL_MARKER)?;
-    let target_path = refresh[pos + REFRESH_URL_MARKER.len()..].trim();
-    Some(resolve_redirect(current_url, target_path))
+fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    let refresh = resp.header("refresh")?;
+    let target = refresh_target(refresh)?;
+    resolved_target(current_url, &target, "Refresh header")
 }
 
-/// The target named by a `<meta http-equiv="refresh">`, resolved against `current_url`.
-fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<String> {
-    if !is_html_content(&resp.content_type, &resp.body) {
+/// The target named by a `<meta http-equiv="refresh">`, resolved against the document's base URL
+/// (its `<base href>`, from [`effective_base_url`], the same base every other consumer uses), if
+/// the crawl can fetch it. The `Refresh` header has no document to carry a base, so it resolves
+/// against the response's own address instead (see [`refresh_header_target`]).
+///
+/// The read of the body is left in `page_scan`, for extraction to reuse.
+fn meta_refresh_target<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    page_scan: &mut Option<PageScan>,
+) -> Option<Url> {
+    if !is_html_content(resp.content_type(), resp.body()) {
         return None;
     }
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
-    let parsed_html = mask_raw_text_markup(&resp.body);
-    let target = tl::parse(&parsed_html, ParserOptions::default())
+    let parsed_html = mask_raw_text_markup(resp.body());
+    let found = crate::html::parse_html(&parsed_html.text)
         .ok()
-        .and_then(|doc| detect_meta_refresh(&doc))?;
-    Some(resolve_redirect(current_url, &target))
+        .and_then(|doc| detect_meta_refresh(&doc))
+        .map(|target| {
+            let base = Url::parse(current_url)
+                .map(|document_url| effective_base_url(parsed_html.base_href.as_deref(), &document_url).to_string())
+                .unwrap_or_else(|_| current_url.to_owned());
+            (base, target)
+        });
+    *page_scan = Some(parsed_html.detach());
+    let (base, target) = found?;
+    fetchable_target(&base, &target, "meta refresh")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tracing_capture::{assert_logged_without_secret, capture_events};
 
     const MAX_REDIRECTS: usize = 5;
+
+    /// ~keep A public crawl refuses a seed that does not parse before this policy runs, so the
+    /// ~keep crawl-level test cannot reach the unparseable branch. Both branches are driven here.
+    #[tokio::test]
+    async fn a_refused_address_is_named_through_the_redactor() {
+        let config = crate::CrawlConfig::builder().allow_private_networks(false).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+        let client = crate::http::build_client(&engine.config).expect("client builds");
+        let mut policy = RedirectPolicy::new(&engine, &client, &[], &[]);
+        for (url, expected) in [
+            (
+                "alice@example.com",
+                "robots_unreachable: cannot parse [address hidden: it may carry credentials] to determine its origin",
+            ),
+            (
+                "user:token@host",
+                "robots_unreachable: [address hidden: it may carry credentials] has no host to read robots.txt from",
+            ),
+        ] {
+            let Ok(Some(PolicyRefusal::Blocked { reason, .. })) = policy.admits(url, false).await else {
+                panic!("{url} must be refused as blocked");
+            };
+            assert_eq!(reason, expected, "the refusal of {url} must not show its credential");
+        }
+    }
 
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> crate::tower::CrawlResponse {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
@@ -559,6 +754,7 @@ mod tests {
             body_bytes: body.as_bytes().to_vec(),
             headers: map,
             landed_url: None,
+            sent_user_agent: None,
         }
     }
 
@@ -579,8 +775,8 @@ mod tests {
         );
         let chain = chain_at("https://example.com/start", &[]);
 
-        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("a 3xx must redirect");
-        assert_eq!(target, "https://example.com/from-location");
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).expect("a 3xx must redirect");
+        assert_eq!(target.as_str(), "https://example.com/from-location");
     }
 
     /// Characterization: a `Location` pointing back at a URL the chain already visited does
@@ -592,9 +788,72 @@ mod tests {
         let resp = response(302, &[("location", "/start"), ("refresh", "0; url=/from-refresh")], "");
         let chain = chain_at("https://example.com/start", &[]);
 
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+            .expect("the refresh header must still be consulted");
+        assert_eq!(target.as_str(), "https://example.com/from-refresh");
+    }
+
+    /// A `Location` with a scheme the crawl cannot fetch is no target, so it falls through like
+    /// a looping one: to the refresh header when there is one, and to no target when there is none.
+    #[test]
+    fn a_non_web_location_falls_through_to_the_refresh_header() {
+        let chain = chain_at("https://example.com/start", &[]);
+        let resp = response(
+            302,
+            &[
+                ("location", "mailto:a@example.com"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+            .expect("the refresh header must still be consulted");
+        assert_eq!(target.as_str(), "https://example.com/from-refresh");
+
+        let resp = response(302, &[("location", "mailto:a@example.com")], "");
+        assert!(next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).is_none());
+    }
+
+    /// A browser that lands on a page it made itself (`about:blank`, its error page) or on a
+    /// non-web address has not landed on a redirect target; a web URL it landed on is one.
+    #[test]
+    fn only_a_web_url_a_browser_landed_on_is_a_redirect() {
+        let chain = chain_at("https://example.com/start", &[]);
+        let landed_on = |url: &str| {
+            let mut resp = response(200, &[], "");
+            resp.landed_url = Some(url.to_owned());
+            landed_redirect(&resp, &chain).map(|(target, _)| target)
+        };
+        for url in [
+            "about:blank",
+            "chrome-error://chromewebdata/",
+            "mailto:a@example.com",
+            "data:,x",
+        ] {
+            assert_eq!(landed_on(url), None, "{url}");
+        }
+        assert_eq!(
+            landed_on("https://example.com/landed").as_ref().map(Url::as_str),
+            Some("https://example.com/landed")
+        );
+    }
+
+    /// A page with both a `Refresh` header and a meta refresh follows the header, and the body
+    /// is not read for its meta refresh.
+    #[test]
+    fn a_refresh_header_wins_over_a_meta_refresh_in_the_body() {
+        let resp = response(
+            200,
+            &[("refresh", "0; url=/from-header")],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=/from-meta"></head></html>"#,
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+        let mut page_scan = None;
+
         let (target, _) =
-            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the refresh header must still be consulted");
-        assert_eq!(target, "https://example.com/from-refresh");
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut page_scan).expect("the page must redirect");
+        assert_eq!(target.as_str(), "https://example.com/from-header");
+        assert!(page_scan.is_none(), "the body must not be read once the header decides");
     }
 
     /// The same fall-through, one source further: both header sources loop, so the meta
@@ -608,9 +867,27 @@ mod tests {
         );
         let chain = chain_at("https://example.com/start", &["https://example.com/seen-already"]);
 
-        let (target, _) =
-            next_redirect_target(&resp, &chain, MAX_REDIRECTS).expect("the meta refresh must still be consulted");
-        assert_eq!(target, "https://example.com/from-meta");
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+            .expect("the meta refresh must still be consulted");
+        assert_eq!(target.as_str(), "https://example.com/from-meta");
+    }
+
+    /// A `Refresh` header whose delay is a lone `.`, with no digit anywhere in it, names no
+    /// refresh: the shared refresh parser rejects it exactly as it does for the meta tag, so it
+    /// falls through to the meta refresh in the body (oracle case `d06_dot_only_then_longer`,
+    /// #353).
+    #[test]
+    fn a_refresh_header_with_a_dot_only_delay_falls_through_to_the_meta_refresh() {
+        let resp = response(
+            200,
+            &[("refresh", ".; url=/from-header")],
+            r#"<html><head><meta http-equiv="refresh" content="3; url=/from-meta"></head></html>"#,
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+            .expect("the meta refresh must still be consulted");
+        assert_eq!(target.as_str(), "https://example.com/from-meta");
     }
 
     /// A `<meta http-equiv="refresh">` written inside script text is script source, not a
@@ -624,7 +901,7 @@ mod tests {
         );
 
         assert!(
-            meta_refresh_target(&resp, "https://example.com/start").is_none(),
+            meta_refresh_target(&resp, "https://example.com/start", &mut None).is_none(),
             "a meta refresh inside script text must not be followed"
         );
     }
@@ -639,9 +916,153 @@ mod tests {
         );
 
         assert_eq!(
-            meta_refresh_target(&resp, "https://example.com/start"),
+            meta_refresh_target(&resp, "https://example.com/start", &mut None).map(String::from),
             Some("https://example.com/real".to_owned()),
             "a real meta refresh after a script must still be found"
+        );
+    }
+
+    /// A relative meta refresh target is checked for scheme AFTER it resolves, not before: it
+    /// takes `current_url`'s scheme, and a `current_url` with a scheme the crawl cannot fetch
+    /// makes the resolved target one too, so it is no redirect target (#478).
+    #[test]
+    fn a_relative_meta_refresh_is_no_target_when_it_resolves_to_a_scheme_it_cannot_fetch() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+
+        assert_eq!(
+            meta_refresh_target(&resp, "ftp://files.example/start", &mut None).map(String::from),
+            None,
+            "a relative target under a non-web current_url must not be treated as a redirect"
+        );
+    }
+
+    /// The meta refresh target loses only what the URL parser strips: a no-break space stays,
+    /// and a target of only C0 controls is no target. ~keep
+    #[test]
+    fn a_meta_refresh_target_keeps_unicode_spaces_and_drops_c0_controls() {
+        let meta = |content: &str| {
+            response(
+                200,
+                &[],
+                &format!("<html><head><meta http-equiv=\"refresh\" content=\"{content}\"></head></html>"),
+            )
+        };
+        assert_eq!(
+            meta_refresh_target(&meta("0; url= /next\u{A0}"), "https://example.com/start", &mut None).map(String::from),
+            Some("https://example.com/next%C2%A0".to_owned())
+        );
+        assert_eq!(
+            meta_refresh_target(&meta("0; url=\u{1}\u{B}"), "https://example.com/start", &mut None).map(String::from),
+            None
+        );
+    }
+
+    /// A meta refresh target resolves against the document's base URL, exactly as a browser
+    /// does: a `<base href="/app/">` sends a relative target under `/app/`, not under the page's
+    /// own path (#300, matched against Chrome).
+    #[test]
+    fn a_meta_refresh_target_resolves_against_the_base_element() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><base href="/app/"><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&resp, "https://example.com/dir/page", &mut None).map(String::from),
+            Some("https://example.com/app/next".to_owned()),
+            "the target must resolve against the base element, not the page's own directory"
+        );
+    }
+
+    /// With no `<base>` element, the page address is the base, as it always was (#300).
+    #[test]
+    fn a_meta_refresh_target_resolves_against_the_page_url_without_a_base_element() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=next"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&resp, "https://example.com/dir/page", &mut None).map(String::from),
+            Some("https://example.com/dir/next".to_owned())
+        );
+    }
+
+    /// The `Refresh` HTTP header arrives before any document exists to carry a `<base>`, so it
+    /// has none to honour: it resolves against the response's own address even when the body
+    /// that follows declares a base element (#300, matched against Chrome).
+    #[test]
+    fn a_refresh_header_target_ignores_the_bodys_base_element() {
+        let resp = response(
+            200,
+            &[("refresh", "0; url=next")],
+            r#"<html><head><base href="/app/"></head></html>"#,
+        );
+        assert_eq!(
+            refresh_header_target(&resp, "https://example.com/dir/page").map(String::from),
+            Some("https://example.com/dir/next".to_owned()),
+            "the Refresh header must resolve against the response URL, never the body's base element"
+        );
+    }
+
+    /// The `Refresh` header target is cleaned by the URL rule, as the meta refresh target is: a
+    /// no-break space stays (#206). ~keep
+    #[test]
+    fn a_refresh_header_target_keeps_unicode_spaces_and_drops_c0_controls() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; url= /next\u{A0}"), "https://example.com/start").map(String::from),
+            Some("https://example.com/next%C2%A0".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; url=\u{1}\u{B}"), "https://example.com/start").map(String::from),
+            None
+        );
+    }
+
+    /// Both refresh forms drop one pair of matching quotes around the target (#208). ~keep
+    #[test]
+    fn a_quoted_refresh_target_is_followed_without_its_quotes() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; url='/next'"), "https://example.com/start").map(String::from),
+            Some("https://example.com/next".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; URL=\"/next\""), "https://example.com/start").map(String::from),
+            Some("https://example.com/next".to_owned())
+        );
+        let meta = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url='/next'"></head></html>"#,
+        );
+        assert_eq!(
+            meta_refresh_target(&meta, "https://example.com/start", &mut None).map(String::from),
+            Some("https://example.com/next".to_owned())
+        );
+    }
+
+    /// The refresh header is read as a browser reads it: the label is optional, a `url=` inside
+    /// the address is not a label, and a value with no leading delay is no refresh. ~keep
+    #[test]
+    fn a_refresh_header_is_read_with_the_browser_refresh_steps() {
+        let header = |value: &str| response(200, &[("refresh", value)], "");
+        assert_eq!(
+            refresh_header_target(&header("0; /next"), "https://example.com/start").map(String::from),
+            Some("https://example.com/next".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("0; /go?url=/elsewhere"), "https://example.com/start").map(String::from),
+            Some("https://example.com/go?url=/elsewhere".to_owned())
+        );
+        assert_eq!(
+            refresh_header_target(&header("url=/next"), "https://example.com/start").map(String::from),
+            None
         );
     }
 
@@ -651,7 +1072,7 @@ mod tests {
         let chain = chain_at("https://example.com/start", &[]);
 
         assert!(
-            next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).is_none(),
             "a chain with nowhere new to go must stop"
         );
     }
@@ -663,8 +1084,277 @@ mod tests {
         chain.redirect_count = MAX_REDIRECTS;
 
         assert!(
-            next_redirect_target(&resp, &chain, MAX_REDIRECTS).is_none(),
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).is_none(),
             "no further hop is allowed once max_redirects is reached"
         );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_is_not_followed_but_falls_through_to_the_refresh_header() {
+        let resp = response(
+            302,
+            &[
+                ("location", "https://ex ample.com/bad"),
+                ("refresh", "0; url=/from-refresh"),
+            ],
+            "",
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+
+        let (target, _) = next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+            .expect("the refresh header must still be consulted");
+        assert_eq!(
+            target.as_str(),
+            "https://example.com/from-refresh",
+            "an unparseable Location must not be followed as raw text; the chain falls \
+             through to the next redirect source instead"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_with_no_other_source_ends_the_chain() {
+        let resp = response(302, &[("location", "https://ex ample.com/bad")], "");
+        let chain = chain_at("https://example.com/start", &[]);
+
+        assert!(
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).is_none(),
+            "an unparseable Location with no other redirect source must not be followed"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_refresh_header_target_is_refused() {
+        let resp = response(200, &[("refresh", "0; url=https://ex ample.com/bad")], "");
+
+        assert!(
+            refresh_header_target(&resp, "https://example.com/start").is_none(),
+            "a Refresh header target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_meta_refresh_target_is_refused() {
+        let resp = response(
+            200,
+            &[],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=https://ex ample.com/bad"></head></html>"#,
+        );
+
+        assert!(
+            meta_refresh_target(&resp, "https://example.com/start", &mut None).is_none(),
+            "a meta refresh target that fails to parse must not be followed as raw text"
+        );
+    }
+
+    /// Every redirect source hands the chain a parsed URL, and the chain checks that URL
+    /// against the SSRF policy before it moves. The public twin shows the same source does
+    /// advance the chain when the policy permits the target. ~keep
+    #[tokio::test]
+    async fn every_redirect_source_reaches_the_ssrf_check() {
+        const REFUSED: &str = "http://169.254.169.254/latest/meta-data/";
+        const PERMITTED: &str = "http://93.184.215.14/next";
+
+        for (target_url, permitted) in [(REFUSED, false), (PERMITTED, true)] {
+            let refresh = format!("0; url={target_url}");
+            let meta =
+                format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target_url}"></head></html>"#);
+            let mut landed = response(200, &[], "");
+            landed.landed_url = Some(target_url.to_owned());
+            let sources = [
+                ("Location", response(302, &[("location", target_url)], "")),
+                ("Refresh header", response(200, &[("refresh", refresh.as_str())], "")),
+                ("meta refresh", response(200, &[], &meta)),
+                ("landed URL", landed),
+            ];
+
+            for (source, resp) in sources {
+                let mut chain = chain_at(PAGE_URL, &[]);
+                let found = if resp.landed_url.is_some() {
+                    landed_redirect(&resp, &chain)
+                } else {
+                    next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None)
+                };
+                let (target, target_key) = found.unwrap_or_else(|| panic!("the {source} must yield a target"));
+
+                let result = chain
+                    .advance_to(target, target_key, HashMap::new(), &SsrfPolicy::default())
+                    .await;
+
+                if permitted {
+                    assert!(
+                        result.is_ok(),
+                        "the {source} to a public address must advance: {result:?}"
+                    );
+                    assert_eq!(chain.current_url, target_url, "the {source} must move the chain");
+                    assert_eq!(chain.redirect_count, 1, "the {source} must count one hop");
+                } else {
+                    assert!(
+                        matches!(result, Err(CrawlError::SsrfPolicyViolation { .. })),
+                        "the {source} to the metadata address must fail the SSRF check, got {result:?}"
+                    );
+                    assert_eq!(
+                        chain.current_url, PAGE_URL,
+                        "a refused {source} must not move the chain"
+                    );
+                    assert_eq!(chain.redirect_count, 0, "a refused {source} must not count a hop");
+                }
+            }
+        }
+    }
+
+    /// `redact_url_credentials` returns an unparseable string unchanged, and each debug
+    /// log in this module fires only for an unparseable target, so none may carry it.
+    /// `https://user:hunter2@ex ample.com/bad` is the reviewer's own example.
+    const CREDENTIAL_TARGET: &str = "https://user:hunter2@ex ample.com/bad";
+    const RAW_PASSWORD: &str = "hunter2";
+    const PAGE_URL: &str = "https://example.com/start";
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_location_with_credentials_is_never_logged() {
+        let resp = response(302, &[("location", CREDENTIAL_TARGET)], "");
+
+        let (target, fields) = capture_events(|| http_redirect_target(&resp, PAGE_URL));
+
+        assert!(target.is_none(), "an unparseable Location must not be followed");
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_refresh_header_target_with_credentials_is_never_logged() {
+        let refresh = format!("0; url={CREDENTIAL_TARGET}");
+        let resp = response(200, &[("refresh", refresh.as_str())], "");
+
+        let (target, fields) = capture_events(|| refresh_header_target(&resp, PAGE_URL));
+
+        assert!(
+            target.is_none(),
+            "an unparseable Refresh header target must not be followed"
+        );
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_meta_refresh_target_with_credentials_is_never_logged() {
+        let body =
+            format!(r#"<html><head><meta http-equiv="refresh" content="0; url={CREDENTIAL_TARGET}"></head></html>"#);
+        let resp = response(200, &[], &body);
+
+        let (target, fields) = capture_events(|| meta_refresh_target(&resp, PAGE_URL, &mut None));
+
+        assert!(
+            target.is_none(),
+            "an unparseable meta refresh target must not be followed"
+        );
+        assert_logged_without_secret(&fields, RAW_PASSWORD, PAGE_URL);
+    }
+    /// The hop the chain takes from a page whose head holds `contents` as meta refresh tags, in order,
+    /// and whose `Refresh` header is `header`.
+    fn refresh_hop(header: Option<&str>, contents: &[&str]) -> Option<String> {
+        let metas: String = contents
+            .iter()
+            .map(|content| format!("<meta http-equiv=\"refresh\" content=\"{content}\">"))
+            .collect();
+        let headers: Vec<(&str, &str)> = header.map(|value| ("refresh", value)).into_iter().collect();
+        let resp = response(
+            200,
+            &headers,
+            &format!("<html><head>{metas}</head><body>x</body></html>"),
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+        next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut None).map(|(target, _)| target.into())
+    }
+
+    /// Chrome acts on the meta refresh with the shortest delay, and on the later tag when two
+    /// delays tie (#279). ~keep
+    #[test]
+    fn the_meta_refresh_with_the_shortest_delay_wins_and_a_tie_goes_to_the_later_tag() {
+        let second = Some("https://example.com/second".to_owned());
+        assert_eq!(refresh_hop(None, &["0; url=/first", "0; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["3; url=/first", "0; url=/second"]), second);
+        assert_eq!(refresh_hop(None, &["1; url=/first", "1.5; url=/second"]), second);
+        assert_eq!(
+            refresh_hop(None, &["0; url=/first", "3; url=/second"]),
+            Some("https://example.com/first".to_owned())
+        );
+        assert_eq!(
+            refresh_hop(None, &["2; url=/first", "0; url=/second", "1; url=/third"]),
+            second
+        );
+    }
+
+    /// A meta refresh with a blank or self target reloads the page, and a later tag with a
+    /// longer delay does not replace it: the chain stays where it is (#279). ~keep
+    #[test]
+    fn a_meta_refresh_of_the_same_page_is_not_skipped_for_a_later_longer_one() {
+        for first in ["0; url=", "0", "0;", "0; url=''", "0; url=/start"] {
+            assert_eq!(
+                refresh_hop(None, &[first, "3; url=/second"]),
+                None,
+                "{first:?} reloads the page, so the later refresh must not be followed"
+            );
+        }
+        assert_eq!(
+            refresh_hop(None, &["0; url=", "0; url=/second"]),
+            Some("https://example.com/second".to_owned()),
+            "a later refresh with the same delay replaces the reload"
+        );
+    }
+
+    /// A `javascript:` refresh target is no refresh at all: the next meta refresh is used whatever
+    /// its delay, and a lone one leaves the chain where it is (#279). ~keep
+    #[test]
+    fn a_javascript_meta_refresh_is_ignored() {
+        for first in [
+            "0; url=javascript:void(0)",
+            "0; url=JavaScript:void(0)",
+            "0; url= \tjavascript:void(0)",
+            "0; url=java&#9;script:void(0)",
+        ] {
+            assert_eq!(
+                refresh_hop(None, &[first, "3; url=/second"]),
+                Some("https://example.com/second".to_owned()),
+                "{first:?} must be ignored"
+            );
+        }
+        assert_eq!(refresh_hop(None, &["0; url=javascript:void(0)"]), None);
+    }
+
+    /// A `javascript:` `Refresh` header is ignored rather than followed into the SSRF scheme check,
+    /// and the meta refresh in the body is used (#279). ~keep
+    #[test]
+    fn a_javascript_refresh_header_is_ignored() {
+        assert_eq!(refresh_hop(Some("0; url=javascript:void(0)"), &[]), None);
+        assert_eq!(
+            refresh_hop(Some("0; url=javascript:void(0)"), &["3; url=/second"]),
+            Some("https://example.com/second".to_owned())
+        );
+    }
+
+    /// A refresh to a scheme the crawl cannot follow keeps the page, and it still competes by delay
+    /// as Chrome schedules it: a web refresh with a longer delay, before or after it, is not
+    /// followed, while a later web refresh with the same delay replaces it. ~keep
+    #[test]
+    fn a_non_web_meta_refresh_keeps_the_page_and_still_competes_by_delay() {
+        for (non_web, web) in [
+            ("mailto:a@example.com", "/second"),
+            ("data:text/html,x", "https://example.com/second"),
+        ] {
+            let non_web = format!("0; url={non_web}");
+            let web = format!("3; url={web}");
+            assert_eq!(refresh_hop(None, &[&non_web, &web]), None, "{non_web:?} then {web:?}");
+            assert_eq!(refresh_hop(None, &[&web, &non_web]), None, "{web:?} then {non_web:?}");
+            assert_eq!(
+                refresh_hop(None, &[&non_web, "0; url=/second"]),
+                Some("https://example.com/second".to_owned()),
+                "a later web refresh with the same delay replaces {non_web:?}"
+            );
+        }
     }
 }

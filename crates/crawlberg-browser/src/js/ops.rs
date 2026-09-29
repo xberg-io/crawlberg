@@ -4,8 +4,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
+use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
+use crate::redact::{RedactedHeaders, RedactedValues};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
 use deno_core::OpState;
@@ -15,7 +19,6 @@ use tokio::sync::Mutex;
 pub type InterceptCallback =
     Arc<Mutex<Option<Box<dyn Fn(String, String, String) -> Option<(u16, String, String)> + Send + Sync>>>>;
 
-#[derive(Debug)]
 pub enum InterceptResolution {
     Continue {
         url: Option<String>,
@@ -31,6 +34,35 @@ pub enum InterceptResolution {
     Fail {
         reason: String,
     },
+}
+
+impl std::fmt::Debug for InterceptResolution {
+    /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the four
+    /// well-known credential names.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Continue {
+                url,
+                method,
+                headers,
+                body,
+            } => f
+                .debug_struct("Continue")
+                .field("url", url)
+                .field("method", method)
+                .field("headers", &headers.as_ref().map(RedactedValues))
+                .field("body", body)
+                .finish(),
+            Self::Fulfill { status, headers, body } => f
+                .debug_struct("Fulfill")
+                .field("status", status)
+                .field("headers", &RedactedHeaders(headers))
+                .field("body", body)
+                .finish(),
+            Self::Fail { reason } => f.debug_struct("Fail").field("reason", reason).finish(),
+        }
+    }
 }
 
 pub struct InterceptedRequest {
@@ -56,6 +88,10 @@ pub struct JsOpState {
     pub intercept_tx: Option<tokio::sync::mpsc::UnboundedSender<InterceptedRequest>>,
     pub intercept_counter: u64,
     pub intercept_enabled: bool,
+    /// The page's interception block list. The module loader refuses a module address it matches.
+    pub intercept_block_patterns: Vec<String>,
+    /// The page's User-Agent, which the module loader sends with every module request.
+    pub user_agent: Option<String>,
 }
 
 impl JsOpState {
@@ -72,7 +108,17 @@ impl JsOpState {
             intercept_tx: None,
             intercept_counter: 0,
             intercept_enabled: false,
+            intercept_block_patterns: Vec::new(),
+            user_agent: None,
         }
+    }
+
+    /// The page client's headers scoped to one host, such as its credential. See [`OriginHeaders`].
+    pub(crate) fn origin_headers(&self) -> Option<OriginHeaders> {
+        let client = self.http_client.as_ref()?;
+        // ~keep The scoped headers are written once, when the context is built, before any
+        // ~keep page runs script, so a busy lock here cannot hide them.
+        client.origin_headers.try_read().ok()?.clone()
     }
 }
 
@@ -356,14 +402,14 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
-fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+fn build_request_client(proxy_url: Option<&str>, ssrf: &Arc<dyn SsrfValidator>) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
         let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
         builder = builder.proxy(p);
     }
-    builder
+    with_policy_resolver(builder, proxy_url.is_some(), ssrf)
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -383,6 +429,15 @@ async fn op_fetch_url(
     #[string] origin: String,
     #[string] mode: String,
 ) -> Result<String, deno_error::JsErrorBox> {
+    // ~keep Refused before anything logs or fetches it, as the Fetch standard does.
+    if let Ok(parsed) = url::Url::parse(&url)
+        && has_userinfo(&parsed)
+    {
+        return Err(deno_error::JsErrorBox::type_error(format!(
+            "fetch refused a URL with credentials in it: {}",
+            without_userinfo(&parsed)
+        )));
+    }
     tracing::debug!("op_fetch_url called: {} {} (intercept check pending)", method, url);
 
     // ~keep Clone the validator out of the RefCell before awaiting; re-entrant page JS
@@ -411,7 +466,7 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy_url.as_deref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -498,6 +553,7 @@ struct FetchContext {
     in_flight: Option<Arc<std::sync::atomic::AtomicU32>>,
     intercept: Option<(tokio::sync::mpsc::UnboundedSender<InterceptedRequest>, String)>,
     proxy_url: Option<String>,
+    origin_headers: Option<OriginHeaders>,
 }
 
 /// `None` when `url` matches one of the page's blocked-URL patterns.
@@ -534,6 +590,7 @@ fn read_fetch_context(state: &Rc<RefCell<OpState>>, url: &str) -> Option<FetchCo
             .http_client
             .as_ref()
             .and_then(|c| c.proxy_url().map(|s| s.to_string())),
+        origin_headers: gs.origin_headers(),
     })
 }
 
@@ -678,7 +735,7 @@ async fn send_preflight(
         )
         .send()
         .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", error_with_causes(&e))))?;
 
     let allowed_origin = preflight
         .headers()
@@ -789,8 +846,20 @@ async fn send_one_hop(
         }
     }
 
+    // ~keep Checked per hop, so a redirect to another host never carries the scoped headers.
+    let origin_headers = context
+        .origin_headers
+        .as_ref()
+        .zip(url::Url::parse(current_url).ok())
+        .map(|(origin_headers, url)| origin_headers.headers_for(&url))
+        .unwrap_or_default();
     for (k, v) in &cors.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+        if !origin_headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(k)) {
+            req = req.header(k.as_str(), v.as_str());
+        }
+    }
+    for (name, value) in origin_headers {
+        req = req.header(name.as_str(), value.as_str());
     }
 
     if !body.is_empty() {
@@ -804,7 +873,7 @@ async fn send_one_hop(
         if let Some(ref counter) = context.in_flight {
             counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
-        deno_error::JsErrorBox::generic(e.to_string())
+        deno_error::JsErrorBox::generic(error_with_causes(&e))
     })?;
     if let Some(ref counter) = context.in_flight {
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -829,7 +898,8 @@ fn redirect_target(current_url: &str, response: &reqwest::Response) -> Option<ur
         .headers()
         .get(reqwest::header::LOCATION)
         .and_then(|v| v.to_str().ok())?;
-    url::Url::parse(current_url).ok()?.join(location).ok()
+    let target = url::Url::parse(current_url).ok()?.join(location).ok()?;
+    Some(without_userinfo(&target))
 }
 
 fn glob_match(pattern: &str, url: &str) -> bool {

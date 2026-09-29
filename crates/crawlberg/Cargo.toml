@@ -71,12 +71,14 @@ dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
 fancy-regex = { workspace = true }
-regex-syntax = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }
 html-to-markdown-rs = { workspace = true }
 html5ever = { workspace = true }
+icu_casemap = { workspace = true }
+icu_normalizer = { workspace = true }
+idna = { workspace = true }
 ipnet = { workspace = true }
 liter-llm = { workspace = true, optional = true }
 memchr = { workspace = true }
@@ -84,8 +86,10 @@ minijinja = { workspace = true, optional = true }
 notify = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
+percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
+regex-syntax = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
@@ -123,12 +127,22 @@ web-time = "1"
 [dev-dependencies]
 async-trait = { workspace = true }
 criterion = { workspace = true }
+# ~keep `testing` provides the in-memory metric exporter that tests/test_waf_blocks_counter.rs
+# ~keep reads crawl_waf_blocks_total through.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
+# ~keep in-process TLS server for the transport-error tests (#395, #463): a static
+# ~keep self-signed cert plus a pure-Rust TLS stack, instead of shelling out to the
+# ~keep system `openssl` binary, whose version differs between CI's Linux and macOS
+# ~keep legs. Both are already resolved in Cargo.lock via other dependents.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 serde_json = { workspace = true }
 serial_test = "4"
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-stream = { workspace = true }
+tracing-subscriber = { workspace = true }
 wiremock = "0.6"
 
 [[bench]]

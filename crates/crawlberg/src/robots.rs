@@ -110,6 +110,17 @@ impl RobotsParseState {
     }
 }
 
+/// Whether a robots product token addresses the crawler running as `ua_lower`.
+///
+/// ~keep RFC 9309 §2.2.1 matches in one direction only: the token must prefix our user-agent
+/// (so `crawlberg` matches the default `crawlberg/1.2.1`). Accepting the reverse let UA
+/// `crawlberg` claim rules written for a different, more specific bot such as `crawlberg-news`.
+/// Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule decides which
+/// crawler a named directive binds, wherever that name appears.
+pub(crate) fn product_token_addresses_us(token_lower: &str, ua_lower: &str) -> bool {
+    !token_lower.is_empty() && ua_lower != "*" && ua_lower.starts_with(token_lower)
+}
+
 /// Pick the last block written for `ua_lower` specifically and the last `*` block.
 ///
 /// Returns `(specific, wildcard)`; either may be absent.
@@ -125,14 +136,9 @@ fn select_rule_blocks<'a>(
         let mut matches_wildcard = false;
 
         for agent in agents {
-            // ~keep RFC 9309 §2.2.1 matches in one direction only: the group's product token
-            // ~keep must prefix our user-agent (so `User-agent: crawlberg` matches the default
-            // ~keep `crawlberg/1.2.1`). Also accepting the reverse let UA `crawlberg` claim a
-            // ~keep group written for a different, more specific bot such as `crawlberg-news`,
-            // ~keep silently substituting that bot's rules for the `*` block the site meant for us.
             if agent == "*" {
                 matches_wildcard = true;
-            } else if ua_lower != "*" && ua_lower.starts_with(agent.as_str()) {
+            } else if product_token_addresses_us(agent, ua_lower) {
                 matches_specific = true;
             }
         }
@@ -146,6 +152,28 @@ fn select_rule_blocks<'a>(
     }
 
     (specific_block, wildcard_block)
+}
+
+/// `body` as the robots.txt block-page check reads it: without its whole-line comments, or
+/// unchanged when it holds a `<`.
+///
+/// ~keep A robots.txt comment is written for a human reader and can say anything, such as "AI
+/// crawlers are blocked below" (crawlberg#507). Only a line whose first non-space character is
+/// `#` is left out. A trailing comment stays, because in an HTML page a `#` in a style rule or a
+/// link can come before the block phrase on the same line. A body with any `<` is read whole:
+/// robots.txt has no use for `<`, and in an HTML page a style rule can also start a line with
+/// `#`. This only picks the lines the fingerprint sees; [`parse_robots_txt`] reads comments its
+/// own way.
+pub(crate) fn fingerprint_text(body: &str) -> std::borrow::Cow<'_, str> {
+    if body.contains('<') {
+        return std::borrow::Cow::Borrowed(body);
+    }
+    let mut text = String::with_capacity(body.len());
+    for line in body.lines().filter(|line| !line.trim_start().starts_with('#')) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    std::borrow::Cow::Owned(text)
 }
 
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
@@ -499,6 +527,33 @@ mod tests {
              {:?}",
             rules.disallow
         );
+    }
+
+    #[test]
+    fn fingerprint_text_drops_only_whole_line_comments_and_reads_markup_whole() {
+        for (body, expected) in [
+            (
+                "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n",
+                "User-agent: GPTBot\nDisallow: /\n",
+            ),
+            ("  # blocked\r\nDisallow: /private\r\n", "Disallow: /private\n"),
+            ("Disallow: /private # blocked\n", "Disallow: /private # blocked\n"),
+            (
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+            ),
+            (
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+            ),
+            ("", ""),
+        ] {
+            assert_eq!(
+                fingerprint_text(body),
+                expected,
+                "{body:?}: only a whole-line comment in a body with no `<` must go"
+            );
+        }
     }
 
     #[test]

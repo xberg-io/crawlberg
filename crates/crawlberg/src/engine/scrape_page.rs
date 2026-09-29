@@ -1,8 +1,7 @@
 //! [`CrawlEngine::scrape`]: fetch one page and run the extraction pipeline over it.
 
-use super::CrawlEngine;
+use super::{CrawlEngine, SeedUrl};
 use crate::error::CrawlError;
-use crate::telemetry::attributes::URL_FULL;
 use crate::types::*;
 
 impl CrawlEngine {
@@ -19,10 +18,32 @@ impl CrawlEngine {
     /// - `BrowserMode::Auto` + JS detected: after extraction, if `js_render_hint` is
     ///   `true` and the browser has not been used yet, re-fetches with headless Chrome
     ///   and re-runs the extraction pipeline on the rendered HTML.
-    #[tracing::instrument(name = "crawl.engine.scrape", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
+        let (engine, seed) = self.admit(url)?;
+        engine.scrape_seed(&seed).await
+    }
+
+    /// Scrape an admitted seed URL. See [`CrawlEngine::scrape`].
+    pub(crate) async fn scrape_seed(&self, seed: &SeedUrl) -> Result<ScrapeResult, CrawlError> {
+        self.scrape_in_scope(seed.as_str(), None).await
+    }
+
+    /// Scrape `url` under the credential scope this engine's seed admission set.
+    ///
+    /// The sequential crawl loop scrapes each frontier entry through this, not through
+    /// [`CrawlEngine::scrape`], which would admit the entry as a new seed and scope the
+    /// credentials to the entry's host.
+    ///
+    /// `forced_user_agent` pins the agent this fetch sends, ahead of the configured default.
+    /// `scrape_seed()` above passes `None`; the sequential crawl loop passes its per-page
+    /// rotation pick, so the agent that judged this page's robots.txt is the agent the fetch
+    /// sends (crawlberg#483).
+    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %url))]
+    pub(super) async fn scrape_in_scope(
+        &self,
+        url: &str,
+        forced_user_agent: Option<&str>,
+    ) -> Result<ScrapeResult, CrawlError> {
         self.config.validate()?;
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -52,11 +73,11 @@ impl CrawlEngine {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        let (final_url, response, browser_used_for_fetch) = {
+        let (final_url, response, page_scan, browser_used_for_fetch) = {
             use super::redirect::{RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            let outcome = match follow_redirects(self, url, max_redirects, None).await? {
+            let outcome = match follow_redirects(self, url, max_redirects, None, forced_user_agent).await? {
                 RedirectResolution::Fetched(outcome) => outcome,
                 // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
@@ -75,15 +96,23 @@ impl CrawlEngine {
             {
                 return Ok(self.bodyless_status_result(404, outcome.final_url));
             }
-            (outcome.final_url, outcome.final_response, outcome.browser_used)
+            (
+                outcome.final_url,
+                outcome.final_response,
+                outcome.page_scan,
+                outcome.browser_used,
+            )
         };
 
         #[cfg(target_arch = "wasm32")]
-        let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url).await?;
+        let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url, forced_user_agent).await?;
+        #[cfg(target_arch = "wasm32")]
+        let page_scan = None;
 
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &response,
+            page_scan,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -144,10 +173,13 @@ impl CrawlEngine {
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
             landed_url: None,
+            // ~keep The native browser backend never reads `config.user_agents`.
+            sent_user_agent: None,
         };
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
             &crawl_resp,
+            None,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -186,6 +218,7 @@ impl CrawlEngine {
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &crawl_resp,
+            None,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -239,13 +272,35 @@ impl CrawlEngine {
     }
 
     /// Fetch `url` on wasm32, where the browser's own `fetch` already followed redirects.
-    #[cfg(target_arch = "wasm32")]
-    async fn wasm_fetch_for_scrape(
+    ///
+    /// `forced_user_agent`, when given, is the wasm crawl loop's own per-page rotation pick
+    /// (crawlberg#483): it goes out as the one `user-agent` header this fetch sends, replacing
+    /// (not adding to) the configured default -- see `http::send_hop_request`. `None` sends the
+    /// configured default, unchanged, exactly as a standalone `scrape()` always has.
+    ///
+    /// ~keep Also compiled under `cfg(test)` so a native test can pin the header this builds:
+    /// ~keep wasm32 has no test runner in this repo.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(super) async fn wasm_fetch_for_scrape(
         &self,
         url: &str,
+        forced_user_agent: Option<&str>,
     ) -> Result<(String, crate::tower::CrawlResponse, bool), CrawlError> {
         let client = crate::http::build_client(&self.config)?;
-        let resp = crate::http::fetch_with_retry(url, &self.config, &std::collections::HashMap::new(), &client).await?;
+        let extra_headers = match forced_user_agent {
+            Some(agent) => std::collections::HashMap::from([("user-agent".to_owned(), agent.to_owned())]),
+            None => std::collections::HashMap::new(),
+        };
+        let resp = crate::http::fetch_with_retry(
+            url,
+            &self.config,
+            &extra_headers,
+            &client,
+            crate::http::RefreshRedirects::Ignore,
+            crate::http::Fetched::Page,
+        )
+        .await?
+        .response;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
         let crawl_resp = crate::tower::CrawlResponse {
@@ -255,6 +310,7 @@ impl CrawlEngine {
             body_bytes: resp.body_bytes,
             headers: resp.headers,
             landed_url: None,
+            sent_user_agent: forced_user_agent.map(str::to_owned),
         };
         Ok((post_redirect_url, crawl_resp, false))
     }
