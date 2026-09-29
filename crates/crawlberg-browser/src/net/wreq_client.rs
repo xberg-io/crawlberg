@@ -19,6 +19,8 @@ use crate::net::cookies::CookieJar;
 #[cfg(feature = "stealth")]
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 #[cfg(feature = "stealth")]
+use crate::net::resolver::ValidatorResolver;
+#[cfg(feature = "stealth")]
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 #[cfg(feature = "stealth")]
@@ -80,8 +82,11 @@ impl StealthHttpClient {
             .timeout(Duration::from_secs(30))
             .redirect(wreq::redirect::Policy::none());
 
-        if let Some(proxy) = proxy {
-            builder = builder.proxy(proxy);
+        match proxy {
+            Some(proxy) => builder = builder.proxy(proxy),
+            // ~keep Connect only to the addresses the policy resolved; see `ValidatorResolver`.
+            // ~keep With a proxy, the proxy resolves the target.
+            None => builder = builder.dns_resolver(ValidatorResolver::new(ssrf.clone())),
         }
 
         let client = builder.build().expect("failed to build wreq stealth client");
@@ -229,6 +234,61 @@ mod tests {
         );
         assert!(!accepted.is_finished(), "nothing may reach the network");
         accepted.abort();
+    }
+
+    #[tokio::test]
+    async fn a_rebinding_host_never_reaches_the_address_the_policy_denies() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+        let (port, seen) =
+            denied_server("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nDENIED").await;
+        let policy = Arc::new(RebindingPolicy::default());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, policy.clone())
+            .expect("no proxy, so the client must build");
+
+        client
+            .fetch(&format!("http://localhost:{port}/").parse::<Url>().expect("valid URL"))
+            .await
+            .expect_err("the connection's lookup answers a denied address");
+
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection: {:?}",
+            seen.lock().expect("lock")
+        );
+        assert_eq!(
+            *policy.resolved.lock().expect("lock"),
+            vec!["localhost"],
+            "the connection must use the policy's lookup"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_proxied_stealth_client_leaves_the_target_to_the_proxy() {
+        use crate::net::resolver::tests::RebindingPolicy;
+
+        let (proxy, proxy_requests) =
+            recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
+        let policy = Arc::new(RebindingPolicy::default());
+        // ~keep A proxy named by host: a client that asked the policy for it would be refused.
+        let proxy = format!("http://localhost:{}", proxy.port());
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone())
+            .expect("an http proxy must build");
+
+        client
+            .fetch(&"http://example.invalid/".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy answers the request");
+
+        assert_eq!(
+            proxy_requests.lock().expect("lock").len(),
+            1,
+            "the request goes to the proxy"
+        );
+        assert!(
+            policy.resolved.lock().expect("lock").is_empty(),
+            "the proxy resolves the target, so the client must not"
+        );
     }
 
     #[derive(Debug)]

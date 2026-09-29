@@ -42,12 +42,19 @@ pub(crate) async fn scrape_from_crawl_response(
     let client = build_client(config)?;
     let auth_header_sent = config.auth.is_some();
 
-    let robots = resolve_robots_status(url, &parsed_url, config, &client).await;
+    // ~keep The agent this response's request actually sent, when the UA rotation layer chose
+    // one; without rotation this is exactly `default_robots_user_agent(config)`, so a
+    // non-rotating scrape() sees no change (crawlberg#423).
+    let sent_user_agent = resp
+        .sent_user_agent
+        .as_deref()
+        .unwrap_or_else(|| default_robots_user_agent(config));
+    let robots = resolve_robots_status(url, &parsed_url, config, &client, sent_user_agent).await;
     let response_meta = crate::http::extract_response_meta_from_hashmap(&resp.headers);
     let content_type = resp.content_type.clone();
     let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
 
-    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers, default_robots_user_agent(config));
+    let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers, sent_user_agent);
 
     let downloaded_document = crate::document::build_downloaded_document_with_filter(
         url,
@@ -62,7 +69,7 @@ pub(crate) async fn scrape_from_crawl_response(
     )
     .await;
 
-    let body = extract_from_body(&decoded, &parsed_url, config, &header_robots)?;
+    let body = extract_from_body(&decoded, &parsed_url, config, &header_robots, sent_user_agent)?;
     let extraction = body.extraction;
 
     let word_count = extraction.metadata.word_count.unwrap_or(0);
@@ -102,6 +109,11 @@ pub(crate) async fn scrape_from_crawl_response(
         screenshot_base64: None,
         downloaded_document,
         browser: None,
+        ssrf_refused_urls: resp
+            .landed
+            .as_ref()
+            .map(|landed| landed.refused.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -122,13 +134,14 @@ fn extract_from_body(
     parsed_url: &Url,
     config: &CrawlConfig,
     header_robots: &RobotsDirectives,
+    sent_user_agent: &str,
 ) -> Result<BodyExtraction, CrawlError> {
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&decoded.body);
     let doc =
         crate::html::parse_html(&parsed_html).map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
-    let page_robots = header_robots.with_meta_tags(&doc, default_robots_user_agent(config));
+    let page_robots = header_robots.with_meta_tags(&doc, sent_user_agent);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
     Ok(BodyExtraction {
@@ -152,6 +165,7 @@ async fn resolve_robots_status(
     parsed_url: &Url,
     config: &CrawlConfig,
     client: &reqwest::Client,
+    sent_user_agent: &str,
 ) -> RobotsStatus {
     if !config.respect_robots_txt {
         return RobotsStatus {
@@ -166,9 +180,15 @@ async fn resolve_robots_status(
     // enforcing it -- the page is fetched by the caller either way -- so failing closed
     // here means reporting `is_allowed: false`, which is the honest answer when the
     // site's policy could not be read.
-    // ~keep The `"*"` user-agent is preserved from the previous behaviour; see
-    // `helpers::default_robots_user_agent` for why unifying it is deferred.
-    let ua = config.user_agent.as_deref().unwrap_or("*");
+    // ~keep The `"*"` user-agent is preserved from the previous behaviour without rotation; see
+    // `helpers::default_robots_user_agent` for why unifying that default is deferred. A
+    // configured rotation list changes what actually goes out on the wire per request, though,
+    // and robots.txt group selection must match that (crawlberg#423), so it overrides "*".
+    let ua = if config.user_agents.is_empty() {
+        "*"
+    } else {
+        sent_user_agent
+    };
     match fetch_robots_outcome(url, config, client, ua).await {
         RobotsOutcome::Rules(rules) => RobotsStatus {
             is_allowed: is_path_allowed(parsed_url.path(), &rules),
@@ -404,7 +424,8 @@ mod tests {
             body: body.to_owned(),
             body_bytes: body.as_bytes().to_vec(),
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
+            sent_user_agent: None,
         }
     }
 
@@ -415,7 +436,8 @@ mod tests {
             body: String::from_utf8_lossy(&body_bytes).into_owned(),
             body_bytes,
             headers: HashMap::new(),
-            landed_url: None,
+            landed: None,
+            sent_user_agent: None,
         }
     }
 
@@ -611,6 +633,105 @@ mod tests {
         assert!(
             result.noindex_detected,
             "a meta tag naming our own product token must be honoured"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_matches_a_meta_tag_against_the_agent_the_request_actually_sent() {
+        // ~keep crawlberg#423: the UA rotation layer chose "AgentB" for this request, which the
+        // ~keep response reports back on `sent_user_agent`; the configured agent is "AgentA",
+        // ~keep which this specific request never sent. A meta tag naming the configured agent
+        // ~keep must not bind this page, and one naming the sent agent must.
+        let mut config = offline_config();
+        config.user_agent = Some("AgentA".to_owned());
+        let mut resp = response(
+            "text/html",
+            r#"<html><head><meta name="AgentA" content="noindex"></head><body>x</body></html>"#,
+        );
+        resp.sent_user_agent = Some("AgentB".to_owned());
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+            .await
+            .expect("scrape should succeed");
+        assert!(
+            !result.noindex_detected,
+            "a meta tag naming the configured agent must not bind a request that sent a different one"
+        );
+
+        let mut resp = response(
+            "text/html",
+            r#"<html><head><meta name="AgentB" content="noindex"></head><body>x</body></html>"#,
+        );
+        resp.sent_user_agent = Some("AgentB".to_owned());
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+            .await
+            .expect("scrape should succeed");
+        assert!(
+            result.noindex_detected,
+            "a meta tag naming the agent this request actually sent must bind it"
+        );
+    }
+
+    #[tokio::test]
+    async fn scrape_without_rotation_matches_the_configured_agent_unchanged() {
+        // ~keep Characterization: `sent_user_agent: None` (no UA rotation layer reached this
+        // ~keep response) must fall back to exactly `default_robots_user_agent(config)`, the
+        // ~keep pre-existing behaviour, so a non-rotating scrape() sees no change (crawlberg#423).
+        let mut config = offline_config();
+        config.user_agent = Some("AgentA".to_owned());
+        let resp = response(
+            "text/html",
+            r#"<html><head><meta name="AgentA" content="noindex"></head><body>x</body></html>"#,
+        );
+        assert_eq!(resp.sent_user_agent, None);
+
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+            .await
+            .expect("scrape should succeed");
+        assert!(
+            result.noindex_detected,
+            "without rotation, the configured agent must still bind the page as before"
+        );
+    }
+
+    /// crawlberg#423: `resolve_robots_status`'s own robots.txt fetch, inside `scrape()`, must
+    /// pick the agent that request actually sent when rotation is configured, exactly like
+    /// the crawl loop's `RedirectPolicy::admits`. A robots.txt group naming only the sent
+    /// agent must block the page.
+    #[tokio::test]
+    async fn scrape_matches_robots_txt_against_the_agent_actually_sent_when_rotating() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("User-agent: AgentB\nDisallow: /\n")
+                    .append_header("content-type", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+
+        let mut config = CrawlConfig {
+            respect_robots_txt: true,
+            user_agent: Some("AgentA".to_owned()),
+            user_agents: vec!["AgentB".to_owned()],
+            ..CrawlConfig::default()
+        };
+        config.ssrf.deny_private = false;
+        let mut resp = response("text/html", "<html><body>x</body></html>");
+        resp.sent_user_agent = Some("AgentB".to_owned());
+
+        let url = format!("{}/page", mock.uri());
+        let result = scrape_from_crawl_response(&url, &resp, &config, None)
+            .await
+            .expect("scrape should succeed");
+
+        assert!(
+            !result.is_allowed,
+            "a robots.txt group naming the agent this request actually sent must block it"
         );
     }
 

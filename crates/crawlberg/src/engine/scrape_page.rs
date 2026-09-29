@@ -138,8 +138,10 @@ impl CrawlEngine {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let mut http_resp =
+        let (http_resp, ssrf_refused_urls) =
             crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
+        let redirected = http_resp.final_url != url;
+        let mut http_resp = crate::http::rendered_status_outcome(http_resp, redirected, &self.config)?;
         let raw_extras = http_resp.browser_extras.take();
         let crawl_resp = crate::tower::CrawlResponse {
             status: http_resp.status,
@@ -147,7 +149,9 @@ impl CrawlEngine {
             body: http_resp.body,
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
-            landed_url: None,
+            landed: None,
+            // ~keep The native browser backend never reads `config.user_agents`.
+            sent_user_agent: None,
         };
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
@@ -157,6 +161,7 @@ impl CrawlEngine {
         )
         .await?;
         result.browser_used = true;
+        result.ssrf_refused_urls = ssrf_refused_urls;
         if let Some(ex) = raw_extras {
             result.browser = Some(crate::types::BrowserExtras {
                 eval_result: ex.eval_result,
@@ -172,7 +177,7 @@ impl CrawlEngine {
     async fn chromiumoxide_screenshot_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         let pool = self.config.browser_pool.as_deref();
         #[cfg(feature = "browser-native")]
-        let mut http_resp = crate::browser::browser_fetch(
+        let mut page = crate::browser::browser_fetch(
             url,
             &self.config,
             None,
@@ -182,11 +187,11 @@ impl CrawlEngine {
         )
         .await?;
         #[cfg(not(feature = "browser-native"))]
-        let mut http_resp = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
+        let mut page = crate::browser::browser_fetch(url, &self.config, None, pool, true).await?;
 
-        let screenshot = http_resp.screenshot.take();
-        let final_url = http_resp.final_url.clone();
-        let (crawl_resp, _extras) = Self::browser_http_to_crawl(http_resp);
+        let screenshot = page.response.screenshot.take();
+        let final_url = page.response.final_url.clone();
+        let (crawl_resp, _extras) = Self::browser_http_to_crawl(page);
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &crawl_resp,
@@ -239,6 +244,7 @@ impl CrawlEngine {
             screenshot_base64: None,
             downloaded_document: None,
             browser: None,
+            ssrf_refused_urls: Vec::new(),
         }
     }
 
@@ -258,7 +264,9 @@ impl CrawlEngine {
             body: resp.body,
             body_bytes: resp.body_bytes,
             headers: resp.headers,
-            landed_url: None,
+            landed: None,
+            // ~keep wasm has no UA rotation layer; every fetch sends `config.user_agent`.
+            sent_user_agent: None,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

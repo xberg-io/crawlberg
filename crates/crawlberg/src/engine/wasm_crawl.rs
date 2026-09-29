@@ -63,6 +63,7 @@ impl CrawlEngine {
             redirect_count: 0,
             noindex_detected: scrape.noindex_detected,
             nofollow_detected: scrape.nofollow_detected,
+            ssrf_refused_urls: scrape.ssrf_refused_urls,
         }
     }
 

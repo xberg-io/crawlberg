@@ -21,6 +21,33 @@ title: "Changelog"
 - **The config check also checks `browser.proxy`.** A `browser.proxy` with a scheme the browser
   cannot use, such as `gopher://`, now fails the config check instead of the render. (#249)
 
+- **In browser mode, a page with an error status is now the error HTTP mode returns.** A scrape
+  of such a page returned the rendered HTML with status 200. It now returns the same error that
+  HTTP mode returns for the same status. The statuses are 401, 403, 404, 408, 410, 429, 500, 502,
+  503 and 504. A 403 page is a forbidden or WAF error. A page with another status, such as 501,
+  505 or 599, stays a page, as in HTTP mode. Code that expects a page from every browser-mode
+  scrape must handle these errors. A crawl in browser mode now keeps the same pages as one in HTTP
+  mode. Under `soft_http_errors` a 404 or 403 page, and a 404 at the end of a redirect, is a page
+  that keeps its status and has an empty body, as in HTTP mode. The Chromiumoxide backend reports the status and the
+  response headers of the document the page shows, so a WAF block is found from the headers of a
+  403 page as well as from its body. (#143)
+
+- **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
+  field is left out when it is empty, so an older crawlberg still reads a result with no refused
+  request. A scrape or page result that lists one is rejected by an older reader, because both
+  types refuse unknown fields.
+
+- **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
+  The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
+  ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
+  carry, so an allowlist entry for such an address has to name that IPv4 range instead of the
+  IPv6 one. IPv4-mapped and `64:ff9b::/96` addresses already behaved this way.
+
+- **The browser crate's fallback validator names the denial reason.** `DefaultSsrfValidator`
+  messages now end with the reason the core policy reports (`loopback`, `private_network`,
+  `link_local`, `unspecified`, `multicast`, `unique_local`). Code that compares the whole message
+  must allow for the new suffix.
+
 - **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
   userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
   that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
@@ -76,6 +103,129 @@ title: "Changelog"
   show them. Chrome gets the address as the HTTP client reads it, so `127.0.0.1:3128` and
   `http:proxy:3128` now work. (#435)
 
+- **A 204 or 304 seed timed out in browser mode.** Chrome commits no page for a response without
+  a document, so the Chrome backend waited for the browser timeout (20 seconds by default) and
+  then failed. A 204, 205 or 304 answer, including one at the end of a redirect, now ends the
+  fetch at once with the status, final URL and empty body that HTTP mode reports. The native
+  backend already returned at once, but it reported an empty HTML skeleton as the body; it now
+  reports an empty body too. (#121)
+
+  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
+  304 against its cache entry before the response reaches this check, so what the check sees is
+  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
+  what it carries.
+
+- **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
+  chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode
+  refuses. Chrome now follows at most the redirects the chain has left. The chain stops on the
+  redirect response at the limit, with the same redirect count, status and final URL that HTTP
+  mode reports, and the next hop is never requested. Only the redirects of the requested page
+  count, and this applies to the Chromiumoxide backend. (#90)
+
+  Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
+  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
+  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
+  an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
+  nothing to compare against; where HTTP mode would bound a chain of the same length, browser
+  mode does not. (#117)
+- **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
+  `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
+  returns at once. When the navigation ends on a response without a document, `interact` reports
+  the URL that answered, empty HTML, and a failed result for each action that names the status.
+  The SSRF check still applies to every request. This applies to the Chromiumoxide backend only:
+  on the native backend `interact` still follows every redirect a chain offers, up to the
+  backend's own fixed cap of 20, and `max_redirects` does not bound it. (#116, #140, #115)
+- **A page could navigate to a refused address after it loaded.** The Chromiumoxide backend
+  stopped checking requests against the SSRF policy when the page finished loading, so a script
+  that navigated during `extra_wait` reached any address. The check now stays on until the HTML
+  is read. A main-frame navigation it refuses, during the load or after it, fails the fetch with
+  the SSRF policy error, because the page Chrome then shows is its own error page. A refused image
+  or iframe keeps the page. (#143)
+- **Browser mode reached addresses the SSRF policy refuses.** The request check covered one page
+  and stopped when the navigation finished. In `interact`, a click, a form submission, a script
+  `fetch()` or a popup the actions started reached private and loopback addresses. In scrape and
+  crawl, a popup the page opened, and a request it sent during the extra wait or while it was
+  screenshotted, did too. Each browser now has one check for every page it serves, and each
+  request is judged by the policy of the page it belongs to: the page, its frames, and the
+  popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
+  is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
+  alone. A launched browser no longer opens a tab of its own. When a fetch or a session ends, its
+  page and popups are closed while their requests are still refused. The check is turned off only
+  after every refusal it had started when asked to stop has been delivered; a request Chrome
+  pauses after that is not checked. In `interact`, a main-frame navigation refused before the
+  actions fails the session with the SSRF policy error, as it fails a scrape. This applies to the
+  Chromiumoxide backend. (#153, #165, #168, #281)
+- **An `interact` action whose request the SSRF check refused was reported as successful.** The
+  action now fails with the SSRF policy error that names the refused URL. A refused request counts
+  for the action that was running when the check received it from Chrome, so on a busy host it can
+  count for the next action. This applies to the Chromiumoxide backend. (#167)
+- **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
+  image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
+  in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of
+  the whole session, the extra wait included. The first five refusals of a page are each logged
+  as a warning, then one warning reports the count, so a page cannot flood the log. This applies
+  to both browser backends, for scrape, crawl and `interact`.
+- **The native browser backend connected to a rebinding host's second DNS answer.** It checked
+  a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
+  to connect. A DNS answer that changed between the two lookups reached an address the policy
+  denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
+  only to the addresses the policy checked, as the HTTP path already does. With a configured
+  proxy, the proxy resolves the target. Two setups that worked before are now refused, as on the
+  HTTP path: a proxy set by the `HTTP_PROXY` environment variable whose host name resolves to a
+  private address, and, when `crawlberg-browser` is used directly with its default policy, a host name
+  that resolves to a private address. A refusal now names the policy's reason. (#451)
+
+- **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
+  within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
+  before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
+  all reached the private host 10.0.0.5 with `deny_private` on. The IPv4-compatible (`::/96`),
+  IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
+  `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
+  address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
+  connect-time resolver and the browser crate's fallback validator apply the same rules. An
+  address that only has the shape of one of these forms is refused for the address it seems to
+  carry: `2001:db8::5efe:1:1` reads as `0.1.0.1` and is refused. (#109)
+
+- **A Teredo address reached the private IPv4 address it carries.** A `2001:0::/32` address
+  stores the client's IPv4 address inverted in its last 32 bits, and nothing decoded it, so
+  `http://[2001:0:4136:e378:0:ffff:5601:5601]/` reached 169.254.169.254 with `deny_private` on.
+  The address is now decoded and checked like the other embedded forms, so a Teredo address that
+  carries a public IPv4 address still works. (#196)
+
+- **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
+  The IPv4 address in the last 32 bits, where a /96 network puts it, is now checked, so
+  `http://[64:ff9b:1::a00:5]/` is refused. A /48, /56 or /64 network puts the address elsewhere
+  and its unused bits read as zeros at that position, so a reading whose last three octets are
+  zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
+  network sizes are checked as IPv6 only, as before. (#108)
+
+- **A denial reason could name an address the allowlist permits.** The reason was classified from
+  the first deny-listed candidate rather than the first one the allowlist did not admit, so an
+  allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
+  `private_network`. The allow or deny decision itself was always correct.
+
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
 - **The credential redactor passed a malformed address through unchanged.** It only stripped
   `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
   stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
@@ -327,6 +477,74 @@ title: "Changelog"
   to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
   unchanged: they still report the `content` without resolving or checking it. (#291)
 
+- **Link extraction could disagree with the markdown about the same tag.** Link extraction read
+  every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
+  could read a different tag boundary than the page's real structure, so the links list showed no
+  link, or the wrong address, for a link the markdown still carried. Each real `<a>` start tag is
+  now rewritten into unambiguous form first -- one copy of each attribute, double-quoted, as
+  html5ever's tokenizer reads it -- so link extraction and the markdown agree on the same tag. This
+  reads every page's links a second time and is slower on a link-heavy page; a well-formed `<a>`
+  tag is rewritten to itself. (#294)
+- **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
+  query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
+  URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
+  `fetch` that read `final_url` or formatted the response with `{:?}` saw the key. Crawl and scrape
+  results never carried it, because the engine does not read a bypass response's `final_url`.
+  `final_url` is now empty, as the field's contract allows when the vendor does not report the
+  resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
+
+- **A caller's debug output of a config printed its secrets.** Crawlberg does not log these types,
+  but a caller that formats one with `{:?}`, such as `tracing::debug!(?config)`, a panic or an
+  `expect` message, printed a bypass provider config's API key, token or auth header value. The
+  same held for custom request headers, a CDP endpoint token, proxy credentials in a browser session
+  key, the REST API token, cookie values and the native browser's proxy URL. Each now prints `***`
+  in place of the secret and keeps the non-secret fields. A browser `eval_script` prints as `***`
+  with its length, because a script can embed a token. This covers the Rust types only: the
+  language bindings define their own config types, and their `repr` and `inspect` output is
+  unchanged. (#118, #290)
+- **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
+  whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached the error
+  text and, through it, an API error body. The error now names only the field and prints no part
+  of the value, not even redacted: the endpoint is a capability, and the field name is enough to
+  find it. The `proxy.url` error has not carried the value since #401. (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
+
+- **A caller's debug output of a bypass provider config printed `${ENV}` values.** Crawlberg
+  prints only the vendor name for a provider, but a caller that formats a loaded `ProviderConfig`
+  with `{:?}` saw a secret substituted into the endpoint, a fixed query value or the JSON body
+  template. The endpoint now prints as its origin only: the scheme, the host and a non-default
+  port, or `***` when it does not parse as an absolute URL or has no host. Each query value prints
+  as `***`. The body template prints as `***` with its length, and with whether it holds the
+  `{{url}}` marker. (#144, #152)
+- **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
+  `ws://host:9222/devtools/browser/<GUID>`, and the GUID in the path is the capability that drives
+  the browser. Redaction covered only the userinfo and the query, so the debug output of
+  `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
+  that did not parse printed whole. Both now print through
+  `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
+  uses, which prints `***` for a value without a host. A proxy URL now prints as its origin too,
+  in a `ProxyConfig`, a browser session key and a static proxy provider. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  no more secret than the host. Two pooled endpoints on the same host and port now print the same.
+  (#152)
+- **A failed bypass request logs its cause.** The send and body-read errors carry only the error
+  kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
+  chain when a send or a body read fails. (#89)
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
@@ -445,6 +663,18 @@ Four changes can affect an existing setup:
   HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
   percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
   they do not resolve at all. (#220)
+
+- **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
+  `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
+  of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
+  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
+  name and every other value stays
+  visible. Output is unchanged for a document crawlberg produced itself, because no path in the
+  core populates `headers` yet — the leak was reachable through a deserialised or caller-built
+  value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
+  map and are not covered by this. (#159)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had

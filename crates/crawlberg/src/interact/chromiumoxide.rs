@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use chromiumoxide::Handler;
@@ -10,6 +11,7 @@ use tokio_stream::StreamExt;
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
+use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -20,15 +22,34 @@ pub(super) async fn run(
     let (browser, mut handler, data_dir) = launch_or_connect(config).await?;
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    let result = run_with_browser(&browser, url, actions, config).await;
-
-    release_browser(
-        browser,
-        handler_handle,
-        ExternalTabCleanup::default(),
-        config.browser.shutdown_timeout,
+    let browser = Arc::new(browser);
+    let result = match BrowserFirewall::start(
+        Arc::clone(&browser),
+        BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
     )
-    .await;
+    .await
+    {
+        Ok(firewall) => {
+            let result = run_with_browser(&browser, &firewall, url, actions, config).await;
+            firewall.stop().await;
+            result
+        }
+        Err(error) => Err(error),
+    };
+
+    // ~keep The stopped firewall held the only other reference, so this is the browser itself.
+    match Arc::into_inner(browser) {
+        Some(browser) => {
+            release_browser(
+                browser,
+                handler_handle,
+                ExternalTabCleanup::default(),
+                config.browser.shutdown_timeout,
+            )
+            .await;
+        }
+        None => handler_handle.abort(),
+    }
     if let Some(dir) = data_dir {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -39,13 +60,28 @@ pub(super) async fn run(
 /// Run every action in order, collecting one [`ActionResult`] each and the last screenshot taken.
 ///
 /// A failing action is recorded and the run continues, so the caller always gets one result per
-/// requested action.
-async fn run_actions(page: &chromiumoxide::Page, actions: &[PageAction]) -> (Vec<ActionResult>, Option<Vec<u8>>) {
+/// requested action. An action that sent a request the SSRF check refused fails with the policy
+/// error.
+async fn run_actions(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    actions: &[PageAction],
+) -> (Vec<ActionResult>, Option<Vec<u8>>) {
     let mut action_results = Vec::with_capacity(actions.len());
     let mut screenshot = None;
 
     for (index, action) in actions.iter().enumerate() {
-        match run_action_with_timeout(page, action, index).await {
+        let started = std::time::Instant::now();
+        let outcome = run_action_with_timeout(page, action, index).await;
+        let grace = match action {
+            PageAction::Click { .. } | PageAction::Press { .. } | PageAction::TypeText { .. } => INPUT_ACTION_GRACE,
+            _ => ACTION_GRACE,
+        };
+        let outcome = match watch.refusal_during(started, grace).await {
+            Some((url, reason)) => Err(CrawlError::ssrf_violation(url, reason)),
+            None => outcome,
+        };
+        match outcome {
             Ok(action_data) => {
                 if let Some(bytes) = action_data.screenshot {
                     screenshot = Some(bytes);
@@ -94,6 +130,7 @@ async fn run_action_with_timeout(
 
 async fn run_with_browser(
     browser: &Browser,
+    firewall: &BrowserFirewall,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
@@ -107,30 +144,39 @@ async fn run_with_browser(
             .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?
     };
 
-    let result = async {
-        prepare_page(&page, config).await?;
-        // ~keep The interception stays on until the page is closed: it adds the seed-host
-        // ~keep headers and the SSRF check to requests the actions send too.
-        let interceptor = crate::ssrf_intercept::start_ssrf_interception(&page, config).await?;
-        let outcome = interact_on_page(&page, url, actions, config, &interceptor).await;
-        interceptor.finish().await;
-        outcome
+    // ~keep The SSRF check holds for the whole session, not just the first navigation: the
+    // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
+    // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
+    // ~keep Closing the watch closes the popups, children first, then the page, and stops
+    // ~keep watching only once Chrome has destroyed them, so the check answers until then.
+    match firewall.handle().watch(&page, config, config.max_redirects).await {
+        Ok(watch) => {
+            let result = async {
+                prepare_page(&page, config).await?;
+                run_session(&page, &watch, url, actions, config).await
+            }
+            .await;
+            watch.close().await;
+            result
+        }
+        Err(error) => {
+            let _ = page.close().await;
+            Err(error)
+        }
     }
-    .await;
-
-    let _ = page.close().await;
-    result
 }
 
-/// Navigate, run the actions, and read the final page, under the caller's interception.
-async fn interact_on_page(
+/// Navigate to `url`, then run the actions and read the final page.
+async fn run_session(
     page: &chromiumoxide::Page,
+    watch: &Watch,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
-    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
 ) -> Result<InteractionResult, CrawlError> {
-    navigate_and_wait(page, url, config, interceptor).await?;
+    if let Some(stop) = navigate_and_wait(page, watch, url, config).await? {
+        return Ok(no_document_result(&stop, actions));
+    }
     if let Some(ref script) = config.browser.eval_script {
         evaluate_json(page, script).await.map_err(|e| {
             CrawlError::browser_error(format!(
@@ -139,7 +185,7 @@ async fn interact_on_page(
         })?;
     }
 
-    let (action_results, screenshot) = run_actions(page, actions).await;
+    let (action_results, screenshot) = run_actions(page, watch, actions).await;
 
     let final_html = page
         .content()
@@ -159,7 +205,38 @@ async fn interact_on_page(
         final_url,
         screenshot,
         screenshot_base64,
+        ssrf_refused_urls: watch.refused_urls().await,
     })
+}
+
+/// The result of a navigation that ended on a response without a document: the URL that
+/// answered, no HTML, and a failed result per action, since there is no page to act on.
+///
+/// ~keep `scrape` reports the same response as a page with its status and an empty body.
+/// ~keep `InteractionResult` has no status, so the action errors carry it.
+fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> InteractionResult {
+    let error = format!(
+        "no page to act on: {} answered {} with no document",
+        stop.url, stop.status
+    );
+    InteractionResult {
+        action_results: actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| ActionResult {
+                action_index: index,
+                action_type: action_type(action).into(),
+                success: false,
+                data: None,
+                error: Some(error.clone()),
+            })
+            .collect(),
+        final_html: String::new(),
+        final_url: stop.url.clone(),
+        screenshot: None,
+        screenshot_base64: None,
+        ssrf_refused_urls: Vec::new(),
+    }
 }
 
 async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
@@ -176,16 +253,19 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
     Ok(())
 }
 
-// ~keep Mirrors `browser::navigation::page_fetch`'s interception shape (xberg-io/crawlberg#74):
-// ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
-// ~keep redirects/client-side navigations internally, so per-request CDP interception is still
-// ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
+/// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
+/// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
+/// Fails with the SSRF policy error when a main-frame navigation was refused, during the load
+/// or the extra wait.
+// ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows
+// ~keep redirects/client-side navigations internally, so `watch` checks every request the
+// ~keep navigation makes, the same way the scrape/crawl path does (xberg-io/crawlberg#74).
 async fn navigate_and_wait(
     page: &chromiumoxide::Page,
+    watch: &Watch,
     url: &str,
     config: &CrawlConfig,
-    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
-) -> Result<(), CrawlError> {
+) -> Result<Option<StoppedResponse>, CrawlError> {
     let timeout = config.browser.timeout;
 
     let navigation = tokio::time::timeout(timeout, async {
@@ -199,13 +279,26 @@ async fn navigate_and_wait(
     })
     .await;
 
-    resolve_navigation_outcome(navigation, interceptor.take_blocked(), timeout)?;
+    let intercepted = watch.take_outcome();
+    if intercepted.blocked.is_none()
+        && let Some(stop) = intercepted.stopped_response
+    {
+        return Ok(Some(stop));
+    }
+    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
+    // ~keep A main-frame navigation the policy refused before the actions leaves Chrome's error
+    // ~keep page in place of the page, so the session fails as a scrape does. One an action
+    // ~keep starts fails that action instead.
+    watch.settle().await;
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
 
-    Ok(())
+    Ok(None)
 }
 
 /// Resolve navigation's timeout/error/SSRF-block outcome into a single result.

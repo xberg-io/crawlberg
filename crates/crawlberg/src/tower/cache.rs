@@ -100,7 +100,13 @@ fn now_secs() -> u64 {
 const STATUS_NOT_MODIFIED: u16 = 304;
 
 /// Build a [`CrawlResponse`] that replays `cached`.
-fn response_from_cache(cached: CachedPage) -> CrawlResponse {
+///
+/// `sent_user_agent` is the agent the request pinned before this layer answered from cache
+/// (a caller earlier in the chain -- `RedirectPolicy::admits` -- may have chosen one for
+/// robots.txt group selection and forced it onto the request); a cache hit never reaches the
+/// UA rotation layer, but the caller's robots decision was still made for that agent, so the
+/// replayed response must report the same one rather than none.
+fn response_from_cache(cached: CachedPage, sent_user_agent: Option<String>) -> CrawlResponse {
     let mut headers = HashMap::new();
     if let Some(ref etag) = cached.etag {
         headers.insert("etag".to_owned(), vec![etag.clone()]);
@@ -115,7 +121,8 @@ fn response_from_cache(cached: CachedPage) -> CrawlResponse {
         body: cached.body,
         body_bytes,
         headers,
-        landed_url: None,
+        landed: None,
+        sent_user_agent,
     }
 }
 
@@ -206,12 +213,15 @@ where
                 return inner.call(req).await;
             }
             let mut req = req;
+            let sent_user_agent = req.headers.get("user-agent").cloned();
 
             // ~keep A fresh entry short-circuits; a stored-but-unusable one (expired, or
             // `no-cache`) is still worth a conditional request, so it is carried forward
             // to be validated rather than discarded.
             let revalidating = match cache.get(&url).await {
-                Ok(Some(cached)) if is_fresh(&cached, now_secs()) => return Ok(response_from_cache(cached)),
+                Ok(Some(cached)) if is_fresh(&cached, now_secs()) => {
+                    return Ok(response_from_cache(cached, sent_user_agent));
+                }
                 Ok(Some(stale)) => Some(stale),
                 _ => cache.get_stale(&url).await.ok().flatten(),
             };
@@ -229,7 +239,7 @@ where
                     ..cached
                 };
                 let _ = cache.set(&url, &refreshed).await;
-                return Ok(response_from_cache(refreshed));
+                return Ok(response_from_cache(refreshed, resp.sent_user_agent.clone()));
             }
 
             if resp.status >= 200 && resp.status < 300 {
@@ -297,7 +307,8 @@ mod tests {
                     body: "ok".into(),
                     body_bytes: vec![],
                     headers: HashMap::new(),
-                    landed_url: None,
+                    landed: None,
+                    sent_user_agent: None,
                 })
             })
         }
@@ -341,6 +352,8 @@ mod tests {
         status: u16,
         headers: HashMap<String, Vec<String>>,
         seen_request_headers: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
+        /// The agent the origin reports back as actually sent, as a real fetch would.
+        sent_user_agent: Option<String>,
     }
 
     impl ScriptedService {
@@ -353,7 +366,14 @@ mod tests {
                 status,
                 headers,
                 seen_request_headers: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+                sent_user_agent: None,
             }
+        }
+
+        /// Report `agent` back on the response, as the agent this hop's request pinned.
+        fn with_sent_user_agent(mut self, agent: &str) -> Self {
+            self.sent_user_agent = Some(agent.to_owned());
+            self
         }
     }
 
@@ -368,6 +388,7 @@ mod tests {
             *self.seen_request_headers.lock().expect("headers mutex") = req.headers.clone();
             let status = self.status;
             let headers = self.headers.clone();
+            let sent_user_agent = self.sent_user_agent.clone();
             Box::pin(async move {
                 Ok(CrawlResponse {
                     status,
@@ -375,7 +396,8 @@ mod tests {
                     body: "fresh from origin".into(),
                     body_bytes: b"fresh from origin".to_vec(),
                     headers,
-                    landed_url: None,
+                    landed: None,
+                    sent_user_agent,
                 })
             })
         }
@@ -457,6 +479,73 @@ mod tests {
         assert!(
             cache.entries.lock().expect("cache mutex").is_empty(),
             "a crawl cache is shared, so a private response must not be stored even with max-age"
+        );
+    }
+
+    /// crawlberg#423: a cache hit never reaches the UA rotation layer, but a caller earlier
+    /// in the chain (`RedirectPolicy::admits`) may have pinned an agent onto the request for
+    /// its robots.txt decision. The replayed response must report that same agent back, not
+    /// none, or a downstream directive check would fall back to the configured default.
+    #[tokio::test]
+    async fn a_fresh_cache_hit_reports_the_agent_the_request_pinned() {
+        let cache = RecordingCache::default();
+        cache.entries.lock().expect("cache mutex").insert(
+            "http://a.com".to_owned(),
+            CachedPage {
+                url: "http://a.com".to_owned(),
+                status_code: 200,
+                content_type: "text/html".to_owned(),
+                body: "cached body".to_owned(),
+                etag: None,
+                last_modified: None,
+                cached_at: now_secs(),
+                max_age_secs: Some(600),
+                must_revalidate: false,
+            },
+        );
+        let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache));
+        let mut svc = layer.layer(ScriptedService::new(200, &[]));
+
+        let mut req = CrawlRequest::new("http://a.com");
+        req.headers.insert("user-agent".to_owned(), "AgentB".to_owned());
+        let resp = svc.call(req).await.unwrap();
+
+        assert_eq!(
+            resp.sent_user_agent.as_deref(),
+            Some("AgentB"),
+            "a fresh cache hit must report the agent pinned on the request that looked it up"
+        );
+    }
+
+    /// crawlberg#423: the revalidated-hit call site must report the *origin's* answer to the
+    /// conditional request, not the request's own pin, since a 304 still comes from a live
+    /// fetch through the UA rotation layer.
+    #[tokio::test]
+    async fn a_revalidated_cache_hit_reports_the_agent_the_304_request_sent() {
+        let cache = RecordingCache::default();
+        cache.entries.lock().expect("cache mutex").insert(
+            "http://a.com".to_owned(),
+            CachedPage {
+                url: "http://a.com".to_owned(),
+                status_code: 200,
+                content_type: "text/html".to_owned(),
+                body: "stored body".to_owned(),
+                etag: Some("\"v1\"".to_owned()),
+                last_modified: None,
+                cached_at: now_secs(),
+                max_age_secs: None,
+                must_revalidate: true,
+            },
+        );
+        let layer = CrawlCacheLayer::new(std::sync::Arc::new(cache));
+        let mut svc = layer.layer(ScriptedService::new(STATUS_NOT_MODIFIED, &[]).with_sent_user_agent("AgentB"));
+
+        let resp = svc.call(CrawlRequest::new("http://a.com")).await.unwrap();
+
+        assert_eq!(
+            resp.sent_user_agent.as_deref(),
+            Some("AgentB"),
+            "a revalidated cache hit must report the agent the 304 request actually sent"
         );
     }
 

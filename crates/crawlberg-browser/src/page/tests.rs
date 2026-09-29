@@ -1829,3 +1829,168 @@ async fn a_module_that_fails_to_load_names_no_credential_in_its_error() {
     );
     assert!(rendered_html(&page).contains("<p>page</p>"));
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn script_fetches_and_module_imports_never_reach_a_rebinding_hosts_denied_address() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: 22\r\nConnection: close\r\n\r\nglobalThis.far = true;",
+    )
+    .await;
+    let target = format!("http://localhost:{port}");
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 'pending';\
+         fetch('{target}/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+         <script type=\"module\">import '{target}/far.js';</script><p>page</p></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let policy = Arc::new(RebindingPolicy::default());
+    let context = BrowserContext::with_ssrf("test".to_string(), None, false, None, policy.clone(), false)
+        .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&base).await.expect("navigate");
+
+    assert!(rendered_html(&page).contains("<p>page</p>"), "the page itself renders");
+    let fetched = global(&mut page, "String(globalThis.fetched)");
+    assert!(
+        fetched
+            .as_str()
+            .is_some_and(|error| error.contains("denied by the test policy: 127.0.0.1")),
+        "the fetch must fail with the policy's reason, got {fetched}"
+    );
+    assert_eq!(
+        global(&mut page, "!!globalThis.far"),
+        serde_json::json!(false),
+        "the module must not run"
+    );
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection: {:?}",
+        seen.lock().expect("lock")
+    );
+    assert_eq!(
+        *policy.resolved.lock().expect("lock"),
+        vec!["localhost", "localhost"],
+        "the fetch and the module import must each connect through the policy's lookup"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
+    use crate::net::resolver::tests::RebindingPolicy;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let html = "<html><body><script>globalThis.fetched = 'pending';\
+                fetch('http://example.invalid/data').then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script>\
+                <script type=\"module\">import 'http://example.invalid/m.js';</script></body></html>";
+    let requests = serve_raw_recording(
+        listener,
+        raw(&[
+            ("http://example.invalid/", &ok_response("text/html", html)),
+            ("http://example.invalid/data", &ok_response("application/json", "{}")),
+            (
+                "http://example.invalid/m.js",
+                &ok_response("text/javascript", "globalThis.far = true;"),
+            ),
+        ]),
+    );
+    let policy = Arc::new(RebindingPolicy::default());
+    // ~keep A proxy named by host: a client that asked the policy for it would be refused.
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        Some(format!("http://localhost:{port}")),
+        false,
+        None,
+        policy.clone(),
+        false,
+    )
+    .expect("an http proxy must build the context");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate("http://example.invalid/").await.expect("navigate");
+
+    assert_eq!(
+        global(&mut page, "JSON.stringify([globalThis.fetched, !!globalThis.far])"),
+        serde_json::json!("[\"ok\",true]"),
+        "the fetch and the module must go through the proxy: {:?}",
+        requests.lock().expect("lock")
+    );
+    assert!(
+        policy.resolved.lock().expect("lock").is_empty(),
+        "the proxy resolves the target, so no client may ask the policy to"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_navigation_refused_at_connect_time_names_the_policy_reason_once() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RebindingPolicy::default()),
+        false,
+    )
+    .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    let error = page
+        .navigate(&format!("http://localhost:{port}/"))
+        .await
+        .expect_err("the connection's lookup answers a denied address")
+        .to_string();
+
+    assert!(
+        error.contains("denied by the test policy: 127.0.0.1"),
+        "the refusal must carry the policy's reason: {error}"
+    );
+    assert_eq!(error.matches("Network error").count(), 1, "{error}");
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_preflight_refused_at_connect_time_names_the_policy_reason() {
+    use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+    let (port, seen) = denied_server("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+    let html = format!(
+        "<html><body><script>globalThis.fetched = 'pending';\
+         fetch('http://localhost:{port}/data', {{headers: {{'X-Custom': '1'}}}})\
+         .then(() => globalThis.fetched = 'ok', e => globalThis.fetched = String(e));</script></body></html>"
+    );
+    let base = serve(routes(&[("/", "text/html", &html)])).await;
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        None,
+        false,
+        None,
+        Arc::new(RebindingPolicy::default()),
+        false,
+    )
+    .expect("no proxy, so the context must build");
+    let mut page = Page::new("page-1".to_string(), Arc::new(context));
+
+    page.navigate(&base).await.expect("navigate");
+
+    let fetched = global(&mut page, "String(globalThis.fetched)");
+    assert!(
+        fetched
+            .as_str()
+            .is_some_and(|error| error.contains("CORS preflight failed")
+                && error.contains("denied by the test policy: 127.0.0.1")),
+        "the preflight must fail with the policy's reason, got {fetched}"
+    );
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the denied address must receive no connection"
+    );
+}

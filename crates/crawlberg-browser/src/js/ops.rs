@@ -5,8 +5,11 @@ use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
+use crate::redact::{RedactedHeaders, RedactedValues};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use deno_core::Extension;
 use deno_core::OpState;
@@ -16,7 +19,6 @@ use tokio::sync::Mutex;
 pub type InterceptCallback =
     Arc<Mutex<Option<Box<dyn Fn(String, String, String) -> Option<(u16, String, String)> + Send + Sync>>>>;
 
-#[derive(Debug)]
 pub enum InterceptResolution {
     Continue {
         url: Option<String>,
@@ -32,6 +34,35 @@ pub enum InterceptResolution {
     Fail {
         reason: String,
     },
+}
+
+impl std::fmt::Debug for InterceptResolution {
+    /// Redacted: names stay visible. `Continue` carries *request* headers, so every value is
+    /// hidden; `Fulfill` carries a synthesised *response*, so its values print except the four
+    /// well-known credential names.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Continue {
+                url,
+                method,
+                headers,
+                body,
+            } => f
+                .debug_struct("Continue")
+                .field("url", url)
+                .field("method", method)
+                .field("headers", &headers.as_ref().map(RedactedValues))
+                .field("body", body)
+                .finish(),
+            Self::Fulfill { status, headers, body } => f
+                .debug_struct("Fulfill")
+                .field("status", status)
+                .field("headers", &RedactedHeaders(headers))
+                .field("body", body)
+                .finish(),
+            Self::Fail { reason } => f.debug_struct("Fail").field("reason", reason).finish(),
+        }
+    }
 }
 
 pub struct InterceptedRequest {
@@ -371,14 +402,14 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
-fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+fn build_request_client(proxy_url: Option<&str>, ssrf: &Arc<dyn SsrfValidator>) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
         let p = crate::net::proxy::reqwest_proxy(proxy).map_err(|e| format!("Invalid op_fetch_url proxy: {e}"))?;
         builder = builder.proxy(p);
     }
-    builder
+    with_policy_resolver(builder, proxy_url.is_some(), ssrf)
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -435,7 +466,7 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy_url.as_deref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -704,7 +735,7 @@ async fn send_preflight(
         )
         .send()
         .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", error_with_causes(&e))))?;
 
     let allowed_origin = preflight
         .headers()
@@ -842,7 +873,7 @@ async fn send_one_hop(
         if let Some(ref counter) = context.in_flight {
             counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
-        deno_error::JsErrorBox::generic(e.to_string())
+        deno_error::JsErrorBox::generic(error_with_causes(&e))
     })?;
     if let Some(ref counter) = context.in_flight {
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -949,9 +980,14 @@ pub fn build_extension() -> Extension {
 mod tests {
     use super::*;
 
+    fn client_through(proxy: &str) -> Result<reqwest::Client, String> {
+        let ssrf: Arc<dyn SsrfValidator> = Arc::new(DefaultSsrfValidator::from_env());
+        build_request_client(Some(proxy), &ssrf)
+    }
+
     #[test]
     fn a_proxy_scheme_reqwest_would_drop_refuses_the_client() {
-        let err = build_request_client(Some("ftp://operator:s3cr3t@127.0.0.1:1"))
+        let err = client_through("ftp://operator:s3cr3t@127.0.0.1:1")
             .expect_err("an ftp proxy must not build a direct client");
         assert!(err.contains("'ftp'"), "the error must name the scheme, got {err}");
         assert!(!err.contains("s3cr3t"), "the error leaked the proxy password: {err}");
@@ -960,13 +996,13 @@ mod tests {
     #[test]
     fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
         for proxy in crate::net::proxy::credential_urls::URLS {
-            let err = build_request_client(Some(proxy)).expect_err("the proxy must not build a direct client");
+            let err = client_through(proxy).expect_err("the proxy must not build a direct client");
             crate::net::proxy::credential_urls::assert_not_shown(proxy, &err);
         }
     }
 
     #[test]
     fn an_http_proxy_builds_the_client() {
-        assert!(build_request_client(Some("http://proxy.test:8080")).is_ok());
+        assert!(client_through("http://proxy.test:8080").is_ok());
     }
 }

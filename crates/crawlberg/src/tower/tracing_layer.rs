@@ -192,7 +192,8 @@ mod tests {
                 body: String::new(),
                 body_bytes: Vec::new(),
                 headers: std::collections::HashMap::new(),
-                landed_url: None,
+                landed: None,
+                sent_user_agent: None,
             })
         });
         let svc = CrawlTracingLayer::new().layer(inner);

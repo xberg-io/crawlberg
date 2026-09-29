@@ -431,3 +431,161 @@ async fn a_chrome_render_with_only_the_crawl_wide_proxy_goes_through_it() {
         seen.lock().expect("record")
     );
 }
+
+/// A loopback server the SSRF policy denies, with a count of the connections it accepted.
+async fn denied_listener() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind the denied server");
+    let port = listener.local_addr().expect("denied server address").port();
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&accepted);
+    tokio::spawn(async move {
+        while let Ok((_stream, _)) = listener.accept().await {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    (format!("http://127.0.0.1:{port}/secret"), accepted)
+}
+
+/// An HTTP proxy that answers every request itself, with [`MARKER`] and an image at `image`.
+async fn spawn_proxy_with_image(image: String) -> (String, Seen) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind the proxy");
+    let address = listener.local_addr().expect("proxy address").to_string();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let record = Arc::clone(&record);
+            let image = image.clone();
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut buf = [0_u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                let request_line = head.lines().next().unwrap_or_default().to_owned();
+                record.lock().expect("record").push(request_line);
+                let body = format!("<html><body><p>{MARKER}</p><img src={image:?}></body></html>");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    (address, seen)
+}
+
+/// Assert that a page rendered in a proxy's browser context kept its content and had its
+/// request to the denied address refused: listed on the result, and seen by neither the proxy
+/// nor the denied server.
+fn assert_refused_in_the_proxy_context(
+    label: &str,
+    html: &str,
+    refused: &[String],
+    denied: &str,
+    seen: &Seen,
+    accepted: &std::sync::atomic::AtomicUsize,
+) {
+    assert!(
+        html.contains(MARKER),
+        "{label}: the page must come from the proxy, got {html}"
+    );
+    assert!(
+        !target_requests(seen).is_empty(),
+        "{label}: the proxy must see the render's request, saw {:?}",
+        seen.lock().expect("record")
+    );
+    assert_eq!(
+        refused,
+        [denied.to_owned()],
+        "{label}: the SSRF check must refuse the image at the denied address"
+    );
+    assert!(
+        requests_for(seen, denied).is_empty(),
+        "{label}: the refused request must not reach the proxy, saw {:?}",
+        seen.lock().expect("record")
+    );
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "{label}: the denied server must see no connection"
+    );
+}
+
+/// A pooled page opens in a browser context made with the crawl's proxy, and the SSRF check
+/// still refuses its requests to a denied address.
+#[tokio::test]
+async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_pooled_proxy_context() {
+    let name = "the_ssrf_check_refuses_a_request_from_a_page_in_a_pooled_proxy_context";
+    let (denied, accepted) = denied_listener().await;
+    let (address, seen) = spawn_proxy_with_image(denied.clone()).await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let mut config = render_config(proxy_at(address, None, None));
+    config.browser.session_affinity = false;
+    config.browser.extra_wait = Some(Duration::from_millis(500));
+    config.browser_pool = Some(Arc::clone(&pool));
+    let result = render(name, config, &seen).await;
+    pool.shutdown().await;
+    let Some(result) = result else {
+        return;
+    };
+    assert_refused_in_the_proxy_context(name, &result.html, &result.ssrf_refused_urls, &denied, &seen, &accepted);
+}
+
+/// On a browser reached through `browser.endpoint`, the page opens in a browser context made
+/// with the crawl's proxy, and the SSRF check still refuses its requests to a denied address.
+#[tokio::test]
+async fn the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context() {
+    use futures::StreamExt as _;
+    let name = "the_ssrf_check_refuses_a_request_from_a_page_in_a_connected_proxy_context";
+    let profile = tempfile::tempdir().expect("a temp profile directory");
+    let launched = chromiumoxide::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(profile.path())
+        .build()
+        .map_err(|e| e.to_string());
+    let launched = match launched {
+        Ok(config) => chromiumoxide::Browser::launch(config).await.map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+    let (mut chrome, mut handler) = match launched {
+        Ok(launched) => launched,
+        Err(reason) => {
+            announce_chrome_skip(name, &reason);
+            return;
+        }
+    };
+    let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let (denied, accepted) = denied_listener().await;
+    let (address, seen) = spawn_proxy_with_image(denied.clone()).await;
+    let mut config = render_config(proxy_at(address, None, None));
+    config.browser.extra_wait = Some(Duration::from_millis(500));
+    config.browser.endpoint = Some(chrome.websocket_address().clone());
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    let rendered = tokio::time::timeout(Duration::from_secs(60), scrape(&engine, TARGET))
+        .await
+        .expect("the render must finish within 60s");
+    let _ = chrome.close().await;
+    handler.abort();
+
+    let rendered = rendered.unwrap_or_else(|e| panic!("{name}: the render must go through the proxy: {e:?}"));
+    assert_refused_in_the_proxy_context(
+        name,
+        &rendered.html,
+        &rendered.ssrf_refused_urls,
+        &denied,
+        &seen,
+        &accepted,
+    );
+}

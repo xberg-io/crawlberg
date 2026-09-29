@@ -2103,6 +2103,7 @@ const _: fn() = || {
         let _: i64 = CrawlPageResult.redirect_count;
         let _: bool = CrawlPageResult.noindex_detected;
         let _: bool = CrawlPageResult.nofollow_detected;
+        let _: Vec<String> = CrawlPageResult.ssrf_refused_urls;
     }
     {
         let CrawlResult = None::<crate::CrawlResult>.unwrap();
@@ -2196,6 +2197,7 @@ const _: fn() = || {
         let _: String = InteractionResult.final_html;
         let _: String = InteractionResult.final_url;
         let _: Option<String> = InteractionResult.screenshot_base64;
+        let _: Vec<String> = InteractionResult.ssrf_refused_urls;
     }
     {
         let JsonLdEntry = None::<crate::JsonLdEntry>.unwrap();
@@ -2349,6 +2351,7 @@ const _: fn() = || {
         let _: Option<String> = ScrapeResult.screenshot_base64;
         let _: Option<crate::DownloadedDocument> = ScrapeResult.downloaded_document;
         let _: Option<crate::BrowserExtras> = ScrapeResult.browser;
+        let _: Vec<String> = ScrapeResult.ssrf_refused_urls;
     }
     {
         let SitemapUrl = None::<crate::SitemapUrl>.unwrap();
@@ -3055,6 +3058,7 @@ impl SseDecode for crate::CrawlPageResult {
         let mut var_redirectCount = <i64>::sse_decode(deserializer);
         let mut var_noindexDetected = <bool>::sse_decode(deserializer);
         let mut var_nofollowDetected = <bool>::sse_decode(deserializer);
+        let mut var_ssrfRefusedUrls = <Vec<String>>::sse_decode(deserializer);
         return crate::CrawlPageResult {
             url: var_url,
             normalized_url: var_normalizedUrl,
@@ -3081,6 +3085,7 @@ impl SseDecode for crate::CrawlPageResult {
             redirect_count: var_redirectCount,
             noindex_detected: var_noindexDetected,
             nofollow_detected: var_nofollowDetected,
+            ssrf_refused_urls: var_ssrfRefusedUrls,
         };
     }
 }
@@ -3357,11 +3362,13 @@ impl SseDecode for crate::InteractionResult {
         let mut var_finalHtml = <String>::sse_decode(deserializer);
         let mut var_finalUrl = <String>::sse_decode(deserializer);
         let mut var_screenshotBase64 = <Option<String>>::sse_decode(deserializer);
+        let mut var_ssrfRefusedUrls = <Vec<String>>::sse_decode(deserializer);
         return crate::InteractionResult {
             action_results: var_actionResults,
             final_html: var_finalHtml,
             final_url: var_finalUrl,
             screenshot_base64: var_screenshotBase64,
+            ssrf_refused_urls: var_ssrfRefusedUrls,
         };
     }
 }
@@ -4177,6 +4184,7 @@ impl SseDecode for crate::ScrapeResult {
         let mut var_screenshotBase64 = <Option<String>>::sse_decode(deserializer);
         let mut var_downloadedDocument = <Option<crate::DownloadedDocument>>::sse_decode(deserializer);
         let mut var_browser = <Option<crate::BrowserExtras>>::sse_decode(deserializer);
+        let mut var_ssrfRefusedUrls = <Vec<String>>::sse_decode(deserializer);
         return crate::ScrapeResult {
             status_code: var_statusCode,
             final_url: var_finalUrl,
@@ -4207,6 +4215,7 @@ impl SseDecode for crate::ScrapeResult {
             screenshot_base64: var_screenshotBase64,
             downloaded_document: var_downloadedDocument,
             browser: var_browser,
+            ssrf_refused_urls: var_ssrfRefusedUrls,
         };
     }
 }
@@ -4972,6 +4981,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::CrawlPageResult> {
             self.0.redirect_count.into_into_dart().into_dart(),
             self.0.noindex_detected.into_into_dart().into_dart(),
             self.0.nofollow_detected.into_into_dart().into_dart(),
+            self.0.ssrf_refused_urls.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5259,6 +5269,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::InteractionResult> {
             self.0.final_html.into_into_dart().into_dart(),
             self.0.final_url.into_into_dart().into_dart(),
             self.0.screenshot_base64.into_into_dart().into_dart(),
+            self.0.ssrf_refused_urls.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5529,6 +5540,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::ScrapeResult> {
             self.0.screenshot_base64.into_into_dart().into_dart(),
             self.0.downloaded_document.into_into_dart().into_dart(),
             self.0.browser.into_into_dart().into_dart(),
+            self.0.ssrf_refused_urls.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6136,6 +6148,7 @@ impl SseEncode for crate::CrawlPageResult {
         <i64>::sse_encode(self.redirect_count, serializer);
         <bool>::sse_encode(self.noindex_detected, serializer);
         <bool>::sse_encode(self.nofollow_detected, serializer);
+        <Vec<String>>::sse_encode(self.ssrf_refused_urls, serializer);
     }
 }
 
@@ -6363,6 +6376,7 @@ impl SseEncode for crate::InteractionResult {
         <String>::sse_encode(self.final_html, serializer);
         <String>::sse_encode(self.final_url, serializer);
         <Option<String>>::sse_encode(self.screenshot_base64, serializer);
+        <Vec<String>>::sse_encode(self.ssrf_refused_urls, serializer);
     }
 }
 
@@ -7024,6 +7038,7 @@ impl SseEncode for crate::ScrapeResult {
         <Option<String>>::sse_encode(self.screenshot_base64, serializer);
         <Option<crate::DownloadedDocument>>::sse_encode(self.downloaded_document, serializer);
         <Option<crate::BrowserExtras>>::sse_encode(self.browser, serializer);
+        <Vec<String>>::sse_encode(self.ssrf_refused_urls, serializer);
     }
 }
 
