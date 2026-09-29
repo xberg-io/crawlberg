@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use crate::dom::{DomTree, NodeData, NodeId};
 use crate::net::credential::{OriginHeaders, has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::net::{CookieJar, HttpClient};
 use crate::redact::{RedactedHeaders, RedactedValues};
@@ -400,14 +402,14 @@ fn op_console_msg(state: &OpState, #[string] level: &str, #[string] msg: &str) {
 
 // ~keep JS fetch/XHR must build with the page proxy each request.
 // ~keep A cached client can otherwise bypass a changed proxy setting.
-fn build_request_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+fn build_request_client(proxy_url: Option<&str>, ssrf: &Arc<dyn SsrfValidator>) -> Result<reqwest::Client, String> {
     // ~keep Manual redirects keep every hop under SSRF validation; reqwest auto-follow can cross into localhost.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if let Some(proxy) = proxy_url {
         let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid op_fetch_url proxy '{}': {}", proxy, e))?;
         builder = builder.proxy(p);
     }
-    builder
+    with_policy_resolver(builder, proxy_url.is_some(), ssrf)
         .build()
         .map_err(|e| format!("failed to build reqwest::Client: {}", e))
 }
@@ -464,7 +466,7 @@ async fn op_fetch_url(
         return Ok(early);
     }
 
-    let client = build_request_client(context.proxy_url.as_deref()).map_err(deno_error::JsErrorBox::generic)?;
+    let client = build_request_client(context.proxy_url.as_deref(), &ssrf).map_err(deno_error::JsErrorBox::generic)?;
     let cors = CorsContext::new(&url, &origin, &method, &headers_json);
 
     if cors.needs_preflight(&mode) {
@@ -733,7 +735,7 @@ async fn send_preflight(
         )
         .send()
         .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", error_with_causes(&e))))?;
 
     let allowed_origin = preflight
         .headers()
@@ -871,7 +873,7 @@ async fn send_one_hop(
         if let Some(ref counter) = context.in_flight {
             counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
-        deno_error::JsErrorBox::generic(e.to_string())
+        deno_error::JsErrorBox::generic(error_with_causes(&e))
     })?;
     if let Some(ref counter) = context.in_flight {
         counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);

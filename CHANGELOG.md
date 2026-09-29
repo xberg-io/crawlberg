@@ -44,6 +44,36 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
+  caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
+  and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
+  case-insensitive. Both entry points now parse the address and read the parsed scheme instead. (#221)
+
+- **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
+  request sent the fixed default agent, and robots.txt was judged for that same default agent.
+  Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
+  judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
+  behavior the native crawl loop already had. A page on another origin, such as a subdomain
+  under `allow_subdomains`, is now judged by that origin's own robots.txt, as on native. Before,
+  every page was judged by the seed origin's robots.txt, so such a page can now be refused. (#483)
+
+- **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
+  crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
+  page followed under `allow_subdomains` or a document link on another host got the credentials
+  set for the seed host. Each page now keeps the seed's credential scope, as the native crawl
+  already did. The same loop also dropped the user name and password written into a seed URL, so
+  no page got them, not even the seed; every page on the seed host now gets them. (#404)
+
+- **The native browser backend connected to a rebinding host's second DNS answer.** It checked
+  a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
+  to connect. A DNS answer that changed between the two lookups reached an address the policy
+  denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
+  only to the addresses the policy checked, as the HTTP path already does. With a configured
+  proxy, the proxy resolves the target. Two setups that worked before are now refused, as on the
+  HTTP path: a proxy set by the `HTTP_PROXY` environment variable whose host name resolves to a
+  private address, and, when `crawlberg-browser` is used directly with its default policy, a host name
+  that resolves to a private address. A refusal now names the policy's reason. (#451)
+
 - **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
   within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
   before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
@@ -191,6 +221,23 @@ All notable changes to crawlberg are documented here.
   network event also carried the raw address. Every script and stylesheet address in the page
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
+
+- **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
+  address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
+  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, and
+  a websocket endpoint with no host is still refused. The browser connection uses the same parse
+  and sends the address with a lower-case scheme, so an upper-case, space-padded or slash-less
+  spelling that the checks accept also connects. The CLI's rejection error no longer prints the
+  address, the same as the config check. (#343)
+
+- **A failed connection to a remote browser printed its password.** When crawlberg could not
+  connect to a `browser.endpoint`, the connect error showed the address as configured, with its
+  `user:pass@` credentials and its CDP path token. The error now prints only the scheme, the host
+  and the port. (#424)
+
+- **The interact backend's connect error printed a browser endpoint's password.** It built the
+  same connect error as the launch path, without redacting the address. It now prints only the
+  origin, the same as the launch path. (#473)
 
 - **The SSRF check could print a credential as the refused scheme.** An address written without
   a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
@@ -413,6 +460,91 @@ All notable changes to crawlberg are documented here.
   visible. A request header map prints no value at all, whatever the header's name, as
   `custom_headers` in `CrawlConfig` already does. (#141)
 
+- **An absolute redirect target was followed exactly as sent, without going through the URL
+  parser.** A relative redirect target was resolved through `Url::join`, which parses it and
+  reports the parser's normalized form, stripped of an embedded tab or newline and trimmed of
+  leading/trailing spaces. An absolute `http://`/`https://` target skipped that parse entirely
+  and came back byte-for-byte as received, so a `Location`, `Refresh`, or `<meta refresh>` value
+  crafted with stray whitespace was followed and reported exactly as sent. Both forms now go
+  through the same parser, and a target that fails to parse, absolute or relative, is refused
+  rather than followed: the redirect source it came from contributes nothing, and the chain
+  falls through to the next source or stops. A target is now followed in the URL parser's
+  normalized form: an IDN host becomes punycode, a default port is dropped, the host is
+  lower-cased, a bare origin gains a trailing `/`, dot segments are removed, a space becomes
+  `%20`, and `127.1` becomes `127.0.0.1`.
+  (#207)
+
+- **A sitemap-index child `<loc>` was fetched and deduplicated on its raw text instead of its
+  parsed form.** A same-host absolute child address, and any child address when the sitemap
+  index's own URL failed to parse, skipped the URL parser entirely, so two spellings of the
+  same address (a default port, an upper-case scheme, a stray tab) were fetched as two separate
+  documents. Every child address is now parsed and normalized before it is fetched and before
+  it is used as the duplicate key, matching the resolver already used for redirect targets, and
+  a child address that fails to parse is skipped instead of fetched as raw text. (#226)
+
+- **`map()` returned sitemap `<loc>` entries as raw text and kept duplicates.** Two spellings of
+  one page, such as `https://example.com/a` and `HTTPS://example.com:443/a`, came back as two
+  entries, a relative `<loc>` came back as a bare path, and a `<loc>` that is not an address came
+  back as text. Each `<loc>` is now resolved against the sitemap's own URL with the same parser as
+  sitemap-index children and returned in its normalized form. A `<loc>` that does not parse is
+  dropped. An address is returned once per `map()` call, even when several sitemaps list it, and a
+  duplicate does not count toward `map_limit`. A relative `<loc>` is now subject to
+  `exclude_paths`, like every other entry. `map_search` now matches the normalized address, so a
+  search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
+  longer matches. A `<loc>` that is only a query, such as `?q=1`, is dropped instead of reported
+  as a page, and so is a `<loc>` that resolves to the sitemap's own address once a fragment such
+  as `#top` is ignored. (#323, #340)
+
+- **A sitemap-index child differing only by a URL fragment was fetched twice.** The
+  fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
+  the host rewrite kept the fragment on a same-host child address before it was fetched
+  and used as the duplicate key. A relative child address such as `a.xml#x` kept its fragment
+  too. The fragment is now dropped from every child address, so both addresses fetch and dedupe
+  as one document. (#324, #363)
+
+- **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
+  answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
+  `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
+  the sitemap's URL after redirects. A redirected index that lists its own address, the one it
+  answered from, is no longer fetched a second time. (#339, #374)
+
+- **A sitemap index's children on other hosts were fetched from the index's own host.** An index
+  at `https://example.com/sitemap.xml` that listed `https://blog.example.com/sitemap.xml` and
+  `https://shop.example.com/sitemap.xml` had each child moved onto `example.com` with its path
+  kept, so both became `https://example.com/sitemap.xml`, the index itself, and were skipped as a
+  cycle. Their pages were missing from the result. Each child is now fetched from its own host,
+  as the sitemaps.org protocol allows. The SSRF policy checks every child fetch, and the seed's
+  credentials and custom headers still go only to the seed host. (#398)
+
+- **A robots.txt `Sitemap:` line on another host was fetched from the seed's host.** A robots.txt
+  on `example.com` that named `https://cdn.example.net/sitemap.xml` made `map()` fetch
+  `https://example.com/sitemap.xml` instead, which is another document or none. The sitemaps.org
+  protocol lets robots.txt name a sitemap on another host, so the line is now fetched from the
+  host it names. The SSRF policy checks the fetch, and the seed's credentials and custom headers
+  go only to the seed host. A relative `Sitemap:` line now resolves against the address that
+  served robots.txt after its redirects, not the address being mapped. (#268, #349)
+
+- **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
+  returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
+  path and encodes a non-ASCII host as punycode, so a search for `café` never found
+  `https://example.com/caf%C3%A9` and a search for `bücher` never found the matching
+  `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
+  of the address, alongside the address text itself. The term and the address are compared after
+  Unicode normalization and default case folding, so `café` typed with a combining accent finds
+  `café`, and `STRASSE` finds `/Straße`. Case folding does not use a locale, so the Turkish dotted
+  and dotless `i` do not match their Turkish case partners. (#338)
+
+- **The `search` field of `POST /v1/map` never matched a non-ASCII term.** The REST handler kept
+  its own lower-case substring check against the returned address, so `café` never found
+  `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
+  a term the same way as the CLI and the MCP `map` tool. (#362)
+
+- **`map()` resolved a redirected HTML page's links against the address it requested, not the
+  one that answered.** When `/start` redirected to `/dir/page.html`, a link to `x.html` on that
+  page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
+  fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
+  redirects; the HTML link branch now does too, matching the crawl engine. (#360)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
@@ -531,6 +663,18 @@ Four changes can affect an existing setup:
   HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
   percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
   they do not resolve at all. (#220)
+
+- **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
+  `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
+  of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
+  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
+  name and every other value stays
+  visible. Output is unchanged for a document crawlberg produced itself, because no path in the
+  core populates `headers` yet — the leak was reachable through a deserialised or caller-built
+  value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
+  map and are not covered by this. (#159)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
@@ -666,6 +810,12 @@ Four changes can affect an existing setup:
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A custom retry policy could not read the status of a failed attempt.** `AttemptOutcome.status`
+  was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
+  the error but not the 503 or 500 behind it. The field now holds the status for every status the
+  built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
+  stays empty when no response caused the error, such as a connection failure, and also for a
+  plain 403 or a 429/503 fingerprinted as a WAF block; #133 tracks giving those a status too. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
