@@ -69,9 +69,9 @@ pub struct CrawlEngine {
     /// Optional page budget hook for enforcing per-crawl page allowances.
     #[allow(dead_code)]
     pub(crate) page_budget: Arc<dyn crate::budget::PageBudget>,
-    /// Shared UA rotation layer — preserves rotation counter across service builds.
-    #[cfg(not(target_arch = "wasm32"))]
-    ua_rotation: crate::tower::UaRotationLayer,
+    /// Shared UA rotation state: one counter across every service build and, on wasm32, across
+    /// every page the sequential crawl fetches.
+    ua_rotation: crate::tower::UaRotation,
     #[cfg(not(target_arch = "wasm32"))]
     robots_cache: Arc<robots_cache::RobotsCache>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
@@ -138,9 +138,10 @@ impl CrawlEngine {
     /// ~keep A request the browser tier will fetch never reaches UA rotation at all -- the
     /// browser always sends the configured or custom-header agent (`default_robots_user_agent`),
     /// never a rotated pick -- so robots decisions for it must judge that same agent, not one
-    /// the browser will never send (crawlberg#423).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// the browser will never send (crawlberg#423). wasm32 has no browser tier, so there every
+    /// request takes the rotation pick (crawlberg#483).
     pub(crate) fn choose_request_user_agent(&self) -> String {
+        #[cfg(not(target_arch = "wasm32"))]
         if self.request_will_use_browser() {
             return crate::helpers::default_robots_user_agent(&self.config).to_owned();
         }

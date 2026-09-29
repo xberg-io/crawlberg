@@ -59,7 +59,7 @@ fn validate_url(url: &str) -> Result<(), ApiError> {
     if url.is_empty() {
         return Err(ApiError::bad_request("url is required"));
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !crate::net::has_http_scheme(url) {
         return Err(ApiError::bad_request("url must start with http:// or https://"));
     }
     if url.len() > 8192 {
@@ -602,4 +602,25 @@ fn rebuild_engine_with_config(
         .config(config)
         .build()
         .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_url;
+
+    #[test]
+    fn accepts_an_upper_case_scheme() {
+        assert!(validate_url("HTTP://example.com/").is_ok());
+        assert!(validate_url("Https://example.com/").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_url() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_http_scheme() {
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
 }

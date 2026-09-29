@@ -175,7 +175,11 @@ async fn urls_from_direct_response(
     }
 
     if is_html_content(&resp.content_type, &resp.body) {
-        return links_as_sitemap_urls(&mask_raw_text_markup(&resp.body), parsed_url);
+        // ~keep The page's links resolve against the URL that served it, not the one
+        // ~keep requested, matching the crawl engine (`crawl_loop.rs`'s `url_for_extract`)
+        // ~keep and the gzip, urlset and sitemap index branches above.
+        let base_url = Url::parse(&resp.final_url).unwrap_or_else(|_| parsed_url.clone());
+        return links_as_sitemap_urls(&mask_raw_text_markup(&resp.body), &base_url);
     }
 
     Vec::new()
@@ -1833,5 +1837,66 @@ mod tests {
         let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
 
         assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_html_pages_link_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/start", "/dir/page.html").await;
+        mount_body(
+            &mock,
+            "/dir/page.html",
+            "text/html",
+            "<html><body><a href=\"x.html\">next</a></body></html>".to_owned(),
+        )
+        .await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/dir/x.html")],
+            "a relative href must resolve against the URL that served the page, not the one requested"
+        );
+    }
+
+    /// A native fetch always returns a parseable `final_url`, so this calls
+    /// `urls_from_direct_response` directly to force the branch `map()` cannot reach
+    /// through a real HTTP round trip.
+    #[tokio::test]
+    async fn a_directly_fetched_html_pages_link_falls_back_to_the_requested_url_when_the_final_url_does_not_parse() {
+        let config = local_test_config();
+        let client = build_client(&config).expect("build_client should succeed");
+        let filter = MapFilter::from_config(&config).expect("MapFilter::from_config should succeed");
+        let context = SitemapWalkContext::new(&config, &client, &filter);
+        let requested = "http://example.test/dir/start";
+        let parsed_url = Url::parse(requested).expect("the requested URL must parse");
+        let body = "<html><body><a href=\"x.html\">next</a></body></html>";
+
+        for final_url in ["", "not a url", "http://[::1"] {
+            let resp = crate::http::HttpResponse {
+                status: 200,
+                content_type: "text/html".to_owned(),
+                body: body.to_owned(),
+                body_bytes: body.as_bytes().to_vec(),
+                headers: Default::default(),
+                browser_extras: None,
+                final_url: final_url.to_owned(),
+                screenshot: None,
+            };
+
+            let urls: Vec<String> = urls_from_direct_response(requested, &parsed_url, &resp, &config, &context)
+                .await
+                .into_iter()
+                .map(|u| u.url)
+                .collect();
+
+            assert_eq!(
+                urls,
+                vec!["http://example.test/dir/x.html".to_owned()],
+                "an unparseable final URL {final_url:?} must fall back to the requested URL, not a fixed default"
+            );
+        }
     }
 }

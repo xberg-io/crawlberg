@@ -1211,6 +1211,7 @@ dependencies = [
  "notify",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
  "percent-encoding",
  "proptest",
  "quick-xml 0.42.0",
