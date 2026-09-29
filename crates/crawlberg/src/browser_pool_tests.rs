@@ -43,6 +43,19 @@ thread_local! {
     pub(crate) static PROFILE_HAND_OFFS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many profile teardowns ran on this thread. An executor thread must see none.
     pub(crate) static PROFILE_TEARDOWNS_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test-only seam: [`kill_if_chrome_using`] fires this once its re-check confirms the pid still
+    /// runs `chrome`, before it sends the kill. A test installs a hook here to force a pid reuse in
+    /// exactly the window a pidfd exists to close.
+    pub(crate) static REUSE_WINDOW_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Call and clear the reuse-window hook a test installed on [`REUSE_WINDOW_HOOK`], if any.
+pub(crate) fn fire_reuse_window_hook() {
+    let hook = REUSE_WINDOW_HOOK.with(|cell| cell.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 /// This thread's counts of dropped profile directories and of profile teardowns run on it.
@@ -288,8 +301,16 @@ fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
 /// ~keep Forces the reuse as the review did: the scanned process exits and is reaped, then
 /// ~keep `ns_last_pid` hands its pid to a new process. Writing `ns_last_pid` needs root, so the test
 /// ~keep returns early without it, and says so.
+///
+/// ~keep `ns_last_pid` is one setting for the whole host, so this test and the recheck-window test
+/// ~keep below raced each other's pid choice when the full suite ran both at once: measured at 5 of
+/// ~keep 20 runs failing "the new process must reuse the scanned pid" for this test, 2 of those 5
+/// ~keep together with the other test also failing it. `#[serial_test::serial]` on both, under one
+/// ~keep shared key, is the fix already in this crate for a test that mutates host-wide state (see
+/// ~keep `sitemap.rs`, `map.rs`), and it closes the race between these two specifically.
 #[cfg(target_os = "linux")]
 #[test]
+#[serial_test::serial(ns_last_pid)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
@@ -329,6 +350,84 @@ fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
     let _ = reused.wait();
     assert_eq!(users, [sysinfo::Pid::from_u32(pid)], "the scan must find the process");
     assert!(forced, "the new process must reuse the scanned pid");
+    assert!(running, "the process that reused the pid must not be killed");
+}
+
+/// A pid reused between the re-check and the kill, inside [`kill_if_chrome_using`], is not killed.
+///
+/// ~keep The forced-reuse test above reuses the pid before `kill_if_chrome_using` runs, so its own
+/// ~keep re-check catches the reuse and nothing reaches the gap between the re-check and the kill: a
+/// ~keep pidfd protects against reuse in that exact gap, and nothing else does. This test installs
+/// ~keep the [`REUSE_WINDOW_HOOK`] the production code fires right there, and inside it reaps the
+/// ~keep scanned process and forces its pid onto a new, innocent one, so the reuse lands after the
+/// ~keep re-check has already passed. Root, like the test above; returns early without it, and says so.
+/// ~keep Shares the `ns_last_pid` serial key with the test above: both mutate that host-wide setting.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial_test::serial(ns_last_pid)]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
+    let dir = tempfile::tempdir().expect("the directory must be creatable");
+    let flag = user_data_dir_flag(dir.path());
+    let scanned = std::process::Command::new("cat")
+        .args(["--", "-", &flag])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let pid = scanned.id();
+    let chrome = chrome_started_by(pid, dir.path()).expect("the scanned process's executable must be readable");
+    let mut system = sysinfo::System::new();
+    let users: Vec<_> = processes_naming(&mut system, &flag)
+        .into_iter()
+        .filter(|process| runs(process, &chrome))
+        .map(sysinfo::Process::pid)
+        .collect();
+    assert_eq!(users, [sysinfo::Pid::from_u32(pid)], "the scan must find the process");
+
+    let skipped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let forced = std::rc::Rc::new(std::cell::Cell::new(false));
+    let innocent: std::rc::Rc<std::cell::RefCell<Option<std::process::Child>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    {
+        let mut scanned = scanned;
+        let skipped = skipped.clone();
+        let forced = forced.clone();
+        let innocent = innocent.clone();
+        REUSE_WINDOW_HOOK.with(|cell| {
+            *cell.borrow_mut() = Some(Box::new(move || {
+                let _ = scanned.kill();
+                let _ = scanned.wait();
+                if std::fs::write("/proc/sys/kernel/ns_last_pid", (pid - 1).to_string()).is_err() {
+                    skipped.set(true);
+                    return;
+                }
+                let child = std::process::Command::new("cat")
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("cat must start");
+                forced.set(child.id() == pid);
+                *innocent.borrow_mut() = Some(child);
+            }));
+        });
+    }
+
+    for &user in &users {
+        kill_if_chrome_using(user, &flag, &chrome);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+
+    if skipped.get() {
+        eprintln!("skipping: choosing the next pid needs root");
+        return;
+    }
+    let mut innocent = innocent
+        .borrow_mut()
+        .take()
+        .expect("the hook must run and spawn the innocent process");
+    let running = innocent.try_wait().expect("the status must be readable").is_none();
+    let _ = innocent.kill();
+    let _ = innocent.wait();
+    assert!(forced.get(), "the new process must reuse the scanned pid");
     assert!(running, "the process that reused the pid must not be killed");
 }
 

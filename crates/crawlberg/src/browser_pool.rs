@@ -371,10 +371,11 @@ fn runs(process: &sysinfo::Process, chrome: &std::path::Path) -> bool {
 /// Kill the process `pid` if it still runs `chrome` and its command line still holds `flag`.
 ///
 /// ~keep `pid` comes from an earlier scan, and its process can have exited and the pid gone to a new
-/// ~keep process since. On Linux a pidfd pins the process first, the check reads the pinned process
-/// ~keep while the pid cannot be reused, and the kill goes through the pidfd, so it reaches no other
-/// ~keep process. Elsewhere, and on a Linux kernel older than 5.3, the check runs right before the
-/// ~keep kill, which narrows the gap between the two but does not close it.
+/// ~keep process since. A pidfd does not stop the pid number from being reused once its process is
+/// ~keep reaped; it pins the process itself, so on Linux the kill goes through the pidfd and reaches
+/// ~keep only the pinned process, failing with no such process if it has already exited, even if the
+/// ~keep re-check ran just before the reuse. Elsewhere, and on a Linux kernel older than 5.3, the kill
+/// ~keep goes by pid, so the re-check running right before it narrows the gap but does not close it.
 fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) {
     #[cfg(target_os = "linux")]
     if let Some(pinned) = i32::try_from(pid.as_u32())
@@ -384,6 +385,8 @@ fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path)
         match rustix::process::pidfd_open(pinned, rustix::process::PidfdFlags::empty()) {
             Ok(pidfd) => {
                 if chrome_user(&mut sysinfo::System::new(), pid, flag, chrome).is_some() {
+                    #[cfg(test)]
+                    tests::fire_reuse_window_hook();
                     let _ = rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::KILL);
                 }
                 return;
@@ -393,6 +396,8 @@ fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path)
         }
     }
     if let Some(process) = chrome_user(&mut sysinfo::System::new(), pid, flag, chrome) {
+        #[cfg(test)]
+        tests::fire_reuse_window_hook();
         process.kill();
     }
 }

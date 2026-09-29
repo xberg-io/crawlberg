@@ -453,11 +453,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
         let builder = build_interact_launch_builder(user_data_dir.path(), proxy_url);
-        #[cfg(test)]
-        let builder = match tests::LAUNCH_EXECUTABLE.with(|executable| executable.borrow().clone()) {
-            Some(executable) => builder.chrome_executable(executable),
-            None => builder,
-        };
+        let builder = apply_launch_executable_override(builder);
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -468,6 +464,29 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
         Ok((browser, handler, Some(user_data_dir)))
     }
+}
+
+/// The Chrome executable a test installed on [`tests::LAUNCH_EXECUTABLE`], applied to `builder` in
+/// place of the one [`build_interact_launch_builder`] chose.
+///
+/// ~keep The override itself stays test-only; only this call is unconditional, so
+/// ~keep `launch_or_connect` carries no `#[cfg(test)]` of its own.
+#[cfg(test)]
+fn apply_launch_executable_override(
+    builder: chromiumoxide::browser::BrowserConfigBuilder,
+) -> chromiumoxide::browser::BrowserConfigBuilder {
+    match tests::LAUNCH_EXECUTABLE.with(|executable| executable.borrow().clone()) {
+        Some(executable) => builder.chrome_executable(executable),
+        None => builder,
+    }
+}
+
+/// `builder` unchanged: no executable override exists outside tests.
+#[cfg(not(test))]
+fn apply_launch_executable_override(
+    builder: chromiumoxide::browser::BrowserConfigBuilder,
+) -> chromiumoxide::browser::BrowserConfigBuilder {
+    builder
 }
 
 /// Build the [`ChromeBrowserConfig`] builder for a fresh interact-mode launch (not the
