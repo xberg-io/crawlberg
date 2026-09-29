@@ -71,11 +71,12 @@ fn stalled_pooled_config(pool: std::sync::Arc<BrowserPool>) -> CrawlConfig {
 async fn pooled_fetch_fails_near_the_overall_deadline_when_navigation_stalls() {
     let url = spawn_stalling_server();
     let pool = BrowserPool::new(BrowserPoolConfig::default());
-    let engine = create_engine(Some(stalled_pooled_config(pool))).expect("engine must build");
+    let engine = create_engine(Some(stalled_pooled_config(Arc::clone(&pool)))).expect("engine must build");
 
     let start = Instant::now();
     let result = scrape(&engine, &url).await;
     let elapsed = start.elapsed();
+    pool.shutdown().await;
 
     match result {
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
@@ -188,6 +189,7 @@ async fn a_pooled_fetch_that_hits_the_overall_deadline_still_releases_its_page()
     });
     let result = scrape(&engine, &url).await;
     drop(capture);
+    pool.shutdown().await;
 
     match result {
         Ok(response) => panic!("a pooled fetch against a server that never responds must not succeed: {response:?}"),

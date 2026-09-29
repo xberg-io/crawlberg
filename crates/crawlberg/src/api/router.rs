@@ -192,6 +192,10 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::types::CrawlConfig;
 
     use super::*;
 
@@ -202,6 +206,63 @@ mod tests {
                 .build()
                 .expect("default engine"),
         )
+    }
+
+    fn test_engine_with_config(config: CrawlConfig) -> Arc<CrawlEngine> {
+        Arc::new(
+            CrawlEngine::builder()
+                .config(config)
+                .rate_limiter(crate::defaults::NoopRateLimiter)
+                .build()
+                .expect("engine with test config"),
+        )
+    }
+
+    /// A `CrawlConfig` that allows fetching a local wiremock server without tripping SSRF
+    /// private-network protections, and skips robots.txt (the mock mounts no `/robots.txt`).
+    fn local_test_config() -> CrawlConfig {
+        CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        }
+    }
+
+    fn urlset(locs: &[&str]) -> String {
+        let mut body =
+            String::from(r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
+        for loc in locs {
+            body.push_str(&format!("<url><loc>{loc}</loc></url>"));
+        }
+        body.push_str("</urlset>");
+        body
+    }
+
+    async fn mount_sitemap(mock: &MockServer, locs: &[&str]) {
+        let response = ResponseTemplate::new(200)
+            .set_body_string(urlset(locs))
+            .append_header("content-type", "application/xml");
+        Mock::given(method("GET"))
+            .and(path("/sitemap.xml"))
+            .respond_with(response)
+            .mount(mock)
+            .await;
+    }
+
+    /// POST `/v1/map` and return the discovered URLs in response order.
+    async fn map_urls(router: Router, url: &str, search: &str) -> Vec<String> {
+        let response = call(
+            router,
+            json_post("/v1/map", serde_json::json!({ "url": url, "search": search })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "map request must succeed");
+        let body = body_json(response).await;
+        body["data"]["urls"]
+            .as_array()
+            .expect("urls array")
+            .iter()
+            .map(|u| u["url"].as_str().expect("url string").to_owned())
+            .collect()
     }
 
     #[tokio::test]
@@ -501,5 +562,65 @@ mod tests {
         assert!(constant_time_eq(b"token", b"token"));
         assert!(!constant_time_eq(b"token", b"tokeN"));
         assert!(!constant_time_eq(b"short", b"longer-value"));
+    }
+
+    #[tokio::test]
+    async fn map_endpoint_search_matches_a_non_ascii_term_against_a_percent_encoded_path() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_sitemap(&mock, &["https://example.com/café", "https://example.com/other"]).await;
+
+        let router = create_router_with_security(
+            test_engine_with_config(local_test_config()),
+            ApiSecurityConfig::default(),
+        );
+
+        let urls = map_urls(router, &base, "café").await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/caf%C3%A9".to_owned()],
+            "search=\"café\" must match the address map() stores percent-encoded, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_endpoint_search_matches_a_non_ascii_term_against_a_punycode_host() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_sitemap(&mock, &["https://bücher.example/x", "https://example.com/other"]).await;
+
+        let router = create_router_with_security(
+            test_engine_with_config(local_test_config()),
+            ApiSecurityConfig::default(),
+        );
+
+        let urls = map_urls(router, &base, "bücher").await;
+
+        assert_eq!(
+            urls,
+            vec!["https://xn--bcher-kva.example/x".to_owned()],
+            "search=\"bücher\" must match the address map() stores as punycode, got {urls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_endpoint_search_matches_an_ascii_term() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_sitemap(&mock, &["https://example.com/keep-1", "https://example.com/drop-1"]).await;
+
+        let router = create_router_with_security(
+            test_engine_with_config(local_test_config()),
+            ApiSecurityConfig::default(),
+        );
+
+        let urls = map_urls(router, &base, "KEEP").await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/keep-1".to_owned()],
+            "an ASCII search term must still match case-insensitively, got {urls:?}"
+        );
     }
 }

@@ -786,3 +786,579 @@ async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
 
     drop(mock);
 }
+
+/// Serve `body` at `robots.txt` for the sequential crawl's seed origin.
+async fn mount_robots(mock: &MockServer, body: &str) {
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body.to_owned()))
+        .mount(mock)
+        .await;
+}
+
+/// crawlberg#483: a `user_agents` rotation list decides the agent robots.txt is judged for,
+/// so a site that disallows only the rotated agent is not crawled.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_sequential_crawl_rotates_the_configured_user_agent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: AgentB\nDisallow: /\n").await;
+    mount_html_expecting(&mock, "/", "<html><body>root</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        user_agent: Some("AgentA".to_owned()),
+        user_agents: vec!["AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.len(),
+        0,
+        "robots.txt disallows the rotated agent, so no page may be fetched"
+    );
+    drop(mock);
+}
+
+/// Each page gets the next agent in the rotation, robots.txt is judged for that agent, and
+/// the page request sends that same agent.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_sequential_crawl_picks_and_sends_the_agent_per_page() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: AgentB\nDisallow: /\n").await;
+    for (at, body) in [
+        (
+            "/",
+            r#"<html><body><a href="/next">n</a><a href="/third">t</a></body></html>"#,
+        ),
+        ("/third", "<html><body>third</body></html>"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .and(wiremock::matchers::header("user-agent", "AgentA"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(body.to_owned())
+                    .append_header("content-type", "text/html"),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+    }
+    mount_html_expecting(&mock, "/next", "<html><body>next</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        user_agents: vec!["AgentA".to_owned(), "AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/third".to_owned()],
+        "the second page is judged for AgentB and refused; the first and third go out as AgentA"
+    );
+    drop(mock);
+}
+
+/// Whether each request `mock` received for `at` carried `header`, in order.
+async fn header_sent_to(mock: &MockServer, at: &str, header: &str) -> Vec<bool> {
+    let requests = mock.received_requests().await.expect("request recording must be on");
+    requests
+        .iter()
+        .filter(|request| request.url.path() == at)
+        .map(|request| request.headers.contains_key(header))
+        .collect()
+}
+
+fn bearer(config: CrawlConfig) -> CrawlConfig {
+    CrawlConfig {
+        auth: Some(crate::types::AuthConfig::Bearer {
+            token: "test-fixture-bearer-token-not-a-real-secret".to_owned(),
+        }),
+        ..config
+    }
+}
+
+/// A subdomain page the crawl follows is fetched without the credentials configured for the
+/// seed host: the loop keeps the seed's credential scope for every frontier entry.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_withholds_credentials_from_a_subdomain_it_follows() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        bearer(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            ..CrawlConfig::default()
+        }),
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        header_sent_to(&mock, "/", "authorization").await,
+        vec![true],
+        "the seed host must get the configured credentials"
+    );
+    assert_eq!(
+        header_sent_to(&mock, "/a", "authorization").await,
+        vec![false],
+        "the subdomain page must be fetched once, without the seed host's credentials"
+    );
+}
+
+/// A cross-host document link, which a default crawl follows, is fetched without the
+/// credentials configured for the seed host.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_withholds_credentials_from_a_cross_host_document() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://other.localhost:{port}/report.pdf">pdf</a></body></html>"#),
+    )
+    .await;
+    mount_pdf(&mock, "/report.pdf", 1).await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        bearer(CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        }),
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        header_sent_to(&mock, "/", "authorization").await,
+        vec![true],
+        "the seed host must get the configured credentials"
+    );
+    assert_eq!(
+        header_sent_to(&mock, "/report.pdf", "authorization").await,
+        vec![false],
+        "the document on another host must be fetched once, without the seed host's credentials"
+    );
+}
+
+/// `custom_headers` follow the same scope as `auth`: a subdomain page the crawl follows is
+/// fetched without the headers configured for the seed host.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_withholds_custom_headers_from_a_subdomain_it_follows() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    mount_html(&mock, "/a", "<html><body>a</body></html>").await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            custom_headers: [("x-api-key".to_owned(), "fixture-value".to_owned())].into(),
+            ..CrawlConfig::default()
+        },
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        header_sent_to(&mock, "/", "x-api-key").await,
+        vec![true],
+        "the seed host must get the configured custom headers"
+    );
+    assert_eq!(
+        header_sent_to(&mock, "/a", "x-api-key").await,
+        vec![false],
+        "the subdomain page must be fetched once, without the seed host's custom headers"
+    );
+}
+
+/// A seed URL with `user:password@` gets Basic credentials on the seed host, for the seed
+/// and for every page on that host the crawl follows.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_sends_seed_url_credentials_to_the_seed_host() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(&mock, "/", r#"<html><body><a href="/b">B</a></body></html>"#).await;
+    mount_html(&mock, "/b", "<html><body>b</body></html>").await;
+    let (user, password) = ("fixture-user", "fixture-password");
+    let base = format!("http://{user}:{password}@localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        header_sent_to(&mock, "/", "authorization").await,
+        vec![true],
+        "the seed must get the credentials from its own URL"
+    );
+    assert_eq!(
+        header_sent_to(&mock, "/b", "authorization").await,
+        vec![true],
+        "a page on the seed host must get the seed URL's credentials"
+    );
+}
+
+/// Every page of a sequential crawl opens one `crawl.engine.scrape` span that records the
+/// page's URL.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_opens_one_scrape_span_per_page() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    mount_html(&mock, "/", r#"<html><body><a href="/b">B</a></body></html>"#).await;
+    mount_html(&mock, "/b", "<html><body>b</body></html>").await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
+    let captured = std::sync::Arc::new(crate::engine::tests::FieldCapture::default());
+
+    let guard = tracing::subscriber::set_default(crate::engine::tests::CapturingSubscriber(captured.clone()));
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+    drop(guard);
+
+    assert_eq!(
+        captured.values("crawl.engine.scrape", "url.full"),
+        vec![base.clone(), format!("{base}/b")],
+        "each page must open one crawl.engine.scrape span with its URL"
+    );
+}
+
+/// An unreachable robots.txt for the seed (HTTP 500) ends the whole crawl with the
+/// `robots_unreachable` result, and the seed page is never fetched.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_stops_when_the_seed_robots_txt_is_unreachable() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&mock)
+        .await;
+    mount_html_expecting(&mock, "/", "<html><body>root</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert!(result.pages.is_empty(), "no page may be fetched");
+    assert!(result.was_skipped, "an unreachable seed robots.txt must skip the crawl");
+    let error = result.error.clone().unwrap_or_default();
+    assert!(
+        error.starts_with("robots_unreachable"),
+        "the crawl error must name the unreachable robots.txt, got {error:?}"
+    );
+    drop(mock);
+}
+
+/// A link that `exclude_paths` removes costs no rotation tick: the next page gets the agent
+/// the excluded link would otherwise have taken.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_excluded_link_does_not_advance_the_rotation() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: AgentB\nDisallow: /\n").await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/skip">s</a><a href="/next">n</a></body></html>"#,
+    )
+    .await;
+    mount_html_expecting(&mock, "/skip", "<html><body>skip</body></html>", 0).await;
+    mount_html_expecting(&mock, "/next", "<html><body>next</body></html>", 0).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        exclude_paths: vec!["^/skip$".to_owned()],
+        user_agents: vec!["AgentA".to_owned(), "AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned()],
+        "/next must get AgentB, which robots.txt refuses; the excluded /skip takes no agent"
+    );
+    drop(mock);
+}
+
+/// The loop reads robots.txt once per origin and agent: three pages after the seed under two
+/// rotating agents cost the loop two robots.txt requests. Each page's scrape reads it once
+/// more for its `is_allowed` report, so the fixture sees 2 + 4.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_reads_robots_txt_once_per_origin_and_agent() {
+    let mock = MockServer::start().await;
+    mount_robots(&mock, "User-agent: *\nAllow: /\n").await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/b">b</a><a href="/c">c</a><a href="/d">d</a></body></html>"#,
+    )
+    .await;
+    for at in ["/b", "/c", "/d"] {
+        mount_html(&mock, at, "<html><body>x</body></html>").await;
+    }
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(10),
+        respect_robots_txt: true,
+        user_agents: vec!["AgentA".to_owned(), "AgentB".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(result.pages.len(), 4, "every page is allowed");
+    let robots_requests = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .filter(|request| request.url.path() == "/robots.txt")
+        .count();
+    assert_eq!(
+        robots_requests, 6,
+        "the loop must read robots.txt once per agent (2), plus one read per page scrape (4)"
+    );
+    drop(mock);
+}
+
+/// A page on another origin is judged against that origin's own robots.txt, not the seed's.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_judges_a_second_origin_by_its_own_robots_txt() {
+    let mock = MockServer::start().await;
+    let port = mock.address().port();
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .and(wiremock::matchers::header(
+            "host",
+            format!("sub.localhost:{port}").as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string("User-agent: *\nDisallow: /\n"))
+        .with_priority(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("User-agent: *\nAllow: /\n"))
+        .with_priority(5)
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        &format!(r#"<html><body><a href="http://sub.localhost:{port}/a">A</a></body></html>"#),
+    )
+    .await;
+    mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
+    let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            respect_robots_txt: true,
+            ..CrawlConfig::default()
+        },
+    ));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        result.pages.iter().map(|page| page.url.as_str()).collect::<Vec<_>>(),
+        vec![base.as_str()],
+        "the subdomain's own robots.txt refuses /a"
+    );
+    drop(mock);
+}
+
+/// With `respect_robots_txt` off, the loop never requests robots.txt, and the page still goes
+/// out under the rotation agent.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_skips_robots_txt_when_not_respecting_it() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("User-agent: *\nDisallow: /\n"))
+        .expect(0)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .and(wiremock::matchers::header("user-agent", "AgentZ"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>r</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_pages: Some(10),
+        respect_robots_txt: false,
+        user_agent: Some("Configured".to_owned()),
+        user_agents: vec!["AgentZ".to_owned()],
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(result.pages.len(), 1, "the page must be fetched as AgentZ");
+    drop(mock);
+}
+
+/// The wasm page fetch sends a pinned agent as its one `user-agent` line, in place of the
+/// configured default, and reports that agent as the one it sent.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_sends_the_pinned_agent_once() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", "<html><body>root</body></html>").await;
+    let engine = engine_with(permissive(CrawlConfig {
+        user_agent: Some("Configured".to_owned()),
+        ..CrawlConfig::default()
+    }));
+
+    let (_, response, _) = engine
+        .wasm_fetch_for_scrape(&mock.uri(), Some("Pinned"))
+        .await
+        .expect("fetch must succeed");
+
+    let requests = mock.received_requests().await.expect("request recording must be on");
+    let sent: Vec<Vec<String>> = requests
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .get_all("user-agent")
+                .iter()
+                .map(|value| value.to_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![vec!["Pinned".to_owned()]],
+        "one request, with the pinned agent as its only user-agent line"
+    );
+    assert_eq!(response.sent_user_agent.as_deref(), Some("Pinned"));
+}
+
+/// The wasm page fetch keeps the page rule: a sitemap whose URL says "blocked", served by
+/// Cloudflare, is refused when it is scraped as a page (crawlberg#515 reads it only for `map`).
+#[tokio::test]
+async fn wasm_page_fetch_refuses_a_small_cloudflare_body_that_says_blocked() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "application/xml")
+                .append_header("server", "cloudflare")
+                .set_body_string(
+                    "<urlset><url><loc>https://example.com/blog/why-we-blocked-the-old-api</loc></url></urlset>",
+                ),
+        )
+        .mount(&mock)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let result = engine.wasm_fetch_for_scrape(&mock.uri(), None).await;
+
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "cloudflare"),
+        "a scraped page keeps the page rule, got {:?}",
+        result.map(|(url, _, _)| url)
+    );
+}
+
+/// The wasm page fetch passes `RefreshRedirects::Ignore`, so a `<meta http-equiv="refresh">` on
+/// the page it fetches is not a hop it takes; it returns that page's own response.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_does_not_follow_a_meta_refresh() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta http-equiv="refresh" content="0; url=/next"></head><body></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/next", "<html><body>next</body></html>").await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let (final_url, _, _) = engine
+        .wasm_fetch_for_scrape(&format!("{}/", mock.uri()), None)
+        .await
+        .expect("fetch must succeed");
+
+    let next = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .filter(|r| r.url.path() == "/next")
+        .count();
+    assert_eq!(next, 0, "the wasm page fetch followed a refresh; final_url={final_url}");
+}

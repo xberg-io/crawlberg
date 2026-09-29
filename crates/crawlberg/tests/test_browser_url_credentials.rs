@@ -310,22 +310,24 @@ async fn a_pooled_page_sends_the_bearer_and_custom_headers_to_the_seed_host_only
     let other = MockServer::start().await;
     mount_seed_and_third_party(&seed, &other).await;
     let base = bearer_config();
+    let pool = crawlberg::BrowserPool::new(crawlberg::BrowserPoolConfig::default());
     let config = CrawlConfig {
         browser: BrowserConfig {
             session_affinity: false,
             ..base.browser.clone()
         },
-        browser_pool: Some(crawlberg::BrowserPool::new(crawlberg::BrowserPoolConfig::default())),
+        browser_pool: Some(std::sync::Arc::clone(&pool)),
         ..base
     };
 
-    let Some(outcome) = scrape_in_browser_with(
+    let outcome = scrape_in_browser_with(
         "a_pooled_page_sends_the_bearer_and_custom_headers_to_the_seed_host_only",
         config,
         &format!("{}/", seed.uri()),
     )
-    .await
-    else {
+    .await;
+    pool.shutdown().await;
+    let Some(outcome) = outcome else {
         return;
     };
     outcome.expect("scrape must succeed");

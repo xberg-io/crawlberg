@@ -154,6 +154,28 @@ fn select_rule_blocks<'a>(
     (specific_block, wildcard_block)
 }
 
+/// `body` as the robots.txt block-page check reads it: without its whole-line comments, or
+/// unchanged when it holds a `<`.
+///
+/// ~keep A robots.txt comment is written for a human reader and can say anything, such as "AI
+/// crawlers are blocked below" (crawlberg#507). Only a line whose first non-space character is
+/// `#` is left out. A trailing comment stays, because in an HTML page a `#` in a style rule or a
+/// link can come before the block phrase on the same line. A body with any `<` is read whole:
+/// robots.txt has no use for `<`, and in an HTML page a style rule can also start a line with
+/// `#`. This only picks the lines the fingerprint sees; [`parse_robots_txt`] reads comments its
+/// own way.
+pub(crate) fn fingerprint_text(body: &str) -> std::borrow::Cow<'_, str> {
+    if body.contains('<') {
+        return std::borrow::Cow::Borrowed(body);
+    }
+    let mut text = String::with_capacity(body.len());
+    for line in body.lines().filter(|line| !line.trim_start().starts_with('#')) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    std::borrow::Cow::Owned(text)
+}
+
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
 ///
 /// Returns the most specific matching rules block, falling back to the wildcard (`*`) block.
@@ -505,6 +527,33 @@ mod tests {
              {:?}",
             rules.disallow
         );
+    }
+
+    #[test]
+    fn fingerprint_text_drops_only_whole_line_comments_and_reads_markup_whole() {
+        for (body, expected) in [
+            (
+                "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n",
+                "User-agent: GPTBot\nDisallow: /\n",
+            ),
+            ("  # blocked\r\nDisallow: /private\r\n", "Disallow: /private\n"),
+            ("Disallow: /private # blocked\n", "Disallow: /private # blocked\n"),
+            (
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+            ),
+            (
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+            ),
+            ("", ""),
+        ] {
+            assert_eq!(
+                fingerprint_text(body),
+                expected,
+                "{body:?}: only a whole-line comment in a body with no `<` must go"
+            );
+        }
     }
 
     #[test]

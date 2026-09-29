@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, HostMatcher,
-    ScrapeResult, crawl, create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
+    CrawlError, HostMatcher, ScrapeResult, crawl, create_engine, scrape,
 };
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -333,6 +333,26 @@ async fn cancelled_pooled_scrape_leaks_nothing() {
     pool.shutdown().await;
 }
 
+/// A page parked for session reuse keeps running its scripts. When the pool shuts down while
+/// such a page still floods a denied address, nothing it sent reaches that address.
+#[tokio::test]
+async fn pool_shutdown_with_a_parked_flooding_page_leaks_nothing() {
+    let test_name = "pool_shutdown_with_a_parked_flooding_page_leaks_nothing";
+    let denied = denied_server().await;
+    let (_site, seed) = seed_site(&fetch_flood(&denied_url(&denied))).await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let mut config = pooled_config(&pool);
+    config.browser.session_affinity = true;
+    config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
+    if run(test_name, &seed, config).await.is_none() {
+        pool.shutdown().await;
+        return;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    pool.shutdown().await;
+    assert_refused(test_name, &denied).await;
+}
+
 /// A permissive policy (private networks allowed) for a second engine on the same pool.
 fn permissive_pooled_config(pool: &Arc<BrowserPool>) -> CrawlConfig {
     let mut config = CrawlConfig {
@@ -518,6 +538,60 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
     );
 }
 
+/// On an external browser reached through `browser.endpoint`, the scrape's page starts with the
+/// browser's own cookies, and the cookies the page sets stay out of the browser.
+#[tokio::test]
+async fn an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out() {
+    use chromiumoxide::cdp::browser_protocol::storage::GetCookiesParams;
+
+    let test_name = "an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(html("start").append_header("set-cookie", "fresh=1; Path=/"))
+        .mount(&site)
+        .await;
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let Some(mut other_client) = common::launch_external_chrome_with_cookie(test_name, &seed).await else {
+        return;
+    };
+    let mut config = config();
+    config.browser.endpoint = Some(other_client.websocket_address().clone());
+    let result = run(test_name, &seed, config).await;
+    let received = site.received_requests().await.expect("recording");
+    let sent = received
+        .iter()
+        .find(|request| request.url.path() == "/")
+        .and_then(|request| request.headers.get("cookie"))
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let mut names: Vec<String> = other_client
+        .execute(GetCookiesParams::default())
+        .await
+        .expect("the browser must list its cookies")
+        .result
+        .cookies
+        .into_iter()
+        .map(|cookie| cookie.name)
+        .collect();
+    names.sort();
+    let _ = other_client.close().await;
+    let _ = other_client.wait().await;
+    if result.is_none() {
+        return;
+    }
+    assert!(
+        sent.contains("owner=1"),
+        "{test_name}: the page must start with the external browser's cookie, sent {sent:?}"
+    );
+    assert_eq!(
+        names,
+        vec!["owner".to_owned()],
+        "{test_name}: the page's own cookie must stay out of the external browser"
+    );
+}
+
 /// A page with an image at a denied address and a `fetch()` to one during the extra wait.
 fn refused_image_and_late_fetch(denied: &MockServer) -> (String, String, String) {
     let image = format!("{}?image", denied_url(denied));
@@ -603,6 +677,46 @@ async fn crawl_lists_the_refused_requests_on_the_page() {
     );
     assert_listed(test_name, page.ssrf_refused_urls.clone(), vec![image, late]);
     assert_refused(test_name, &denied).await;
+}
+
+/// On an external browser reached through `browser_endpoint`, a pooled scrape's page starts
+/// with the browser's own cookies, as a one-shot scrape's does.
+#[tokio::test]
+async fn a_pooled_scrape_on_an_external_browser_starts_with_its_cookies() {
+    let test_name = "a_pooled_scrape_on_an_external_browser_starts_with_its_cookies";
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(html("start"))
+        .mount(&site)
+        .await;
+    let seed = format!("http://localhost:{}/", site.address().port());
+    let Some(mut other_client) = common::launch_external_chrome_with_cookie(test_name, &seed).await else {
+        return;
+    };
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some(other_client.websocket_address().clone()),
+        ..BrowserPoolConfig::default()
+    });
+    let result = run(test_name, &seed, pooled_config(&pool)).await;
+    pool.shutdown().await;
+    let received = site.received_requests().await.expect("recording");
+    let sent = received
+        .iter()
+        .find(|request| request.url.path() == "/")
+        .and_then(|request| request.headers.get("cookie"))
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let _ = other_client.close().await;
+    let _ = other_client.wait().await;
+    if result.is_none() {
+        return;
+    }
+    assert!(
+        sent.contains("owner=1"),
+        "{test_name}: the pooled page must start with the external browser's cookie, sent {sent:?}"
+    );
 }
 
 /// A dedicated worker's request to a denied address is refused and listed, while its request
