@@ -451,6 +451,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_url_rejects_the_reserved_range_and_broadcast() {
+        let policy = SsrfPolicy::default();
+        for host in ["240.0.0.1", "250.1.2.3", "255.255.255.254", "255.255.255.255"] {
+            let url = format!("http://{host}/").parse::<url::Url>().unwrap();
+            let err = validate_url(&url, &policy)
+                .await
+                .expect_err("240.0.0.0/4 must be denied");
+            assert!(
+                matches!(
+                    err,
+                    SsrfError::DeniedByPolicy {
+                        reason: "private_network"
+                    }
+                ),
+                "expected DeniedByPolicy private_network for {host}, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_url_permits_the_address_just_below_the_reserved_and_multicast_ranges() {
+        let policy = SsrfPolicy::default();
+        let url = "http://223.255.255.1/".parse::<url::Url>().unwrap();
+        validate_url(&url, &policy)
+            .await
+            .expect("223.255.255.1 is outside 224.0.0.0/4 and 240.0.0.0/4 and must be permitted");
+    }
+
+    #[tokio::test]
     async fn validate_url_rejects_ipv6_loopback() {
         let policy = SsrfPolicy::default();
         let url = "http://[::1]/".parse::<url::Url>().unwrap();

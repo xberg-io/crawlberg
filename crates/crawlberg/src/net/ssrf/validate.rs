@@ -45,7 +45,7 @@ const UNNAMED_SCHEME: &str = "unrecognized";
 ///
 /// `crawlberg-browser` keeps its own copy for standalone use; the parity test in
 /// `crate::net::browser_policy` asserts the two have not drifted.
-pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
+pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 14] = [
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -53,6 +53,8 @@ pub(crate) const DEFAULT_DENY_NET_CIDRS: [&str; 13] = [
     "169.254.0.0/16",
     "0.0.0.0/8",
     "224.0.0.0/4",
+    // ~keep RFC 1112 reserved range, which holds the broadcast address 255.255.255.255.
+    "240.0.0.0/4",
     // ~keep RFC 6598 shared address space. Not covered by any RFC 1918 range, but it carries
     // ~keep Alibaba Cloud's metadata endpoint (100.100.100.200) and Tailscale/CGNAT node addresses.
     "100.64.0.0/10",
