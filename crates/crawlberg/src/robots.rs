@@ -47,8 +47,6 @@ struct RobotsParseState {
     current_rules: RulesBlock,
     in_rules: bool,
     sitemaps: Vec<String>,
-    /// How many lines were a directive this parser acts on.
-    directives: usize,
 }
 
 impl RobotsParseState {
@@ -56,10 +54,9 @@ impl RobotsParseState {
     ///
     /// `key` is already lower-cased and `value` already trimmed.
     fn apply_directive(&mut self, key: &str, value: &str) {
-        let known = match key {
+        match key {
             "sitemap" if !value.is_empty() => {
                 self.sitemaps.push(value.to_owned());
-                true
             }
             "user-agent" => {
                 if self.in_rules {
@@ -72,28 +69,24 @@ impl RobotsParseState {
                     self.in_rules = false;
                 }
                 self.current_agents.push(value.to_lowercase());
-                true
             }
             "allow" => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.allow.push(value.to_owned());
                 }
-                true
             }
             "disallow" => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.disallow.push(value.to_owned());
                 }
-                true
             }
             "crawl-delay" => {
                 self.in_rules = true;
                 if let Ok(delay) = value.parse::<u64>() {
                     self.current_rules.crawl_delay = Some(delay);
                 }
-                true
             }
             "request-rate" => {
                 self.in_rules = true;
@@ -103,11 +96,9 @@ impl RobotsParseState {
                 {
                     self.current_rules.crawl_delay = Some(s);
                 }
-                true
             }
-            _ => false,
-        };
-        self.directives += usize::from(known);
+            _ => {}
+        }
     }
 
     /// Close the block still being accumulated and yield the parsed blocks and sitemaps.
@@ -163,32 +154,26 @@ fn select_rule_blocks<'a>(
     (specific_block, wildcard_block)
 }
 
-/// Each line of `body` without its comment, trimmed, skipping lines left empty.
-fn content_lines(body: &str) -> impl Iterator<Item = &str> {
-    body.lines()
-        .map(|line| line.split('#').next().unwrap_or("").trim())
-        .filter(|line| !line.is_empty())
-}
-
-/// Fold every directive line of `body` into a fresh parse state.
-fn scan(body: &str) -> RobotsParseState {
-    let mut state = RobotsParseState::default();
-    for line in content_lines(body) {
-        if let Some((key, value)) = line.split_once(':') {
-            state.apply_directive(&key.trim().to_lowercase(), value.trim());
-        }
-    }
-    state
-}
-
-/// Whether `body` is a robots.txt file: at least one directive this parser acts on, and no
-/// markup outside comments.
+/// `body` as the robots.txt block-page check reads it: without its whole-line comments, or
+/// unchanged when it holds a `<`.
 ///
-/// ~keep An HTML interstitial opens with a tag, so a `<` outside a comment marks the body as a
-/// page even when it shows robots.txt lines. A real file can say anything in a comment, such as
-/// "AI crawlers are blocked below", so comments are not read (crawlberg#507).
-pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
-    scan(body).directives > 0 && !content_lines(body).any(|line| line.contains('<'))
+/// ~keep A robots.txt comment is written for a human reader and can say anything, such as "AI
+/// crawlers are blocked below" (crawlberg#507). Only a line whose first non-space character is
+/// `#` is left out. A trailing comment stays, because in an HTML page a `#` in a style rule or a
+/// link can come before the block phrase on the same line. A body with any `<` is read whole:
+/// robots.txt has no use for `<`, and in an HTML page a style rule can also start a line with
+/// `#`. This only picks the lines the fingerprint sees; [`parse_robots_txt`] reads comments its
+/// own way.
+pub(crate) fn fingerprint_text(body: &str) -> std::borrow::Cow<'_, str> {
+    if body.contains('<') {
+        return std::borrow::Cow::Borrowed(body);
+    }
+    let mut text = String::with_capacity(body.len());
+    for line in body.lines().filter(|line| !line.trim_start().starts_with('#')) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    std::borrow::Cow::Owned(text)
 }
 
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
@@ -197,7 +182,20 @@ pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
 pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
     let ua_lower = user_agent.to_lowercase();
 
-    let (blocks, sitemaps) = scan(body).finish();
+    let mut state = RobotsParseState::default();
+    for raw_line in body.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        state.apply_directive(&key.trim().to_lowercase(), value.trim());
+    }
+
+    let (blocks, sitemaps) = state.finish();
     let (specific_block, wildcard_block) = select_rule_blocks(&blocks, &ua_lower);
 
     let using_wildcard = specific_block.is_none() && wildcard_block.is_some();
@@ -529,6 +527,33 @@ mod tests {
              {:?}",
             rules.disallow
         );
+    }
+
+    #[test]
+    fn fingerprint_text_drops_only_whole_line_comments_and_reads_markup_whole() {
+        for (body, expected) in [
+            (
+                "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n",
+                "User-agent: GPTBot\nDisallow: /\n",
+            ),
+            ("  # blocked\r\nDisallow: /private\r\n", "Disallow: /private\n"),
+            ("Disallow: /private # blocked\n", "Disallow: /private # blocked\n"),
+            (
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+            ),
+            (
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+            ),
+            ("", ""),
+        ] {
+            assert_eq!(
+                fingerprint_text(body),
+                expected,
+                "{body:?}: only a whole-line comment in a body with no `<` must go"
+            );
+        }
     }
 
     #[test]

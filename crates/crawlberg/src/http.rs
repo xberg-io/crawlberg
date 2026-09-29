@@ -195,9 +195,8 @@ pub(crate) async fn http_fetch(
     fetch_as(url, config, extra_headers, client, Fetched::Page).await
 }
 
-/// [`http_fetch`] for a robots.txt: a 2xx body that reads as robots.txt is returned whatever it
-/// says, and any other 2xx body that fingerprints as a block page is refused at any size up to
-/// the classifier's body limit.
+/// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
+/// without its whole-line comments, at any size up to the classifier's body limit.
 pub(crate) async fn http_fetch_robots_txt(
     url: &str,
     config: &CrawlConfig,
@@ -317,8 +316,8 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     // The body is read before the check rather than after a header match because a header-only
     // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
     // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
-    // response this hop returns. A robots.txt and a sitemap get their own decisions, which read a
-    // robots file as rules and a sitemap as a sitemap whatever they say.
+    // response this hop returns. A robots.txt gets its own decision, which does not read its
+    // whole-line comments, and a sitemap gets one that reads a sitemap as a sitemap whatever it lists.
     let refusal = match context.fetched {
         Fetched::Page => waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map),
         Fetched::Sitemap => waf::sitemap_2xx_error(head.status, &head.content_type, &body_bytes, &body, &headers_map),

@@ -6,6 +6,10 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
+  `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
+  iterates it does not.
+
 - **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
   The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
   ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
@@ -74,9 +78,11 @@ All notable changes to crawlberg are documented here.
 - **A robots.txt that says "blocked" in a comment is read as rules.** Behind Cloudflare, a
   `server: cloudflare` header and the word "blocked" anywhere in the body matched a block-page
   fingerprint, so a real robots.txt with a comment such as "AI crawlers are blocked below" denied
-  the whole site. A robots.txt body with at least one directive and no markup outside comments is
-  now read as the site's rules. Any other body that fingerprints as a block page still denies the
-  whole site at any size up to 100 KB. (#507)
+  the whole site. The robots.txt fetch now leaves whole-line comments (lines that start with `#`)
+  out of the fingerprint, so a file whose only match is in such a comment is read as the site's
+  rules. Any other body that fingerprints as a block page still denies the whole site at any size
+  up to 100 KB. So does a robots.txt with the word in a rule (`Disallow: /blocked-users`) or in a
+  trailing comment, and any body that contains `<`, which the check reads whole. (#507)
 
 - **A sitemap that lists a URL saying "blocked" is read behind Cloudflare.** A `server: cloudflare`
   header and the word "blocked" anywhere in a small body matched a block-page fingerprint, so a
@@ -146,6 +152,12 @@ All notable changes to crawlberg are documented here.
   and its unused bits read as zeros at that position, so a reading whose last three octets are
   zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
   network sizes are checked as IPv6 only, as before. (#108)
+
+- **The reserved range `240.0.0.0/4` passed the SSRF deny-list.** With `deny_private` on,
+  `http://255.255.255.255/` and every other address in the range was fetched, plain or embedded
+  in an IPv6 form that carries an IPv4 address. The range is now refused everywhere the deny-list
+  applies, with reason `private_network`, the same reason the shared address space and the other
+  RFC 1918 ranges already report. (#173)
 
 - **A denial reason could name an address the allowlist permits.** The reason was classified from
   the first deny-listed candidate rather than the first one the allowlist did not admit, so an

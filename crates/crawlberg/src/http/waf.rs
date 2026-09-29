@@ -10,6 +10,7 @@ use super::HttpResponse;
 use crate::error::CrawlError;
 use crate::types::{WafClassifier, WafClassifyError, WafSignal};
 use crate::waf::TomlClassifier;
+use crate::waf::rules::CHALLENGE_BODY_LIMIT;
 
 /// Process-wide WAF classifier built once from the embedded fingerprint corpus.
 ///
@@ -158,28 +159,26 @@ fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> Http
     block_page_error(&response(), Some(WAF_2XX_MAX_BODY_LEN))
 }
 
-/// [`waf_2xx_error`] for a robots.txt fetch: `None` when the body is the site's robots.txt, else
-/// the refusal a 2xx block page gets.
+/// [`waf_2xx_error`] for a robots.txt fetch: the refusal a 2xx robots.txt gets when the text
+/// [`crate::robots::fingerprint_text`] keeps of it fingerprints as a block page, else `None`.
 ///
-/// ~keep A body that reads as robots.txt is rules, as RFC 9309 reads any 2xx: a fingerprint
-/// such as `server: cloudflare` with "blocked" in the body also matches a comment written for a
-/// human reader (crawlberg#507). Any other body gets the 2xx decision without
-/// [`WAF_2XX_MAX_BODY_LEN`], only the classifier's own body limit: a block page served as
-/// robots.txt is an interstitial at any size, and reading one as rules hands a WAF-protected
-/// site an unrestricted crawl.
+/// ~keep That text leaves out whole-line comments, so a real robots.txt whose only match is a
+/// comment such as "AI crawlers are blocked below" behind `server: cloudflare` is read as rules
+/// (crawlberg#507), and it keeps every line of a body with a `<`. There is no
+/// [`WAF_2XX_MAX_BODY_LEN`] here, only the classifier's own body limit, taken on the body as
+/// fetched: a block page served as robots.txt is an interstitial at any size, and reading one as
+/// rules hands a WAF-protected site an unrestricted crawl.
 pub(super) fn robots_2xx_error(
     status: u16,
     body_bytes: &[u8],
     body: &str,
     headers_map: &HashMap<String, Vec<String>>,
 ) -> Option<CrawlError> {
-    if crate::robots::reads_as_robots_txt(body) {
+    if !is_2xx(status) || body_bytes.len() > CHALLENGE_BODY_LIMIT {
         return None;
     }
-    block_page_error(
-        &build_partial_response_with_bytes(status, body_bytes, body, headers_map),
-        None,
-    )
+    let text = crate::robots::fingerprint_text(body);
+    block_page_error(&build_partial_response(status, &text, headers_map), None)
 }
 
 /// [`waf_2xx_error`] for a sitemap fetch: `None` when the body is a sitemap document, else the
@@ -784,6 +783,33 @@ mod tests {
                 super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.get()),
                 0,
                 "a {status} with {len} body bytes must not be copied to be classified"
+            );
+        }
+    }
+
+    #[test]
+    fn robots_2xx_error_copies_no_response_it_cannot_refuse() {
+        let block_page = "<html><body><h1>Sorry, you have been blocked</h1></body></html>";
+        let headers = std::collections::HashMap::from([("server".to_owned(), vec!["cloudflare".to_owned()])]);
+        for (status, body) in [
+            (404_u16, block_page.to_owned()),
+            (503, block_page.to_owned()),
+            (200, format!("{block_page}<!--{}-->", "x".repeat(100 * 1024))),
+        ] {
+            super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.set(0));
+
+            let refusal = super::robots_2xx_error(status, body.as_bytes(), &body, &headers);
+
+            assert!(
+                refusal.is_none(),
+                "a {status} robots.txt of {} bytes must not be refused here",
+                body.len()
+            );
+            assert_eq!(
+                super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.get()),
+                0,
+                "a {status} robots.txt of {} bytes must not be copied to be classified",
+                body.len()
             );
         }
     }
