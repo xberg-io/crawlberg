@@ -120,7 +120,7 @@ impl DispatchPlan {
         });
 
         let waf_signal = match (self.waf_classifier.as_ref(), response.as_ref()) {
-            (Some(c), Some(h)) => match c.classify(h) {
+            (Some(c), Some(h)) => match crate::http::engine_waf_signal(c.as_ref(), h) {
                 Ok(sig) => sig,
                 Err(e) => {
                     tracing::warn!(
@@ -380,6 +380,7 @@ impl CrawlEngine {
                 LoopStep::Restart
             }
             RetryDirective::Escalate { reason } => {
+                Self::record_waf_refusal(&reason);
                 if let Some(next) = state.affordable_next_tier(plan).await {
                     Self::record_escalation(state.current_tier, next, &reason);
                     state.escalate_to(next, &reason);
@@ -425,6 +426,7 @@ impl CrawlEngine {
             }
             Decision::EscalateBrowser => {
                 let reason = EscalationReason::AntibotEscalate;
+                Self::record_waf_refusal(&reason);
                 if let Some(next) = state.affordable_next_tier(plan).await {
                     Self::record_escalation(state.current_tier, next, &reason);
                     state.escalate_to(next, &reason);

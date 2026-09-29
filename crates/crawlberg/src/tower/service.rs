@@ -86,9 +86,6 @@ const REDIRECT_STATUS_MAX: u16 = 400;
 /// chunked body, so only a clearly truncated transfer is reported.
 const CONTENT_LENGTH_SHORTFALL_TOLERANCE: usize = 100;
 
-/// Largest 2xx body still treated as a possible WAF challenge page rather than real content.
-const WAF_CHALLENGE_MAX_BODY_LEN: usize = 5000;
-
 /// Whether a status is a redirect that `do_fetch` returns to the caller unclassified.
 fn is_redirect_status(status: u16) -> bool {
     (REDIRECT_STATUS_MIN..REDIRECT_STATUS_MAX).contains(&status)
@@ -193,22 +190,6 @@ fn content_length_shortfall_error(
     None
 }
 
-/// Classify a short 2xx body as a WAF challenge page when it carries a vendor fingerprint.
-///
-/// ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
-/// Shares `http::waf_2xx_error` with `http::fetch_one_hop` rather than the pair of helpers that
-/// stood here, which classified the response as if it were a 403 (they hardcode that status) and
-/// showed the classifier only the `server` header — so a CDN's own `server` header refused every
-/// ordinary page it proxied, and the corpus could not scope the fingerprint by status because the
-/// status it saw was a fiction (crawlberg#231).
-#[cfg(not(target_arch = "wasm32"))]
-fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<String>>) -> Option<CrawlError> {
-    if status != 200 || body.len() >= WAF_CHALLENGE_MAX_BODY_LEN {
-        return None;
-    }
-    crate::http::waf_2xx_error(status, body.as_bytes(), body, headers)
-}
-
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.
 ///
 /// Returns the raw response — including any 3xx — without following redirects.
@@ -276,8 +257,10 @@ async fn do_fetch(
 
     let body = String::from_utf8_lossy(&body_vec).into_owned();
 
+    // ~keep The same 2xx decision `http::fetch_one_hop` makes, so the engine's crawl and the plain
+    // fetch refuse exactly the same responses (crawlberg#231).
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(error) = waf_error_for_success(status, &body, &headers) {
+    if let Some(error) = crate::http::waf_2xx_error(status, &body_vec, &body, &headers) {
         return Err(error);
     }
 

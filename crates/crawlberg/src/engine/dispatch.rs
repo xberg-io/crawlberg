@@ -6,6 +6,9 @@ use super::CrawlEngine;
 use crate::error::CrawlError;
 use crate::tower::CrawlRequest;
 
+/// The vendor an antibot strategy's refusal is reported and counted under.
+const ANTIBOT_VENDOR: &str = "antibot";
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn escalation_reason_label(reason: &crate::types::EscalationReason) -> &'static str {
     use crate::types::EscalationReason;
@@ -241,9 +244,26 @@ impl CrawlEngine {
                 CrawlError::server_error(format!("origin_unreliable and no escalation target: {url}"))
             }
             EscalationReason::AntibotEscalate => CrawlError::WafBlocked {
-                vendor: "antibot".to_string(),
+                vendor: ANTIBOT_VENDOR.to_string(),
                 message: format!("antibot strategy forced browser escalation at {url}"),
             },
+        }
+    }
+
+    /// Count a successful response the engine refuses for `reason` in `crawl_waf_blocks_total`,
+    /// when `reason` refuses it as a WAF block.
+    ///
+    /// ~keep The fetch path counts the responses it refuses itself; the engine only ever refuses
+    /// a response the fetch path returned, so the two counts never cover the same response. The
+    /// count happens whether or not a higher tier is left to escalate to, as the fetch path
+    /// counts a refusal the engine then escalates.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn record_waf_refusal(reason: &crate::types::EscalationReason) {
+        use crate::types::EscalationReason;
+        match reason {
+            EscalationReason::WafBlocked { vendor } => crate::http::record_waf_block(vendor),
+            EscalationReason::AntibotEscalate => crate::http::record_waf_block(ANTIBOT_VENDOR),
+            EscalationReason::SoftBlock | EscalationReason::RenderNeeded | EscalationReason::OriginUnreliable => {}
         }
     }
 

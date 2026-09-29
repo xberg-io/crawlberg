@@ -31,6 +31,8 @@ pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
 pub(crate) use waf::waf_2xx_error;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use waf::{engine_waf_signal, record_waf_block};
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
@@ -136,10 +138,6 @@ impl ResponseHead {
             final_url: resp.url().to_string(),
             headers: resp.headers().clone(),
         }
-    }
-
-    fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
     }
 
     fn content_length(&self) -> Option<usize> {
@@ -268,21 +266,16 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     let body_bytes = read_validated_body(context.config, resp, expected_len).await?;
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
+    let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&head.headers));
+
     // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
     // The body is read before the check rather than after a header match because a header-only
-    // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231).
-    if head.is_success() {
-        let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-        if let Some(error) = waf::waf_2xx_error(head.status, &body_bytes, &body, headers_map) {
-            return Err(error);
-        }
+    // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
+    // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
+    // response this hop returns.
+    if let Some(error) = waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map) {
+        return Err(error);
     }
-
-    // ~keep Reuses the cached header map (built at most once above) instead of walking
-    // `headers` a third time; falls back to a fresh build only for the statuses that
-    // never populated the cache (anything outside 200..300 and not explicitly matched
-    // above, e.g. 206 or an unlisted 4xx/5xx that falls through to no terminal error).
-    let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&head.headers));
     Ok(HopOutcome::Complete(head.into_response(body, body_bytes, headers_map)))
 }
 

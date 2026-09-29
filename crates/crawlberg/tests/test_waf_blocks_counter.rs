@@ -6,7 +6,13 @@
 //! the process, and no other test may fetch concurrently or the deltas read here would include
 //! its blocks.
 
-use crawlberg::{BrowserMode, CrawlConfig, CrawlError, create_engine, scrape};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use crawlberg::{
+    AttemptOutcome, BrowserMode, CrawlConfig, CrawlError, DefaultAntibotStrategy, DispatchProfile, EscalationReason,
+    RetryDirective, RetryPolicy, TomlClassifier, create_engine, scrape,
+};
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 use wiremock::matchers::{method, path};
@@ -58,10 +64,52 @@ fn config() -> CrawlConfig {
     config
 }
 
+/// The engine with the built-in classifier and antibot strategy set as dispatch hooks.
+fn hook_config() -> CrawlConfig {
+    let mut config = config();
+    config.dispatch = Some(DispatchProfile {
+        waf_classifier: Some(Arc::new(TomlClassifier::builtin())),
+        antibot_strategy: Some(Arc::new(DefaultAntibotStrategy::new())),
+        ..DispatchProfile::default()
+    });
+    config
+}
+
+/// A retry policy that refuses every successful response as a WAF block.
+#[derive(Debug)]
+struct RefuseEverySuccess;
+
+#[async_trait]
+impl RetryPolicy for RefuseEverySuccess {
+    async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
+        if outcome.error.is_some() {
+            return RetryDirective::Stop;
+        }
+        RetryDirective::Escalate {
+            reason: EscalationReason::WafBlocked {
+                vendor: "policy".to_owned(),
+            },
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "refuse-every-success"
+    }
+}
+
 /// Serve `template` at `/` on a fresh server, scrape it once, and return the result together
 /// with the counter delta and the number of requests the server received.
 async fn scrape_and_count(
     counter: &BlockCounter,
+    template: ResponseTemplate,
+) -> (Result<crawlberg::ScrapeResult, CrawlError>, u64, usize) {
+    scrape_and_count_with(counter, config(), template).await
+}
+
+/// [`scrape_and_count`] with an engine built from `engine_config`.
+async fn scrape_and_count_with(
+    counter: &BlockCounter,
+    engine_config: CrawlConfig,
     template: ResponseTemplate,
 ) -> (Result<crawlberg::ScrapeResult, CrawlError>, u64, usize) {
     let mock = MockServer::start().await;
@@ -70,7 +118,7 @@ async fn scrape_and_count(
         .respond_with(template)
         .mount(&mock)
         .await;
-    let handle = create_engine(Some(config())).expect("create_engine with the test config");
+    let handle = create_engine(Some(engine_config)).expect("create_engine with the test config");
 
     let before = counter.total();
     let result = scrape(&handle, &mock.uri()).await;
@@ -153,4 +201,88 @@ async fn the_waf_block_counter_counts_each_refused_response_once_and_nothing_els
         );
         assert_eq!(delta, 0, "a retried {status} must not count as a WAF block");
     }
+
+    // (d) With the classifier and antibot strategy set as engine hooks, a CDN-presence 200 is
+    // still content, and still no block.
+    let (result, delta, _) = scrape_and_count_with(
+        &counter,
+        hook_config(),
+        ResponseTemplate::new(200)
+            .set_body_string("<html><head><title>Blog</title></head><body><h1>Release notes</h1></body></html>")
+            .append_header("content-type", "text/html")
+            .append_header("x-sucuri-id", "18012"),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "the sucuri 200 must be returned as content with engine hooks set, got {result:?}"
+    );
+    assert_eq!(
+        delta, 0,
+        "a 200 returned as content must not count, with engine hooks set"
+    );
+
+    // (e) A response the fetch path refuses is counted there, and the hooks never see it: one block.
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        hook_config(),
+        ResponseTemplate::new(200)
+            .set_body_string("<html><script src=\"https://js.datadome.co/tags.js\"></script></html>")
+            .append_header("content-type", "text/html")
+            .append_header("x-datadome", "protected"),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "datadome"),
+        "the DataDome 200 must be refused by the fetch path, got {result:?}"
+    );
+    assert_eq!(requests, 1, "the refused 200 must be fetched once");
+    assert_eq!(
+        delta, 1,
+        "a response refused by the fetch path must count once, not again in the engine"
+    );
+
+    // (f) A response the fetch path returns but the engine's antibot strategy refuses: one block.
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        hook_config(),
+        ResponseTemplate::new(418)
+            .set_body_string("<html><script src=\"https://js.datadome.co/tags.js\"></script></html>")
+            .append_header("content-type", "text/html")
+            .append_header("x-datadome", "protected"),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "antibot"),
+        "the antibot strategy must refuse the DataDome 418, got {result:?}"
+    );
+    assert_eq!(requests, 1, "the refused 418 must be fetched once");
+    assert_eq!(
+        delta, 1,
+        "a response the antibot strategy refuses must count exactly one WAF block"
+    );
+
+    // (g) A successful response a retry policy refuses as a WAF block: one block.
+    let mut policy_config = config();
+    policy_config.dispatch = Some(DispatchProfile {
+        retry_policy: Some(Arc::new(RefuseEverySuccess)),
+        ..DispatchProfile::default()
+    });
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        policy_config,
+        ResponseTemplate::new(200)
+            .set_body_string("<html><body><h1>Release notes</h1></body></html>")
+            .append_header("content-type", "text/html"),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "policy"),
+        "the retry policy must refuse the 200 as a WAF block, got {result:?}"
+    );
+    assert_eq!(requests, 1, "the refused 200 must be fetched once");
+    assert_eq!(
+        delta, 1,
+        "a response the retry policy refuses must count exactly one WAF block"
+    );
 }

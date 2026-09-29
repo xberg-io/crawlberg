@@ -312,3 +312,53 @@ pattern = "THIS_PATTERN_WILL_NEVER_MATCH_ANYTHING_xyzzy_12345"
         "broken fingerprint correctly produces no match"
     );
 }
+
+/// The corpus rule the 2xx body corroboration in `crate::http::waf` depends on: every built-in
+/// fingerprint that mixes header and body signals is Cloudflare's and keys on `server:
+/// cloudflare`, and no header-only fingerprint matches that header.
+#[test]
+fn every_mixed_builtin_fingerprint_is_cloudflare_keyed_on_its_server_header() {
+    use crate::waf::rules::Signal;
+
+    let rules = Rules::builtin();
+    let mut mixed = 0;
+    for fingerprint in &rules.fingerprints {
+        let has_body = fingerprint.signals.iter().any(|s| matches!(s, Signal::BodySubstring));
+        let headers: Vec<_> = fingerprint
+            .signals
+            .iter()
+            .filter_map(|s| match s {
+                Signal::ResponseHeader { name, value_contains } => Some((name.as_str(), value_contains.as_deref())),
+                Signal::BodySubstring => None,
+            })
+            .collect();
+        if !has_body || headers.is_empty() {
+            continue;
+        }
+        mixed += 1;
+        assert_eq!(
+            fingerprint.vendor, "cloudflare",
+            "{} mixes header and body",
+            fingerprint.id
+        );
+        assert_eq!(
+            headers,
+            [("server", Some("cloudflare"))],
+            "{} must key on server: cloudflare alone",
+            fingerprint.id
+        );
+    }
+    assert!(
+        mixed > 0,
+        "the corpus must still hold the Cloudflare header+body fingerprints"
+    );
+
+    for status in [200, 203, 403] {
+        let cloudflare_only = make_response(status, vec![("server", "cloudflare")], "");
+        assert_eq!(
+            rules.classify(&cloudflare_only).expect("classify must not fail"),
+            None,
+            "no header-only fingerprint may match server: cloudflare on a {status}"
+        );
+    }
+}

@@ -54,9 +54,10 @@ pub struct MetricRegistry {
 
     /// Responses refused as a WAF block, partitioned by vendor.
     ///
-    /// Counts once for each response the fetch path refuses as a WAF block. A response that a WAF
-    /// fingerprint matches but that is returned as content does not count, and neither does a
-    /// refusal that a custom retry policy or antibot strategy makes.
+    /// Counts once for each response refused as a WAF block: by the fetch path, for a 403, 429 or
+    /// 503 challenge or a 2xx interstitial, or by the engine, when its antibot strategy or retry
+    /// policy refuses a response as a WAF block. A response that a WAF fingerprint matches but
+    /// that is returned as content does not count, and no response counts twice.
     ///
     /// Labels: `vendor`
     pub waf_blocks_total: Counter<u64>,
