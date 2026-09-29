@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::error::CrawlError;
 use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
-use crate::http::{build_client, fetch_with_retry, http_fetch};
+use crate::http::{Fetched, build_client, fetch_with_retry, http_fetch_sitemap};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
@@ -47,7 +47,16 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
         return Ok(filter_map_result(urls, &filter, config.map_limit));
     }
 
-    let resp = fetch_with_retry(url, config, &std::collections::HashMap::new(), &client).await?;
+    // ~keep The mapped URL is often a sitemap itself, so a body that reads as one is read whatever
+    // its URLs say; any other body gets the page decision.
+    let resp = fetch_with_retry(
+        url,
+        config,
+        &std::collections::HashMap::new(),
+        &client,
+        Fetched::Sitemap,
+    )
+    .await?;
     let urls = urls_from_direct_response(url, &parsed_url, &resp, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
@@ -122,7 +131,7 @@ async fn sitemap_urls_from_well_known(
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
     let sitemap_url = format!("{}://{}/sitemap.xml", parsed_url.scheme(), parsed_url.authority());
-    let Ok(sitemap_resp) = http_fetch(&sitemap_url, config, &std::collections::HashMap::new(), client).await else {
+    let Ok(sitemap_resp) = http_fetch_sitemap(&sitemap_url, config, client).await else {
         return Vec::new();
     };
     if !(sitemap_resp.body.contains("<urlset") || sitemap_resp.body.contains("<sitemapindex")) {

@@ -98,9 +98,11 @@ struct FetchContext<'a> {
 
 /// What a fetch reads its response as, which picks the 2xx WAF decision the response gets.
 #[derive(Clone, Copy)]
-enum Fetched {
-    /// A page, sitemap or asset: [`waf::waf_2xx_error`].
+pub(crate) enum Fetched {
+    /// A page or asset: [`waf::waf_2xx_error`].
     Page,
+    /// A sitemap, or a page `map` reads as one when it is one: [`waf::sitemap_2xx_error`].
+    Sitemap,
     /// The site's robots.txt: [`waf::robots_2xx_error`].
     RobotsTxt,
 }
@@ -204,6 +206,16 @@ pub(crate) async fn http_fetch_robots_txt(
     fetch_as(url, config, &HashMap::new(), client, Fetched::RobotsTxt).await
 }
 
+/// [`http_fetch`] for a sitemap: a 2xx body that reads as a sitemap document is returned whatever
+/// its URLs say, and any other body gets the page decision.
+pub(crate) async fn http_fetch_sitemap(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+) -> Result<HttpResponse, CrawlError> {
+    fetch_as(url, config, &HashMap::new(), client, Fetched::Sitemap).await
+}
+
 async fn fetch_as(
     url: &str,
     config: &CrawlConfig,
@@ -305,10 +317,11 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     // The body is read before the check rather than after a header match because a header-only
     // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
     // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
-    // response this hop returns. A robots.txt gets its own decision, which reads a robots file as
-    // rules whatever it says.
+    // response this hop returns. A robots.txt and a sitemap get their own decisions, which read a
+    // robots file as rules and a sitemap as a sitemap whatever they say.
     let refusal = match context.fetched {
         Fetched::Page => waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map),
+        Fetched::Sitemap => waf::sitemap_2xx_error(head.status, &head.content_type, &body_bytes, &body, &headers_map),
         Fetched::RobotsTxt => waf::robots_2xx_error(head.status, &body_bytes, &body, &headers_map),
     };
     if let Some(error) = refusal {
@@ -765,7 +778,7 @@ mod tests {
         }
     }
 
-    /// ~keep Regression coverage for #442: `http_fetch` -> `send_hop_request` is the one
+    /// ~keep Regression coverage for #442: the plain fetch's `send_hop_request` is the one
     /// call site robots.txt (`helpers.rs`), sitemaps (`sitemap.rs`) and asset downloads
     /// (`assets.rs`) all fetch through, and it shares `classify_reqwest_error` with the
     /// page-fetch path `test_transport_error_credential_redaction.rs` already covers. That
@@ -1203,7 +1216,8 @@ mod tests {
     }
 
     /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
-    /// `http_fetch`, the path robots.txt, sitemap and asset fetches take (crawlberg#231).
+    /// `http_fetch`, the decision asset fetches get and sitemap fetches fall back to
+    /// (crawlberg#231).
     #[tokio::test]
     async fn http_fetch_returns_a_2xx_with_only_a_cdn_presence_header_as_content() {
         for (name, value) in [("server", "AkamaiGHost"), ("x-sucuri-id", "18012")] {
@@ -1332,7 +1346,7 @@ mod tests {
         assert_eq!(next.as_str(), "http://example.com/end");
     }
 
-    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of `http_fetch`)
+    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of the plain fetch)
     /// must send the custom-header agent once, not append it alongside the configured one.
     #[tokio::test]
     async fn a_robots_or_asset_fetch_does_not_duplicate_a_custom_header_user_agent() {

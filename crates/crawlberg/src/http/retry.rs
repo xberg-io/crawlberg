@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::status::error_status;
-use super::{HttpResponse, http_fetch};
+use super::{Fetched, HttpResponse, fetch_as};
 use crate::defaults::dispatch::compute_backoff_ms;
 use crate::error::CrawlError;
 use crate::types::CrawlConfig;
@@ -29,19 +29,21 @@ pub(crate) fn should_retry_error(error: &CrawlError, retry_codes: &[u16]) -> boo
 ///
 /// Retries the errors [`should_retry_error`] admits for `config.retry_codes`. Uses the
 /// crate-wide exponential backoff (see [`compute_backoff_ms`]), seeded from
-/// `config.retry_initial_delay_ms` and capped at `config.retry_max_delay_ms`.
+/// `config.retry_initial_delay_ms` and capped at `config.retry_max_delay_ms`. `fetched` picks
+/// the 2xx WAF decision each attempt gets.
 pub(crate) async fn fetch_with_retry(
     url: &str,
     config: &CrawlConfig,
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
+    fetched: Fetched,
 ) -> Result<HttpResponse, CrawlError> {
     let retries = config.retry_count;
     let retry_codes = config.retry_codes.clone();
 
     let mut last_err = None;
     for attempt in 0..=retries {
-        match http_fetch(url, config, extra_headers, client).await {
+        match fetch_as(url, config, extra_headers, client, fetched).await {
             Ok(resp) => return Ok(resp),
             Err(e) => {
                 let should_retry = should_retry_error(&e, &retry_codes);

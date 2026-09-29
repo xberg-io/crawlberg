@@ -281,7 +281,9 @@ impl CrawlEngine {
             Some(agent) => std::collections::HashMap::from([("user-agent".to_owned(), agent.to_owned())]),
             None => std::collections::HashMap::new(),
         };
-        let resp = crate::http::fetch_with_retry(url, &self.config, &extra_headers, &client).await?;
+        let resp =
+            crate::http::fetch_with_retry(url, &self.config, &extra_headers, &client, crate::http::Fetched::Page)
+                .await?;
         // ~keep On wasm, browser fetch follows redirects; `resp.final_url` is the post-redirect URL.
         let post_redirect_url = resp.final_url.clone();
         let crawl_resp = crate::tower::CrawlResponse {
