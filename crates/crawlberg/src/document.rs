@@ -170,12 +170,9 @@ async fn persist_document(
 /// future !Send, which breaks every spawned batch task and axum handler. A synchronous helper
 /// cannot hold it across an await at all.
 fn record_download_telemetry(url: &str, mime_type: &str, size: usize, max_size: usize, truncated: bool) {
-    // ~keep `url` may carry userinfo (http://user:pass@host/); redact before it reaches
-    // the span, which is shipped to logs/OTLP by default.
-    let redacted_url = crate::net::redact_url_credentials(url);
     let _span = tracing::info_span!(
         "crawl.document.download",
-        { URL_FULL } = %redacted_url,
+        { URL_FULL } = %url,
         { CRAWL_MIME_TYPE } = %mime_type,
         { CRAWL_SIZE_BYTES } = size as i64,
     )
