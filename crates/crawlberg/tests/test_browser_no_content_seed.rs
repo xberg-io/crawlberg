@@ -22,7 +22,8 @@ use common::{announce_chrome_skip, is_missing_chrome_message};
 
 /// The browser timeout of the reported defect. A result well inside it proves no wait.
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(20);
-const PROMPT: Duration = Duration::from_secs(10);
+/// How long a browser fetch of a seed without a document may take and still count as prompt.
+const MAX_PROMPT_RETURN: Duration = Duration::from_secs(10);
 
 fn config(mode: BrowserMode, backend: BrowserBackend) -> CrawlConfig {
     CrawlConfig {
@@ -106,7 +107,7 @@ async fn assert_browser_matches_http(test_name: &str, status: u16, via_redirect:
         return;
     };
     assert!(
-        elapsed < PROMPT,
+        elapsed < MAX_PROMPT_RETURN,
         "{test_name}: browser mode must not wait for the {BROWSER_TIMEOUT:?} timeout, took {elapsed:?}"
     );
     assert_eq!(
@@ -171,10 +172,11 @@ async fn a_slow_200_seed_still_waits_for_its_body() {
 ///
 /// ~keep A GUARD, not evidence for #121: treating 304 as a no-document status could plausibly
 /// ~keep have emptied a page Chrome could render from cache, and this pins that it does not.
-/// ~keep The reason it does not is that Chrome resolves a revalidation 304 against its cache
-/// ~keep entry BEFORE the Fetch response-stage pause sees it, so the interception is handed the
-/// ~keep merged 200 and never the 304. A 304 that does reach the interception is therefore one
-/// ~keep no cache entry can satisfy, which genuinely carries no document.
+/// ~keep Why it does not is inferred from the outcome, not observed at the protocol level:
+/// ~keep Chrome sends the conditional request, and a 304 that reached the response-stage check
+/// ~keep would have ended the fetch as an empty 304, yet the page renders from the cache with
+/// ~keep status 200. So Chrome resolves the revalidation against its cache entry before the
+/// ~keep check sees it, and a 304 the check does see is one no cache entry can satisfy.
 /// ~keep The `if-none-match` assertion below is load-bearing: without it the test passes
 /// ~keep vacuously whenever Chrome does not revalidate at all, which is what a browser launched
 /// ~keep per fetch does, having no cache to reuse.
@@ -211,7 +213,8 @@ async fn a_304_chrome_can_serve_from_its_cache_reports_the_cached_page() {
     // ~keep because a browser launched per fetch starts with an empty cache. Session affinity
     // ~keep is not needed for it and is set only to exercise the reused-page path too.
     config.browser.session_affinity = true;
-    config.browser_pool = Some(BrowserPool::new(BrowserPoolConfig::default()));
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    config.browser_pool = Some(Arc::clone(&pool));
     config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
 
     let engine = create_engine(Some(config)).expect("engine must build");
@@ -221,12 +224,14 @@ async fn a_304_chrome_can_serve_from_its_cache_reports_the_cached_page() {
         Ok(first) => assert_eq!(first.status_code, 200, "the first fetch must fill the cache"),
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
+            pool.shutdown().await;
             return;
         }
         Err(error) => panic!("{test_name}: the first scrape must succeed: {error:?}"),
     }
 
     let second = scrape(&engine, &url).await.expect("the revalidated fetch must succeed");
+    pool.shutdown().await;
 
     let conditional_requests = mock
         .received_requests()

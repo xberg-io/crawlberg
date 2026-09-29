@@ -17,6 +17,20 @@ All notable changes to crawlberg are documented here.
   response headers of the document the page shows, so a WAF block is found from the headers of a
   403 page as well as from its body. (#143)
 
+- **The native browser backend reports an empty body for a 204, 205 or 304.** It reported an
+  empty HTML skeleton for these statuses. It now reports an empty body, as HTTP mode does. If
+  your code reads the body of such a page, expect an empty string. (#121)
+
+- **`interact` on the Chromiumoxide backend now follows at most `max_redirects` redirects.** The
+  default is 10. It followed every redirect a chain offered. For a longer chain, `interact`
+  returns the URL of the redirect at the limit, empty HTML, and a failed result for each action.
+  If an `interact` call must follow a longer chain, raise `max_redirects`. (#116)
+
+- **A Chromiumoxide browser fetch or `interact` session fails when Chrome reports no main
+  frame.** The redirect limit counts only the redirects of the page's main frame, so crawlberg
+  must know that frame. If Chrome reports no main frame, or the read of it fails, the call
+  returns a browser error that says the redirect limit cannot be applied. (#90)
+
 - **`ScrapeResult`, `CrawlPageResult` and `InteractionResult` gained `ssrf_refused_urls`.** The
   field is left out when it is empty, so an older crawlberg still reads a result with no refused
   request. A scrape or page result that lists one is rejected by an older reader, because both
@@ -67,10 +81,9 @@ All notable changes to crawlberg are documented here.
   backend already returned at once, but it reported an empty HTML skeleton as the body; it now
   reports an empty body too. (#121)
 
-  A 304 Chrome asked for itself is unaffected and still renders: Chrome resolves a revalidation
-  304 against its cache entry before the response reaches this check, so what the check sees is
-  the merged 200. Only a 304 no cache entry can satisfy is reported as an empty 304, which is
-  what it carries.
+  A 304 Chrome asked for itself is unaffected: when Chrome revalidates a page it holds in its
+  cache, the page still renders from that cache with status 200. Only a 304 that no cache entry
+  can satisfy is reported as an empty 304, which is what it carries.
 
 - **`max_redirects` did not limit browser mode.** Chrome follows a redirect chain itself, and the
   chain counted the whole of it as one hop, so a browser-mode crawl followed chains that HTTP mode

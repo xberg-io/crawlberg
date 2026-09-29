@@ -40,6 +40,9 @@ pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// Statuses that carry no document. A browser commits nothing for them, so a browser fetch
 /// reports them with an empty body, as the HTTP fetch does.
+///
+/// ~keep Gated on the browser features, unlike `REDIRECT_STATUSES`: only the browser backends
+/// ~keep read it, while the HTTP path reads `REDIRECT_STATUSES` on every non-wasm build.
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 pub(crate) const NO_DOCUMENT_STATUSES: [u16; 3] = [204, 205, 304];
 
@@ -366,6 +369,7 @@ async fn unfollowable_redirect_response(
 }
 
 /// The error for a 403 body: a WAF block when the body fingerprints, a plain forbidden otherwise.
+#[cfg(any(feature = "browser", feature = "browser-native"))]
 fn forbidden_body_error(status: u16, body: &str, headers_map: &HashMap<String, Vec<String>>) -> CrawlError {
     match waf::waf_vendor_from_body(status, body, headers_map) {
         Some(vendor) => CrawlError::WafBlocked {
