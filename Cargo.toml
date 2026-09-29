@@ -78,6 +78,7 @@ encoding_rs = "0.8"
 
 # Binding framework dependencies
 ext-php-rs = "0.15.15"
+fancy-regex = "0.19"
 flate2 = "1"
 futures = "0.3"
 html-escape = "0.2.15"
@@ -134,6 +135,7 @@ pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 quick-xml = "0.42"
 rayon = "1"
 regex = "1"
+regex-syntax = "0.8"
 # default-features = false: reqwest's `default` set (default-tls, http2, system-proxy) pulls
 # tokio/net -> mio, which fails to compile on wasm32 even though reqwest's own code cfg-gates
 # native transport off wasm. Native-only features are re-added per-crate under
