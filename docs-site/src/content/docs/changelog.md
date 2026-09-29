@@ -14,6 +14,13 @@ title: "Changelog"
 - **The config check refuses proxy credentials set in two places.** A proxy URL that holds a user
   name or password, together with `username` or `password`, now fails `CrawlConfig::validate`.
   Set the credentials in the URL or in the two fields, not both.
+- **A proxy with only `username` set now sends its credentials.** The HTTP client sends
+  `Proxy-Authorization` with the user name and an empty password. Before, it sent credentials
+  only when both `username` and `password` were set.
+- **A proxy that a `ProxyProvider` returns gets the same check as the configured proxy.** A
+  provider proxy that the check refuses is not used: the request goes direct, and an ERROR line
+  names the target host and the reason, never the proxy URL. Its credentials reach the proxy as
+  `Proxy-Authorization`.
 - **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
   `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
   user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address

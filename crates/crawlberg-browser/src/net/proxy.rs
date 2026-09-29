@@ -333,9 +333,12 @@ mod tests {
             assert_eq!(err, ProxyError::CredentialsInAddress, "{raw}");
             assert!(!err.to_string().contains("IMPL385-UP"), "{err}");
         }
+        let err = UpstreamProxy::new(Url::parse("ftp://proxy.test:21").expect("parses"), None)
+            .expect_err("a scheme the clients cannot use is refused");
+        assert_eq!(err, ProxyError::UnsupportedScheme("ftp".to_string()));
         assert!(
-            UpstreamProxy::new(Url::parse("ftp://proxy.test:21").expect("parses"), None).is_err(),
-            "a scheme the clients cannot use is refused"
+            err.to_string().contains("'ftp'"),
+            "the error must name the scheme: {err}"
         );
     }
 

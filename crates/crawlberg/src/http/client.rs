@@ -218,31 +218,20 @@ fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest
         // an operator most needs to know about — so it is logged at ERROR. Failing
         // closed is not reachable from inside this closure.
         //
-        // ~keep The offending URL is deliberately NOT logged: it does not parse, so
-        // `redact_url_credentials` would hide it whole whenever it holds an `@`, and the
-        // target host already names the request that went direct.
-        let Ok(mut parsed) = reqwest::Url::parse(&cfg.url) else {
-            tracing::error!(
-                target_host = %host,
-                "proxy provider returned an unparseable URL; connecting DIRECTLY, bypassing the proxy"
-            );
-            return None;
-        };
-
-        if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
-            // ~keep Deliberately still proxied when the credentials cannot be
-            // attached: the proxy answers 407 and the request fails visibly, whereas
-            // returning `None` would send the traffic direct and defeat egress
-            // control outright. The louder failure is the safer one.
-            if parsed.set_username(user).is_err() || parsed.set_password(Some(pass)).is_err() {
+        // ~keep The offending URL is deliberately NOT logged: a URL the proxy check refuses can
+        // hold a password it cannot redact, and the target host already names the request
+        // that went direct. The check's own error never shows the URL.
+        match crate::proxy::admit_proxy(&cfg) {
+            Ok(admitted) => Some(admitted.into_reqwest_custom_url()),
+            Err(error) => {
                 tracing::error!(
                     target_host = %host,
-                    proxy_url = %crate::net::redact_url_credentials(&cfg.url),
-                    "proxy URL does not accept credentials; connecting through the proxy unauthenticated"
+                    %error,
+                    "proxy provider returned a proxy that cannot be used; connecting DIRECTLY, bypassing the proxy"
                 );
+                None
             }
         }
-        Some(parsed)
     })
 }
 

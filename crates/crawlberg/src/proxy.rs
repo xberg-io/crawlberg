@@ -188,6 +188,22 @@ impl AdmittedProxy {
             None => proxy,
         })
     }
+
+    /// The URL a `reqwest::Proxy::custom` closure returns for this proxy.
+    ///
+    /// ~keep A custom proxy has no `basic_auth` for each URL it returns: reqwest reads the
+    /// ~keep credentials from the userinfo of that URL, so they join it here and it goes only
+    /// ~keep to reqwest.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn into_reqwest_custom_url(self) -> url::Url {
+        let ProxyUrl(mut url) = self.address;
+        if let Some(credentials) = self.credentials {
+            // ~keep Cannot fail: the address has a host, so it can hold userinfo.
+            let _ = url.set_username(&credentials.username);
+            let _ = url.set_password(Some(&credentials.password));
+        }
+        url
+    }
 }
 
 /// Shows the scheme, host and port, and whether credentials are set.
@@ -203,13 +219,14 @@ impl std::fmt::Debug for AdmittedProxy {
 /// Reads `proxy` once: its address with [`parse_proxy_url`], and its credentials from the
 /// URL userinfo or from the `username`/`password` fields, never both.
 ///
-/// ~keep A raw `@` that the parser did not read as the end of the userinfo means a `#`, `/`
-/// ~keep or `?` in a credential ended the authority early (#285): the parser then reads the
-/// ~keep user name as the host and the start of the password as the port. It is refused.
+/// ~keep A raw `@` after the authority means a `#`, `/` or `?` in a credential ended the
+/// ~keep authority early (#285): the parser then reads the user name as the host and the start
+/// ~keep of the password as the port, or keeps the rest of the password in the path or the
+/// ~keep fragment. It is refused.
 pub(crate) fn admit_proxy(proxy: &ProxyConfig) -> Result<AdmittedProxy, CrawlError> {
     let ProxyUrl(mut url) = parse_proxy_url(&proxy.url)?;
     let in_url = !url.username().is_empty() || url.password().is_some();
-    if !in_url && proxy.url.contains('@') {
+    if after_authority(&proxy.url).contains('@') {
         return Err(CrawlError::invalid_config(
             "invalid proxy URL: a user name or password in it holds a character that ends the address \
              (such as #, / or ?); percent-encode it, or set it in username and password",
@@ -251,6 +268,13 @@ pub(crate) fn admit_proxy(proxy: &ProxyConfig) -> Result<AdmittedProxy, CrawlErr
         address: ProxyUrl(url),
         credentials,
     })
+}
+
+/// The raw text from the first `/`, `?`, `#` or `\` after the scheme: the part that is not
+/// the authority, so an `@` in it cannot end a userinfo.
+fn after_authority(raw: &str) -> &str {
+    let rest = raw.split_once("://").map_or(raw, |(_, rest)| rest);
+    rest.find(['/', '?', '#', '\\']).map_or("", |start| &rest[start..])
 }
 
 fn percent_decoded(part: &str) -> Result<String, CrawlError> {
@@ -672,6 +696,37 @@ mod tests {
             assert_hides_the_password(raw, &err);
         }
         crawl_through(proxy("http://operator:4242%23IMPL385-285@proxy.test:8080"))
+            .validate()
+            .expect("positive twin: the percent-encoded password is accepted");
+    }
+
+    #[test]
+    fn a_password_with_a_raw_at_sign_then_a_hash_is_refused_without_showing_its_tail() {
+        for raw in [
+            "http://op:pa@h#FIX385D-TAIL@proxy.test:8080",
+            "http://op:pa@h/FIX385D-TAIL@proxy.test:8080",
+            "http://op:pa@h?FIX385D-TAIL@proxy.test:8080",
+            "op:pa@h#FIX385D-TAIL@proxy.test:8080",
+        ] {
+            let err = crawl_through(proxy(raw))
+                .validate()
+                .expect_err("an @ past the userinfo means the password ended the address early")
+                .to_string();
+            assert!(
+                err.contains("percent-encode"),
+                "{raw}: the error must name the fix: {err}"
+            );
+            let shown = format!(
+                "{err} {:?} {:?} {}",
+                proxy(raw),
+                StaticProxyProvider::new(vec![proxy(raw)]),
+                redacted_proxy_address(&proxy(raw))
+            );
+            for part in ["FIX385D-TAIL", "pa@h"] {
+                assert!(!shown.contains(part), "{raw}: '{part}' is shown: {shown}");
+            }
+        }
+        crawl_through(proxy("http://op:pa%40h%23FIX385D-TAIL@proxy.test:8080"))
             .validate()
             .expect("positive twin: the percent-encoded password is accepted");
     }

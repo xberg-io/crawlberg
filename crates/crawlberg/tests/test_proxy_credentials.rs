@@ -210,7 +210,10 @@ async fn assert_http_fetch_authenticates(mock: &MockServer, proxy: ProxyConfig, 
     let result = engine.scrape(&mock.uri()).await;
     let error = result.as_ref().err().map(ToString::to_string).unwrap_or_default();
     assert!(result.is_ok(), "the fetch through the proxy must succeed: {error}");
-    assert!(!error.contains(password), "an error shows the proxy password: {error}");
+    assert!(
+        password.is_empty() || !error.contains(password),
+        "an error shows the proxy password: {error}"
+    );
     let expected = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"))
@@ -253,4 +256,199 @@ async fn an_http_fetch_sends_a_percent_encoded_proxy_password_decoded() {
         password: None,
     };
     assert_http_fetch_authenticates(&mock, proxy, "operator", "IMPL385#HTTP/PW?").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn an_http_fetch_with_only_a_proxy_user_name_sends_it_with_an_empty_password() {
+    let mock = site().await;
+    let proxy = ProxyConfig {
+        url: mock.uri(),
+        username: Some("FIX385D-USER-ONLY".into()),
+        password: None,
+    };
+    assert_http_fetch_authenticates(&mock, proxy, "FIX385D-USER-ONLY", "").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn a_native_interact_goes_through_the_proxy_with_its_credentials() {
+    let mock = site().await;
+    let proxy = ProxyConfig {
+        url: mock.uri(),
+        username: Some("operator".into()),
+        password: Some("FIX385D-INTERACT-PW".into()),
+    };
+    let engine = CrawlEngine::builder()
+        .config(native_config(proxy))
+        .build()
+        .expect("a native proxy with credentials is a valid config");
+    let actions = [crawlberg::PageAction::ExecuteJs {
+        script: "1".to_string(),
+    }];
+    let result = engine.interact(&mock.uri(), &actions).await;
+    let error = result.as_ref().err().map(ToString::to_string).unwrap_or_default();
+    assert!(result.is_ok(), "the interact through the proxy must succeed: {error}");
+    assert!(
+        !error.contains("FIX385D-INTERACT-PW"),
+        "an error shows the proxy password: {error}"
+    );
+    let expected = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("operator:FIX385D-INTERACT-PW")
+    );
+    assert!(
+        proxy_authorizations(&mock).await.contains(&expected),
+        "the interact page load must reach the proxy with its credentials"
+    );
+}
+
+/// A provider that hands out one proxy for every host.
+#[derive(Debug)]
+struct OneProxy(ProxyConfig);
+
+impl crawlberg::ProxyProvider for OneProxy {
+    fn next_proxy(&self, _host: &str) -> Option<ProxyConfig> {
+        Some(self.0.clone())
+    }
+}
+
+/// A plain HTTP fetch, with no render, through a provider that returns `proxy`.
+async fn fetch_through_provider(mock: &MockServer, proxy: ProxyConfig) -> Result<(), String> {
+    let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+    config.browser.mode = BrowserMode::Never;
+    let engine = CrawlEngine::builder()
+        .config(config)
+        .with_proxy_provider(Arc::new(OneProxy(proxy)))
+        .build()
+        .expect("a proxy provider is a valid config");
+    engine.scrape(&mock.uri()).await.map(|_| ()).map_err(|e| e.to_string())
+}
+
+async fn proxy_authorizations(mock: &MockServer) -> Vec<String> {
+    let requests = mock.received_requests().await.expect("the mock records requests");
+    requests
+        .iter()
+        .filter(|request| request.url.path() == "/")
+        .filter_map(|request| request.headers.get("proxy-authorization"))
+        .filter_map(|value| value.to_str().ok().map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn a_provider_proxy_with_credentials_gets_them_as_proxy_authorization_and_logs_no_password() {
+    let in_fields = |authority: &str| ProxyConfig {
+        url: format!("http://{authority}"),
+        username: Some("operator".into()),
+        password: Some("FIX385D-PROV-PW-7c1".into()),
+    };
+    let in_url = |authority: &str| ProxyConfig {
+        url: format!("http://operator:FIX385D%23PROV%2FPW@{authority}"),
+        username: None,
+        password: None,
+    };
+    for (make, password) in [
+        (&in_fields as &dyn Fn(&str) -> ProxyConfig, "FIX385D-PROV-PW-7c1"),
+        (&in_url, "FIX385D#PROV/PW"),
+    ] {
+        let mock = site().await;
+        let proxy = make(mock.uri().trim_start_matches("http://"));
+        drop(take());
+        let result = fetch_through_provider(&mock, proxy).await;
+        let recorded = take();
+        let error = result.as_ref().err().cloned().unwrap_or_default();
+        assert!(
+            result.is_ok(),
+            "the fetch through the provider's proxy must succeed: {error}"
+        );
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("operator:{password}"))
+        );
+        assert!(
+            proxy_authorizations(&mock).await.contains(&expected),
+            "the page fetch must reach the provider's proxy with its credentials"
+        );
+        assert!(
+            recorded.iter().all(|field| !field.contains("FIX385D")),
+            "a recorded field shows the proxy password: {recorded:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn a_provider_proxy_with_an_unencoded_password_is_refused_with_an_error_that_hides_it() {
+    for template in [
+        "http://operator:4242#FIX385D-TAIL@AUTHORITY",
+        "http://operator:pa@127.0.0.1:9#FIX385D-TAIL@AUTHORITY",
+    ] {
+        let mock = site().await;
+        let url = template.replace("AUTHORITY", mock.uri().trim_start_matches("http://"));
+        drop(take());
+        let proxy = ProxyConfig {
+            url: url.clone(),
+            username: None,
+            password: None,
+        };
+        let result = fetch_through_provider(&mock, proxy).await;
+        let recorded = take();
+        assert!(
+            recorded.iter().any(|field| field.contains("bypassing the proxy")),
+            "{url}: the refused proxy must be reported: {recorded:?}"
+        );
+        assert!(
+            recorded.iter().any(|field| field.contains("percent-encode")),
+            "{url}: the report must name the fix: {recorded:?}"
+        );
+        let shown = format!("{recorded:?} {result:?}");
+        for part in ["FIX385D-TAIL", "pa@127"] {
+            assert!(!shown.contains(part), "{url}: '{part}' is shown: {shown}");
+        }
+        assert!(
+            proxy_authorizations(&mock).await.is_empty(),
+            "{url}: a refused proxy must get no credentials"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial(proxy_credentials)]
+async fn a_native_render_through_a_scheme_no_client_speaks_names_the_scheme_and_hides_the_credential() {
+    let mock = site().await;
+    let authority = mock.uri().trim_start_matches("http://").to_owned();
+    for scheme in ["socks5", "socks5h", "ftp"] {
+        let proxy = ProxyConfig {
+            url: format!("{scheme}://operator:FIX385D-SCHEME-PW@{authority}"),
+            username: None,
+            password: None,
+        };
+        let error = match CrawlEngine::builder().config(native_config(proxy)).build() {
+            Err(error) => error.to_string(),
+            Ok(engine) => engine
+                .scrape(&mock.uri())
+                .await
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| panic!("{scheme}: a render through a {scheme} proxy must fail")),
+        };
+        assert!(
+            error.contains(&format!("'{scheme}'")),
+            "{scheme}: the error must name the scheme: {error}"
+        );
+        assert!(
+            !error.contains("FIX385D-SCHEME-PW"),
+            "{scheme}: the error shows the credential: {error}"
+        );
+        assert!(
+            !error.contains("operator"),
+            "{scheme}: the error shows the user name: {error}"
+        );
+    }
+    let requests = mock.received_requests().await.expect("the mock records requests");
+    assert!(
+        requests.is_empty(),
+        "a refused proxy must not reach the site: {requests:?}"
+    );
 }
