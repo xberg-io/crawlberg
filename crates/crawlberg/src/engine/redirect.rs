@@ -360,11 +360,18 @@ fn canonical_redirect_key(url: &str) -> String {
 /// surface a soft `state.error` rather than aborting the request.
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
 /// cannot reach a URL the configuration forbids, whatever order it does its own work in.
+///
+/// `override_user_agent` pins the agent every hop sends, ahead of whatever `policy` would have
+/// picked. `scrape()` passes `None` for both, unchanged; the wasm crawl loop passes
+/// `Some(agent)` with no policy, so the one pick its own per-page robots check already made is
+/// the one that reaches the wire here too (crawlberg#483) -- native's own frontier loop still
+/// picks entirely through `policy`, so passing `None` here changes nothing for it.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
     max_redirects: usize,
     mut policy: Option<&mut RedirectPolicy<'_>>,
+    override_user_agent: Option<&str>,
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
@@ -382,9 +389,13 @@ pub(crate) async fn follow_redirects(
         // ~keep The agent `admits()` just chose (for robots.txt group selection) and this hop's
         // ~keep fetch must send are the same one: pinned onto the request below so every retry
         // ~keep or tier escalation of this hop reuses it rather than picking a new one
-        // ~keep (crawlberg#423). `None` when no policy runs (`scrape()`), which leaves the UA
-        // ~keep rotation layer free to pick per its own default behaviour, unchanged.
-        let forced_user_agent = policy.as_deref().and_then(|p| p.pending_user_agent.clone());
+        // ~keep (crawlberg#423). `override_user_agent` outranks it when the caller already made
+        // ~keep its own pick outside any policy (crawlberg#483); both are `None` for `scrape()`,
+        // ~keep which leaves the UA rotation layer free to pick per its own default behaviour,
+        // ~keep unchanged.
+        let forced_user_agent = override_user_agent
+            .map(str::to_owned)
+            .or_else(|| policy.as_deref().and_then(|p| p.pending_user_agent.clone()));
 
         // ~keep Bound the read per hop: the seed's final response is now consumed directly as
         // the depth-0 page, so a document seed must be bounded here rather than in the loop.
