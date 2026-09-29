@@ -109,6 +109,14 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The sitemap walk and the well-known `/sitemap.xml` fallback gave no URLs for a gzip sitemap
+  served with the wrong content type.** A robots.txt `Sitemap:` directive, a sitemap-index child,
+  and the `/sitemap.xml` fallback each decided whether to inflate a body by its content type, so a
+  gzip sitemap served as `application/octet-stream`, or recognised only by its gzip header bytes,
+  yielded no URLs there, while `map()`'s direct fetch read the same file. All three now inflate a
+  body that starts with the gzip header, whatever its content type says, the way the direct fetch
+  already did. (#534)
+
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
   directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose
