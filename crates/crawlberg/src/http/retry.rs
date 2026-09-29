@@ -30,7 +30,7 @@ pub(crate) fn should_retry_error(error: &CrawlError, retry_codes: &[u16]) -> boo
 /// Retries the errors [`should_retry_error`] admits for `config.retry_codes`. Uses the
 /// crate-wide exponential backoff (see [`compute_backoff_ms`]), seeded from
 /// `config.retry_initial_delay_ms` and capped at `config.retry_max_delay_ms`. `refresh` says
-/// whether each attempt follows a refresh as a redirect.
+/// whether each attempt follows a refresh as a redirect, under the crawl's chain rules.
 pub(crate) async fn fetch_with_retry(
     url: &str,
     config: &CrawlConfig,

@@ -1372,6 +1372,230 @@ mod tests {
         assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
     }
 
+    /// Where the crawl's own redirect chain stops for `url`: the final URL without `base`, and
+    /// its status. The crawl never fails on these chains, so neither may map.
+    async fn crawl_stop(base: &str, url: &str, config: &CrawlConfig) -> (String, u16) {
+        let engine = crate::CrawlEngine::builder()
+            .config(config.clone())
+            .build()
+            .expect("engine builds");
+        let page = engine.scrape(url).await.expect("the crawl does not fail on this chain");
+        (page.final_url.replace(base, ""), page.status_code)
+    }
+
+    #[tokio::test]
+    async fn map_stops_on_a_refresh_target_that_is_not_found_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let start = r#"<html><head><meta http-equiv="refresh" content="0; url=/missing"></head>
+            <body><a href="/fallback">f</a></body></html>"#;
+        mount_body(&mock, "/start", "text/html", start.to_owned()).await;
+        let config = local_test_config();
+
+        let result = map(&format!("{base}/start"), &config).await;
+
+        assert!(
+            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
+            "map must stop on the missing page without failing, got {result:?}"
+        );
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/start"), &config).await,
+            ("/missing".to_owned(), 404)
+        );
+    }
+
+    #[tokio::test]
+    async fn map_stops_on_a_redirect_past_the_limit_after_a_refresh_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        // ~keep /r0 -meta-> /r1 -meta-> /r2 -301-> /r3 with a limit of 2: both refresh hops are
+        // ~keep taken, so the 301 is the page the chain stops on.
+        mount_body(&mock, "/r0", "text/html", meta_refresh_page("0; url=/r1")).await;
+        let r1 = r#"<html><head><meta http-equiv="refresh" content="0; url=/r2"></head>
+            <body><a href="/from-r1">l</a></body></html>"#;
+        mount_body(&mock, "/r1", "text/html", r1.to_owned()).await;
+        mount_redirect(&mock, "/r2", "/r3").await;
+        mount_body(&mock, "/r3", "text/html", page_linking_to("/from-r3")).await;
+        let config = CrawlConfig {
+            max_redirects: 2,
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{base}/r0"), &config).await;
+
+        assert!(
+            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
+            "map must stop on the 301 without failing, got {result:?}"
+        );
+        assert_eq!(
+            request_count(&mock, "/r3").await,
+            0,
+            "a hop past the limit is not requested"
+        );
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            ("/r2".to_owned(), 301)
+        );
+    }
+
+    #[tokio::test]
+    async fn map_does_not_request_a_url_again_when_a_redirect_leads_back_to_it() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        // ~keep /a -meta-> /b -301-> /a: the 301 leads back to a URL already requested, so the
+        // ~keep chain stops on /b as the crawl does.
+        let a = r#"<html><head><meta http-equiv="refresh" content="0; url=/b"></head>
+            <body><a href="/from-a">a</a></body></html>"#;
+        mount_body(&mock, "/a", "text/html", a.to_owned()).await;
+        mount_redirect(&mock, "/b", "/a").await;
+        let config = local_test_config();
+
+        let urls = map_urls(&format!("{base}/a"), &config).await;
+
+        assert_eq!(request_count(&mock, "/a").await, 1, "/a must be requested once");
+        assert_eq!(urls, Vec::<String>::new(), "map stops on /b, which has no links");
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/a"), &config).await,
+            ("/b".to_owned(), 301)
+        );
+    }
+
+    #[tokio::test]
+    async fn map_does_not_request_the_start_url_again_when_a_refresh_leads_back_to_it() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/a", "text/html", meta_refresh_page("0; url=/b")).await;
+        let b = r#"<html><head><meta http-equiv="refresh" content="0; url=/a"></head>
+            <body><a href="/from-b">b</a></body></html>"#;
+        mount_body(&mock, "/b", "text/html", b.to_owned()).await;
+
+        let urls = map_urls(&format!("{base}/a"), &local_test_config()).await;
+
+        assert_eq!(
+            request_count(&mock, "/a").await,
+            1,
+            "the start URL must be requested once"
+        );
+        assert_eq!(urls, vec![format!("{base}/from-b")]);
+    }
+
+    #[tokio::test]
+    async fn map_follows_the_refresh_header_before_a_meta_refresh_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        Mock::given(method("GET"))
+            .and(path("/s"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(meta_refresh_page("0; url=/m"))
+                    .append_header("content-type", "text/html")
+                    .append_header("refresh", "0; url=/h"),
+            )
+            .mount(&mock)
+            .await;
+        mount_body(&mock, "/h", "text/html", page_linking_to("/from-h")).await;
+        mount_body(&mock, "/m", "text/html", page_linking_to("/from-m")).await;
+        let config = local_test_config();
+
+        let urls = map_urls(&format!("{base}/s"), &config).await;
+
+        assert_eq!(urls, vec![format!("{base}/from-h")]);
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/s"), &config).await,
+            ("/h".to_owned(), 200)
+        );
+    }
+
+    #[tokio::test]
+    async fn map_sends_custom_headers_only_to_the_seed_host_along_a_meta_refresh() {
+        let seed = MockServer::start().await;
+        let other = MockServer::start().await;
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        mount_body(&seed, "/start", "text/html", meta_refresh_page("0; url=/mid")).await;
+        let to_other = meta_refresh_page(&format!("0; url={}/page.html", other.uri()));
+        mount_body(&seed, "/mid", "text/html", to_other).await;
+        mount_body(&other, "/page.html", "text/html", page_linking_to("x.html")).await;
+        let seed_url = Url::parse(&seed_base).expect("mock URL must parse");
+        let config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed_url,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            custom_headers: std::collections::HashMap::from([("x-seed-secret".to_owned(), "s3cr3t".to_owned())]),
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&format!("{seed_base}/start"), &config).await;
+
+        assert_eq!(urls, vec![format!("{}/x.html", other.uri())]);
+        let with_secret = |requests: Vec<wiremock::Request>, route: &str| {
+            requests
+                .iter()
+                .filter(|r| r.url.path() == route && r.headers.contains_key("x-seed-secret"))
+                .count()
+        };
+        let seed_requests = seed.received_requests().await.expect("wiremock records requests");
+        let other_requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            with_secret(seed_requests, "/mid"),
+            1,
+            "a refresh hop on the seed host gets the custom header"
+        );
+        assert_eq!(
+            with_secret(other_requests, "/page.html"),
+            0,
+            "the refresh target on another host must not"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_stops_a_redirect_chain_at_the_limit_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/r0", "/r1").await;
+        mount_redirect(&mock, "/r1", "/r2").await;
+        mount_body(&mock, "/r2", "text/html", page_linking_to("/from-r2")).await;
+        let config = CrawlConfig {
+            max_redirects: 1,
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{base}/r0"), &config).await;
+
+        assert!(
+            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
+            "map must stop on the second 301 without failing, got {result:?}"
+        );
+        assert_eq!(
+            request_count(&mock, "/r2").await,
+            0,
+            "a hop past the limit is not requested"
+        );
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            ("/r1".to_owned(), 301)
+        );
+    }
+
+    #[tokio::test]
+    async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/r0", "/missing").await;
+        let config = local_test_config();
+
+        let result = map(&format!("{base}/r0"), &config).await;
+
+        assert!(
+            matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
+            "map must stop on the missing page without failing, got {result:?}"
+        );
+        assert_eq!(
+            crawl_stop(&base, &format!("{base}/r0"), &config).await,
+            ("/missing".to_owned(), 404)
+        );
+    }
+
     #[tokio::test]
     async fn map_resolves_a_relative_urlset_loc_against_the_url_after_a_redirect() {
         let mock = MockServer::start().await;

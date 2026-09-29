@@ -108,6 +108,21 @@ enum HopOutcome {
     Complete(HttpResponse),
 }
 
+/// The response a 404 past the first hop of a followed chain stops on: the crawl's chain reports
+/// the same empty 404 at the missing URL.
+fn not_found_response(url: &url::Url) -> HttpResponse {
+    HttpResponse {
+        status: 404,
+        content_type: String::new(),
+        body: String::new(),
+        body_bytes: Vec::new(),
+        headers: HashMap::new(),
+        browser_extras: None,
+        final_url: url.to_string(),
+        screenshot: None,
+    }
+}
+
 /// Where a 3xx response points.
 enum RedirectTarget {
     /// The `Location` header, resolved against the URL that served the redirect.
@@ -176,7 +191,8 @@ impl ResponseHead {
 /// follows an HTTP 3xx.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RefreshRedirects {
-    /// Follow them as the crawl does. Native only: wasm has no refresh reader, and its crawl
+    /// Follow them as the crawl does, and stop the whole chain where the crawl's chain stops.
+    /// The refresh itself is followed on native only: wasm has no refresh reader, and its crawl
     /// follows no refresh either.
     Follow,
     /// Return the response that names them.
@@ -203,9 +219,8 @@ pub(crate) async fn http_fetch(
 ///
 /// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
 /// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
-/// ~keep `send_hop_request`. As in the crawl's chain, a refresh is followed only while a hop is
-/// ~keep left and never to a URL this fetch already requested; either way the page naming it is
-/// ~keep the response.
+/// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
+/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
 pub(crate) async fn http_fetch_with(
     url: &str,
     config: &CrawlConfig,
@@ -225,18 +240,27 @@ pub(crate) async fn http_fetch_with(
         extra_headers,
         client,
     };
-    let mut visited = VisitedUrls::new(refresh, &initial_url);
+    let mut rules = ChainRules::new(refresh, &initial_url);
     let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
-        let next_url = match fetch_one_hop(&context, &current_url).await? {
+        let hop_left = redirects_followed < config.max_redirects;
+        let follows_location = |target: &url::Url| rules.follows_location(target, hop_left);
+        let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
+            Ok(outcome) => outcome,
+            Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
+                return Ok(not_found_response(&current_url));
+            }
+            Err(error) => return Err(error),
+        };
+        let next_url = match outcome {
             HopOutcome::Redirect(next_url) => next_url,
             HopOutcome::Complete(response) => {
-                if redirects_followed >= config.max_redirects {
+                if !hop_left {
                     return Ok(response);
                 }
-                match visited.refresh_target(&response, &current_url) {
+                match rules.refresh_target(&response, &current_url) {
                     Some(next_url) => next_url,
                     None => return Ok(response),
                 }
@@ -259,19 +283,28 @@ pub(crate) async fn http_fetch_with(
             return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
         }
 
-        visited.insert(&next_url);
+        rules.insert(&next_url);
         current_url = next_url;
     }
 }
 
-/// The URLs one fetch has requested, kept only when it follows refreshes.
+/// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
+/// has requested.
+///
+/// ~keep The rules are the crawl's (`engine/redirect.rs`'s `follow_redirects` and
+/// ~keep `next_redirect_target`): the limit is checked first, a `Location` is followed only to a
+/// ~keep URL not yet requested and otherwise falls through to the refresh sources, a 3xx that
+/// ~keep leads nowhere new is the response, and a 404 past the first hop is the response. The
+/// ~keep crawl fails none of these chains, so a map of the same chain does not fail either.
+/// ~keep A fetch that ignores refreshes keeps the plain rules: every `Location` is followed and a
+/// ~keep hop past the limit or a 404 is an error.
 ///
 /// ~keep A parsed URL's serialization is already the crawl's cycle key for it
 /// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
 /// ~keep serialization is stored and compared directly.
-struct VisitedUrls(Option<std::collections::HashSet<String>>);
+struct ChainRules(Option<std::collections::HashSet<String>>);
 
-impl VisitedUrls {
+impl ChainRules {
     fn new(refresh: RefreshRedirects, initial_url: &url::Url) -> Self {
         let mut visited = Self((refresh == RefreshRedirects::Follow).then(std::collections::HashSet::new));
         visited.insert(initial_url);
@@ -282,6 +315,18 @@ impl VisitedUrls {
         if let Some(seen) = self.0.as_mut() {
             seen.insert(url.as_str().to_owned());
         }
+    }
+
+    /// Whether the fetch goes on to the `Location` target `target`, given whether a hop is left.
+    fn follows_location(&self, target: &url::Url, hop_left: bool) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|seen| hop_left && !seen.contains(target.as_str()))
+    }
+
+    /// Whether `error`, raised past the first hop, ends the chain on a response instead.
+    fn stops_on(&self, error: &CrawlError) -> bool {
+        self.0.is_some() && matches!(error, CrawlError::NotFound { .. })
     }
 
     /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
@@ -301,16 +346,25 @@ impl VisitedUrls {
 }
 
 /// Fetch `current_url` once, without following any redirect it returns.
-async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Result<HopOutcome, CrawlError> {
+///
+/// A 3xx names its `Location` as the next hop when `follows_location` accepts it; otherwise the
+/// 3xx is the response.
+async fn fetch_one_hop(
+    context: &FetchContext<'_>,
+    current_url: &url::Url,
+    follows_location: impl Fn(&url::Url) -> bool,
+) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     let head = ResponseHead::from_response(&resp);
 
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
-            Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
-            Some(RedirectTarget::Unfollowable) => {
+            Some(RedirectTarget::Follow(next_url)) if follows_location(&next_url) => {
+                return Ok(HopOutcome::Redirect(next_url));
+            }
+            Some(_) => {
                 return Ok(HopOutcome::Complete(
-                    unfollowable_redirect_response(context.config, resp, head).await,
+                    unfollowed_redirect_response(context.config, resp, head).await,
                 ));
             }
             None => {}
@@ -437,8 +491,9 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
     })
 }
 
-/// Return a 3xx whose `Location` names no URL the crawler can fetch as the response itself.
-async fn unfollowable_redirect_response(
+/// Return a 3xx whose `Location` is not followed as the response itself: it names no URL the
+/// crawler can fetch, or the chain's rules stop before it.
+async fn unfollowed_redirect_response(
     config: &CrawlConfig,
     resp: reqwest::Response,
     head: ResponseHead,
@@ -1316,6 +1371,45 @@ mod tests {
 
         assert_eq!(response.status, 302, "the 3xx itself must be returned");
         assert_eq!(response.body, "moved", "its body must be read");
+    }
+
+    #[tokio::test]
+    async fn a_followed_chain_stops_on_a_404_past_the_first_hop_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/here"))
+            .respond_with(ResponseTemplate::new(301).append_header("location", "/missing"))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let fetch = |route: &str, refresh| {
+            let url = format!("{}{route}", mock.uri());
+            let (config, client) = (&config, &client);
+            async move { http_fetch_with(&url, config, &HashMap::new(), client, refresh).await }
+        };
+
+        let response = fetch("/here", RefreshRedirects::Follow)
+            .await
+            .expect("a 404 past the first hop must not fail a followed chain");
+        assert_eq!(response.status, 404);
+        assert_eq!(response.final_url, format!("{}/missing", mock.uri()));
+        assert!(response.body.is_empty(), "the crawl's chain reports an empty 404");
+
+        assert!(
+            matches!(
+                fetch("/missing", RefreshRedirects::Follow).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a 404 on the first hop still fails, as in the crawl"
+        );
+        assert!(
+            matches!(
+                fetch("/here", RefreshRedirects::Ignore).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a plain fetch keeps failing on a 404 anywhere in the chain"
+        );
     }
 
     #[tokio::test]

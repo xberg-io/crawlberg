@@ -48,7 +48,9 @@ All notable changes to crawlberg are documented here.
   `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
   followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
   each hop counts toward `max_redirects`, each hop passes the SSRF policy, and the seed's
-  credentials go only to the seed host. The links come from the page it lands on. (#502)
+  credentials go only to the seed host. The links come from the page it lands on. A chain that
+  reaches the redirect limit, leads back to a URL it already requested, or ends on a missing
+  page now stops there, as the crawl does, instead of failing the whole `map()`. (#502)
 
 - **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
   request sent the fixed default agent, and robots.txt was judged for that same default agent.
