@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
-use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, read_one_document};
+use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, page_content, read_one_document};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
     ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch, listed_refusal,
@@ -224,15 +224,7 @@ async fn final_page(page: &chromiumoxide::Page, refused: &[String]) -> Result<(S
 /// The HTML of `page` and the committed document it was read from, bound by
 /// [`read_one_document`]. `what` names the read in its error.
 async fn read_page_html(page: &chromiumoxide::Page, what: &str) -> Result<(String, CommittedDocument), CrawlError> {
-    read_one_document(
-        || committed_document(page),
-        move || async move {
-            page.content()
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to {what}: {e}")))
-        },
-    )
-    .await
+    read_one_document(|| committed_document(page), || page_content(page, what)).await
 }
 
 /// The result of a navigation that ended on a response without a document: the URL that

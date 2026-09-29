@@ -42,6 +42,31 @@ pub(crate) async fn committed_document(page: &chromiumoxide::Page) -> Result<Com
         .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
 }
 
+/// The HTML of `page`. `what` names the read in its error.
+pub(crate) async fn page_content(page: &chromiumoxide::Page, what: &str) -> Result<String, CrawlError> {
+    let html = page
+        .content()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to {what}: {e}")))?;
+    #[cfg(test)]
+    navigate_after_content(page).await;
+    Ok(html)
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// A URL the page navigates to once, right after the next HTML read in this task. A test sets
+    /// it to commit a new document between a read of the HTML and a read of the document.
+    pub(crate) static NAVIGATE_AFTER_CONTENT: std::cell::Cell<Option<String>>;
+}
+
+#[cfg(test)]
+async fn navigate_after_content(page: &chromiumoxide::Page) {
+    if let Some(url) = NAVIGATE_AFTER_CONTENT.try_with(std::cell::Cell::take).ok().flatten() {
+        page.goto(url).await.expect("the test navigation must load");
+    }
+}
+
 /// Read the page with `read` and pair the result with the document `read_document` reports.
 ///
 /// ~keep `read` runs in whatever document is committed when it arrives, so a navigation that
