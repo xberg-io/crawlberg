@@ -3,7 +3,7 @@ version = '4.0'
 name = 'Crawlberg'
 description = 'Web crawling and scraping library with active Python, TypeScript/Node, Ruby, PHP, Go, Java/JNI, C#, Elixir, WebAssembly, Dart, Kotlin Android, Swift, Zig, and C FFI bindings'
 gitignore = true
-presets = ["claude", "codex"]
+presets = ["claude", "codex", "opencode"]
 builtins = [
   'rust',
   'python',
