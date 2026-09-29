@@ -142,9 +142,7 @@ pub(super) async fn launch_or_connect(
                  the remote Chrome process's profile is managed externally"
             );
         }
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         let user_data = resolve_user_data_dir(config)?;
@@ -388,6 +386,58 @@ mod tests {
             !path.exists(),
             "an unclaimed ephemeral profile directory must be removed"
         );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password or path token, though the failing origin must still be readable for debugging.
+    ///
+    /// ~keep A closed local port refuses the connection immediately, so this needs no real
+    /// ~keep Chrome and stays fast. `ws://` skips chromiumoxide's `json/version` HTTP probe
+    /// ~keep and goes straight to the WebSocket handshake. The endpoint-listener test just
+    /// ~keep below reaches the same error path with a local socket that answers HTTP 418, so
+    /// ~keep a closed port is not the only way here; it stays because it needs no listener at all.
+    #[tokio::test]
+    async fn connect_error_prints_only_the_endpoint_origin() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            !msg.contains("b1946ac9-guid"),
+            "the CDP path token must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
+        );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 
     /// `hand_over` passes the path on and stops the guard from removing it.
