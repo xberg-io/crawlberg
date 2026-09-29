@@ -20,24 +20,30 @@ impl CrawlEngine {
     ///   and re-runs the extraction pipeline on the rendered HTML.
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         let (engine, seed) = self.admit(url)?;
-        engine.scrape_seed(&seed, None).await
+        engine.scrape_seed(&seed).await
     }
 
     /// Scrape an admitted seed URL. See [`CrawlEngine::scrape`].
+    pub(crate) async fn scrape_seed(&self, seed: &SeedUrl) -> Result<ScrapeResult, CrawlError> {
+        self.scrape_in_scope(seed.as_str(), None).await
+    }
+
+    /// Scrape `url` under the credential scope this engine's seed admission set.
+    ///
+    /// The sequential crawl loop scrapes each frontier entry through this, not through
+    /// [`CrawlEngine::scrape`], which would admit the entry as a new seed and scope the
+    /// credentials to the entry's host.
     ///
     /// `forced_user_agent` pins the agent this fetch sends, ahead of the configured default.
-    /// `scrape()` above passes `None`; the wasm crawl loop's own per-page rotation pick passes
-    /// `Some(agent)` so the same pick that judged this page's robots.txt also reaches the wire
-    /// (crawlberg#483), on every target -- native's fetch path included, since wasm32 has no
-    /// test runner in this repo and this loop's tests exercise it through native's `scrape_seed`
-    /// branch instead.
-    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %seed))]
-    pub(crate) async fn scrape_seed(
+    /// `scrape_seed()` above passes `None`; the sequential crawl loop passes its per-page
+    /// rotation pick, so the agent that judged this page's robots.txt is the agent the fetch
+    /// sends (crawlberg#483).
+    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %url))]
+    pub(super) async fn scrape_in_scope(
         &self,
-        seed: &SeedUrl,
+        url: &str,
         forced_user_agent: Option<&str>,
     ) -> Result<ScrapeResult, CrawlError> {
-        let url = seed.as_str();
         self.config.validate()?;
 
         #[cfg(not(target_arch = "wasm32"))]

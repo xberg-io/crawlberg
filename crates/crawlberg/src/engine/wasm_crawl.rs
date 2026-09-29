@@ -298,16 +298,9 @@ impl CrawlEngine {
         state: &mut SequentialState,
         agent: &str,
     ) -> Option<ScrapeResult> {
-        // ~keep Not the public `scrape()`: this pins `agent`, the pick `drive_sequential_loop`
-        // ~keep already judged this page's robots.txt for, onto the fetch itself
-        // ~keep (crawlberg#483) -- `scrape()` always forces `None`, which would let this fetch
-        // ~keep pick (or, on native under `cfg(test)`, send) a different agent than the one
-        // ~keep just admitted it.
-        let result = match self.admit(&entry.url) {
-            Ok((engine, seed)) => engine.scrape_seed(&seed, Some(agent)).await,
-            Err(e) => Err(e),
-        };
-        match result {
+        // ~keep `agent` is the pick `drive_sequential_loop` already judged this page's robots.txt
+        // ~keep for; pinning it here makes the fetch send that same agent (crawlberg#483).
+        match self.scrape_in_scope(&entry.url, Some(agent)).await {
             Ok(scrape) => Some(scrape),
             Err(e) => {
                 state.pages_failed += 1;
@@ -504,7 +497,7 @@ impl CrawlEngine {
         let mut results = Vec::with_capacity(urls.len());
         for url in urls {
             results.push(match self.admit(url) {
-                Ok((engine, seed)) => (seed.as_str().to_owned(), engine.scrape_seed(&seed, None).await),
+                Ok((engine, seed)) => (seed.as_str().to_owned(), engine.scrape_seed(&seed).await),
                 Err(e) => (super::admission::admission_key(url, None), Err(e)),
             });
         }
