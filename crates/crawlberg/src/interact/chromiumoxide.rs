@@ -10,8 +10,11 @@ use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
+use crate::chrome_frame::{CommittedDocument, committed_document, error_page_error, read_one_document};
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
+use crate::ssrf_intercept::{
+    ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch, listed_refusal,
+};
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -187,15 +190,7 @@ async fn run_session(
 
     let (action_results, screenshot) = run_actions(page, watch, actions).await;
 
-    let final_html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-    let final_url = evaluate_json(page, "location.href")
-        .await
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| url.to_owned());
+    let (final_html, final_url) = final_page(page, &watch.refused_urls().await).await?;
 
     let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
 
@@ -207,6 +202,37 @@ async fn run_session(
         screenshot_base64,
         ssrf_refused_urls: watch.refused_urls().await,
     })
+}
+
+/// The final HTML and URL of the session, both of one committed document.
+///
+/// ~keep Chrome's own error page is never the final HTML. When it shows a navigation the SSRF check
+/// ~keep refused, the refusal already failed the action that caused it and is in `refused`, so the
+/// ~keep session keeps its result, with no HTML and the refused URL as it is listed. Any other error
+/// ~keep page fails the session.
+async fn final_page(page: &chromiumoxide::Page, refused: &[String]) -> Result<(String, String), CrawlError> {
+    let (html, document) = read_page_html(page, "extract final HTML").await?;
+    if let Some(failed_url) = document.unreachable_url {
+        return match listed_refusal(&failed_url, refused) {
+            Some(listed) => Ok((String::new(), listed)),
+            None => Err(error_page_error(&failed_url)),
+        };
+    }
+    Ok((html, document.url))
+}
+
+/// The HTML of `page` and the committed document it was read from, bound by
+/// [`read_one_document`]. `what` names the read in its error.
+async fn read_page_html(page: &chromiumoxide::Page, what: &str) -> Result<(String, CommittedDocument), CrawlError> {
+    read_one_document(
+        || committed_document(page),
+        move || async move {
+            page.content()
+                .await
+                .map_err(|e| CrawlError::browser_error(format!("failed to {what}: {e}")))
+        },
+    )
+    .await
 }
 
 /// The result of a navigation that ended on a response without a document: the URL that
@@ -419,10 +445,12 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
                 .format(CaptureScreenshotFormat::Png)
                 .full_page(full_page.unwrap_or(false))
                 .build();
-            let bytes = page
-                .screenshot(params)
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))?;
+            let bytes = fail_if_run_on_error_page(page, async {
+                page.screenshot(params)
+                    .await
+                    .map_err(|e| CrawlError::browser_error(format!("failed to capture screenshot: {e}")))
+            })
+            .await?;
             let len = bytes.len();
             Ok(ActionData {
                 data: Some(json!({ "bytes": len, "format": "png" })),
@@ -430,17 +458,40 @@ async fn execute_action(page: &chromiumoxide::Page, action: &PageAction) -> Resu
             })
         }
         PageAction::ExecuteJs { script } => {
-            let value = evaluate_json(page, script).await?;
+            let value = fail_if_run_on_error_page(page, evaluate_json(page, script)).await?;
             Ok(ActionData::data(value))
         }
         PageAction::Scrape => {
-            let html = page
-                .content()
-                .await
-                .map_err(|e| CrawlError::browser_error(format!("failed to scrape current page: {e}")))?;
+            // ~keep Chrome's own error page is never the site's content, so a Scrape on it fails.
+            let (html, document) = read_page_html(page, "scrape current page").await?;
+            if let Some(failed_url) = document.unreachable_url {
+                return Err(error_page_error(&failed_url));
+            }
             Ok(ActionData::data(json!({ "html": html })))
         }
     }
+}
+
+/// Run `action` once, and fail when the document committed just before it started was Chrome's
+/// own error page.
+///
+/// ~keep Checks once, not bound to a document the way [`read_page_html`] binds a read: that
+/// ~keep binding repeats the read when the document changes between its own before and after
+/// ~keep check, which is safe for `page.content()` but not here. ExecuteJs and Screenshot can have
+/// ~keep side effects: a script may navigate the page away from the error page, as
+/// ~keep `history.back()` does, and a fast back-navigation can commit inside the round trip of an
+/// ~keep after-check. Repeating the script on that mismatch would run it a second time. The action
+/// ~keep still runs, so a script that leaves the error page can recover the session.
+async fn fail_if_run_on_error_page<T>(
+    page: &chromiumoxide::Page,
+    action: impl std::future::Future<Output = Result<T, CrawlError>>,
+) -> Result<T, CrawlError> {
+    let document = committed_document(page).await?;
+    let value = action.await?;
+    if let Some(failed_url) = &document.unreachable_url {
+        return Err(error_page_error(failed_url));
+    }
+    Ok(value)
 }
 
 async fn evaluate_json(page: &chromiumoxide::Page, script: &str) -> Result<serde_json::Value, CrawlError> {

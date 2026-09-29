@@ -36,6 +36,9 @@ pub(crate) struct BrowserPage {
     /// HTTP redirects the browser followed. The native backend does not report its chain,
     /// so for it a landing on another URL counts as one.
     pub(crate) redirects: usize,
+    /// Whether the navigation that received the response followed an HTTP redirect to it. For a
+    /// page that navigated itself after the load, that is the late navigation, not the seed.
+    pub(crate) redirected: bool,
     /// The URLs the SSRF policy refused for requests the page sent, credential-redacted.
     pub(crate) refused: Vec<String>,
 }
@@ -74,16 +77,19 @@ pub(crate) async fn browser_fetch(
             let (response, refused) = native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
             let (response, refused) = native_fetch(url, config, prior_cookies).await?;
+            let redirected = response.final_url != url;
             BrowserPage {
-                redirects: usize::from(response.final_url != url),
+                redirects: usize::from(redirected),
+                redirected,
                 response,
                 refused,
             }
         }
     };
     Ok(BrowserPage {
-        response: crate::http::rendered_status_outcome(page.response, page.redirects > 0, config)?,
+        response: crate::http::rendered_status_outcome(page.response, page.redirected, config)?,
         redirects: page.redirects,
+        redirected: page.redirected,
         refused: page.refused,
     })
 }
@@ -467,4 +473,70 @@ async fn native_fetch(
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
     ))
+}
+
+#[cfg(all(test, feature = "browser-native"))]
+mod tests {
+    use std::time::Duration;
+
+    use crawlberg_browser::adapter::{NativeBrowserExecutor, NativeBrowserExecutorConfig};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::{BrowserPage, browser_fetch};
+    use crate::error::CrawlError;
+    use crate::types::{BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig};
+
+    async fn native_fetch_route(
+        site: &MockServer,
+        route: &str,
+        executor: &NativeBrowserExecutor,
+    ) -> Result<BrowserPage, CrawlError> {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: BrowserBackend::Native,
+                mode: BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        browser_fetch(
+            &format!("{}{route}", site.uri()),
+            &config,
+            None,
+            None,
+            false,
+            Some(executor),
+        )
+        .await
+    }
+
+    /// A native fetch that followed a redirect to a 404 is a page with status 404 and no body,
+    /// as in HTTP mode. The same 404 without the redirect is `NotFound`.
+    #[tokio::test]
+    async fn a_native_fetch_reports_a_404_after_a_redirect_as_a_page() {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/missing"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw("<html><body>gone</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/moved"))
+            .respond_with(ResponseTemplate::new(302).append_header("location", "/missing"))
+            .mount(&site)
+            .await;
+        let executor = NativeBrowserExecutor::new(NativeBrowserExecutorConfig::with_workers(1))
+            .expect("single-worker executor should start");
+        let page = native_fetch_route(&site, "/moved", &executor)
+            .await
+            .expect("a 404 at the end of a redirect is a page");
+        assert_eq!(
+            (page.response.status, page.response.body.as_str(), page.redirected),
+            (404, "", true)
+        );
+        let direct = native_fetch_route(&site, "/missing", &executor).await;
+        assert!(matches!(direct, Err(CrawlError::NotFound { .. })), "{:?}", direct.err());
+    }
 }

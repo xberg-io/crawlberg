@@ -7,14 +7,15 @@ use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
-use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, GetFrameTreeParams};
+use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
 use super::launch::resolve_default_user_agent;
+use crate::chrome_frame::{committed_document, error_page_error, read_one_document};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
-use crate::ssrf_intercept::{StoppedResponse, Watch};
+use crate::ssrf_intercept::{DocumentResponse, StoppedResponse, Watch};
 use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
@@ -26,6 +27,9 @@ const STEALTH_VIEWPORT_HEIGHT: u32 = 1080;
 /// and the content type reported for every rendered page.
 const RENDERED_PAGE_STATUS: u16 = 200;
 const RENDERED_PAGE_CONTENT_TYPE: &str = "text/html";
+
+/// How long a page screenshot may take before the page is reported without one.
+const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Navigate a pre-existing CDP page to `url`, wait for rendering, and extract
 /// the final HTML. The caller provides the page; this function does not
@@ -60,17 +64,20 @@ pub(super) async fn page_fetch(
 
     apply_prior_cookies(page, prior_cookies).await;
 
-    let mut rendered = render(url, config, page, watch, want_screenshot).await?;
+    let rendered = render(url, config, page, watch, want_screenshot).await;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
     // ~keep of `extra_wait` is not missed while its DNS lookup runs.
-    rendered.refused = watch.refused_urls().await;
+    let refused = watch.refused_urls().await;
     // ~keep A main-frame navigation the policy refused leaves Chrome's error page in place of
     // ~keep the page, so it fails the fetch even when the navigation `goto` waited for succeeded:
-    // ~keep the refused one can come during the load or after it, during `extra_wait`. Any other
+    // ~keep the refused one can come during the load or after it, during `extra_wait`. It is
+    // ~keep checked before the render's own result, which fails on that same error page. Any other
     // ~keep refused request keeps the page and is listed on it.
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
+    let mut rendered = rendered?;
+    rendered.refused = refused;
     Ok(rendered)
 }
 
@@ -80,9 +87,9 @@ pub(super) async fn page_fetch(
 /// ~keep `extra_wait` (a challenge page that moves to the real page, for example) reports the
 /// ~keep status and headers of the new document. They are those of the main-frame document
 /// ~keep committed when they are read. A response Chrome does not commit (a 204, a 2xx download)
-/// ~keep leaves the previous document in place, and its status with it. The read is a separate
-/// ~keep CDP call from reading the HTML: a navigation that commits between the two calls pairs
-/// ~keep them with a different document.
+/// ~keep leaves the previous document in place, and its status with it. The HTML and the status
+/// ~keep are those of one committed document. When that document is Chrome's own error page, its
+/// ~keep HTML is never the page.
 async fn render(
     url: &str,
     config: &CrawlConfig,
@@ -111,23 +118,39 @@ async fn render(
         return Ok(BrowserPage {
             response: stopped_response(stop),
             redirects: intercepted.redirects_followed,
+            redirected: intercepted.redirects_followed > 0,
             refused: Vec::new(),
         });
     }
-    resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
+    if let Err(error) = resolve_navigation_outcome(navigation, intercepted.blocked, timeout) {
+        if matches!(error, CrawlError::BrowserError { .. })
+            && let Some(outcome) = answered_error_page(page, watch, intercepted.redirects_followed).await
+        {
+            return outcome;
+        }
+        return Err(error);
+    }
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
 
-    let html = page
-        .content()
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-    let loader_id = committed_loader_id(page).await?;
-    let (status, headers) = watch.document(&loader_id).map_or_else(
-        || (RENDERED_PAGE_STATUS, HashMap::new()),
-        |doc| (doc.status, doc.headers),
+    let (html, document) = read_one_document(
+        || committed_document(page),
+        move || async move {
+            page.content()
+                .await
+                .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))
+        },
+    )
+    .await?;
+    let recorded = watch.document(&document.loader_id);
+    if let Some(failed_url) = document.unreachable_url {
+        return error_page_outcome(failed_url, recorded, intercepted.redirects_followed);
+    }
+    let (status, headers, redirected) = recorded.map_or_else(
+        || (RENDERED_PAGE_STATUS, HashMap::new(), false),
+        |doc| (doc.status, doc.headers, doc.redirects > 0),
     );
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
@@ -149,16 +172,55 @@ async fn render(
             screenshot,
         },
         redirects: intercepted.redirects_followed,
+        redirected,
         refused: Vec::new(),
     })
 }
 
-/// The loader id of the document the main frame has committed.
-async fn committed_loader_id(page: &chromiumoxide::Page) -> Result<String, CrawlError> {
-    page.execute(GetFrameTreeParams::default())
-        .await
-        .map(|tree| tree.result.frame_tree.frame.loader_id.into())
-        .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
+/// The outcome of a navigation that failed on Chrome's error page for a response the server
+/// sent, or `None` when the main frame shows no error page or no response was recorded for it.
+///
+/// ~keep A navigation `goto` reports as failed can still have committed Chrome's error page for a
+/// ~keep response the server sent: Chrome fails a seed that answers an error status with an empty
+/// ~keep body with `ERR_HTTP_RESPONSE_CODE_FAILURE`. The server did answer, so the response decides
+/// ~keep the outcome as it does for a late navigation that ends on the error page.
+async fn answered_error_page(
+    page: &chromiumoxide::Page,
+    watch: &Watch,
+    redirects: usize,
+) -> Option<Result<BrowserPage, CrawlError>> {
+    let document = committed_document(page).await.ok()?;
+    let failed_url = document.unreachable_url?;
+    let recorded = watch.document(&document.loader_id)?;
+    Some(error_page_outcome(failed_url, Some(recorded), redirects))
+}
+
+/// The outcome of a main frame that committed Chrome's error page for `failed_url`, whose
+/// response, if one arrived, is `recorded`. `redirects` are the HTTP redirects of the seed.
+///
+/// ~keep The error page is Chrome's, never the server's content. When the server answered, the
+/// ~keep response is reported with its status and headers and no body, and HTTP mode's status
+/// ~keep handling decides on it: a 404 or 500 raises the same error, and a 400 or 501 is a page.
+/// ~keep A late navigation's own redirects decide whether a 404 is a page, not the seed's. A
+/// ~keep navigation that got no response fails with a browser error.
+fn error_page_outcome(
+    failed_url: String,
+    recorded: Option<DocumentResponse>,
+    redirects: usize,
+) -> Result<BrowserPage, CrawlError> {
+    let Some(recorded) = recorded else {
+        return Err(error_page_error(&failed_url));
+    };
+    Ok(BrowserPage {
+        response: stopped_response(StoppedResponse {
+            url: failed_url,
+            status: recorded.status,
+            headers: recorded.headers,
+        }),
+        redirects,
+        redirected: recorded.redirects > 0,
+        refused: Vec::new(),
+    })
 }
 
 /// The response a navigation stopped on without a document, with no body, as the HTTP
@@ -267,12 +329,18 @@ async fn capture_screenshot(
         .format(CaptureScreenshotFormat::Png)
         .full_page(false)
         .build();
-    match page.screenshot(params).await {
-        Ok(bytes) => Some(bytes),
-        Err(e) => {
+    // ~keep Bounded because Chrome can leave a screenshot unanswered while the page keeps
+    // ~keep replacing its document, which held the fetch until its deadline.
+    match tokio::time::timeout(SCREENSHOT_TIMEOUT, page.screenshot(params)).await {
+        Ok(Ok(bytes)) => Some(bytes),
+        Ok(Err(e)) => {
             // ~keep A failed screenshot must not fail an otherwise-successful page fetch;
             // ~keep the caller still gets HTML, just no image.
             tracing::warn!(error = %e, "failed to capture page screenshot; continuing without one");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(timeout = ?SCREENSHOT_TIMEOUT, "page screenshot timed out; continuing without one");
             None
         }
     }
@@ -433,6 +501,72 @@ mod tests {
         assert!(
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
+        );
+    }
+
+    fn error_page(status: u16, redirects: usize) -> Result<HttpResponse, CrawlError> {
+        let recorded = DocumentResponse {
+            status,
+            headers: HashMap::from([("content-type".to_owned(), vec!["text/plain".to_owned()])]),
+            redirects,
+        };
+        let page = error_page_outcome("https://example.com/dl".to_owned(), Some(recorded), 0)
+            .expect("a response the server sent is reported");
+        crate::http::rendered_status_outcome(page.response, page.redirected, &CrawlConfig::default())
+    }
+
+    #[test]
+    fn an_error_page_with_a_response_is_handled_as_http_mode_handles_its_status() {
+        let url = "https://example.com/dl";
+        for status in [400_u16, 405, 409, 413, 422, 451, 501, 505, 511, 599] {
+            let page = error_page(status, 0).unwrap_or_else(|error| panic!("{status} is a page: {error:?}"));
+            assert_eq!(
+                (
+                    page.status,
+                    page.body.as_str(),
+                    page.final_url.as_str(),
+                    page.content_type.as_str()
+                ),
+                (status, "", url, "text/plain"),
+                "{status}"
+            );
+        }
+        for status in [401_u16, 404, 408, 410, 429, 500, 502, 503, 504] {
+            let Err(error) = error_page(status, 0) else {
+                panic!("HTTP mode raises {status} as an error");
+            };
+            let expected = crate::http::status_error(status, url).expect("an error status");
+            assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{status}");
+        }
+        for status in [408_u16, 429, 500, 502, 503, 504] {
+            let Err(error) = error_page(status, 0) else {
+                panic!("HTTP mode raises {status} as an error");
+            };
+            assert!(
+                crate::http::should_retry_error(&error, &[status]),
+                "retry_codes [{status}] must see the status of {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_error_page_404_is_a_page_only_when_its_own_navigation_redirected() {
+        assert!(matches!(error_page(404, 0), Err(CrawlError::NotFound { .. })));
+        let page = error_page(404, 1).expect("a 404 at the end of a redirect is a page");
+        assert_eq!((page.status, page.body.as_str()), (404, ""));
+    }
+
+    #[test]
+    fn an_error_page_without_a_response_is_a_browser_error() {
+        let error = error_page_outcome("https://user:s3cretpw@example.com/gone".to_owned(), None, 0)
+            .err()
+            .expect("no response arrived");
+        let CrawlError::BrowserError { message, .. } = &error else {
+            panic!("got {error:?}");
+        };
+        assert!(
+            message.contains("example.com/gone") && !message.contains("s3cretpw"),
+            "{message}"
         );
     }
 }
