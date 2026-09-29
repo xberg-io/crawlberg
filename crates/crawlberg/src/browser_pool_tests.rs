@@ -122,7 +122,7 @@ fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zom
         path.join("state").exists(),
         "the stand-in must write into the directory"
     );
-    let chrome = chrome_of(helper.id()).expect("the stand-in's executable must be readable");
+    let chrome = chrome_started_by(helper.id(), &path).expect("the stand-in's executable must be readable");
 
     let started = std::time::Instant::now();
     stop_chrome_processes_using(&path, &chrome);
@@ -220,43 +220,123 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
     child
 }
 
-/// Dropping a profile directory leaves running a process that is not Chrome, even one that
-/// carries the exact flag as an argument of its own, as a shell, `strace` or `grep` can.
+/// Dropping a profile directory stops the Chrome launched on it and leaves running a process that
+/// is not Chrome, even one that carries the exact flag as an argument of its own, as a shell,
+/// `strace` or `grep` can.
 ///
-/// ~keep A `sleep` stands in for the Chrome launched on the directory. It lies in the same
-/// ~keep directory as the bystander's `sh`, as a launcher such as `/usr/bin/snap` lies beside
-/// ~keep shells, so only the executable itself tells the two apart.
+/// ~keep A `cat` blocked on its stdin stands in for the Chrome launched on the directory, with the
+/// ~keep flag as an operand it never reaches. It lies in the same directory as the bystander's `sh`,
+/// ~keep as a launcher such as `/usr/bin/snap` lies beside shells, so only the executable itself
+/// ~keep tells the two apart.
 #[cfg(unix)]
 #[test]
 fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
     let mut dir =
         ScratchProfileDir::create("crawlberg-profile-bystander-test-").expect("the directory must be creatable");
-    let mut chrome = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .expect("sleep must start");
-    dir.record_chrome(chrome.id());
     let path = dir.path().to_path_buf();
-    let mut bystander = spawn_bystander(&user_data_dir_flag(&path));
+    let flag = user_data_dir_flag(&path);
+    let mut chrome = std::process::Command::new("cat")
+        .args(["--", "-", &flag])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let mut bystander = spawn_bystander(&flag);
+    dir.record_chrome(chrome.id());
 
     drop(dir);
     let removed = wait_for_removal(&path);
 
+    let stopped = chrome.try_wait().expect("the status must be readable").is_some();
     let running = bystander.try_wait().expect("the status must be readable").is_none();
     let _ = bystander.kill();
     let _ = bystander.wait();
     let _ = chrome.kill();
     let _ = chrome.wait();
     assert!(removed, "the directory must be removed");
+    assert!(stopped, "the Chrome launched on the directory must be killed");
     assert!(running, "a process that is not Chrome must not be killed");
+}
+
+/// A pid from the scan that now names a process without the flag, as a pid reused since the scan
+/// does, is not killed.
+///
+/// ~keep `/` holds every executable, so only the check of the command line spares the process.
+#[cfg(unix)]
+#[test]
+fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
+    let dir = tempfile::tempdir().expect("the directory must be creatable");
+    let mut other = std::process::Command::new("cat")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+
+    kill_if_chrome_using(
+        sysinfo::Pid::from_u32(other.id()),
+        &user_data_dir_flag(dir.path()),
+        std::path::Path::new("/"),
+    );
+    std::thread::sleep(Duration::from_millis(200));
+
+    let running = other.try_wait().expect("the status must be readable").is_none();
+    let _ = other.kill();
+    let _ = other.wait();
+    assert!(running, "a process that does not name the profile must not be killed");
+}
+
+/// A pid reused between the scan and the kill is not killed.
+///
+/// ~keep Forces the reuse as the review did: the scanned process exits and is reaped, then
+/// ~keep `ns_last_pid` hands its pid to a new process. Writing `ns_last_pid` needs root, so the test
+/// ~keep returns early without it, and says so.
+#[cfg(target_os = "linux")]
+#[test]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
+    let dir = tempfile::tempdir().expect("the directory must be creatable");
+    let flag = user_data_dir_flag(dir.path());
+    let mut scanned = std::process::Command::new("cat")
+        .args(["--", "-", &flag])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let pid = scanned.id();
+    let chrome = chrome_started_by(pid, dir.path()).expect("the scanned process's executable must be readable");
+    let mut system = sysinfo::System::new();
+    let users: Vec<_> = processes_naming(&mut system, &flag)
+        .into_iter()
+        .filter(|process| runs(process, &chrome))
+        .map(sysinfo::Process::pid)
+        .collect();
+    let _ = scanned.kill();
+    let _ = scanned.wait();
+    if std::fs::write("/proc/sys/kernel/ns_last_pid", (pid - 1).to_string()).is_err() {
+        eprintln!("skipping: choosing the next pid needs root");
+        return;
+    }
+    let mut reused = std::process::Command::new("cat")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let forced = reused.id() == pid;
+
+    for &user in &users {
+        kill_if_chrome_using(user, &flag, &chrome);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+
+    let running = reused.try_wait().expect("the status must be readable").is_none();
+    let _ = reused.kill();
+    let _ = reused.wait();
+    assert_eq!(users, [sysinfo::Pid::from_u32(pid)], "the scan must find the process");
+    assert!(forced, "the new process must reuse the scanned pid");
+    assert!(running, "the process that reused the pid must not be killed");
 }
 
 /// Removing the profile directory of a Chrome that is still running stops that Chrome first.
 ///
 /// ~keep A real Chrome, because Chrome rewrites the command line of each of its processes into
 /// ~keep one space-joined string, which a stand-in started with separate arguments does not do, and
-/// ~keep because its helpers must run the executable the launch reads from the browser process. The
-/// ~keep browser's exit is read from its own handle, not from the process scan under test.
+/// ~keep because its helpers must run the executable the launch reads from the process tree.
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
@@ -269,16 +349,29 @@ async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
             return;
         }
     };
-    let (mut browser, mut handler, dir) = match dir.launch(config).await {
+    let (browser, handler, dir) = match dir.launch(config).await {
         Ok(launched) => launched,
         Err(error) => {
             eprintln!("skipping: no usable Chrome: {error}");
             return;
         }
     };
+    assert_dropping_the_profile_stops_its_chrome(browser, handler, dir, path).await;
+}
+
+/// Drop `profile`, the profile directory of the running Chrome `browser` at `path`, and assert
+/// that the drop stops that Chrome and removes the directory for good.
+///
+/// ~keep The browser's exit is read from its own handle, not from the process scan under test.
+pub(crate) async fn assert_dropping_the_profile_stops_its_chrome<P>(
+    mut browser: Browser,
+    mut handler: Handler,
+    profile: P,
+    path: std::path::PathBuf,
+) {
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    drop(dir);
+    drop(profile);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut exited = browser.try_wait().expect("the browser's status must be readable");
     while exited.is_none() && tokio::time::Instant::now() < deadline {
@@ -291,11 +384,110 @@ async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
     handler_handle.abort();
     assert!(
         exited.is_some(),
-        "removing the profile directory must stop the Chrome still using it"
+        "dropping the profile directory must stop the Chrome still using it"
     );
     tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&path))
         .await
         .expect("no Chrome may use or recreate the profile directory after it is removed");
+}
+
+/// Write an executable `sh` script at `path` that runs `chrome` with its own arguments, through
+/// `exec` or as a child of the script.
+#[cfg(unix)]
+fn write_launcher(path: &std::path::Path, chrome: &std::path::Path, exec: bool) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let run = if exec { "exec " } else { "" };
+    std::fs::write(path, format!("#!/bin/sh\n{run}'{}' \"$@\"\n", chrome.display()))
+        .expect("the launcher must be writable");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("the launcher must be executable");
+}
+
+/// Dropping a running Chrome's profile directory stops that Chrome and leaves a shell naming the
+/// directory running, whether the launched executable is Chrome's own launcher, a script that
+/// `exec`s Chrome, or a script that runs Chrome as its child.
+///
+/// ~keep With the third launcher the process crawlberg starts is `sh`, not Chrome, and the
+/// ~keep bystander runs that same `sh`, so the executable of the launched process tells nothing.
+/// ~keep The launched process is `sh` and ends on its own once its Chrome child is killed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_the_launcher() {
+    let detection = chromiumoxide::detection::DetectionOptions {
+        msedge: false,
+        unstable: false,
+    };
+    let chrome = match chromiumoxide::detection::default_executable(detection) {
+        Ok(chrome) => chrome,
+        Err(error) => {
+            eprintln!("skipping: no usable Chrome: {error}");
+            return;
+        }
+    };
+    let scripts = tempfile::tempdir().expect("the launcher directory must be creatable");
+    let exec_launcher = scripts.path().join("exec-chrome");
+    let child_launcher = scripts.path().join("child-chrome");
+    write_launcher(&exec_launcher, &chrome, true);
+    write_launcher(&child_launcher, &chrome, false);
+
+    for launcher in [chrome.clone(), exec_launcher, child_launcher] {
+        let dir = ScratchProfileDir::create("crawlberg-launcher-test-").expect("the directory must be creatable");
+        let path = dir.path().to_path_buf();
+        let config = build_pool_launch_builder(&path, &[])
+            .chrome_executable(&launcher)
+            .build()
+            .expect("a config naming its executable must build");
+        let (mut browser, mut handler, dir) = match dir.launch(config).await {
+            Ok(launched) => launched,
+            Err(error) => panic!(
+                "{} must launch as {} did: {error}",
+                launcher.display(),
+                chrome.display()
+            ),
+        };
+        let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let mut bystander = spawn_bystander(&user_data_dir_flag(&path));
+
+        drop(dir);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut exited = browser
+            .try_wait()
+            .expect("the launched process's status must be readable");
+        while exited.is_none() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            exited = browser
+                .try_wait()
+                .expect("the launched process's status must be readable");
+        }
+        let running = bystander.try_wait().expect("the status must be readable").is_none();
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+        let check = path.clone();
+        let gone = tokio::task::spawn_blocking(move || assert_profile_directory_is_gone_for_good(&check)).await;
+        if exited.is_none() {
+            let _ = browser.kill().await;
+        }
+        handler_handle.abort();
+        let mut system = sysinfo::System::new();
+        for left in processes_naming(&mut system, &user_data_dir_flag(&path)) {
+            left.kill();
+        }
+        let _ = std::fs::remove_dir_all(&path);
+
+        let launcher = launcher.display();
+        assert!(
+            running,
+            "{launcher}: a shell naming the profile directory must not be killed"
+        );
+        assert!(
+            exited.is_some(),
+            "{launcher}: the teardown must stop the Chrome it launched"
+        );
+        if let Err(error) = gone {
+            std::panic::resume_unwind(error.into_panic());
+        }
+    }
 }
 
 /// A pool dropped without `shutdown` removes the profile directory of the Chrome it launched,

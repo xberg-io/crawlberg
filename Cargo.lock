@@ -1217,6 +1217,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmcp",
+ "rustix 1.1.5",
  "rustls",
  "schemars",
  "serde",

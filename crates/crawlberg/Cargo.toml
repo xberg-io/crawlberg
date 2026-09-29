@@ -22,7 +22,7 @@ default = ["native-runtime"]
 # ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
-browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:sysinfo", "dep:tempfile", "native-runtime"]
+browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:rustix", "dep:sysinfo", "dep:tempfile", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 # ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
 # ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
@@ -123,6 +123,10 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep std::time::Instant::now() traps at runtime on wasm32-unknown-unknown (no clock
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
+
+# ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, optional = true, features = ["process", "std"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }

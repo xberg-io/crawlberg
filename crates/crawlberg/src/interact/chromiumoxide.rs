@@ -453,6 +453,11 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
         let builder = build_interact_launch_builder(user_data_dir.path(), proxy_url);
+        #[cfg(test)]
+        let builder = match tests::LAUNCH_EXECUTABLE.with(|executable| executable.borrow().clone()) {
+            Some(executable) => builder.chrome_executable(executable),
+            None => builder,
+        };
         let browser_config = builder
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
@@ -523,30 +528,46 @@ mod tests {
         .expect("an interact run must stop its Chrome and remove its profile directory");
     }
 
-    /// A launch that fails removes its profile directory, off the executor thread.
+    thread_local! {
+        /// The Chrome executable `launch_or_connect` launches on this thread, instead of the detected one.
+        pub(super) static LAUNCH_EXECUTABLE: std::cell::RefCell<Option<std::path::PathBuf>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// An interact launch that fails drops its profile directory, off the executor thread.
     ///
-    /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any
-    /// ~keep Chrome runs. This exercises `launch_or_connect`'s own launch-error path, not just
-    /// ~keep the shared teardown `browser_pool` already covers.
+    /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome
+    /// ~keep runs. The test goes through `launch_or_connect` itself, so a call site that stops
+    /// ~keep dropping the directory on a failed launch fails here.
     #[tokio::test]
     async fn a_failed_interact_launch_removes_its_profile_directory() {
-        let dir = ScratchProfileDir::create("crawlberg-interact-failed-launch-test-")
-            .expect("the directory must be creatable");
-        let path = dir.path().to_path_buf();
-        let config = build_interact_launch_builder(&path, None)
-            .chrome_executable(path.join("no-such-chrome"))
-            .build()
-            .expect("a config naming its executable must build");
+        let missing = tempfile::tempdir().expect("the directory must be creatable");
+        LAUNCH_EXECUTABLE.with(|executable| *executable.borrow_mut() = Some(missing.path().join("no-such-chrome")));
         let before = crate::browser_pool::tests::profile_drops_here();
 
-        let launched = dir.launch(config).await;
+        let launched = launch_or_connect(&CrawlConfig::default()).await;
 
+        LAUNCH_EXECUTABLE.with(|executable| executable.borrow_mut().take());
         assert!(launched.is_err(), "a launch of a missing executable must fail");
         crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
-        assert!(
-            crate::browser_pool::tests::wait_for_removal(&path),
-            "the directory must be removed"
-        );
+    }
+
+    /// An interact launch records the Chrome it starts, so dropping its profile directory stops
+    /// that Chrome and removes the directory.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn dropping_an_interact_launchs_profile_directory_stops_its_chrome() {
+        let (browser, handler, dir) = match launch_or_connect(&CrawlConfig::default()).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let dir = dir.expect("a launched Chrome must have a profile directory");
+        let path = dir.path().to_path_buf();
+
+        crate::browser_pool::tests::assert_dropping_the_profile_stops_its_chrome(browser, handler, dir, path).await;
     }
 
     /// An interact run cut off during its launch hands its profile teardown off the executor thread.

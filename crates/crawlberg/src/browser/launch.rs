@@ -330,6 +330,25 @@ mod tests {
         );
     }
 
+    /// A one-shot launch records the Chrome it starts, so dropping its profile directory stops
+    /// that Chrome and removes the directory.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    async fn dropping_a_one_shot_launchs_profile_directory_stops_its_chrome() {
+        let (browser, handler, user_data) = match launch_or_connect(&CrawlConfig::default()).await {
+            Ok(launched) => launched,
+            Err(error) => {
+                eprintln!("skipping: no usable Chrome: {error}");
+                return;
+            }
+        };
+        let user_data = user_data.expect("a launched Chrome must have a profile directory");
+        let path = user_data.path().to_path_buf();
+
+        crate::browser_pool::tests::assert_dropping_the_profile_stops_its_chrome(browser, handler, user_data, path)
+            .await;
+    }
+
     /// A one-shot launch cut off by the overall deadline hands its profile teardown off the
     /// executor thread.
     ///

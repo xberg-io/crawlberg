@@ -136,7 +136,7 @@ const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// ~keep parent is then init or a subreaper, so no parent pid or process group leads back to the
 /// ~keep browser. They are found by the `--user-data-dir` flag that Chrome passes to each of them,
 /// ~keep which still names them after the browser process is gone, and by the executable of the
-/// ~keep browser process [`Self::launch`] started, which each of them runs.
+/// ~keep Chrome that [`Self::launch`] started, which each of them runs.
 /// ~keep The drop hands that work to another thread and returns at once: the scan, the kills, the
 /// ~keep wait of up to five seconds and the delete ran for up to a second on a tokio worker, and in
 /// ~keep the pool while it held its state lock.
@@ -168,16 +168,18 @@ impl ScratchProfileDir {
         mut self,
         config: BrowserConfig,
     ) -> Result<(Browser, Handler, Self), chromiumoxide::error::CdpError> {
-        let (mut browser, handler) = Browser::launch(config).await?;
+        // ~keep Boxed: the launch future is large, and each caller's future holds it inline, which
+        // ~keep pushed the generated dart binding's async dispatch past rustc's query depth limit.
+        let (mut browser, handler) = Box::pin(Browser::launch(config)).await?;
         if let Some(pid) = browser.get_mut_child().and_then(|child| child.as_mut_inner().id()) {
             self.record_chrome(pid);
         }
         Ok((browser, handler, self))
     }
 
-    /// Record the Chrome running as `pid` as the one using this directory.
+    /// Record the Chrome that the launched process `pid` started as the one using this directory.
     fn record_chrome(&mut self, pid: u32) {
-        let chrome = chrome_of(pid);
+        let chrome = chrome_started_by(pid, &self.teardown().dir);
         if chrome.is_none() {
             tracing::warn!(
                 pid,
@@ -224,7 +226,7 @@ impl Drop for ScratchProfileDir {
 #[derive(Debug)]
 struct ProfileTeardown {
     dir: std::path::PathBuf,
-    /// The executables of the Chrome launched on `dir`, from [`chrome_of`]. `None` when no launch
+    /// The executables of the Chrome launched on `dir`, from [`chrome_started_by`]. `None` when no launch
     /// succeeded, so no Chrome of crawlberg's can be using the directory.
     chrome: Option<std::path::PathBuf>,
 }
@@ -244,29 +246,35 @@ impl Drop for ProfileTeardown {
     }
 }
 
-/// The executables of the Chrome running as `pid`: its executable, or on macOS the `.app` bundle
-/// that holds it. `None` when that process's executable cannot be read.
+/// The executables of the Chrome that the launched process `pid` started on `dir`: the executable
+/// of the deepest process below `pid` whose command line names `dir` as its profile, or on macOS
+/// the outermost `.app` bundle that holds it. `None` when `pid` names no such process or that
+/// executable cannot be read.
 ///
-/// ~keep Read from the process crawlberg launched, not from the path it launched. A launcher such
-/// ~keep as Debian's `/usr/bin/chromium` script, or `/usr/bin/snap` behind `/snap/bin/chromium`,
-/// ~keep execs the real binary, and Chrome starts each helper from that binary. On macOS each
-/// ~keep helper is an executable of its own inside the bundle. The path comes from the process table,
-/// ~keep as each helper's does, so the two compare equal on every platform, where a canonicalized
-/// ~keep path carries a `\\?\` prefix on Windows that the process table does not.
-fn chrome_of(pid: u32) -> Option<std::path::PathBuf> {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
-
-    let pid = sysinfo::Pid::from_u32(pid);
+/// ~keep The launched process is Chrome only when every launcher on the way execs. Debian's
+/// ~keep `/usr/bin/chromium` and Google's `google-chrome` scripts do; a script that runs Chrome as
+/// ~keep its child stays a shell, and every shell naming the flag would then pass for Chrome.
+/// ~keep Each process of the launch carries the flag, the launcher's shell included, and the deepest
+/// ~keep one is Chrome or a helper Chrome started, which runs Chrome's executable (on macOS a helper
+/// ~keep bundle inside Chrome's own bundle). The path comes from the process table, as each helper's
+/// ~keep does, so the two compare equal on every platform, where a canonicalized path carries a
+/// ~keep `\\?\` prefix on Windows that the process table does not.
+fn chrome_started_by(pid: u32, dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut system = sysinfo::System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
-    );
-    let executable = system.process(pid)?.exe()?;
+    let users = processes_naming(&mut system, &user_data_dir_flag(dir));
+    let mut chrome = *users.iter().find(|process| process.pid().as_u32() == pid)?;
+    // ~keep Bounded: a table read across a pid reuse could link two processes both ways.
+    for _ in 0..users.len() {
+        match users.iter().find(|process| process.parent() == Some(chrome.pid())) {
+            Some(child) => chrome = child,
+            None => break,
+        }
+    }
+    let executable = chrome.exe()?;
     let bundle = executable
         .ancestors()
-        .find(|dir| dir.extension().is_some_and(|extension| extension == "app"));
+        .filter(|dir| dir.extension().is_some_and(|extension| extension == "app"))
+        .last();
     Some(bundle.unwrap_or(executable).to_path_buf())
 }
 
@@ -289,18 +297,29 @@ pub(crate) fn user_data_dir_flag(dir: &std::path::Path) -> String {
 /// ~keep write, and it keeps its command line until its parent reaps it, which for the browser
 /// ~keep process is this process, possibly not before the teardown returns.
 pub(crate) fn processes_naming<'s>(system: &'s mut sysinfo::System, token: &str) -> Vec<&'s sysinfo::Process> {
-    use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, UpdateKind};
+    use sysinfo::ProcessesToUpdate;
 
-    let refresh = ProcessRefreshKind::nothing()
-        .without_tasks()
-        .with_cmd(UpdateKind::Always)
-        .with_exe(UpdateKind::Always);
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, user_refresh());
     system
         .processes()
         .values()
-        .filter(|process| process.status() != ProcessStatus::Zombie && command_line_names(process.cmd(), token))
+        .filter(|process| names(process, token))
         .collect()
+}
+
+/// What [`processes_naming`] and [`kill_if_chrome_using`] read of a process.
+fn user_refresh() -> sysinfo::ProcessRefreshKind {
+    use sysinfo::{ProcessRefreshKind, UpdateKind};
+
+    ProcessRefreshKind::nothing()
+        .without_tasks()
+        .with_cmd(UpdateKind::Always)
+        .with_exe(UpdateKind::Always)
+}
+
+/// Whether `process` is live and its command line holds `token` as a whole token.
+fn names(process: &sysinfo::Process, token: &str) -> bool {
+    process.status() != sysinfo::ProcessStatus::Zombie && command_line_names(process.cmd(), token)
 }
 
 /// Whether the arguments in `cmd`, joined by spaces, hold `token` bounded by a space or an end.
@@ -317,8 +336,8 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
     })
 }
 
-/// Kill every process of `chrome`, as [`chrome_of`] names it, whose command line names `dir` as
-/// its profile, and wait until none is left or [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
+/// Kill every process of `chrome`, as [`chrome_started_by`] names it, whose command line names `dir`
+/// as its profile, and wait until none is left or [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
 ///
 /// ~keep A process counts only when its executable is `chrome` or lies in it and its command line
 /// ~keep carries the flag for `dir`, a directory a [`ScratchProfileDir`] created under a random
@@ -331,16 +350,64 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
     let stopped = kill_until_gone(PROFILE_USERS_EXIT_TIMEOUT, || {
         let users: Vec<_> = processes_naming(&mut system, &flag)
             .into_iter()
-            .filter(|process| process.exe().is_some_and(|exe| exe.starts_with(chrome)))
+            .filter(|process| runs(process, chrome))
+            .map(sysinfo::Process::pid)
             .collect();
-        for process in &users {
-            process.kill();
+        for &pid in &users {
+            kill_if_chrome_using(pid, &flag, chrome);
         }
         !users.is_empty()
     });
     if !stopped {
         tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
     }
+}
+
+/// Whether `process` runs `chrome`, as [`chrome_started_by`] names it.
+fn runs(process: &sysinfo::Process, chrome: &std::path::Path) -> bool {
+    process.exe().is_some_and(|exe| exe.starts_with(chrome))
+}
+
+/// Kill the process `pid` if it still runs `chrome` and its command line still holds `flag`.
+///
+/// ~keep `pid` comes from an earlier scan, and its process can have exited and the pid gone to a new
+/// ~keep process since. On Linux a pidfd pins the process first, the check reads the pinned process
+/// ~keep while the pid cannot be reused, and the kill goes through the pidfd, so it reaches no other
+/// ~keep process. Elsewhere, and on a Linux kernel older than 5.3, the check runs right before the
+/// ~keep kill, which narrows the gap between the two but does not close it.
+fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) {
+    #[cfg(target_os = "linux")]
+    if let Some(pinned) = i32::try_from(pid.as_u32())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        match rustix::process::pidfd_open(pinned, rustix::process::PidfdFlags::empty()) {
+            Ok(pidfd) => {
+                if chrome_user(&mut sysinfo::System::new(), pid, flag, chrome).is_some() {
+                    let _ = rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::KILL);
+                }
+                return;
+            }
+            Err(rustix::io::Errno::SRCH) => return,
+            Err(_) => {}
+        }
+    }
+    if let Some(process) = chrome_user(&mut sysinfo::System::new(), pid, flag, chrome) {
+        process.kill();
+    }
+}
+
+/// The process `pid`, read afresh into `system`, if it runs `chrome` and its command line holds `flag`.
+fn chrome_user<'s>(
+    system: &'s mut sysinfo::System,
+    pid: sysinfo::Pid,
+    flag: &str,
+    chrome: &std::path::Path,
+) -> Option<&'s sysinfo::Process> {
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), true, user_refresh());
+    system
+        .process(pid)
+        .filter(|process| names(process, flag) && runs(process, chrome))
 }
 
 /// Call `kill_users` until it reports that it found no user, pausing between calls, or until
