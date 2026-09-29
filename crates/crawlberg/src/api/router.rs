@@ -696,4 +696,44 @@ mod tests {
             "an ASCII search term must still match case-insensitively, got {urls:?}"
         );
     }
+
+    #[tokio::test]
+    async fn map_endpoint_answers_a_seed_robots_txt_disallows_as_forbidden() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("User-agent: *\nDisallow: /private\n")
+                    .append_header("content-type", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+        let router = create_router_with_security(test_engine_with_config(config), ApiSecurityConfig::default());
+
+        let response = call(
+            router,
+            json_post(
+                "/v1/map",
+                serde_json::json!({ "url": format!("{}/private", mock.uri()) }),
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "a refusal is not a server fault"
+        );
+        let body = body_json(response).await;
+        assert_eq!(body["error"]["code"], "FORBIDDEN", "{body}");
+        assert_eq!(
+            body["error"]["message"], "forbidden: robots.txt disallows /private",
+            "{body}"
+        );
+    }
 }

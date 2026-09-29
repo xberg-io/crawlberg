@@ -1012,4 +1012,35 @@ mod tests {
             "the output must not carry the password: {output}"
         );
     }
+
+    #[tokio::test]
+    async fn map_of_a_seed_robots_txt_disallows_is_a_forbidden_tool_error() {
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/robots.txt"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_raw("User-agent: *\nDisallow: /private\n", "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+        let server = CrawlbergMcp::with_config(CrawlConfig::builder().allow_private_networks(true).build());
+
+        let result = server
+            .map(Parameters(super::super::params::MapParams {
+                url: format!("{}/private", mock.uri()),
+                limit: None,
+                search: None,
+                respect_robots_txt: Some(true),
+            }))
+            .await
+            .expect("a refusal is a tool error, not a protocol error");
+
+        assert_eq!(result.is_error, Some(true), "the refusal must be a tool error");
+        let text = result
+            .content
+            .iter()
+            .find_map(|block| block.as_text().map(|content| content.text.clone()))
+            .unwrap_or_default();
+        assert_eq!(text, "forbidden: robots.txt disallows /private");
+    }
 }

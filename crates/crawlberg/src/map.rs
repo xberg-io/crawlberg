@@ -28,7 +28,7 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// The direct fetch requests each URL only as the crawl would: `exclude_paths`, `include_paths`
 /// on a redirect or refresh hop, and robots.txt for the URL's own origin when
 /// `respect_robots_txt` is on judge the URL first, and a refused URL fails the map with the
-/// reason. The sitemap files map reads are not judged: the URLs they list are returned, not
+/// crawl's forbidden error and the reason. The sitemap files map reads are not judged: the URLs they list are returned, not
 /// requested, and pass `exclude_paths` as every returned URL does.
 ///
 /// `map_limit` bounds both the returned length and the work performed: it is
@@ -1370,13 +1370,19 @@ mod tests {
         }
     }
 
-    /// Assert that `result` is a refusal whose message contains `reason`.
+    /// Assert that `result` is the crawl's forbidden error and its message contains `reason`.
     fn assert_refused(result: &Result<MapResult, CrawlError>, reason: &str, case: &str) {
         match result {
-            Err(error) => assert!(
-                error.to_string().contains(reason),
-                "{case}: the refusal must say {reason:?}, got {error}"
-            ),
+            Err(error) => {
+                assert!(
+                    matches!(error, CrawlError::Forbidden { .. }),
+                    "{case}: a refusal must be the crawl's forbidden error, got {error:?}"
+                );
+                assert!(
+                    error.to_string().contains(reason),
+                    "{case}: the refusal must say {reason:?}, got {error}"
+                );
+            }
             Ok(result) => panic!("{case}: map must refuse, got {result:?}"),
         }
     }
@@ -1520,6 +1526,94 @@ mod tests {
             message.contains("/private"),
             "the refusal must name the address: {message}"
         );
+    }
+
+    /// The `user-agent` header of each request `mock` received for `route`.
+    async fn agents_sent(mock: &MockServer, route: &str) -> Vec<String> {
+        mock.received_requests()
+            .await
+            .expect("wiremock records requests")
+            .iter()
+            .filter(|request| request.url.path() == route)
+            .map(|request| {
+                request
+                    .headers
+                    .get("user-agent")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn map_judges_robots_txt_for_the_agent_its_fetch_sends() {
+        // ~keep A `user-agent` custom header is the agent that goes out, so its group applies.
+        for with_header in [true, false] {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            let robots = "User-agent: Custom\nDisallow: /private\n\nUser-agent: *\nDisallow:\n";
+            mount_body(&mock, "/robots.txt", "text/plain", robots.to_owned()).await;
+            mount_redirect(&mock, "/s", "/private").await;
+            mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+            let mut config = robots_config();
+            if with_header {
+                config.custom_headers =
+                    std::collections::HashMap::from([("user-agent".to_owned(), "Custom".to_owned())]);
+            }
+
+            let result = map(&format!("{base}/s"), &config).await;
+
+            if with_header {
+                assert_refused(&result, "robots.txt disallows /private", "a custom agent header");
+                assert_eq!(agents_sent(&mock, "/s").await, vec!["Custom".to_owned()]);
+                assert_eq!(request_count(&mock, "/private").await, 0, "the hop is never requested");
+            } else {
+                assert!(result.is_ok(), "the default agent's group allows the hop: {result:?}");
+                assert_eq!(request_count(&mock, "/private").await, 1, "the hop is requested");
+            }
+        }
+
+        // ~keep The rotation list is the crawl's alone: map sends the default agent, so the
+        // ~keep group of a rotated agent must not refuse it.
+        let mock = MockServer::start().await;
+        let robots = "User-agent: Rotated\nDisallow: /\n\nUser-agent: *\nDisallow: /private\n";
+        mount_body(&mock, "/robots.txt", "text/plain", robots.to_owned()).await;
+        mount_body(&mock, "/open", "text/html", page_linking_to("/from-open")).await;
+        let config = CrawlConfig {
+            user_agents: vec!["Rotated".to_owned()],
+            ..robots_config()
+        };
+
+        let result = map(&format!("{}/open", mock.uri()), &config).await;
+
+        assert!(
+            result.is_ok(),
+            "the rotated agent's group must not judge map's fetch: {result:?}"
+        );
+        let agents = agents_sent(&mock, "/open").await;
+        assert!(
+            !agents.is_empty() && agents.iter().all(|agent| agent != "Rotated"),
+            "map sends the default agent, got {agents:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_applies_a_full_url_exclude_pattern_to_a_forward() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/s", "/private").await;
+        mount_body(&mock, "/private", "text/html", page_linking_to("/from-private")).await;
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^http://127\.0\.0\.1:\d+/private$".to_owned()],
+            path_patterns_match_url: true,
+            ..local_test_config()
+        };
+
+        let result = map(&format!("{base}/s"), &config).await;
+
+        assert_refused(&result, EXCLUDED, "a full-URL exclude pattern");
+        assert_eq!(request_count(&mock, "/private").await, 0, "the hop is never requested");
     }
 
     #[tokio::test]

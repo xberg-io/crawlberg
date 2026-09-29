@@ -89,11 +89,12 @@ impl PolicyRefusal {
         }
     }
 
-    /// The refusal as an error, for a caller with no place to report a URL it skipped.
+    /// The refusal as an error, for a caller with no place to report a URL it skipped: the
+    /// forbidden error the crawl raises when robots.txt refuses the agent a tier sends.
     pub(crate) fn into_error(self) -> CrawlError {
         match self {
-            Self::Blocked { reason, .. } => CrawlError::other(reason),
-            Self::Filtered { url } => CrawlError::other(format!(
+            Self::Blocked { reason, .. } => CrawlError::forbidden(reason),
+            Self::Filtered { url } => CrawlError::forbidden(format!(
                 "{} is excluded by include_paths or exclude_paths",
                 redact_url_credentials(&url)
             )),
@@ -788,6 +789,38 @@ mod tests {
             };
             assert_eq!(reason, expected, "the refusal of {url} must not show its credential");
         }
+    }
+
+    #[test]
+    fn a_refusal_is_the_forbidden_error_and_names_a_filtered_address_without_its_credential() {
+        let blocked = PolicyRefusal::Blocked {
+            url: "https://example.com/private".to_owned(),
+            reason: "robots.txt disallows /private".to_owned(),
+        }
+        .into_error();
+        assert!(
+            matches!(blocked, CrawlError::Forbidden { .. }),
+            "a robots.txt refusal must be the crawl's forbidden error, got {blocked:?}"
+        );
+        assert_eq!(blocked.to_string(), "forbidden: robots.txt disallows /private");
+
+        let filtered = PolicyRefusal::Filtered {
+            url: "https://user:hunter2@example.com/private".to_owned(),
+        }
+        .into_error();
+        assert!(
+            matches!(filtered, CrawlError::Forbidden { .. }),
+            "a path-filter refusal must be the crawl's forbidden error, got {filtered:?}"
+        );
+        let message = filtered.to_string();
+        assert!(
+            !message.contains("hunter2"),
+            "the refusal must not carry the credential: {message}"
+        );
+        assert!(
+            message.contains("example.com/private is excluded by include_paths or exclude_paths"),
+            "the refusal must name the address: {message}"
+        );
     }
 
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> crate::tower::CrawlResponse {

@@ -38,7 +38,7 @@ The map operation tries multiple strategies in order, returning results from the
    - A regular sitemap XML file
    - An HTML page (extracts all internal and external links)
 
-   The direct fetch follows HTTP redirects and refreshes as a crawl does, and it requests a URL only if a crawl would: `exclude_paths` and, for a redirect or refresh hop, `include_paths` must admit it, and with `respect_robots_txt` on, the robots.txt of the URL's origin must allow it. A refused URL is not requested, and the map returns an error with the reason.
+   The direct fetch follows HTTP redirects and refreshes as a crawl does, and it requests a URL only if a crawl would: `exclude_paths` and, for a redirect or refresh hop, `include_paths` must admit it, and with `respect_robots_txt` on, the robots.txt of the URL's origin must allow it. A refused URL is not requested, and the map returns a forbidden error with the reason (HTTP 403 from the REST API).
 
 4. **Empty result** -- If none of the above produces URLs, returns an empty `MapResult`.
 

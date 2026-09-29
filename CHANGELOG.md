@@ -169,8 +169,9 @@ All notable changes to crawlberg are documented here.
   page without requesting it. Each request of the direct fetch now passes the crawl's own checks
   first: `exclude_paths`, `include_paths` for a redirect or refresh hop, and, with
   `respect_robots_txt` on, the robots.txt of the URL's own origin, which fails closed when that
-  file is unreachable. A refused URL is never requested, and `map()` returns an error with the
-  reason. The sitemaps that `map()` reads are not checked this way. (#512)
+  file is unreachable. A refused URL is never requested, and `map()` returns the crawl's forbidden
+  error with the reason, which the REST API answers with a 403. The sitemaps that `map()` reads
+  are not checked this way. (#512)
 
 - **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
   refused as a WAF block ended the attempt with an error that did not keep the response status, so
