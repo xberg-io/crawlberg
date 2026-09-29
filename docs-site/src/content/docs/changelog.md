@@ -76,6 +76,14 @@ title: "Changelog"
   fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
   `statuses` array of the codes it may decide; an empty array is rejected. (#197)
 
+- **`CrawlError::WafBlocked` has a `source` field.** Rust code that builds the variant by hand
+  must pass `source: None`, or call `CrawlError::waf_blocked(vendor, message)` instead.
+  `CrawlError::waf_blocked_with_source` attaches an underlying error. A match on the variant with
+  `..` does not change. The Swift and Kotlin Android bindings give the WAF block case a `source`
+  value, as their other error cases already have: Swift code that matches
+  `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
+  `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
+
 ### Added
 
 - **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
@@ -92,6 +100,13 @@ title: "Changelog"
   credential. (#79, #80)
 
 ### Fixed
+
+- **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
+  refused as a WAF block ended the attempt with an error that did not keep the response status, so
+  `AttemptOutcome.status` stayed empty for them. Both errors now keep the status, so the policy
+  reads 403 for a plain forbidden, and 403, 429, 503 or the 2xx status for a block. The built-in
+  retry decisions do not change: a forbidden and a WAF block still escalate, and listing 403 in
+  `retry_codes` still does not retry them. (#133)
 
 - **Link extraction read markup inside raw-text elements and took the wrong `<base>`.** Only
   `script`, `style`, `textarea` and `title` were treated as raw text, by a hand-written scanner.
@@ -914,8 +929,7 @@ Four changes can affect an existing setup:
   was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
   the error but not the 503 or 500 behind it. The field now holds the status for every status the
   built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
-  stays empty when no response caused the error, such as a connection failure, and also for a
-  plain 403 or a 429/503 fingerprinted as a WAF block; #133 tracks giving those a status too. (#99)
+  stays empty when no response caused the error, such as a connection failure. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because
