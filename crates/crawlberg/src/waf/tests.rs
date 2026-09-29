@@ -85,6 +85,23 @@ fn classifier_akamai_server_header() {
     assert_eq!(signal.expect("signal is Some — asserted above").vendor, "akamai");
 }
 
+/// A CDN's own `server` header is not evidence of a block, so it decides a 403 only: the
+/// statuses a real page is served with must stay unclassified (crawlberg#197).
+#[test]
+fn classifier_ignores_cdn_presence_outside_a_403() {
+    let c = TomlClassifier::builtin();
+    for server in ["AkamaiGHost", "Incapsula", "BIG-IP"] {
+        for status in [200_u16, 429, 503] {
+            let resp = make_response(status, vec![("server", server)], "<html>Service Unavailable</html>");
+            let signal = c.classify(&resp).expect("classify must not fail");
+            assert!(
+                signal.is_none(),
+                "{status} behind {server} must not classify, got {signal:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn classifier_large_2xx_not_flagged() {
     let c = TomlClassifier::builtin();
@@ -293,5 +310,47 @@ pattern = "THIS_PATTERN_WILL_NEVER_MATCH_ANYTHING_xyzzy_12345"
     assert!(
         c.classify(&resp).expect("classify must not fail").is_none(),
         "broken fingerprint correctly produces no match"
+    );
+}
+
+/// The corpus rule the 2xx body corroboration in `crate::http::waf` depends on: no header that a
+/// built-in fingerprint mixing header and body signals needs matches a header-only fingerprint on
+/// its own. Corroboration sets such headers aside before it asks the body, so a mixed fingerprint
+/// whose header matched alone could never corroborate.
+#[test]
+fn no_header_a_mixed_builtin_fingerprint_needs_matches_on_its_own() {
+    use crate::waf::rules::Signal;
+
+    let rules = Rules::builtin();
+    let mut mixed = 0;
+    for fingerprint in &rules.fingerprints {
+        let has_body = fingerprint.signals.iter().any(|s| matches!(s, Signal::BodySubstring));
+        let headers: Vec<_> = fingerprint
+            .signals
+            .iter()
+            .filter_map(|s| match s {
+                Signal::ResponseHeader { name, value_contains } => Some((name.as_str(), value_contains.as_deref())),
+                Signal::BodySubstring => None,
+            })
+            .collect();
+        if !has_body || headers.is_empty() {
+            continue;
+        }
+        mixed += 1;
+        for (name, value) in headers {
+            for status in [200, 203] {
+                let alone = make_response(status, vec![(name, value.unwrap_or("1"))], "");
+                assert_eq!(
+                    rules.classify(&alone).expect("classify must not fail"),
+                    None,
+                    "{} needs `{name}`, which must not match on its own on a {status}",
+                    fingerprint.id
+                );
+            }
+        }
+    }
+    assert!(
+        mixed > 0,
+        "the corpus must still hold fingerprints that mix header and body signals"
     );
 }

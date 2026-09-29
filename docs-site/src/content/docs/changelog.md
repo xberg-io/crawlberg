@@ -28,7 +28,69 @@ title: "Changelog"
   profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
   already set the launch's `--user-data-dir` directly. Code that called
   `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
-  `CrawlConfig.browser_profile` and let crawlberg apply it.
+  `CrawlConfig.browser_profile` and let crawlberg apply it. (#254)
+
+- **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
+  constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
+  to Swift's `init` and the Java record constructor, and `chromeArgs` to Dart's constructor. The
+  Java builder and the other bindings give both settings defaults. (#79, #80)
+
+- **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
+  `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
+  iterates it does not.
+
+- **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
+  The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
+  ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
+  carry, so an allowlist entry for such an address has to name that IPv4 range instead of the
+  IPv6 one. IPv4-mapped and `64:ff9b::/96` addresses already behaved this way.
+
+- **The browser crate's fallback validator names the denial reason.** `DefaultSsrfValidator`
+  messages now end with the reason the core policy reports (`loopback`, `private_network`,
+  `link_local`, `unspecified`, `multicast`, `unique_local`). Code that compares the whole message
+  must allow for the new suffix.
+
+- **A URL's `user:pass@` no longer appears in any URL crawlberg returns.** crawlberg takes the
+  userinfo off a URL when a call starts, and sends it only as an `Authorization: Basic` header to
+  that URL's host. Every URL in a result, a stream event or a plugin callback is the URL without
+  the userinfo: `final_url`, page and link URLs, map entries, and the URL that pairs each
+  `batch_scrape` and `batch_crawl` result. If you match batch results against your own input URLs,
+  remove the userinfo from your input first. A URL that carries userinfo is now a configuration
+  error when `auth` is also set; use one of the two.
+
+- **`auth` and `custom_headers` now go only to the seed URL's host.** A subdomain, a linked
+  document on another host or a redirect target on another host gets neither. If a crawl needs a
+  header on another host, start a separate call with that host as its seed.
+
+- **`metadata.canonical_url` is now an absolute URL.** It was the canonical link's `href` as
+  the page wrote it, so `<link rel="canonical" href="/en/page">` gave `/en/page`. It is now
+  resolved against the page's base URL and normalized as the links list is, so it gives
+  `https://example.com/en/page`, and `https://Example.com` gives `https://example.com/`. If your
+  code joins a relative canonical URL to the page URL, remove that step. If it compares the value
+  with a literal, compare with the normalized form. (#101)
+
+- **`metadata.hreflangs[].url` is now an absolute URL.** It was each alternate-language link's
+  `href` as the page wrote it, so `<link rel="alternate" hreflang="de" href="/de/">` gave `/de/`.
+  It is now resolved against the page's base URL and normalized as the canonical URL is, so it
+  gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
+  remove that step. (#126)
+
+- **A 503 or 429 behind Akamai, Imperva or F5 is retried again instead of escalating.** The three
+  fingerprints in `rules/waf_fingerprints.toml` whose only signal is the CDN's own `server` header
+  (`AkamaiGHost`, `Incapsula`, `BIG-IP`) now decide a 403 only. An overloaded or redeploying origin
+  behind one of those CDNs is therefore retried per `retry_codes` as it was before challenge
+  statuses were fingerprinted, instead of being classified as a WAF block and escalated to the
+  bypass or browser tier. A real block from those vendors is still caught on a 403, and no other
+  fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
+  `statuses` array of the codes it may decide; an empty array is rejected. (#197)
+
+- **`CrawlError::WafBlocked` has a `source` field.** Rust code that builds the variant by hand
+  must pass `source: None`, or call `CrawlError::waf_blocked(vendor, message)` instead.
+  `CrawlError::waf_blocked_with_source` attaches an underlying error. A match on the variant with
+  `..` does not change. The Swift and Kotlin Android bindings give the WAF block case a `source`
+  value, as their other error cases already have: Swift code that matches
+  `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
+  `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
 
 ### Added
 
@@ -41,7 +103,570 @@ title: "Changelog"
   every Chrome that crawlberg launches, and both are ignored with a warning, and not checked,
   when `browser.endpoint` is set or the native backend is in use. Flags such as
   `--proxy-server` and `--host-resolver-rules` route around the SSRF policy, so set
-  `chrome_args` only from trusted configuration. (#79, #80)
+  `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
+  warning give the number of flags, not their values, because a flag value can carry a
+  credential. (#79, #80)
+
+### Fixed
+
+- **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
+  refused as a WAF block ended the attempt with an error that did not keep the response status, so
+  `AttemptOutcome.status` stayed empty for them. Both errors now keep the status, so the policy
+  reads 403 for a plain forbidden, and 403, 429, 503 or the 2xx status for a block. The built-in
+  retry decisions do not change: a forbidden and a WAF block still escalate, and listing 403 in
+  `retry_codes` still does not retry them. (#133)
+
+- **Link extraction read markup inside raw-text elements and took the wrong `<base>`.** Only
+  `script`, `style`, `textarea` and `title` were treated as raw text, by a hand-written scanner.
+  Links and a `<base href>` inside `xmp`, `iframe`, `noembed`, `noframes` and `plaintext`, after
+  `<script/>` and in a script inside SVG `foreignObject` were read as real, and a `<!--` in such
+  text hid every link after it. Links inside a bogus comment (`<? ... >`, `<!x ... >`, `<![CDATA[`
+  outside SVG) and inside an SVG or MathML CDATA section were read as real too. A crawled or
+  scraped page is now read once by html5ever with scripting off, and that read decides the raw
+  text, the link tags, the base, the meta refresh target and the render hint. Two kinds of page
+  are still read twice: a page decoded again from a declared non-UTF-8 charset, and a body cut to
+  `max_body_size`. The base is the first `<base href>` in the finished document, as in a browser:
+  a `<base>` in a table moves in front of it, and a `<frameset>` drops the body with its `<base>`.
+  (#201, #287)
+
+- **One tag with tens of thousands of attributes slowed link extraction quadratically.** The
+  HTML parser compares each new attribute name of a tag with every earlier one. Attributes past
+  the 1,024th of one tag are now overwritten with spaces before the parser reads the page, so the
+  cost grows linearly. Repeated attribute names count toward the limit, so an `href` after the
+  1,024th attribute of an `<a>` or `<base>` tag is not read. (#269)
+
+- **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
+  products stamp their own header on every response they proxy, and a WAF fingerprint that matches
+  on response headers alone was enough to refuse the response. Robots.txt, sitemap and asset
+  fetches refused every 2xx served through one of them, and the crawl refused such a 200 when its
+  body was under 5000 bytes, with the real page already in hand. A header-only fingerprint now
+  needs the body to show the interstitial before a 2xx is refused. A 403 behind one of those CDNs
+  still blocks. (#231)
+
+- **Every fetch path now makes the same call on a 2xx.** Robots.txt, sitemap and asset fetches
+  checked the body of any 2xx up to 100 KB, the crawl checked only a 200 under 5000 bytes, and a
+  `WafClassifier` set on the engine flagged a 2xx to the antibot strategy and retry policy on a
+  header-only match, so the built-in antibot strategy refused an ordinary 200 behind Sucuri. All
+  three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
+  the body corroborates. So sitemap and asset fetches return a 2xx of 5000 bytes or more as content,
+  the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine flags a 2xx only
+  under the same rule. A robots.txt that is a block page still denies the whole site at any size up
+  to 100 KB. (#500)
+
+- **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
+  WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
+  added one or two, and a `TomlClassifier` set on the engine added one for every match it made. It
+  now moves once for each response refused as a WAF block: by the fetch path, for a 403, 429 or
+  503 challenge or a 2xx interstitial, or by the engine, when its antibot strategy or retry policy
+  refuses a response as a WAF block. A response that is returned as content does not count, and no
+  response counts twice.
+
+- **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
+  caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
+  and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
+  case-insensitive. Both entry points now parse the address and read the parsed scheme instead. (#221)
+
+- **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
+  request sent the fixed default agent, and robots.txt was judged for that same default agent.
+  Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
+  judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
+  behavior the native crawl loop already had. A page on another origin, such as a subdomain
+  under `allow_subdomains`, is now judged by that origin's own robots.txt, as on native. Before,
+  every page was judged by the seed origin's robots.txt, so such a page can now be refused. (#483)
+
+- **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
+  crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
+  page followed under `allow_subdomains` or a document link on another host got the credentials
+  set for the seed host. Each page now keeps the seed's credential scope, as the native crawl
+  already did. The same loop also dropped the user name and password written into a seed URL, so
+  no page got them, not even the seed; every page on the seed host now gets them. (#404)
+
+- **The native browser backend connected to a rebinding host's second DNS answer.** It checked
+  a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
+  to connect. A DNS answer that changed between the two lookups reached an address the policy
+  denies. The page, redirect, script `fetch()`, module import and stealth clients now connect
+  only to the addresses the policy checked, as the HTTP path already does. With a configured
+  proxy, the proxy resolves the target. Two setups that worked before are now refused, as on the
+  HTTP path: a proxy set by the `HTTP_PROXY` environment variable whose host name resolves to a
+  private address, and, when `crawlberg-browser` is used directly with its default policy, a host name
+  that resolves to a private address. A refusal now names the policy's reason. (#451)
+
+- **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
+  within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
+  before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`
+  all reached the private host 10.0.0.5 with `deny_private` on. The IPv4-compatible (`::/96`),
+  IPv4-translated (`::ffff:0:0:0/96`), 6to4 (`2002::/16`) and ISATAP (interface identifier
+  `0000:5efe` or `0200:5efe`, under any prefix) forms are now unwrapped as well, and the embedded
+  address is checked against the IPv4 rows of the deny-list. The pre-connect check, the
+  connect-time resolver and the browser crate's fallback validator apply the same rules. An
+  address that only has the shape of one of these forms is refused for the address it seems to
+  carry: `2001:db8::5efe:1:1` reads as `0.1.0.1` and is refused. (#109)
+
+- **A Teredo address reached the private IPv4 address it carries.** A `2001:0::/32` address
+  stores the client's IPv4 address inverted in its last 32 bits, and nothing decoded it, so
+  `http://[2001:0:4136:e378:0:ffff:5601:5601]/` reached 169.254.169.254 with `deny_private` on.
+  The address is now decoded and checked like the other embedded forms, so a Teredo address that
+  carries a public IPv4 address still works. (#196)
+
+- **The local-use NAT64 prefix `64:ff9b:1::/48` carried private addresses past the deny-list.**
+  The IPv4 address in the last 32 bits, where a /96 network puts it, is now checked, so
+  `http://[64:ff9b:1::a00:5]/` is refused. A /48, /56 or /64 network puts the address elsewhere
+  and its unused bits read as zeros at that position, so a reading whose last three octets are
+  zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
+  network sizes are checked as IPv6 only, as before. (#108)
+
+- **The reserved range `240.0.0.0/4` passed the SSRF deny-list.** With `deny_private` on,
+  `http://255.255.255.255/` and every other address in the range was fetched, plain or embedded
+  in an IPv6 form that carries an IPv4 address. The range is now refused everywhere the deny-list
+  applies, with reason `private_network`, the same reason the shared address space and the other
+  RFC 1918 ranges already report. (#173)
+
+- **A denial reason could name an address the allowlist permits.** The reason was classified from
+  the first deny-listed candidate rather than the first one the allowlist did not admit, so an
+  allowlisted `fe80::/10` with `fe80::5efe:10.0.0.5` reported `link_local` instead of
+  `private_network`. The allow or deny decision itself was always correct.
+
+- **With user-agent rotation on, robots rules were matched against the configured agent, not
+  the one a request actually sent.** A rotating crawl sends a different agent per request, but
+  robots.txt group selection and meta or header directives always judged the page against the
+  single configured agent. A site's rule for the agent that made the request was ignored, and a
+  rule for the configured agent applied even to a request that used a different one. Every
+  robots decision now reads the agent the request actually sent; a crawl that does not rotate
+  sees no change. A `user-agent` set through `custom_headers` is judged the same way, since it
+  is the agent the request actually sends. With `browser.mode` set to `always` or `stealth`,
+  the browser never sends a rotated agent; robots decisions for a browser-fetched request now
+  read the browser's own configured or custom-header agent, so a disallowed browser request is
+  blocked instead of judged against an agent it never sends. With `browser.mode` set to `auto`,
+  a request that escalates mid-crawl to the browser tier is now judged again at that point: the
+  earlier robots decision, made before the tier was known, read whatever agent the HTTP attempt
+  used, and the browser tier ignored it and sent its own agent regardless. Escalating to the
+  browser tier now re-checks robots.txt against the agent the browser actually sends, and a
+  disallow stops the fetch. An empty or whitespace-only
+  `custom_headers["user-agent"]` value now counts as absent for both robots judging and what
+  every tier sends, instead of being sent on the wire as a literal blank agent. A robots.txt,
+  sitemap or asset fetch with a `custom_headers` agent configured alongside `user_agent` sent
+  both as two separate `User-Agent` header lines; it now sends the custom-header agent once.
+  (#423)
+- **The credential redactor passed a malformed address through unchanged.** It only stripped
+  `user:pass@` when the value parsed as a URL with a host. A value that failed to parse, such as a
+  stray space in the host, a bare `user:pass@host` with no scheme, or an address inside a longer
+  message, was logged exactly as received, credentials included. Such a value is now replaced
+  whole with `[address hidden: it may carry credentials]` when it contains an `@`, and a value
+  without an `@` comes back unchanged. A URL that parses with a host and has no whitespace is
+  redacted as before. The placeholder also replaces any other value with an `@` that is not one
+  URL with a host: an "invalid URL" error for such an address, a `mailto:` or `data:` value, and
+  a message that mentions an e-mail address. Three sitemap warnings (the document budget cap, the
+  index depth cap, and cycle detection) also logged their address without going through the
+  redactor at all; they now do. A call that starts from an address with no host and an `@`,
+  such as `user:pass@host/path`, is now refused before any trace span or event records the
+  address, and the error names it as `(unparseable URL)`, so the password no longer reaches a log
+  field. (#236, #243, #261, #399)
+
+- **Links after an abruptly closed or empty comment were not extracted.** `tl` ends a
+  comment by searching for a literal `-->` right after the opening `<!--`, so it never
+  recognized `<!-->` or `<!--->`, which close before any `-->` exists; a comment closed with
+  `--!>` instead of `-->`; or a plain, valid, empty comment, `<!---->`, whose close sits
+  directly against the opener's own dashes. After any of these, `tl` kept reading as if
+  still inside the comment, so every link, image and base address past it was missed. The
+  raw-text masking pass now neutralizes all of them before `tl` parses the page. (#212)
+
+- **Robots directives ignored `none` and applied a crawler-scoped directive to every crawler.**
+  A robots meta tag or `X-Robots-Tag` header that said only `none` was read as neither noindex
+  nor nofollow, although `none` means both. A header addressed to one crawler, such as
+  `X-Robots-Tag: googlebot: noindex`, bound crawlberg too, and a meta tag named for crawlberg's
+  own user agent was ignored. `none` now sets both directives. A directive named for a crawler
+  binds crawlberg only when that name is a prefix of crawlberg's user agent, the same rule
+  robots.txt groups use, and the generic `robots` form still binds every crawler. (#156)
+
+- **A URL's password leaked, and credentials reached hosts they were not for.** The `user:pass@`
+  of a caller's URL stayed inside every URL the engine handled, so logs, errors, results, cache
+  keys and plugin callbacks each had to redact it, and several did not. Relative links and
+  redirects also copied it to other pages. The engine now removes it at the start of each call
+  and keeps it as a credential for the seed host only. The same host rule now applies to `auth`:
+  a page, asset, robots.txt or redirect on another host gets no credentials. Both browser backends
+  now send `Basic`, `Bearer` and header credentials only to the seed host, one request at a time,
+  instead of to every host a page loads from. robots.txt and sitemaps on the seed host are now
+  fetched with the credentials. A response fetched with credentials is never stored in or served
+  from the response cache or the shared robots.txt cache. (#378, #387, #388, #389, #390)
+
+- **A page could make the browser send a URL with userinfo.** A page-supplied link, sitemap
+  entry or redirect target loses its userinfo, and in the native browser a navigation, module
+  import or `fetch()` to a URL with userinfo is refused, as the Fetch standard requires. The
+  chromiumoxide backend refuses such a request too. A URL that does not parse is reported
+  without its text. (#347, #357, #382)
+
+- **Custom headers reached every host a crawl touched.** Plain HTTP requests and both browser
+  backends sent `custom_headers` to other hosts: linked documents, third-party subresources and
+  cross-host redirect targets. They now go only to requests on the seed's host, the same as the
+  credentials. (#393)
+
+- **A page script in the native browser did not get the seed-host credentials.** A `fetch()` or a
+  module import to the seed's host now carries the credentials and the custom headers, as it does
+  in Chrome. A module redirect to another host drops them, and every module redirect is now
+  checked against the SSRF policy. (#409)
+
+- **A link whose `href` does not resolve was returned as raw text.** Such a link is now left out
+  of the page's links instead of appearing with its unresolved text as its URL. (#394)
+
+- **A redirect to a non-web address failed the whole scrape.** A 3xx whose `Location` was a
+  `mailto:`, `tel:`, `javascript:`, `data:`, `file:`, `about:` or `ftp:` address, or a custom app
+  scheme, failed `scrape()` with an `ssrf_policy_violation` error. A crawl stopped on such a seed
+  with the same error and dropped such a linked page. A browser sends no request for such an
+  address. That `Location` is now no redirect target, matching how a refresh naming such an
+  address directly already was, so the 3xx response is the page. The same holds for robots.txt,
+  sitemap and asset fetches: a robots.txt that redirected to such an address made the crawl refuse
+  the whole site. Redirects to `http` and `https` addresses still pass the SSRF check. (#361)
+
+- **A relative meta refresh could still fail the scrape once it resolved to a non-web address.**
+  A meta refresh target was checked for a fetchable scheme before it resolved, so a relative
+  target passed that check and could still resolve to a `mailto:`, `ftp:` or other non-web
+  address afterward, for example under a `<base href>` on such an address, and the fetch then hit
+  the SSRF policy. The scheme is now checked on the resolved address instead, the same way the
+  `Location` header already was, so such a target is no redirect target either, and the page is
+  kept. (#478)
+- **A meta refresh target ignored the page's base address.** `<meta http-equiv="refresh"
+  content="0; url=next">` under `<base href="/app/">` was requested at `/next`, the page's own
+  path, while a browser requests `/app/next`. The target now resolves against the page's base
+  URL, the same base the links list uses. A `Refresh` HTTP header still resolves against the
+  response's own address: it arrives before any document exists to carry a base element, and
+  Chrome ignores the body's base for it too. (#300)
+- **A `data:` or `javascript:` base address was used as the page base.** With
+  `<base href="javascript:alert(1)//">`, every relative link, image, feed, icon and canonical link
+  on the page resolved against the script address, and the markdown kept relative links as
+  written. The page base is now the page address when the base address has one of these schemes,
+  in any letter case and with spaces around it, as the HTML spec and browsers do. (#311)
+
+- **The browser page used an absolute subresource address without parsing it.** A `<script src>`
+  or `<link rel=stylesheet href>` that began with `http://` or `https://` reached the interception
+  block list and the network events exactly as written, while a relative address was parsed and
+  normalized. A script address with trailing spaces or an inner tab or newline therefore slipped
+  past a block pattern such as `*blocked.js` and was still fetched and run. A module script's
+  network event also carried the raw address. Every script and stylesheet address in the page
+  markup now goes through the URL parser against the page address, and an address that does not
+  parse is skipped. (#225)
+
+- **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
+  address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
+  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, and
+  a websocket endpoint with no host is still refused. The browser connection uses the same parse
+  and sends the address with a lower-case scheme, so an upper-case, space-padded or slash-less
+  spelling that the checks accept also connects. The CLI's rejection error no longer prints the
+  address, the same as the config check. (#343)
+
+- **A failed connection to a remote browser printed its password.** When crawlberg could not
+  connect to a `browser.endpoint`, the connect error showed the address as configured, with its
+  `user:pass@` credentials and its CDP path token. The error now prints only the scheme, the host
+  and the port. (#424)
+
+- **The interact backend's connect error printed a browser endpoint's password.** It built the
+  same connect error as the launch path, without redacting the address. It now prints only the
+  origin, the same as the launch path. (#473)
+
+- **The SSRF check could print a credential as the refused scheme.** An address written without
+  a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
+  and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
+  from the browser check. The refusal now names the scheme only when it is a known one, such as
+  `ftp` or `file`. For any other scheme, `DisallowedScheme` carries `unrecognized` and the browser
+  check says the scheme is forbidden without showing it. The address in the same error goes
+  through the credential redactor, which hides such an address whole. (#329)
+
+- **A crawl of an address without a host printed its credential.** A crawl refused a seed such
+  as `user:token@host` because the seed has no host to read robots.txt from, and the reason named
+  the seed as written, so `token` reached the crawl result, the error event and the error hook.
+  Such a seed is now refused before the crawl starts and is named `(unparseable URL)`. The robots
+  refusal for an address without a host also names it through the credential redactor. (#427)
+
+- **Links with an encoded `&` were crawled at the wrong URL.** The links list kept character
+  references as written, so `href="list?a=1&amp;b=2"` was requested as `list?a=1&amp;b=2`.
+  Every attribute value that crawlberg reads is now decoded first, as a browser decodes it.
+  This also covers image addresses, feed and favicon links, and text such as an image's alt
+  text. The `javascript:`, `mailto:`, `tel:` and `data:` addresses that the links list, the
+  images list and asset downloads skip are now recognised as the URL parser reads them, in any
+  letter case and with tabs or newlines inside, so `java&#9;script:` is skipped like
+  `javascript:`. (#86)
+
+- **The native browser never ran a module script loaded from an address.** A
+  `<script type="module" src="app.js">` was registered with empty code, so `app.js` was never
+  fetched and the page rendered as if the script were absent. The module is now fetched through
+  the module loader, with the same SSRF policy, proxy and seed-host credential as an `import()`,
+  and then run with every module it imports. Every module address, including each module that a
+  module script or an inline module imports, now goes through the interception block list, as a
+  classic `<script src>` does, and every module request carries the page's User-Agent. A module
+  that fails to load, or whose server does not answer within 10 seconds, is skipped and the other
+  scripts still run. The same 10-second bound now also applies to the modules an inline module
+  script imports. (#441)
+
+- **Uppercase markup was ignored.** `<A HREF="up.html">` was missing from the links list, so
+  the crawl never followed it, and uppercase `<IMG>`, `<TITLE>`, `<META>` and `<LINK>` tags
+  were skipped the same way. Tag names now match in any case. (#87)
+
+- **The images list ignored `<base href>`.** Image addresses now resolve against the same
+  base as the links list: the first `<base href>`, resolved against the page URL. (#88)
+
+- **Attribute values were matched with exact case.** HTML compares values such as `rel`,
+  `name`, `http-equiv` and `type` without case, but crawlberg compared them byte for byte, so
+  `<meta name="ROBOTS" content="noindex">` did not mark the page as noindex, and
+  `rel="Canonical"`, `rel="Alternate"` and `rel="ICON"` were skipped. These values now match in
+  any case. `rel` is a list of words, so it matches when any word matches: `rel="shortcut icon"`
+  and `rel="alternate stylesheet"` count, and a link with `rel="External NoFollow"` is
+  nofollow. A comma also separates the link qualifiers `nofollow`, `ugc` and `sponsored`, so `rel="ugc,nofollow"` is nofollow too. Asset downloads now also fetch alternate stylesheets. The fallback scan for `<meta>` tags in malformed pages also reads `<META NAME=...>` now. (#100)
+
+- **Feed, favicon, asset and canonical addresses ignored `<base href>`.** They resolved
+  against the page URL, and the canonical URL was not resolved at all, so
+  `<link rel="canonical" href="c.html">` was reported as `c.html`. They now resolve against the
+  same base as the links list, as a browser resolves a `<link href>`. (#101)
+
+- **Attribute values with spaces or parameters were not matched.** `<meta name=" robots ">`
+  was not read as the robots tag, and a JSON-LD or feed `type` with parameters, such as
+  `application/ld+json; charset=utf-8`, was skipped. A `type` is now compared by its MIME type
+  without the parameters. A `type`, `name`, `property` or `http-equiv` value is also compared
+  without the ASCII whitespace around it. HTML strips that whitespace from a `<script type>`, but
+  not from the others: a browser ignores `http-equiv=" refresh "`. Reading those values with the
+  spaces is a deliberate leniency for pages that add them. (#136)
+
+- **An empty canonical link was reported as a canonical URL.** `<link rel="canonical" href="">`
+  gave a canonical URL of `""`. An empty or whitespace-only `href` points at the page itself, so
+  the page now has no canonical URL. (#137)
+
+- **hreflang addresses were not resolved.** The alternate-language links kept each address as
+  the page wrote it, and `<base href>` had no effect. They now resolve against the same base as
+  the links list. The language code is reported without the spaces around it, and a link whose
+  language or `href` is only whitespace is skipped, as an empty one was. (#126)
+
+- **Attribute values kept CR and NUL characters.** A browser turns CR and CRLF in an attribute
+  value into LF, and NUL into U+FFFD. crawlberg did this only for values with a character
+  reference, so `href="x.html\r\n"` stayed as written. Every attribute value now gets this
+  rewrite. (#160)
+
+- **A feed or icon link with a blank `href` was reported.** `<link rel="alternate"
+  type="application/rss+xml" href="  ">` was reported as a feed at the page URL, and an empty
+  `href` as a feed at `""`. A feed or icon link whose `href` is empty or only whitespace is now
+  skipped, as a canonical or hreflang link is. (#187)
+
+- **The links list dropped Unicode spaces from the ends of an address.** A link such as
+  `href="&nbsp;page.html"` was reported as `page.html`, but a browser and the Markdown rewrite
+  keep the no-break space. Every address in a page (links, feeds, icons, hreflang, canonical,
+  images, assets, the Markdown rewrite and a meta refresh target) now loses only what the URL
+  parser removes: control characters and spaces up to U+0020 at either end, and tabs and
+  newlines inside. An address with nothing else in it counts as blank. (#191)
+
+- **Images and assets with a blank address were reported at the page URL.** `<img src=" ">`,
+  an `og:image` or `twitter:image` of only whitespace, and a stylesheet, script or image asset
+  with a blank address each resolved to the page itself. They are now skipped.
+
+- **A `srcset` was split on Unicode spaces.** The first `<source srcset>` candidate was cut at
+  a no-break space, and leading commas hid the candidate after them. The list is now split as
+  a browser splits it, on ASCII whitespace and commas. An inline `data:` candidate is skipped,
+  as an `<img>` one is.
+
+- **A meta refresh target dropped a trailing no-break space.** The target now keeps it, as a
+  browser does, and a target of only control characters is no redirect.
+
+- **Some inline and script addresses still reached the images and links lists.** A
+  `<picture><source srcset>` whose first candidate was a `data:` address in upper or mixed case,
+  such as `DATA:image/png;base64,...`, was reported as an image. An `og:image` or `twitter:image`
+  whose content was a `data:` address, in any case, was reported as an image too. Both are now
+  skipped, as an `<img>` with a `data:` address is. The links list now also skips `vbscript:`
+  links in any case, as it skips `javascript:`. (#200)
+
+- **A refresh target kept its quotes, and the two refresh forms cleaned the target by different
+  rules.** A `<meta http-equiv="refresh">` or `Refresh` header written as `0; url='/next'` sent the
+  crawl to `'/next'` with the quotes, where a browser goes to `/next`. The `Refresh` header target
+  was trimmed by the Unicode whitespace rule, which drops a no-break space, while the meta refresh
+  target was cleaned by the URL parser's rule, which keeps it. Both forms now use one reader that
+  follows the HTML refresh steps: a leading delay, then `;`, `,` or whitespace, then an optional
+  `url=` in any case, then an optional pair of matching quotes. The URL parser's rule then cleans
+  the target. As in a browser, a value with no leading delay is not a refresh, and a target without
+  `url=` is followed, so in `0; /go?url=/elsewhere` the target is `/go?url=/elsewhere`. A refresh
+  to an address the URL parser reads with a scheme the crawl cannot fetch, such as `mailto:`,
+  `javascript:` or `data:`, is no longer a redirect: the page is kept, where the scrape used to
+  fail with an SSRF policy error. (#206, #208)
+
+- **A page with several meta refresh tags was sent to a different target than a browser.** The
+  crawl skipped a meta refresh with a blank target and followed the next one, and otherwise
+  followed the first tag. Chrome acts on the refresh with the shortest delay, and on the later tag
+  when two delays tie, and a blank or self target reloads the page. The crawl now chooses the same
+  tag, and stays on the page when that tag reloads it. A `javascript:` refresh takes no part in
+  that choice, as the HTML refresh steps require, so a later refresh can be used. (#279)
+
+- **The Alef pin named 0.97.0, but the committed Go binding already carried 0.97.1's goroutine
+  thread pinning.** Regenerating with the pinned 0.97.0 binary drops `runtime.LockOSThread` around
+  the FFI's cgo calls; regenerating with 0.97.1 reproduces the committed binding exactly.
+  `alef verify` did not compare the Go binding with a fresh render, so it could not see the
+  mismatch. Repinned Alef to 0.97.1. Alef 0.97.1 no longer turns off the SSRF private-network
+  check in the wasm e2e tests and wasm doc snippets on its own, so `alef.toml` now asks for it with
+  `wasm_config_overrides`. The Rust mock server in `e2e/rust` and `test_apps/rust` is regenerated
+  with 0.97.1. (#412)
+
+- **Images with a script address were reported.** The images list skipped only `data:`
+  addresses, so `<img src="javascript:...">`, a `vbscript:` `<source srcset>` or an `og:image` of
+  `javascript:...` came back as an image. It now skips `data:`, `javascript:` and `vbscript:`
+  addresses in any case, as the links list does. Asset discovery now skips the same addresses when
+  it finds assets on the page. No asset with one of these addresses was downloaded before, because
+  the downloader accepts only `http:` and `https:`. (#276)
+
+- **Feed, favicon, canonical and hreflang links with a script address were reported.** A
+  `<link rel="icon" href="javascript:...">` came back as the page's favicon, and a `javascript:` or
+  `vbscript:` feed, canonical or hreflang link came back as an address. Feed, canonical and
+  hreflang links now skip `data:`, `javascript:` and `vbscript:` addresses in any case, as the
+  links list does. Favicons skip the script schemes and keep any `data:` icon, whatever its media
+  type. These links, and the `<source srcset>`, `og:image` and `twitter:image` entries of the images
+  list, are checked on the address after it resolves against the base, so an address that resolves
+  to a script scheme is skipped too. The `og_image` and `twitter_image` metadata fields are
+  unchanged: they still report the `content` without resolving or checking it. (#291)
+
+- **Link extraction could disagree with the markdown about the same tag.** Link extraction read
+  every page with tl. On a page with an unterminated quote or a stray `=` before a tag's `>`, tl
+  could read a different tag boundary than the page's real structure, so the links list showed no
+  link, or the wrong address, for a link the markdown still carried. Each real `<a>` start tag is
+  now rewritten into unambiguous form first -- one copy of each attribute, double-quoted, as
+  html5ever's tokenizer reads it -- so link extraction and the markdown agree on the same tag. This
+  reads every page's links a second time and is slower on a link-heavy page; a well-formed `<a>`
+  tag is rewritten to itself. (#294)
+- **The bypass provider could expose a vendor API key.** For a vendor that takes its key as a
+  query parameter, the vendor's request URL carries the key. `BypassProvider::fetch` returned that
+  URL as the response's `final_url`, and its send and body-read errors printed it. A caller of
+  `fetch` that read `final_url` or formatted the response with `{:?}` saw the key. Crawl and scrape
+  results never carried it, because the engine does not read a bypass response's `final_url`.
+  `final_url` is now empty, as the field's contract allows when the vendor does not report the
+  resolved URL. The send and body-read errors now name the vendor and the error kind only. (#89)
+
+- **A caller's debug output of a config printed its secrets.** Crawlberg does not log these types,
+  but a caller that formats one with `{:?}`, such as `tracing::debug!(?config)`, a panic or an
+  `expect` message, printed a bypass provider config's API key, token or auth header value. The
+  same held for custom request headers, a CDP endpoint token, proxy credentials in a browser session
+  key, the REST API token, cookie values and the native browser's proxy URL. Each now prints `***`
+  in place of the secret and keeps the non-secret fields. A browser `eval_script` prints as `***`
+  with its length, because a script can embed a token. This covers the Rust types only: the
+  language bindings define their own config types, and their `repr` and `inspect` output is
+  unchanged. (#118, #290)
+- **An unclosed `${` in a bypass provider config echoed its value.** The loader error printed the
+  whole config value, which can hold a secret. It now names the field and the byte position. (#119)
+- **A config validation error echoed the rejected `browser.endpoint`.** An endpoint that is not
+  `ws://` or `wss://` printed the value, so one carrying a `?token=` parameter reached the error
+  text and, through it, an API error body. The error now names only the field and prints no part
+  of the value, not even redacted: the endpoint is a capability, and the field name is enough to
+  find it. The `proxy.url` error has not carried the value since #401. (#118)
+
+  Redaction covers `Debug` and error `Display`. `serde` serialisation is deliberately unchanged:
+  `CrawlConfig`, `BrowserConfig`, `ProxyConfig`, `AuthConfig` and `CookieInfo` still serialise
+  every secret in full, because a config must round-trip through `to_json()`/JSON exactly. Treat
+  serialised config as secret-bearing.
+
+- **A caller's debug output of a bypass provider config printed `${ENV}` values.** Crawlberg
+  prints only the vendor name for a provider, but a caller that formats a loaded `ProviderConfig`
+  with `{:?}` saw a secret substituted into the endpoint, a fixed query value or the JSON body
+  template. The endpoint now prints as its origin only: the scheme, the host and a non-default
+  port, or `***` when it does not parse as an absolute URL or has no host. Each query value prints
+  as `***`. The body template prints as `***` with its length, and with whether it holds the
+  `{{url}}` marker. (#144, #152)
+- **A CDP endpoint token in the URL path printed in full.** The canonical endpoint is
+  `ws://host:9222/devtools/browser/<GUID>`, and the GUID in the path is the capability that drives
+  the browser. Redaction covered only the userinfo and the query, so the debug output of
+  `browser.endpoint` and `BrowserPoolConfig.browser_endpoint` printed the GUID, and an endpoint
+  that did not parse printed whole. Both now print through
+  `crawlberg::net::redact::redact_url_to_origin`, the origin-only helper the bypass provider config
+  uses, which prints `***` for a value without a host. A proxy URL now prints as its origin too,
+  in a `ProxyConfig`, a browser session key and a static proxy provider. The port stays: it tells a container-mapped endpoint from the default 9222, and it is
+  no more secret than the host. Two pooled endpoints on the same host and port now print the same.
+  (#152)
+- **A failed bypass request logs its cause.** The send and body-read errors carry only the error
+  kind, so the provider now logs a warning with the vendor, the endpoint's origin and the cause
+  chain when a send or a body read fails. (#89)
+- **A caller's debug output of a response printed its credential headers.** The fetch and bypass
+  responses, the native browser's rendered page and responses, and the network events printed every
+  response header value with `{:?}`, including a `Set-Cookie` session cookie. A response header
+  map now hides the values of a denylist of credential headers: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Authentication-Info`, `X-Api-Key` and
+  `X-Amz-Security-Token` print as `***`. Every other response header prints in full, because
+  `Content-Type`, `Server` and the like are the debugging value. Header names always stay
+  visible. A request header map prints no value at all, whatever the header's name, as
+  `custom_headers` in `CrawlConfig` already does. (#141)
+
+- **An absolute redirect target was followed exactly as sent, without going through the URL
+  parser.** A relative redirect target was resolved through `Url::join`, which parses it and
+  reports the parser's normalized form, stripped of an embedded tab or newline and trimmed of
+  leading/trailing spaces. An absolute `http://`/`https://` target skipped that parse entirely
+  and came back byte-for-byte as received, so a `Location`, `Refresh`, or `<meta refresh>` value
+  crafted with stray whitespace was followed and reported exactly as sent. Both forms now go
+  through the same parser, and a target that fails to parse, absolute or relative, is refused
+  rather than followed: the redirect source it came from contributes nothing, and the chain
+  falls through to the next source or stops. A target is now followed in the URL parser's
+  normalized form: an IDN host becomes punycode, a default port is dropped, the host is
+  lower-cased, a bare origin gains a trailing `/`, dot segments are removed, a space becomes
+  `%20`, and `127.1` becomes `127.0.0.1`.
+  (#207)
+
+- **A sitemap-index child `<loc>` was fetched and deduplicated on its raw text instead of its
+  parsed form.** A same-host absolute child address, and any child address when the sitemap
+  index's own URL failed to parse, skipped the URL parser entirely, so two spellings of the
+  same address (a default port, an upper-case scheme, a stray tab) were fetched as two separate
+  documents. Every child address is now parsed and normalized before it is fetched and before
+  it is used as the duplicate key, matching the resolver already used for redirect targets, and
+  a child address that fails to parse is skipped instead of fetched as raw text. (#226)
+
+- **`map()` returned sitemap `<loc>` entries as raw text and kept duplicates.** Two spellings of
+  one page, such as `https://example.com/a` and `HTTPS://example.com:443/a`, came back as two
+  entries, a relative `<loc>` came back as a bare path, and a `<loc>` that is not an address came
+  back as text. Each `<loc>` is now resolved against the sitemap's own URL with the same parser as
+  sitemap-index children and returned in its normalized form. A `<loc>` that does not parse is
+  dropped. An address is returned once per `map()` call, even when several sitemaps list it, and a
+  duplicate does not count toward `map_limit`. A relative `<loc>` is now subject to
+  `exclude_paths`, like every other entry. `map_search` now matches the normalized address, so a
+  search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
+  longer matches. A `<loc>` that is only a query, such as `?q=1`, is dropped instead of reported
+  as a page, and so is a `<loc>` that resolves to the sitemap's own address once a fragment such
+  as `#top` is ignored. (#323, #340)
+
+- **A sitemap-index child differing only by a URL fragment was fetched twice.** The
+  fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
+  the host rewrite kept the fragment on a same-host child address before it was fetched
+  and used as the duplicate key. A relative child address such as `a.xml#x` kept its fragment
+  too. The fragment is now dropped from every child address, so both addresses fetch and dedupe
+  as one document. (#324, #363)
+
+- **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
+  answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
+  `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
+  the sitemap's URL after redirects. A redirected index that lists its own address, the one it
+  answered from, is no longer fetched a second time. (#339, #374)
+
+- **A sitemap index's children on other hosts were fetched from the index's own host.** An index
+  at `https://example.com/sitemap.xml` that listed `https://blog.example.com/sitemap.xml` and
+  `https://shop.example.com/sitemap.xml` had each child moved onto `example.com` with its path
+  kept, so both became `https://example.com/sitemap.xml`, the index itself, and were skipped as a
+  cycle. Their pages were missing from the result. Each child is now fetched from its own host,
+  as the sitemaps.org protocol allows. The SSRF policy checks every child fetch, and the seed's
+  credentials and custom headers still go only to the seed host. (#398)
+
+- **A robots.txt `Sitemap:` line on another host was fetched from the seed's host.** A robots.txt
+  on `example.com` that named `https://cdn.example.net/sitemap.xml` made `map()` fetch
+  `https://example.com/sitemap.xml` instead, which is another document or none. The sitemaps.org
+  protocol lets robots.txt name a sitemap on another host, so the line is now fetched from the
+  host it names. The SSRF policy checks the fetch, and the seed's credentials and custom headers
+  go only to the seed host. A relative `Sitemap:` line now resolves against the address that
+  served robots.txt after its redirects, not the address being mapped. (#268, #349)
+
+- **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
+  returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
+  path and encodes a non-ASCII host as punycode, so a search for `café` never found
+  `https://example.com/caf%C3%A9` and a search for `bücher` never found the matching
+  `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
+  of the address, alongside the address text itself. The term and the address are compared after
+  Unicode normalization and default case folding, so `café` typed with a combining accent finds
+  `café`, and `STRASSE` finds `/Straße`. Case folding does not use a locale, so the Turkish dotted
+  and dotless `i` do not match their Turkish case partners. (#338)
+
+- **The `search` field of `POST /v1/map` never matched a non-ASCII term.** The REST handler kept
+  its own lower-case substring check against the returned address, so `café` never found
+  `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
+  a term the same way as the CLI and the MCP `map` tool. (#362)
+
+- **`map()` resolved a redirected HTML page's links against the address it requested, not the
+  one that answered.** When `/start` redirected to `/dir/page.html`, a link to `x.html` on that
+  page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
+  fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
+  redirects; the HTML link branch now does too, matching the crawl engine. (#360)
 
 ## [1.8.0] - 2026-09-27
 
@@ -161,6 +786,18 @@ Four changes can affect an existing setup:
   HTML strips nothing else from a URL attribute — an NBSP-only reference is a real value and is
   percent-encoded (#191). Canonical (#137) and hreflang (#126) leak the raw value instead, because
   they do not resolve at all. (#220)
+
+- **`DownloadedDocument` printed every response header value under `{:?}`.** The type derived
+  `Debug` over `headers`, so a `Set-Cookie` or an echoed `Authorization` reached any debug render
+  of a scrape or crawl page result — the value itself, not just the name. `DownloadedDocument` now
+  has a hand-written `Debug` that prints `***` for every header on the shared sensitive list
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Amz-Security-Token` and `Authentication-Info`), matching names without case; every header
+  name and every other value stays
+  visible. Output is unchanged for a document crawlberg produced itself, because no path in the
+  core populates `headers` yet — the leak was reachable through a deserialised or caller-built
+  value. The Elixir and Ruby binding mirrors keep their own derived `Debug` over their own header
+  map and are not covered by this. (#159)
 
 - **A browser fetch reported no response headers at all on the crawl path.**
   `browser_http_to_crawl` built an empty header map, so every header a browser backend had
@@ -296,6 +933,11 @@ Four changes can affect an existing setup:
   path now maps a status to the same error, so a 504 is a server error everywhere and is
   retried like a 503. The messages of these errors on `map()` now match the other paths:
   `timeout`, `service unavailable` and `gateway timeout`. (#76)
+- **A custom retry policy could not read the status of a failed attempt.** `AttemptOutcome.status`
+  was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
+  the error but not the 503 or 500 behind it. The field now holds the status for every status the
+  built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
+  stays empty when no response caused the error, such as a connection failure. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because

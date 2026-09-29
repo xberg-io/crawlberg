@@ -13,15 +13,15 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::net::origin::same_host;
+use crate::html::is_fetchable_scheme;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
-use crate::types::{AuthConfig, CrawlConfig};
+use crate::types::CrawlConfig;
 
 use headers::build_headers_map;
 
 pub(crate) use body::{
-    effective_max_body_size, read_body_bounded, read_text_bounded, redecode_with_charset,
-    truncate_body_at_char_boundary,
+    effective_max_body_size, read_body_bounded, redecode_with_charset, truncate_body_at_char_boundary,
 };
 pub(crate) use challenge::{challenge_status_error, is_challenge_status};
 pub(crate) use client::build_client;
@@ -29,9 +29,12 @@ pub(crate) use client::build_client;
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
-pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
+pub(crate) use status::error_status;
+pub(crate) use status::status_error;
+pub(crate) use waf::robots_block_page_error;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.
@@ -68,13 +71,13 @@ pub struct HttpResponse {
     /// Optional browser-specific extras (eval result, network events, cookies).
     #[allow(dead_code)]
     pub browser_extras: Option<BrowserExtras>,
-    /// The URL of the final response after any transparent redirect following.
+    /// The URL of the final response after any redirects.
     ///
-    /// On native targets reqwest uses `Policy::none()` so this always equals
-    /// the request URL (redirects are handled manually by `follow_redirects`).
+    /// On native targets reqwest uses `Policy::none()` and `http_fetch` follows each
+    /// redirect hop itself, so this is the URL of the last hop it requested.
     /// On wasm targets the browser's `fetch` follows redirects transparently
-    /// and `reqwest::Response::url()` returns the post-redirect URL — which is
-    /// what the wasm scrape path needs to populate `ScrapeResult::final_url`.
+    /// and `reqwest::Response::url()` returns the post-redirect URL, which the wasm
+    /// scrape path uses to populate `ScrapeResult::final_url`.
     #[allow(dead_code)]
     pub final_url: String,
     /// PNG screenshot bytes captured for this fetch, when the caller requested one
@@ -91,7 +94,6 @@ struct FetchContext<'a> {
     config: &'a CrawlConfig,
     extra_headers: &'a HashMap<String, String>,
     client: &'a reqwest::Client,
-    initial_url: &'a url::Url,
 }
 
 /// What one hop produced: a redirect target still to follow, or a finished response.
@@ -110,8 +112,9 @@ enum HopOutcome {
 enum RedirectTarget {
     /// The `Location` header, resolved against the URL that served the redirect.
     Follow(url::Url),
-    /// A `Location` that does not resolve to a URL; the 3xx is returned as the response.
-    Unresolvable,
+    /// A `Location` that does not resolve to a URL, or resolves to one with a scheme the crawler
+    /// cannot fetch (`mailto:`, `data:`, `file:`, ...); the 3xx is returned as the response.
+    Unfollowable,
 }
 
 /// Response metadata captured before the body is consumed.
@@ -137,10 +140,6 @@ impl ResponseHead {
             final_url: resp.url().to_string(),
             headers: resp.headers().clone(),
         }
-    }
-
-    fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
     }
 
     fn content_length(&self) -> Option<usize> {
@@ -193,9 +192,8 @@ pub(crate) async fn http_fetch(
         config,
         extra_headers,
         client,
-        initial_url: &initial_url,
     };
-    let mut current_url = initial_url.clone();
+    let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
@@ -232,9 +230,9 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
             Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
-            Some(RedirectTarget::Unresolvable) => {
+            Some(RedirectTarget::Unfollowable) => {
                 return Ok(HopOutcome::Complete(
-                    unresolvable_redirect_response(context.config, resp, head).await,
+                    unfollowable_redirect_response(context.config, resp, head).await,
                 ));
             }
             None => {}
@@ -266,92 +264,76 @@ async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Re
         return Err(error);
     }
 
-    // ~keep Header-only WAF fingerprints must fire before reading a 2xx body as real content.
-    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
-    if let Some(header_vendor) = header_only_waf_vendor(&head, &mut headers_map_cache) {
-        let config = context.config;
-        return Err(body_confirmed_waf_error(config, resp, &head, header_vendor, &mut headers_map_cache).await);
-    }
-
     let expected_len = head.content_length();
     let body_bytes = read_validated_body(context.config, resp, expected_len).await?;
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
-    // ~keep Small 2xx bodies with high-confidence vendor JS fingerprints are treated as WAF interstitials.
-    if let Some(vendor) = body_waf_vendor(&head, &body, &body_bytes, &mut headers_map_cache) {
-        return Err(CrawlError::WafBlocked {
-            message: format!("waf/blocked detected on 2xx (body): {vendor}"),
-            vendor,
-        });
-    }
-
-    // ~keep Reuses the cached header map (built at most once above) instead of walking
-    // `headers` a third time; falls back to a fresh build only for the statuses that
-    // never populated the cache (anything outside 200..300 and not explicitly matched
-    // above, e.g. 206 or an unlisted 4xx/5xx that falls through to no terminal error).
     let headers_map = headers_map_cache.unwrap_or_else(|| build_headers_map(&head.headers));
+
+    // ~keep The TOML corpus is the single WAF source of truth; do not hardcode header lists here.
+    // The body is read before the check rather than after a header match because a header-only
+    // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
+    // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
+    // response this hop returns.
+    if let Some(error) = waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map) {
+        return Err(error);
+    }
     Ok(HopOutcome::Complete(head.into_response(body, body_bytes, headers_map)))
 }
 
 /// Build and send the GET for one hop.
 async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) -> Result<reqwest::Response, CrawlError> {
+    crate::net::userinfo::refuse(current_url)?;
     // ~keep WASM has no client-level timeout; apply the budget to every redirect hop.
     let mut req = context
         .client
         .get(current_url.to_string())
         .timeout(context.config.request_timeout);
 
-    if let Some(ref ua) = context.config.user_agent {
-        req = req.header(USER_AGENT, ua.as_str());
-    } else {
-        req = req.header(USER_AGENT, concat!("crawlberg/", env!("CARGO_PKG_VERSION")));
+    // ~keep `extra_headers["user-agent"]` outranks everything else: on wasm, where every
+    // ~keep request (including the page fetch) goes through this function, it is the crawl
+    // ~keep loop's own per-page rotation pick (crawlberg#483). Falls back to
+    // ~keep `custom_headers["user-agent"]` ahead of `config.user_agent`, the same precedence
+    // ~keep every other sender uses (crawlberg#423); this hop's own robots.txt, sitemap and
+    // ~keep asset fetches used to read `config.user_agent` only, so a custom-header agent
+    // ~keep never reached them. Native's own Tower-routed page fetch never reaches this
+    // ~keep function at all -- it sets its `User-Agent` header in `tower/service.rs` instead.
+    let extra_user_agent = context
+        .extra_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.as_str());
+    req = req.header(
+        USER_AGENT,
+        extra_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(context.config)),
+    );
+
+    // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
+    // ~keep strip-credentials-on-cross-host behaviour never runs; asking per hop for the
+    // ~keep seed-host headers replaces it, for the custom headers as well as the credential.
+    // ~keep A `user-agent` custom header is already reflected in the line above; re-adding it
+    // ~keep here would append a second, redundant `User-Agent` header line rather than
+    // ~keep replacing the first one, the same bug `tower/service.rs::apply_headers` had
+    // ~keep before it was fixed (crawlberg#423).
+    for (name, value) in seed_host_headers(context.config, current_url) {
+        if name.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
+        req = req.header(name.as_str(), value.as_str());
     }
 
-    req = apply_auth(req, context, current_url);
-
-    for (k, v) in &context.config.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
-    }
-
+    // ~keep `user-agent` is already reflected in the line above (as `extra_user_agent`);
+    // ~keep re-adding it here would append a second, redundant header line instead of
+    // ~keep replacing the first one -- the same duplicate-header bug the loop above already
+    // ~keep guards against for `seed_host_headers` (crawlberg#423, crawlberg#483).
     for (k, v) in context.extra_headers {
+        if k.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
 
     req.send().await.map_err(classify_reqwest_error)
-}
-
-/// Attach the configured credentials, but only while the hop is still on the origin they
-/// were configured for.
-///
-/// ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
-/// ~keep strip-credentials-on-cross-host behaviour never runs and we must do it here:
-/// ~keep an open redirect off an authenticated origin would otherwise hand the
-/// ~keep configured Authorization header straight to the redirect target.
-fn apply_auth(
-    req: reqwest::RequestBuilder,
-    context: &FetchContext<'_>,
-    current_url: &url::Url,
-) -> reqwest::RequestBuilder {
-    if !same_host(context.initial_url, current_url) {
-        if context.config.auth.is_some() {
-            tracing::debug!(
-                origin = context.initial_url.host_str().unwrap_or(""),
-                target = current_url.host_str().unwrap_or(""),
-                "withholding configured credentials from a cross-host redirect hop"
-            );
-        }
-        return req;
-    }
-
-    match context.config.auth {
-        Some(AuthConfig::Basic {
-            ref username,
-            ref password,
-        }) => req.basic_auth(username, Some(password)),
-        Some(AuthConfig::Bearer { ref token }) => req.bearer_auth(token),
-        Some(AuthConfig::Header { ref name, ref value }) => req.header(name.as_str(), value.as_str()),
-        None => req,
-    }
 }
 
 /// Resolve a 3xx response's `Location` header against the URL that served it.
@@ -361,14 +343,14 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)?;
 
-    Some(match current_url.join(&location) {
-        Ok(next_url) => RedirectTarget::Follow(next_url),
-        Err(_) => RedirectTarget::Unresolvable,
+    Some(match crate::net::userinfo::resolve(current_url, &location) {
+        Some(next_url) if is_fetchable_scheme(&next_url) => RedirectTarget::Follow(next_url),
+        _ => RedirectTarget::Unfollowable,
     })
 }
 
-/// Return a 3xx whose `Location` could not be resolved as the response itself.
-async fn unresolvable_redirect_response(
+/// Return a 3xx whose `Location` names no URL the crawler can fetch as the response itself.
+async fn unfollowable_redirect_response(
     config: &CrawlConfig,
     resp: reqwest::Response,
     head: ResponseHead,
@@ -379,50 +361,6 @@ async fn unresolvable_redirect_response(
     let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let headers_map = build_headers_map(&head.headers);
     head.into_response(body, body_bytes, headers_map)
-}
-
-/// The WAF vendor a 2xx's headers alone fingerprint, before its body is read.
-fn header_only_waf_vendor(
-    head: &ResponseHead,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    challenge::header_waf_vendor(head.status, headers_map)
-}
-
-/// Re-run classification over the body of a 2xx its headers already flagged, preferring
-/// the vendor the body names and falling back to the header-derived one.
-async fn body_confirmed_waf_error(
-    config: &CrawlConfig,
-    resp: reqwest::Response,
-    head: &ResponseHead,
-    header_vendor: String,
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> CrawlError {
-    let body = read_text_bounded(resp, effective_max_body_size(config)).await;
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    let vendor = waf::waf_vendor_from_body(head.status, &body, headers_map).unwrap_or(header_vendor);
-    CrawlError::WafBlocked {
-        message: format!("waf/blocked detected on 2xx (header): {vendor}"),
-        vendor,
-    }
-}
-
-/// The WAF vendor a 2xx's already-read body fingerprints.
-fn body_waf_vendor(
-    head: &ResponseHead,
-    body: &str,
-    body_bytes: &[u8],
-    headers_map_cache: &mut Option<HashMap<String, Vec<String>>>,
-) -> Option<String> {
-    if !head.is_success() {
-        return None;
-    }
-    let headers_map = headers_map_cache.get_or_insert_with(|| build_headers_map(&head.headers));
-    waf::waf_vendor_from_bytes(head.status, body_bytes, body, headers_map)
 }
 
 /// Shortfall below the declared `content-length` that is read as a truncated transfer
@@ -480,8 +418,14 @@ fn classify_body_read_error(e: reqwest::Error) -> CrawlError {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use crate::net::ssrf::SsrfPolicy;
+    use crate::net::ssrf::{HostMatcher, SsrfPolicy};
+    use rustls::ServerConfig;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Once};
     use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     #[tokio::test]
@@ -572,6 +516,44 @@ mod tests {
         );
     }
 
+    /// A 3xx whose `Location` has a scheme the crawler cannot fetch is the response, not an SSRF
+    /// error, while a web `Location` on the same server is still followed.
+    #[tokio::test]
+    async fn http_fetch_returns_the_3xx_when_location_names_a_scheme_it_cannot_fetch() {
+        let mock = MockServer::start().await;
+        let locations = [
+            "mailto:a@example.com",
+            "data:,x",
+            "file:///etc/passwd",
+            "myapp://open",
+            "/final",
+        ];
+        for (index, location) in locations.iter().enumerate() {
+            Mock::given(method("GET"))
+                .and(path(format!("/start{index}")))
+                .respond_with(ResponseTemplate::new(302).append_header("location", *location))
+                .mount(&mock)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/final"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("final"))
+            .mount(&mock)
+            .await;
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+
+        for (index, location) in locations.iter().enumerate() {
+            let url = format!("{}/start{index}", mock.uri());
+            let resp = http_fetch(&url, &config, &std::collections::HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|e| panic!("{location}: http_fetch must not fail: {e}"));
+            let expected = if *location == "/final" { 200 } else { 302 };
+            assert_eq!(resp.status, expected, "{location}");
+        }
+    }
+
     /// Regression test: `http_fetch`'s internal redirect loop used to enforce
     /// `config.ssrf.max_redirects` (a `u8` with no public builder setter, default 5)
     /// instead of the builder-settable `config.max_redirects`, so `.max_redirects(N)`
@@ -613,18 +595,15 @@ mod tests {
         );
     }
 
-    /// ~keep Regression: `redact_url_credentials` existed and was unit-tested, but every
-    /// real `SsrfPolicyViolation` site built the variant with a struct literal carrying
-    /// the raw URL — so a refused `http://user:pass@host/` leaked the credential into API
-    /// error bodies, MCP payloads and tracing fields. Testing the helper in isolation is
-    /// exactly what hid that, so this drives a real `http_fetch` rejection instead.
+    /// ~keep Regression: a refused `http://user:pass@host/` once leaked the credential into
+    /// API error bodies, MCP payloads and tracing fields. This drives a real SSRF refusal
+    /// through the public entry point, which admits the URL before any fetch sees it.
     #[tokio::test]
     async fn http_fetch_ssrf_rejection_does_not_leak_url_credentials() {
-        let config = CrawlConfig::default();
-        let client = build_client(&config).expect("client must build");
+        let engine = crate::CrawlEngine::builder().build().expect("engine must build");
         let url = "http://alice:hunter2@169.254.169.254/latest/meta-data/";
 
-        let err = match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
+        let err = match engine.scrape(url).await {
             Err(e) => e,
             Ok(_) => panic!("the link-local metadata address must be refused by the default policy"),
         };
@@ -641,6 +620,297 @@ mod tests {
         assert!(
             rendered.contains("169.254.169.254"),
             "the host must survive redaction so the error stays actionable, got {rendered}"
+        );
+    }
+
+    async fn http_fetch_refusal(url: &str) -> CrawlError {
+        let config = CrawlConfig::default();
+        let client = build_client(&config).expect("client must build");
+        match http_fetch(url, &config, &std::collections::HashMap::new(), &client).await {
+            Err(err @ CrawlError::SsrfPolicyViolation { .. }) => err,
+            Err(other) => panic!("{url} must be refused by the SSRF policy, got {other:?}"),
+            Ok(_) => panic!("{url} must be refused by the SSRF policy, got Ok"),
+        }
+    }
+
+    async fn http_fetch_refusal_reason(url: &str) -> String {
+        match http_fetch_refusal(url).await {
+            CrawlError::SsrfPolicyViolation { reason, .. } => reason,
+            other => unreachable!("http_fetch_refusal returns only SsrfPolicyViolation, got {other:?}"),
+        }
+    }
+
+    /// ~keep The refusal's `url` field carries the address as written, so the secret must be
+    /// absent from the whole rendered error, not only from `reason`. Each row is one class of
+    /// credential-bearing address the refusal sees; the expected `url` field is the positive
+    /// twin that proves the row reached the SSRF refusal at all.
+    #[tokio::test]
+    async fn http_fetch_ssrf_refusal_hides_the_credential_in_the_whole_error() {
+        const HIDDEN: &str = "[address hidden: it may carry credentials]";
+        let unrecognized = "disallowed scheme: unrecognized";
+        let rows = [
+            // Opaque: parses as scheme `user` with no host.
+            ("user:token@host", &["token"][..], HIDDEN, unrecognized),
+            ("KEY:@h:1", &["key"][..], HIDDEN, unrecognized),
+            // Real userinfo under a scheme the policy does not recognise.
+            (
+                "foo://alice:hunter2@example.com/",
+                &["alice", "hunter2"][..],
+                "foo://***:***@example.com/",
+                unrecognized,
+            ),
+            // No scheme at all: the address fails to parse.
+            (
+                "alice@example.com",
+                &["alice"][..],
+                HIDDEN,
+                "invalid URL: relative URL without a base",
+            ),
+            // A percent-encoded `@` inside the password.
+            ("user:hunt%40er2@host", &["hunt", "er2"][..], HIDDEN, unrecognized),
+            (
+                "foo://alice:hunt%40er2@example.com/",
+                &["alice", "hunt", "er2"][..],
+                "foo://***:***@example.com/",
+                unrecognized,
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (url, secrets, expected_url, expected_reason) in rows {
+            let err = http_fetch_refusal(url).await;
+            let rendered = format!("{err}\n{err:?}");
+            let lowered = rendered.to_lowercase();
+            let shown: Vec<&str> = secrets.iter().copied().filter(|s| lowered.contains(s)).collect();
+            if !shown.is_empty() {
+                failures.push(format!("{url}: shows {shown:?} in {rendered}"));
+            }
+            let CrawlError::SsrfPolicyViolation { url: field, reason, .. } = &err else {
+                unreachable!("http_fetch_refusal returns only SsrfPolicyViolation, got {err:?}");
+            };
+            if field != expected_url || reason != expected_reason {
+                failures.push(format!(
+                    "{url}: expected url {expected_url:?} and reason {expected_reason:?}, got {field:?} and {reason:?}"
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "credential rows failed:\n{}", failures.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn http_fetch_scheme_refusal_does_not_show_a_user_name_parsed_as_the_scheme() {
+        for (url, parsed_scheme, secret) in [
+            ("user:token@host", "user", "token"),
+            ("KEY:@h:1", "key", "key"),
+            ("localhost:3128", "localhost", "3128"),
+        ] {
+            let reason = http_fetch_refusal_reason(url).await;
+            assert!(
+                reason.contains("disallowed scheme"),
+                "{url} must be refused for its scheme, got: {reason}"
+            );
+            let lowered = reason.to_lowercase();
+            for shown in [parsed_scheme, secret] {
+                assert!(
+                    !lowered.contains(shown),
+                    "the refusal of {url} shows {shown:?}: {reason}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn http_fetch_scheme_refusal_names_a_known_scheme() {
+        for (url, named) in [
+            ("ftp://x", "disallowed scheme: ftp"),
+            ("file:///x", "disallowed scheme: file"),
+        ] {
+            let reason = http_fetch_refusal_reason(url).await;
+            assert_eq!(reason, named, "the refusal of {url} must name its scheme");
+        }
+    }
+
+    /// ~keep Regression coverage for #442: `http_fetch` -> `send_hop_request` is the one
+    /// call site robots.txt (`helpers.rs`), sitemaps (`sitemap.rs`) and asset downloads
+    /// (`assets.rs`) all fetch through, and it shares `classify_reqwest_error` with the
+    /// page-fetch path `test_transport_error_credential_redaction.rs` already covers. That
+    /// test never reaches this call site (page fetches go through `tower/service.rs`
+    /// instead), so a change that reintroduced the raw URL here specifically would still
+    /// pass every existing test. This drives `http_fetch` directly against a closed port.
+    #[tokio::test]
+    async fn http_fetch_transport_error_does_not_leak_url_credentials() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("must bind an ephemeral port");
+        let port = listener.local_addr().expect("must read local addr").port();
+        drop(listener);
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://alice:hunter2@127.0.0.1:{port}/robots.txt");
+
+        let err = match http_fetch(&url, &config, &std::collections::HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("a connection to a closed port must fail"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the closed-port transport error must never carry the URL's password, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the closed-port transport error must never carry the URL's username, got {rendered}"
+        );
+        assert!(
+            rendered.contains("127.0.0.1"),
+            "the host must still be named so the error stays actionable, got {rendered}"
+        );
+    }
+
+    /// ~keep Regression coverage for #463: `send_hop_request` only had connection-refused
+    /// credential-redaction coverage (#442, the test above); the page-fetch path
+    /// (`do_fetch`, `test_transport_error_shapes_credential_redaction.rs`) also has DNS,
+    /// timeout and TLS-certificate shapes for #444. These three tests give the robots,
+    /// sitemap and asset path (this call site) the same three shapes, so a change that
+    /// reintroduced the raw URL in exactly one of them would not slip past unnoticed on
+    /// this path the way it already couldn't on the page-fetch path.
+    #[tokio::test]
+    async fn http_fetch_transport_error_does_not_leak_url_credentials_from_a_dns_failure() {
+        let host = "this-hostname-does-not-exist-crawlberg-test.invalid";
+        let mut config = CrawlConfig::default();
+        config.ssrf.allowlist.push(HostMatcher::exact(host));
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://alice:hunter2@{host}/robots.txt");
+
+        let err = match http_fetch(&url, &config, &HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("an unresolvable host must fail"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the DNS-failure transport error must never carry the URL's password, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the DNS-failure transport error must never carry the URL's username, got {rendered}"
+        );
+        assert!(
+            rendered.contains(host),
+            "the host must still be named so the error stays actionable, got {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_fetch_transport_error_does_not_leak_url_credentials_from_a_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind failed");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((_socket, _)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        config.request_timeout = Duration::from_millis(200);
+        let client = build_client(&config).expect("client must build");
+        let url = format!("http://alice:hunter2@{addr}/robots.txt");
+
+        let err = match http_fetch(&url, &config, &HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("a server that never answers must time out"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the timeout transport error must never carry the URL's password, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the timeout transport error must never carry the URL's username, got {rendered}"
+        );
+        assert!(
+            rendered.contains(&addr.ip().to_string()),
+            "the host must still be named so the error stays actionable, got {rendered}"
+        );
+    }
+
+    /// A throwaway self-signed certificate for `127.0.0.1`, the same static DER fixture
+    /// `test_transport_error_shapes_credential_redaction.rs` uses for the page-fetch path's
+    /// TLS-certificate test: no external process, no cross-OpenSSL-version drift between
+    /// CI's Linux and macOS legs. Unit tests here and that integration test are separate
+    /// compilation units, so the spawn helper is duplicated rather than shared, matching
+    /// this crate's existing per-file test-helper convention (`build_engine`).
+    static CERT_DER: &[u8] = include_bytes!("../tests/fixtures/self_signed/cert.der");
+    static KEY_DER: &[u8] = include_bytes!("../tests/fixtures/self_signed/key.der");
+
+    fn install_crypto_provider() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+    }
+
+    async fn spawn_self_signed_tls_server() -> SocketAddr {
+        install_crypto_provider();
+
+        let cert = CertificateDer::from(CERT_DER.to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY_DER.to_vec()));
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert], key)
+            .expect("the self-signed server config must build");
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("must bind an ephemeral port");
+        let addr = listener.local_addr().expect("must read local addr");
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let _ = acceptor.accept(stream).await;
+                });
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn http_fetch_transport_error_does_not_leak_url_credentials_from_a_bad_certificate() {
+        let addr = spawn_self_signed_tls_server().await;
+
+        let mut config = CrawlConfig::default();
+        config.ssrf.deny_private = false;
+        let client = build_client(&config).expect("client must build");
+        let url = format!("https://alice:hunter2@{addr}/robots.txt");
+
+        let err = match http_fetch(&url, &config, &HashMap::new(), &client).await {
+            Err(e) => e,
+            Ok(_) => panic!("an untrusted self-signed certificate must fail verification"),
+        };
+
+        let rendered = format!("{err}\n{err:?}");
+        assert!(
+            !rendered.contains("hunter2"),
+            "the bad-certificate transport error must never carry the URL's password, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice"),
+            "the bad-certificate transport error must never carry the URL's username, got {rendered}"
+        );
+        assert!(
+            rendered.contains(&addr.ip().to_string()),
+            "the host must still be named so the error stays actionable, got {rendered}"
         );
     }
 
@@ -717,6 +987,59 @@ mod tests {
             );
             assert_eq!(status::error_status(&error), Some(*status), "{error:?}");
         }
+    }
+
+    /// A custom retry policy decides on the status of the response that failed, so a plain 403
+    /// and a fingerprinted block must both carry the status they were raised for (crawlberg#133).
+    #[tokio::test]
+    async fn http_fetch_carries_the_response_status_on_a_403_and_on_a_fingerprinted_block() {
+        let plain = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain 403 must carry its status: {plain:?}"
+        );
+
+        let fingerprinted = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
+        assert_eq!(
+            status::error_status(&fingerprinted),
+            Some(403),
+            "a fingerprinted 403 must carry its status: {fingerprinted:?}"
+        );
+
+        for status in [429_u16, 503] {
+            let blocked = fetch_status(
+                status,
+                ResponseTemplate::new(status)
+                    .append_header("x-datadome", "blocked")
+                    .set_body_string("<html>challenge</html>"),
+            )
+            .await;
+            assert!(
+                matches!(&blocked, CrawlError::WafBlocked { .. }),
+                "status {status} must fingerprint as a block: {blocked:?}"
+            );
+            assert_eq!(
+                status::error_status(&blocked),
+                Some(status),
+                "a block fingerprinted from a {status} must carry it: {blocked:?}"
+            );
+        }
+
+        let refused = fetch_status(
+            200,
+            ResponseTemplate::new(200).set_body_string("<html>cf-chl- x</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&refused, CrawlError::WafBlocked { .. }),
+            "a 2xx interstitial must be refused as a block: {refused:?}"
+        );
+        assert_eq!(
+            status::error_status(&refused),
+            Some(200),
+            "a block refused from a 2xx must carry its status: {refused:?}"
+        );
     }
 
     /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
@@ -844,19 +1167,24 @@ mod tests {
         }
     }
 
-    /// A 2xx whose headers alone fingerprint is a WAF interstitial, reported before the
-    /// body is treated as page content. ~keep
+    /// A 2xx whose headers name the vendor is reported as a header block rather than treated
+    /// as page content. ~keep
     ///
     /// ~keep Also the regression guard for crawlberg#169: this and the body-block test below
     /// pin the 2xx wording, which the challenge-status work must not reword. Both pass with
     /// and without that change, which is the point of a guard.
+    ///
+    /// ~keep The body carries DataDome's own script tag because a header-only fingerprint no
+    /// longer decides a 2xx on its own (crawlberg#231). That narrowing reaches `x-datadome`,
+    /// `x-px-block` and `x-amzn-waf-action` as well as the CDN-presence headers #231 is about:
+    /// on a 2xx all four now need the interstitial to be visible in the body.
     #[tokio::test]
     async fn http_fetch_reports_a_header_waf_block_on_a_2xx() {
         let error = fetch_status(
             200,
             ResponseTemplate::new(200)
                 .append_header("x-datadome", "protected")
-                .set_body_string("<html></html>"),
+                .set_body_string("<html><script src=\"https://js.datadome.co/tags.js\"></script></html>"),
         )
         .await;
         assert!(
@@ -891,6 +1219,35 @@ mod tests {
         );
     }
 
+    /// A 2xx whose only WAF evidence is a CDN-presence header is returned as content by
+    /// `http_fetch`, the path robots.txt, sitemap and asset fetches take (crawlberg#231).
+    #[tokio::test]
+    async fn http_fetch_returns_a_2xx_with_only_a_cdn_presence_header_as_content() {
+        for (name, value) in [("server", "AkamaiGHost"), ("x-sucuri-id", "18012")] {
+            let mock = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/probe"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .append_header(name, value)
+                        .set_body_string("<html><body><h1>Release notes</h1></body></html>"),
+                )
+                .mount(&mock)
+                .await;
+
+            let config = permissive_config();
+            let client = build_client(&config).expect("client must build");
+            let response = http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+                .await
+                .unwrap_or_else(|error| panic!("a 200 with only `{name}: {value}` must succeed, got {error:?}"));
+            assert!(
+                response.body.contains("Release notes"),
+                "the real page must reach the caller, got: {}",
+                response.body
+            );
+        }
+    }
+
     /// A 3xx whose `Location` does not resolve to a URL is returned as the response
     /// rather than followed or rejected. ~keep
     #[tokio::test]
@@ -914,6 +1271,41 @@ mod tests {
 
         assert_eq!(response.status, 302, "the 3xx itself must be returned");
         assert_eq!(response.body, "moved", "its body must be read");
+    }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_before_the_network() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+
+        let credentialed = mock.uri().replacen("http://", "http://user:FETCH-PW-4d1e@", 1) + "/in";
+        let error = http_fetch(&credentialed, &config, &HashMap::new(), &client)
+            .await
+            .map(|_| ())
+            .expect_err("a URL with userinfo must be refused");
+        let text = error.to_string();
+        assert!(
+            !text.contains("FETCH-PW-4d1e"),
+            "the error must not print the password: {text}"
+        );
+        assert!(text.contains("credentials"), "the error names the refusal: {text}");
+
+        http_fetch(&format!("{}/out", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("the same URL without userinfo must be fetched");
+        let paths: Vec<String> = mock
+            .received_requests()
+            .await
+            .expect("request recording is on")
+            .into_iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
     }
 
     fn permissive_config() -> CrawlConfig {
@@ -941,5 +1333,96 @@ mod tests {
             .await
             .map(|_| ())
             .expect_err(&format!("status {status} must produce an error"))
+    }
+
+    #[test]
+    fn a_redirect_location_loses_its_userinfo() {
+        let current = url::Url::parse("http://example.com/start").expect("test URL must parse");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::LOCATION,
+            reqwest::header::HeaderValue::from_static("http://user:s3cret@example.com/end"),
+        );
+        let Some(RedirectTarget::Follow(next)) = redirect_target(&current, &headers) else {
+            panic!("the Location must be followed");
+        };
+        assert_eq!(next.as_str(), "http://example.com/end");
+    }
+
+    /// crawlberg#423: a robots.txt, sitemap or asset fetch (the only callers of `http_fetch`)
+    /// must send the custom-header agent once, not append it alongside the configured one.
+    #[tokio::test]
+    async fn a_robots_or_asset_fetch_does_not_duplicate_a_custom_header_user_agent() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let seed = url::Url::parse(&mock.uri()).expect("mock URL must parse");
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            custom_headers: HashMap::from([("user-agent".to_owned(), "Custom".to_owned())]),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let client = build_client(&config).expect("client must build");
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &HashMap::new(), &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values.len(),
+            1,
+            "a custom_headers user-agent must replace the configured default, not duplicate it: {user_agent_values:?}"
+        );
+        assert_eq!(user_agent_values, ["Custom"]);
+    }
+
+    /// A fetch that names its own `user-agent` (the wasm page fetch, pinning the agent its
+    /// robots decision judged) must send that agent once, in place of the configured one.
+    #[tokio::test]
+    async fn an_extra_header_user_agent_replaces_the_configured_one() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            ..permissive_config()
+        };
+        let client = build_client(&config).expect("client must build");
+        let extra_headers = HashMap::from([("user-agent".to_owned(), "Pinned".to_owned())]);
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &extra_headers, &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values,
+            ["Pinned"],
+            "an extra-header user-agent must replace the configured one, not add a second line"
+        );
     }
 }

@@ -133,7 +133,7 @@ match config.validate() {
 | `max_body_size`   | `Option<usize>`           | `None`      | Maximum response body size in bytes. Responses are truncated.             |
 | `user_agent`      | `Option<String>`          | `None`      | Custom User-Agent string.                                                 |
 | `user_agents`     | `Vec<String>`             | `[]`        | User-Agent strings for rotation. When non-empty, overrides `user_agent`.  |
-| `custom_headers`  | `HashMap<String, String>` | `{}`        | Extra HTTP headers sent with every request.                               |
+| `custom_headers`  | `HashMap<String, String>` | `{}`        | Extra HTTP headers sent with every request to the seed URL's host.        |
 | `cookies_enabled` | `bool`                    | `false`     | Whether to collect and track cookies across requests.                     |
 
 ### Authentication

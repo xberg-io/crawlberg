@@ -210,3 +210,34 @@ async fn interact_on_the_native_backend_ignores_the_launch_options_with_a_warnin
         "interact() on the native path must warn that the launch options are ignored; logs: {logs}"
     );
 }
+
+#[cfg(feature = "browser")]
+#[tokio::test]
+async fn the_ignored_launch_options_warning_gives_only_the_number_of_flags() {
+    const SECRET: &str = "sk-live-9f8e7d6c5b4a";
+    // ~keep Nothing listens on port 1, so the connect fails after the warning is logged.
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            chrome_args: vec![format!("--proxy-server=http://user:{SECRET}@proxy.internal:8080")],
+            ..ignored_launch_options(BrowserConfig {
+                backend: BrowserBackend::Chromiumoxide,
+                endpoint: Some("ws://127.0.0.1:1/devtools/browser/crawlberg-test".to_owned()),
+                ..BrowserConfig::default()
+            })
+        },
+        ..CrawlConfig::builder().allow_private_networks(true).build()
+    };
+    let (logs, _guard) = capture_warnings();
+    let engine = create_engine(Some(config)).expect("an endpoint config must not be refused for ignored options");
+    let url = start_page_server().await;
+    let _ = scrape(&engine, &url).await;
+    let logs = logs.text();
+    assert!(
+        logs.contains(IGNORED_WARNING) && logs.contains("chrome_args=1 flags"),
+        "the warning must give the number of flags; logs: {logs}"
+    );
+    assert!(
+        !logs.contains(SECRET) && !logs.contains("--proxy-server"),
+        "the warning printed a flag value; logs: {logs}"
+    );
+}

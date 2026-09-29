@@ -207,6 +207,71 @@ fn validate_rejects_http_browser_endpoint() {
 }
 
 #[test]
+fn validate_accepts_upper_and_mixed_case_ws_browser_endpoint() {
+    for endpoint in [
+        "WS://localhost:9222",
+        "WSS://localhost:9222",
+        "Ws://localhost:9222",
+        "wSs://localhost:9222",
+    ] {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some(endpoint.to_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+    }
+}
+
+#[test]
+fn validate_rejects_upper_case_http_browser_endpoint() {
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            endpoint: Some("HTTP://not-websocket:3000".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let err = config.validate().unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+}
+
+#[test]
+fn validate_rejects_host_less_ws_browser_endpoint() {
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            endpoint: Some("ws://".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(
+        config.validate().is_err(),
+        "a websocket endpoint with no host must be refused"
+    );
+}
+
+#[test]
+fn validate_accepts_no_slash_and_whitespace_padded_ws_browser_endpoint() {
+    // ~keep same WHATWG special-scheme normalization `parse_browser_endpoint` in the CLI
+    // relies on: a missing `//` or padding whitespace still parses to a real host, so
+    // both are accepted like any other spelling of the same address.
+    for endpoint in ["ws:localhost:9222", " ws://localhost:9222 "] {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some(endpoint.to_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+    }
+}
+
+#[test]
 fn validate_rejects_unsupported_ssrf_scheme_allowlist_entries() {
     for scheme in ["ftp", "http://"] {
         let mut config = CrawlConfig::default();
