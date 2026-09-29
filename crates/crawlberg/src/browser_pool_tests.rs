@@ -296,18 +296,82 @@ fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
     assert!(running, "a process that does not name the profile must not be killed");
 }
 
+/// How many times a forced-reuse test repeats its whole scenario before it gives up.
+///
+/// ~keep `ns_last_pid` is one setting for the whole pid namespace, so any process that forks between
+/// ~keep the write and the test's own fork takes the freed pid first, and the test's process lands on
+/// ~keep another one. Nothing in a test can stop an unrelated fork, so each test detects a miss,
+/// ~keep cleans up and repeats the scenario with a fresh scanned process and a fresh pid. The
+/// ~keep assertions run only on an attempt where the pid landed, so the retry does not weaken them.
+#[cfg(target_os = "linux")]
+const PID_REUSE_ATTEMPTS: usize = 50;
+
+/// What happened when a test tried to start a new process on a freed pid.
+#[cfg(target_os = "linux")]
+enum PidReuse {
+    /// Writing `ns_last_pid` needs root, and the test does not have it.
+    NotRoot,
+    /// The new process runs on the freed pid.
+    Landed(std::process::Child),
+    /// Another fork took the pid first; the new process runs on a different one.
+    Missed(std::process::Child),
+}
+
+/// Point `ns_last_pid` just below `pid`, which must be free, and start a `cat` on it.
+#[cfg(target_os = "linux")]
+fn spawn_on_pid(pid: u32) -> PidReuse {
+    if std::fs::write("/proc/sys/kernel/ns_last_pid", (pid - 1).to_string()).is_err() {
+        return PidReuse::NotRoot;
+    }
+    let child = std::process::Command::new("cat")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    if child.id() == pid {
+        PidReuse::Landed(child)
+    } else {
+        PidReuse::Missed(child)
+    }
+}
+
+/// Kill and reap a process the test started.
+#[cfg(target_os = "linux")]
+fn stop(mut child: std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Start a `cat` that names `flag`, and return it with its executable and the pids a scan for
+/// `flag` finds running that executable.
+#[cfg(target_os = "linux")]
+fn spawn_scanned(dir: &std::path::Path, flag: &str) -> (std::process::Child, std::path::PathBuf, Vec<sysinfo::Pid>) {
+    let scanned = std::process::Command::new("cat")
+        .args(["--", "-", flag])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("cat must start");
+    let chrome = chrome_started_by(scanned.id(), dir).expect("the scanned process's executable must be readable");
+    let mut system = sysinfo::System::new();
+    let users: Vec<_> = processes_naming(&mut system, flag)
+        .into_iter()
+        .filter(|process| runs(process, &chrome))
+        .map(sysinfo::Process::pid)
+        .collect();
+    assert_eq!(
+        users,
+        [sysinfo::Pid::from_u32(scanned.id())],
+        "the scan must find the process"
+    );
+    (scanned, chrome, users)
+}
+
 /// A pid reused between the scan and the kill is not killed.
 ///
 /// ~keep Forces the reuse as the review did: the scanned process exits and is reaped, then
 /// ~keep `ns_last_pid` hands its pid to a new process. Writing `ns_last_pid` needs root, so the test
-/// ~keep returns early without it, and says so.
-///
-/// ~keep `ns_last_pid` is one setting for the whole host, so this test and the recheck-window test
-/// ~keep below raced each other's pid choice when the full suite ran both at once: measured at 5 of
-/// ~keep 20 runs failing "the new process must reuse the scanned pid" for this test, 2 of those 5
-/// ~keep together with the other test also failing it. `#[serial_test::serial]` on both, under one
-/// ~keep shared key, is the fix already in this crate for a test that mutates host-wide state (see
-/// ~keep `sitemap.rs`, `map.rs`), and it closes the race between these two specifically.
+/// ~keep returns early without it, and says so. See [`PID_REUSE_ATTEMPTS`] for why it repeats.
+/// ~keep `#[serial_test::serial]` keeps it from racing the recheck-window test, which writes the
+/// ~keep same setting, as `sitemap.rs` and `map.rs` do for their host-wide state.
 #[cfg(target_os = "linux")]
 #[test]
 #[serial_test::serial(ns_last_pid)]
@@ -315,42 +379,35 @@ fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
 fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
     let flag = user_data_dir_flag(dir.path());
-    let mut scanned = std::process::Command::new("cat")
-        .args(["--", "-", &flag])
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("cat must start");
-    let pid = scanned.id();
-    let chrome = chrome_started_by(pid, dir.path()).expect("the scanned process's executable must be readable");
-    let mut system = sysinfo::System::new();
-    let users: Vec<_> = processes_naming(&mut system, &flag)
-        .into_iter()
-        .filter(|process| runs(process, &chrome))
-        .map(sysinfo::Process::pid)
-        .collect();
-    let _ = scanned.kill();
-    let _ = scanned.wait();
-    if std::fs::write("/proc/sys/kernel/ns_last_pid", (pid - 1).to_string()).is_err() {
-        eprintln!("skipping: choosing the next pid needs root");
+    for _ in 0..PID_REUSE_ATTEMPTS {
+        let (scanned, chrome, users) = spawn_scanned(dir.path(), &flag);
+        let pid = scanned.id();
+        stop(scanned);
+        let mut reused = match spawn_on_pid(pid) {
+            PidReuse::NotRoot => {
+                eprintln!("skipping: choosing the next pid needs root");
+                return;
+            }
+            PidReuse::Missed(other) => {
+                stop(other);
+                continue;
+            }
+            PidReuse::Landed(reused) => reused,
+        };
+
+        for &user in &users {
+            kill_if_chrome_using(user, &flag, &chrome);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+
+        let running = reused.try_wait().expect("the status must be readable").is_none();
+        stop(reused);
+        assert!(running, "the process that reused the pid must not be killed");
         return;
     }
-    let mut reused = std::process::Command::new("cat")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("cat must start");
-    let forced = reused.id() == pid;
-
-    for &user in &users {
-        kill_if_chrome_using(user, &flag, &chrome);
-    }
-    std::thread::sleep(Duration::from_millis(200));
-
-    let running = reused.try_wait().expect("the status must be readable").is_none();
-    let _ = reused.kill();
-    let _ = reused.wait();
-    assert_eq!(users, [sysinfo::Pid::from_u32(pid)], "the scan must find the process");
-    assert!(forced, "the new process must reuse the scanned pid");
-    assert!(running, "the process that reused the pid must not be killed");
+    panic!(
+        "the new process must reuse the scanned pid: other forks took it first in all {PID_REUSE_ATTEMPTS} attempts"
+    );
 }
 
 /// A pid reused between the re-check and the kill, inside [`kill_if_chrome_using`], is not killed.
@@ -361,7 +418,7 @@ fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
 /// ~keep the [`REUSE_WINDOW_HOOK`] the production code fires right there, and inside it reaps the
 /// ~keep scanned process and forces its pid onto a new, innocent one, so the reuse lands after the
 /// ~keep re-check has already passed. Root, like the test above; returns early without it, and says so.
-/// ~keep Shares the `ns_last_pid` serial key with the test above: both mutate that host-wide setting.
+/// ~keep Repeats on a miss like the test above, and shares its `ns_last_pid` serial key.
 #[cfg(target_os = "linux")]
 #[test]
 #[serial_test::serial(ns_last_pid)]
@@ -369,66 +426,45 @@ fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
 fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
     let flag = user_data_dir_flag(dir.path());
-    let scanned = std::process::Command::new("cat")
-        .args(["--", "-", &flag])
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("cat must start");
-    let pid = scanned.id();
-    let chrome = chrome_started_by(pid, dir.path()).expect("the scanned process's executable must be readable");
-    let mut system = sysinfo::System::new();
-    let users: Vec<_> = processes_naming(&mut system, &flag)
-        .into_iter()
-        .filter(|process| runs(process, &chrome))
-        .map(sysinfo::Process::pid)
-        .collect();
-    assert_eq!(users, [sysinfo::Pid::from_u32(pid)], "the scan must find the process");
+    for _ in 0..PID_REUSE_ATTEMPTS {
+        let (scanned, chrome, users) = spawn_scanned(dir.path(), &flag);
+        let pid = scanned.id();
+        let outcome = std::rc::Rc::new(std::cell::RefCell::new(None::<PidReuse>));
+        {
+            let outcome = outcome.clone();
+            REUSE_WINDOW_HOOK.with(|cell| {
+                *cell.borrow_mut() = Some(Box::new(move || {
+                    stop(scanned);
+                    *outcome.borrow_mut() = Some(spawn_on_pid(pid));
+                }));
+            });
+        }
 
-    let skipped = std::rc::Rc::new(std::cell::Cell::new(false));
-    let forced = std::rc::Rc::new(std::cell::Cell::new(false));
-    let innocent: std::rc::Rc<std::cell::RefCell<Option<std::process::Child>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(None));
-    {
-        let mut scanned = scanned;
-        let skipped = skipped.clone();
-        let forced = forced.clone();
-        let innocent = innocent.clone();
-        REUSE_WINDOW_HOOK.with(|cell| {
-            *cell.borrow_mut() = Some(Box::new(move || {
-                let _ = scanned.kill();
-                let _ = scanned.wait();
-                if std::fs::write("/proc/sys/kernel/ns_last_pid", (pid - 1).to_string()).is_err() {
-                    skipped.set(true);
-                    return;
-                }
-                let child = std::process::Command::new("cat")
-                    .stdin(std::process::Stdio::piped())
-                    .spawn()
-                    .expect("cat must start");
-                forced.set(child.id() == pid);
-                *innocent.borrow_mut() = Some(child);
-            }));
-        });
-    }
+        for &user in &users {
+            kill_if_chrome_using(user, &flag, &chrome);
+        }
+        std::thread::sleep(Duration::from_millis(200));
 
-    for &user in &users {
-        kill_if_chrome_using(user, &flag, &chrome);
-    }
-    std::thread::sleep(Duration::from_millis(200));
-
-    if skipped.get() {
-        eprintln!("skipping: choosing the next pid needs root");
+        let outcome = outcome.borrow_mut().take();
+        let mut innocent = match outcome.expect("the hook must run and spawn the innocent process") {
+            PidReuse::NotRoot => {
+                eprintln!("skipping: choosing the next pid needs root");
+                return;
+            }
+            PidReuse::Missed(other) => {
+                stop(other);
+                continue;
+            }
+            PidReuse::Landed(innocent) => innocent,
+        };
+        let running = innocent.try_wait().expect("the status must be readable").is_none();
+        stop(innocent);
+        assert!(running, "the process that reused the pid must not be killed");
         return;
     }
-    let mut innocent = innocent
-        .borrow_mut()
-        .take()
-        .expect("the hook must run and spawn the innocent process");
-    let running = innocent.try_wait().expect("the status must be readable").is_none();
-    let _ = innocent.kill();
-    let _ = innocent.wait();
-    assert!(forced.get(), "the new process must reuse the scanned pid");
-    assert!(running, "the process that reused the pid must not be killed");
+    panic!(
+        "the new process must reuse the scanned pid: other forks took it first in all {PID_REUSE_ATTEMPTS} attempts"
+    );
 }
 
 /// Removing the profile directory of a Chrome that is still running stops that Chrome first.
