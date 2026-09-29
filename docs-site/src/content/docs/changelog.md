@@ -68,7 +68,7 @@ title: "Changelog"
   three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
   the body corroborates. So robots.txt, sitemap and asset fetches return a 2xx of 5000 bytes or
   more as content, the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine
-  flags a 2xx only under the same rule. (#NNN)
+  flags a 2xx only under the same rule. (#500)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
   WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
