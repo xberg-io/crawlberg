@@ -28,8 +28,8 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// The direct fetch requests each URL only as the crawl would: `exclude_paths`, `include_paths`
 /// on a redirect or refresh hop, and robots.txt for the URL's own origin when
 /// `respect_robots_txt` is on judge the URL first, and a refused URL fails the map with the
-/// crawl's forbidden error and the reason. The sitemap files map reads are not judged: the URLs they list are returned, not
-/// requested, and pass `exclude_paths` as every returned URL does.
+/// crawl's forbidden error and the reason. The sitemap files map reads are not judged: the URLs
+/// they list are returned, not requested, and pass `exclude_paths` as every returned URL does.
 ///
 /// `map_limit` bounds both the returned length and the work performed: it is
 /// threaded into the sitemap fetch loop so a large sitemap-index tree is not
