@@ -101,7 +101,7 @@ impl MaskedHtml<'_> {
     /// Keep what the read found, without the borrow of the page.
     ///
     /// ~keep Only the redirect check detaches a read, and wasm has none.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn detach(self) -> PageScan {
         // ~keep The masked text has the page's byte length.
         let len = self.text.len();

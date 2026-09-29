@@ -769,6 +769,24 @@ mod tests {
         );
     }
 
+    /// A page with both a `Refresh` header and a meta refresh follows the header, and the body
+    /// is not read for its meta refresh.
+    #[test]
+    fn a_refresh_header_wins_over_a_meta_refresh_in_the_body() {
+        let resp = response(
+            200,
+            &[("refresh", "0; url=/from-header")],
+            r#"<html><head><meta http-equiv="refresh" content="0; url=/from-meta"></head></html>"#,
+        );
+        let chain = chain_at("https://example.com/start", &[]);
+        let mut page_scan = None;
+
+        let (target, _) =
+            next_redirect_target(&resp, &chain, MAX_REDIRECTS, &mut page_scan).expect("the page must redirect");
+        assert_eq!(target.as_str(), "https://example.com/from-header");
+        assert!(page_scan.is_none(), "the body must not be read once the header decides");
+    }
+
     /// The same fall-through, one source further: both header sources loop, so the meta
     /// refresh in the body decides. ~keep
     #[test]

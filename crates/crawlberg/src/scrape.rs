@@ -474,6 +474,26 @@ mod tests {
         );
     }
 
+    /// A page with 50 or more words of prose needs no browser, even with an empty SPA mount.
+    #[tokio::test]
+    async fn scrape_gives_no_render_hint_for_a_page_with_enough_words() {
+        let prose = "word ".repeat(60);
+        let html = format!(r#"<html><body><p>{prose}</p><div id="root"></div></body></html>"#);
+        let result = scrape_from_crawl_response(
+            "https://example.com/page",
+            &response("text/html", &html),
+            None,
+            &offline_config(),
+            None,
+        )
+        .await
+        .expect("scrape succeeds");
+        assert!(
+            !result.js_render_hint,
+            "a page of 60 words is rendered content, whatever its SPA mount holds"
+        );
+    }
+
     fn response_with_bytes(content_type: &str, body_bytes: Vec<u8>) -> crate::tower::CrawlResponse {
         crate::tower::CrawlResponse {
             status: 200,

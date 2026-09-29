@@ -51,8 +51,9 @@ title: "Changelog"
   text hid every link after it. Links inside a bogus comment (`<? ... >`, `<!x ... >`, `<![CDATA[`
   outside SVG) and inside an SVG or MathML CDATA section were read as real too. A crawled or
   scraped page is now read once by html5ever with scripting off, and that read decides the raw
-  text, the link tags, the base, the meta refresh target and the render hint. The base is the
-  first `<base href>` in the finished document, as in a browser: a `<base>` in a table moves in
+  text, the link tags, the base, the meta refresh target and the render hint. Two pages are still
+  read twice: a page decoded again from a declared non-UTF-8 charset, and a body cut to
+  `max_body_size`. The base is the first `<base href>` in the finished document, as in a browser: a `<base>` in a table moves in
   front of it, and a `<frameset>` drops the body with its `<base>`. (#201, #287)
 
 - **One tag with tens of thousands of attributes slowed link extraction quadratically.** The
