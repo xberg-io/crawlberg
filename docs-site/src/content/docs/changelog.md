@@ -128,6 +128,12 @@ title: "Changelog"
 
 ### Fixed
 
+- **`soft_http_errors` did not cover a refusal by a custom retry policy or an antibot strategy.**
+  A page refused by a custom retry policy, or by an antibot strategy that asks for browser
+  escalation, came back as an error when no escalation tier was left. It now comes back as the
+  same soft page as a WAF block: the refused status for a 4xx or 5xx, and 403 for a 2xx. A tier
+  left to escalate to still runs first. (#549)
+
 - **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
   with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
   now reports the status of the response it refused. A block page served with a 2xx status still
