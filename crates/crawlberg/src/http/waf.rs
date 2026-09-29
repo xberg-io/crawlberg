@@ -186,6 +186,28 @@ pub(super) fn robots_2xx_error(
     block_page_error(&build_partial_response(status, &text, headers_map), None)
 }
 
+/// [`waf_2xx_error`] for a sitemap fetch: `None` when the body is a sitemap document, else the
+/// refusal a page gets.
+///
+/// ~keep A sitemap is read whatever its `<loc>`s say: a fingerprint such as `server: cloudflare`
+/// with "blocked" in the body also matches a URL like "/blog/why-we-blocked-the-old-api"
+/// (crawlberg#515). Any other body keeps the page decision and its [`WAF_2XX_MAX_BODY_LEN`]
+/// limit. The body is read as a sitemap only inside that limit, where the page decision could
+/// refuse it.
+pub(super) fn sitemap_2xx_error(
+    status: u16,
+    body_bytes: &[u8],
+    body: &str,
+    headers_map: &HashMap<String, Vec<String>>,
+) -> Option<CrawlError> {
+    if in_2xx_decision(status, body_bytes.len(), Some(WAF_2XX_MAX_BODY_LEN))
+        && crate::sitemap::reads_as_sitemap(body_bytes, body)
+    {
+        return None;
+    }
+    waf_2xx_error(status, body_bytes, body, headers_map)
+}
+
 /// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
 fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
     let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
@@ -406,8 +428,8 @@ mod tests {
             .set_body_string(body)
     }
 
-    /// The plain fetch (robots.txt, sitemaps, assets), the engine's crawl fetch and the engine's
-    /// classifier hooks give every 2xx the same answer (crawlberg#231).
+    /// The plain fetch (assets, and sitemaps that do not read as one), the engine's crawl fetch
+    /// and the engine's classifier hooks give every 2xx the same answer (crawlberg#231).
     ///
     /// ~keep Every row runs before the assertion so one disagreement cannot hide the others.
     #[tokio::test]
@@ -489,6 +511,20 @@ mod tests {
                 Err("cloudflare".to_owned()),
             ),
             (
+                "200, server cloudflare, a sitemap that lists a URL saying blocked, fetched as a page",
+                cloudflare("application/xml", SITEMAP_WITH_A_BLOCKED_URL),
+                Err("cloudflare".to_owned()),
+            ),
+            (
+                "200, server cloudflare, a short page that says blocked",
+                html(
+                    200,
+                    "<html><body><p>We blocked the old API.</p></body></html>".to_owned(),
+                )
+                .append_header("server", "cloudflare"),
+                Err("cloudflare".to_owned()),
+            ),
+            (
                 "200, server cloudflare, 20 KB article that says blocked",
                 html(200, article).append_header("server", "cloudflare"),
                 content.clone(),
@@ -502,6 +538,258 @@ mod tests {
                 if *verdict != expected {
                     disagreements.push(format!("{label}: {path_name} gave {verdict:?}, expected {expected:?}"));
                 }
+            }
+        }
+        assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    }
+
+    /// The 184-byte sitemap from crawlberg#515: one `<loc>` whose path says "blocked".
+    const SITEMAP_WITH_A_BLOCKED_URL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n<url><loc>https://example.com/blog/why-we-blocked-the-old-api</loc></url>\n</urlset>\n";
+
+    /// The `<loc>` [`SITEMAP_WITH_A_BLOCKED_URL`] lists.
+    const BLOCKED_LOC: &str = "https://example.com/blog/why-we-blocked-the-old-api";
+
+    /// The heading of Cloudflare's block page.
+    const BLOCK_TEXT: &str = "Sorry, you have been blocked";
+
+    /// A 200 `content_type` response served by Cloudflare with `body`.
+    fn cloudflare(content_type: &str, body: impl Into<Vec<u8>>) -> ResponseTemplate {
+        ResponseTemplate::new(200)
+            .append_header("content-type", content_type)
+            .append_header("server", "cloudflare")
+            .set_body_bytes(body)
+    }
+
+    /// `body` as a gzip file whose deflate blocks are stored, so its bytes carry the text as is.
+    fn stored_gzip(body: &str) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
+        encoder.write_all(body.as_bytes()).expect("gzip must encode");
+        let gzip = encoder.finish().expect("gzip must finish");
+        assert!(
+            String::from_utf8_lossy(&gzip).contains("blocked"),
+            "the gzip bytes must carry the text the fingerprint matches"
+        );
+        gzip
+    }
+
+    /// What a mock server serves: each path with its response.
+    type Mounts<'a> = Vec<(&'a str, ResponseTemplate)>;
+
+    /// The `<loc>`s `map` returned, or the vendor it was refused for.
+    fn map_verdict(result: Result<crate::MapResult, CrawlError>) -> Result<Vec<String>, String> {
+        result
+            .map(|map| map.urls.into_iter().map(|entry| entry.url).collect())
+            .map_err(|error| match error {
+                CrawlError::WafBlocked { vendor, .. } => vendor,
+                other => format!("not a WAF block: {other}"),
+            })
+    }
+
+    /// What the sitemap walk of `walked` and the engine's map of `mapped`, with and without
+    /// classifier hooks, read on a server that serves `mounts`: the `<loc>`s, or the vendor of
+    /// the refusal.
+    ///
+    /// ~keep The walk swallows a failed fetch as an empty list, so its column cannot name a vendor.
+    async fn sitemap_paths(mounts: Mounts<'_>, walked: &str, mapped: &str) -> [Result<Vec<String>, String>; 3] {
+        let mock = MockServer::start().await;
+        for (served, template) in mounts {
+            Mock::given(method("GET"))
+                .and(path(served))
+                .respond_with(template)
+                .mount(&mock)
+                .await;
+        }
+        let walked = format!("{}{walked}", mock.uri());
+        let mapped = format!("{}{mapped}", mock.uri());
+
+        let plain_config = config();
+        let client = crate::http::build_client(&plain_config).expect("client must build");
+        let filter = crate::map::MapFilter::from_config(&plain_config).expect("filter must build");
+        let context = crate::sitemap::SitemapWalkContext::new(&plain_config, &client, &filter);
+        let walk = crate::sitemap::fetch_sitemap_tree(&walked, &context, None).await;
+        let engine = crate::create_engine(Some(config())).expect("engine must build");
+        let hooked = crate::create_engine(Some(hook_config())).expect("engine must build");
+        [
+            Ok(walk.into_iter().map(|entry| entry.url).collect()),
+            map_verdict(crate::map_urls(&engine, &mapped).await),
+            map_verdict(crate::map_urls(&hooked, &mapped).await),
+        ]
+    }
+
+    /// A sitemap that lists a URL saying "blocked" is read behind Cloudflare, wherever map finds
+    /// it: at /sitemap.xml, at the URL mapped, as an index child, and gzipped (crawlberg#515).
+    ///
+    /// ~keep Every row runs before the assertion so one disagreement cannot hide the others.
+    #[tokio::test]
+    async fn a_sitemap_that_lists_a_blocked_url_is_read_behind_cloudflare() {
+        assert_eq!(
+            SITEMAP_WITH_A_BLOCKED_URL.len(),
+            184,
+            "the fixture must be the issue's 184-byte body"
+        );
+        let index = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n<sitemap><loc>/sitemaps/why-we-blocked.xml</loc></sitemap>\n</sitemapindex>\n";
+        let xml = || cloudflare("application/xml", SITEMAP_WITH_A_BLOCKED_URL);
+        let cases: Vec<(&str, Mounts<'_>, &str, &str)> = vec![
+            (
+                "the issue's sitemap at /sitemap.xml",
+                vec![("/sitemap.xml", xml())],
+                "/sitemap.xml",
+                "/",
+            ),
+            (
+                "the issue's sitemap at the URL mapped",
+                vec![("/feed/posts.xml", xml())],
+                "/feed/posts.xml",
+                "/feed/posts.xml",
+            ),
+            (
+                "an index whose child URL says blocked",
+                vec![
+                    ("/sitemap_index.xml", cloudflare("application/xml", index)),
+                    ("/sitemaps/why-we-blocked.xml", xml()),
+                ],
+                "/sitemap_index.xml",
+                "/sitemap_index.xml",
+            ),
+            (
+                "the issue's sitemap gzipped",
+                vec![(
+                    "/sitemap.xml.gz",
+                    cloudflare("application/x-gzip", stored_gzip(SITEMAP_WITH_A_BLOCKED_URL)),
+                )],
+                "/sitemap.xml.gz",
+                "/sitemap.xml.gz",
+            ),
+        ];
+
+        let mut disagreements = Vec::new();
+        for (label, mounts, walked, mapped) in cases {
+            let verdicts = sitemap_paths(mounts, walked, mapped).await;
+            for (path_name, verdict) in ["sitemap walk", "engine map", "engine map with hooks"]
+                .iter()
+                .zip(&verdicts)
+            {
+                if *verdict != Ok(vec![BLOCKED_LOC.to_owned()]) {
+                    disagreements.push(format!("{label}: {path_name} must read the sitemap, got {verdict:?}"));
+                }
+            }
+        }
+        assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    }
+
+    /// A gzip sitemap at the URL mapped is read behind Cloudflare whatever its content type says, as
+    /// `map` inflates it: served as octet-stream at a `.gz` URL, or as XML at a URL without `.gz`.
+    #[tokio::test]
+    async fn map_reads_a_gzip_sitemap_whatever_its_content_type_behind_cloudflare() {
+        let gzip = || stored_gzip(SITEMAP_WITH_A_BLOCKED_URL);
+        let cases = [
+            (
+                "octet-stream at a .gz URL",
+                "/sitemap.xml.gz",
+                cloudflare("application/octet-stream", gzip()),
+            ),
+            (
+                "XML at a URL without .gz",
+                "/feed/posts",
+                cloudflare("application/xml", gzip()),
+            ),
+        ];
+        let mut disagreements = Vec::new();
+        for (label, served, template) in cases {
+            let [_, engine, hooked] = sitemap_paths(vec![(served, template)], served, served).await;
+            for (path_name, verdict) in [("engine map", engine), ("engine map with hooks", hooked)] {
+                if verdict != Ok(vec![BLOCKED_LOC.to_owned()]) {
+                    disagreements.push(format!("{label}: {path_name} must read the sitemap, got {verdict:?}"));
+                }
+            }
+        }
+        assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    }
+
+    /// A block page served by Cloudflare at a sitemap URL is still refused as a WAF block, whatever
+    /// sitemap text it carries: HTML or text that shows sitemap XML, a CDN's XML error, JSON, and
+    /// a sitemap, gzipped or not, followed by block text or holding it outside its entries.
+    #[tokio::test]
+    async fn a_block_page_served_at_a_sitemap_url_is_still_refused_behind_cloudflare() {
+        let cases = [
+            (
+                "an HTML block page",
+                "<html><head><title>Attention Required</title></head><body><h1>Sorry, you have been blocked</h1></body></html>".to_owned(),
+            ),
+            (
+                "an HTML block page that shows sitemap XML",
+                format!("<html><body><pre>{SITEMAP_WITH_A_BLOCKED_URL}</pre><h1>Access blocked</h1></body></html>"),
+            ),
+            (
+                "an XHTML block page",
+                "<?xml version=\"1.0\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>Access blocked</h1></body></html>".to_owned(),
+            ),
+            (
+                "a sitemap followed by a block page",
+                format!("{SITEMAP_WITH_A_BLOCKED_URL}<html><body><h1>Access blocked</h1></body></html>"),
+            ),
+            ("a text block page", "Status: blocked\nReason: automated traffic\n".to_owned()),
+            (
+                "a text block page that shows sitemap XML",
+                format!("Access blocked for this request:\n{SITEMAP_WITH_A_BLOCKED_URL}"),
+            ),
+            (
+                "a CDN's XML error",
+                "<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code><Message>Request blocked</Message></Error>"
+                    .to_owned(),
+            ),
+            (
+                "an HTML block page with a loc element",
+                format!("<html><body><loc>{BLOCKED_LOC}</loc><h1>Access blocked</h1></body></html>"),
+            ),
+            ("a JSON block page", "{\"error\":\"blocked\",\"urlset\":[]}".to_owned()),
+            (
+                "a urlset that holds block text",
+                "<urlset><url><loc>/a</loc></url>Sorry, you have been blocked</urlset>".to_owned(),
+            ),
+            (
+                "a urlset with a div of block text after its entry",
+                format!("<urlset><url><loc>{BLOCKED_LOC}</loc></url><div><h1>{BLOCK_TEXT}</h1></div></urlset>"),
+            ),
+            (
+                "a urlset that wraps an HTML block page after its entry",
+                format!(
+                    "<urlset><url><loc>{BLOCKED_LOC}</loc></url><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>{BLOCK_TEXT}</h1></body></html></urlset>"
+                ),
+            ),
+            (
+                "a sitemap index with a div of block text after its child",
+                format!(
+                    "<sitemapindex><sitemap><loc>/s.xml</loc></sitemap><div><p>{BLOCK_TEXT}</p></div></sitemapindex>"
+                ),
+            ),
+            (
+                "a urlset with a table of block text after its entry",
+                format!(
+                    "<urlset><url><loc>{BLOCKED_LOC}</loc></url><table><tr><td>{BLOCK_TEXT}</td></tr></table></urlset>"
+                ),
+            ),
+        ];
+        let gzip_div = format!("<urlset><url><loc>{BLOCKED_LOC}</loc></url><div><h1>{BLOCK_TEXT}</h1></div></urlset>");
+        let served = cases
+            .into_iter()
+            .map(|(label, body)| (label, cloudflare("application/xml", body)))
+            .chain([(
+                "a gzip urlset with a div of block text after its entry",
+                cloudflare("application/x-gzip", stored_gzip(&gzip_div)),
+            )]);
+        let mut disagreements = Vec::new();
+        for (label, template) in served {
+            let verdicts = sitemap_paths(vec![("/sitemap.xml", template)], "/sitemap.xml", "/sitemap.xml").await;
+            let [walk, engine, hooked] = &verdicts;
+            let refused = |verdict: &Result<Vec<String>, String>| {
+                verdict
+                    .as_ref()
+                    .is_err_and(|vendor| !vendor.starts_with("not a WAF block"))
+            };
+            if *walk != Ok(Vec::new()) || !refused(engine) || !refused(hooked) {
+                disagreements.push(format!("{label}: must be refused as a WAF block, got {verdicts:?}"));
             }
         }
         assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));

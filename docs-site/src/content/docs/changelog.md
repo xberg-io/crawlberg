@@ -163,6 +163,13 @@ title: "Changelog"
   up to 100 KB. So does a robots.txt with the word in a rule (`Disallow: /blocked-users`) or in a
   trailing comment, and any body that contains `<`, which the check reads whole. (#507)
 
+- **A sitemap that lists a URL saying "blocked" is read behind Cloudflare.** A `server: cloudflare`
+  header and the word "blocked" anywhere in a small body matched a block-page fingerprint, so a
+  sitemap listing a URL such as `/blog/why-we-blocked-the-old-api` was refused and `map()` lost
+  every URL it listed. A body with one `urlset` or `sitemapindex` root, at least one entry, and no
+  text outside its entries is now read as a sitemap, gzipped or not. A block page served at a
+  sitemap URL is still refused. (#515)
+
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
   WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
   added one or two, and a `TomlClassifier` set on the engine added one for every match it made. It
