@@ -93,8 +93,8 @@ title: "Changelog"
   count, and this applies to the Chromiumoxide backend. (#90)
 
   Browser mode still diverges from HTTP mode in one way, deliberately: a navigation the page
-  itself starts after it loads — a script's `location.replace`, or a meta refresh Chrome acts on
-  — is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
+  itself starts after it loads (a script's `location.replace`, or a meta refresh Chrome acts on)
+  is not an HTTP redirect of the requested page, so neither it nor any redirect it follows
   counts against `max_redirects`, and the crawl reports the page it landed on. A redirect inside
   an iframe does not count either. HTTP mode cannot reach those navigations at all, so it has
   nothing to compare against; where HTTP mode would bound a chain of the same length, browser

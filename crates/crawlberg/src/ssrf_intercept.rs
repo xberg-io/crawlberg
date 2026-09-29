@@ -22,8 +22,9 @@ use std::time::{Duration, Instant};
 
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::fetch::{
-    ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
-    FailRequestParams, HeaderEntry, RequestPattern, RequestStage,
+    ContinueRequestParams, ContinueResponseParams, DisableParams as FetchDisableParams,
+    EnableParams as FetchEnableParams, EventRequestPaused, FailRequestParams, HeaderEntry, RequestPattern,
+    RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, FrameId};
@@ -924,20 +925,10 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     #[cfg(test)]
     tokio::time::sleep(shared.delays.deliver).await;
     let request_id = event.request_id.clone();
-    // ~keep For a response-stage pause, `Fetch.continueResponse` is the contract-correct call;
-    // ~keep `continueRequest` is the request-stage one, and Chrome accepts it here. Switching was
-    // ~keep tried and reverted. Measured on the macos-latest CI leg, which runs the preinstalled
-    // ~keep Chrome (the Setup Chrome step in ci-rust.yaml is Linux-only), so it is neither
-    // ~keep pinned nor reproducible locally:
-    // ~keep   2d2089793, continueResponse: 5 passed, 2 failed, 60.17s
-    // ~keep   7422fd541, continueRequest:  6 passed, 1 failed, 16.35s
-    // ~keep `a_redirect_after_a_script_navigation_is_not_counted` fails either
-    // ~keep way, so it is INDEPENDENT of this call and pre-existing.
-    // ~keep `a_javascript_navigation_after_load_is_not_counted_as_a_redirect`
-    // ~keep differed, but that is one run each way and could be flake. Pin Chrome
-    // ~keep on that leg before drawing a conclusion or revisiting the call.
-    // ~keep Left as `continueRequest` only to keep this change minimal.
     let _ = match verdict {
+        Verdict::Continue(_) if is_response_stage(event) => {
+            browser.execute(ContinueResponseParams::new(request_id)).await.map(drop)
+        }
         Verdict::Continue(headers) => {
             let mut params = ContinueRequestParams::new(request_id);
             params.headers = headers;

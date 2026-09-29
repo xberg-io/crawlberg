@@ -11,7 +11,8 @@
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, CrawlResult, crawl, create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, CrawlPageResult, CrawlResult, crawl,
+    create_engine, scrape,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -80,9 +81,19 @@ async fn requested_paths(mock: &MockServer) -> Vec<String> {
         .collect()
 }
 
+/// The seed's page, or a panic that names what the crawl reported instead.
+fn seed_page(result: &CrawlResult) -> &CrawlPageResult {
+    result.pages.first().unwrap_or_else(|| {
+        panic!(
+            "no seed page: redirect_count={}, final_url={}, error={:?}",
+            result.redirect_count, result.final_url, result.error
+        )
+    })
+}
+
 /// What a crawl reports about its seed's redirect chain.
 fn chain_outcome(result: &CrawlResult, base: &str) -> (usize, String, u16) {
-    let page = result.pages.first().expect("the seed page must be reported");
+    let page = seed_page(result);
     (
         result.redirect_count,
         result.final_url.trim_start_matches(base).to_owned(),
@@ -145,7 +156,7 @@ async fn browser_mode_follows_a_chain_of_exactly_max_redirects() {
     };
 
     assert_eq!(chain_outcome(&result, &site.uri()), (2, "/r2".to_owned(), 200));
-    let page = result.pages.first().expect("the seed page must be reported");
+    let page = seed_page(&result);
     assert!(
         page.html.contains("landed"),
         "the landing page must be rendered: {}",
@@ -177,7 +188,7 @@ async fn a_javascript_navigation_after_load_is_not_counted_as_a_redirect() {
     };
 
     assert_eq!(chain_outcome(&result, &site.uri()), (0, "/after".to_owned(), 200));
-    let page = result.pages.first().expect("the seed page must be reported");
+    let page = seed_page(&result);
     assert!(
         page.html.contains("id=\"after\""),
         "the page must be the one the script navigated to: {}",
@@ -214,7 +225,7 @@ async fn a_redirect_after_a_script_navigation_is_not_counted() {
     };
 
     assert_eq!(chain_outcome(&result, &site.uri()), (0, "/after".to_owned(), 200));
-    let page = result.pages.first().expect("the seed page must be reported");
+    let page = seed_page(&result);
     assert!(
         page.html.contains("id=\"after\""),
         "the page must be the one the script's navigation landed on: {}",
@@ -321,11 +332,9 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
 
 /// Only the page's own navigation is limited: a redirect inside an iframe does not count.
 ///
-/// ~keep A GUARD, not evidence for #90: this asserts the same `(0, "/", 200)` with the redirect
-/// ~keep counting reverted, because the seed then lands on itself and `landed_redirect` finds that
-/// ~keep URL already in the chain's `seen` set. What it does guard is the frame-id filter in
-/// ~keep `ssrf_intercept::redirect_verdict` — drop that and the iframe's 301 spends the seed's
-/// ~keep budget, which at `max_redirects = 0` ends the fetch on the 301 instead.
+/// ~keep The seed lands on itself here, so the redirect chain would report `(0, "/", 200)` even
+/// ~keep if Chrome were never limited. What turns this red is an iframe redirect counted against
+/// ~keep the seed: at `max_redirects = 0` the fetch then ends on the iframe's 301.
 #[tokio::test]
 async fn a_redirect_inside_an_iframe_does_not_count() {
     let site = MockServer::start().await;
@@ -347,5 +356,10 @@ async fn a_redirect_inside_an_iframe_does_not_count() {
         return;
     };
 
+    let requested = requested_paths(&site).await;
+    assert!(
+        requested.iter().any(|p| p == "/f"),
+        "Chrome must load the iframe, or the test proves nothing, requested: {requested:?}"
+    );
     assert_eq!(chain_outcome(&result, &site.uri()), (0, "/".to_owned(), 200));
 }

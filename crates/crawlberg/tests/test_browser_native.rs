@@ -137,6 +137,42 @@ async fn native_follows_redirect() {
     );
 }
 
+/// The native backend reports no redirect chain, so a landing on another URL counts as one
+/// redirect: the count a one-hop chain gives in HTTP mode.
+#[tokio::test]
+async fn native_counts_a_landing_on_another_url_as_one_redirect() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(301).append_header("location", "/final"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>Redirected</body></html>")
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", mock.uri()))
+        .await
+        .expect("the crawl must succeed");
+    assert_eq!(
+        (result.redirect_count, result.final_url.as_str()),
+        (1, format!("{}/final", mock.uri()).as_str()),
+        "error={:?}",
+        result.error
+    );
+}
+
 #[tokio::test]
 async fn native_respects_timeout() {
     let url = "http://192.0.2.1:80/timeout-target";
