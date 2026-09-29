@@ -58,8 +58,10 @@ title: "Changelog"
 - **`CrawlError::WafBlocked` has a `source` field.** Rust code that builds the variant by hand
   must pass `source: None`, or call `CrawlError::waf_blocked(vendor, message)` instead.
   `CrawlError::waf_blocked_with_source` attaches an underlying error. A match on the variant with
-  `..` does not change, and no binding exposes the source of an error, so the bindings do not
-  change. (#133)
+  `..` does not change. The Swift and Kotlin Android bindings give the WAF block case a `source`
+  value, as their other error cases already have: Swift code that matches
+  `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
+  `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
 
 ### Fixed
 
