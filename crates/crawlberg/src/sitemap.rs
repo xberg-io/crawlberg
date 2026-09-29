@@ -1142,6 +1142,43 @@ mod tests {
         );
     }
 
+    /// The sitemap fetch reads the sitemap it asked for and does not follow a `Refresh` header on
+    /// it, as the robots.txt fetch does not.
+    #[tokio::test]
+    async fn fetch_sitemap_tree_does_not_follow_a_refresh() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        Mock::given(method("GET"))
+            .and(path("/sitemap.xml"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "application/xml")
+                    .append_header("refresh", "0; url=/elsewhere.xml")
+                    .set_body_string(urlset(1)),
+            )
+            .mount(&mock)
+            .await;
+        mount_xml(&mock, "/elsewhere.xml", urlset(2)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/sitemap.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        let urls: Vec<String> = urls.into_iter().map(|entry| entry.url).collect();
+        assert_eq!(
+            urls,
+            vec!["https://example.com/page-0".to_owned()],
+            "the sitemap fetch must read the sitemap it asked for, not follow its refresh"
+        );
+    }
+
     #[tokio::test]
     // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
     #[serial_test::serial(sitemap_redaction_log)]
