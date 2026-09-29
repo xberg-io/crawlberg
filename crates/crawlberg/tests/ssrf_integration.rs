@@ -94,6 +94,25 @@ async fn crawl_refuses_private_ip() {
     }
 }
 
+/// scrape() must refuse the reserved range 240.0.0.0/4 through the actual fetch path
+/// (create_engine -> Tower stack -> http_fetch -> validate_url), not only through a
+/// direct validate_url call: proves the deny-list entry is wired into what the product
+/// invokes on every request, not only into a helper the other tests in this file call.
+#[tokio::test]
+async fn scrape_refuses_the_reserved_range() {
+    let result = scrape(&engine(CrawlConfig::default()), "http://240.0.0.1/").await;
+
+    match result {
+        Err(CrawlError::SsrfPolicyViolation { ref reason, .. }) => {
+            assert!(
+                reason.contains("private_network"),
+                "reason must contain 'private_network', got: '{reason}'"
+            );
+        }
+        other => panic!("expected CrawlError::SsrfPolicyViolation, got {other:?}"),
+    }
+}
+
 /// When allow_private_networks(true) is set, scrape() must succeed against a
 /// server listening on 127.0.0.1 (the wiremock default bind address).
 #[tokio::test]

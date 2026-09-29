@@ -6,6 +6,10 @@ title: "Changelog"
 
 ### Upgrading
 
+- **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
+  `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
+  iterates it does not.
+
 - **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
   The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
   ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
@@ -132,6 +136,12 @@ title: "Changelog"
   and its unused bits read as zeros at that position, so a reading whose last three octets are
   zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
   network sizes are checked as IPv6 only, as before. (#108)
+
+- **The reserved range `240.0.0.0/4` passed the SSRF deny-list.** With `deny_private` on,
+  `http://255.255.255.255/` and every other address in the range was fetched, plain or embedded
+  in an IPv6 form that carries an IPv4 address. The range is now refused everywhere the deny-list
+  applies, with reason `private_network`, the same reason the shared address space and the other
+  RFC 1918 ranges already report. (#173)
 
 - **A denial reason could name an address the allowlist permits.** The reason was classified from
   the first deny-listed candidate rather than the first one the allowlist did not admit, so an
