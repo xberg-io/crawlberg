@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use crawlberg::{
-    AttemptOutcome, BrowserMode, CrawlConfig, CrawlError, DefaultAntibotStrategy, DispatchProfile, EscalationReason,
-    RetryDirective, RetryPolicy, TomlClassifier, create_engine, scrape,
+    AttemptOutcome, BrowserMode, BypassProvider, BypassResponse, CrawlConfig, CrawlError, DefaultAntibotStrategy,
+    DispatchProfile, EscalationReason, EscalationStrategy, RetryDirective, RetryPolicy, TomlClassifier, create_engine,
+    scrape,
 };
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
@@ -94,6 +95,49 @@ impl RetryPolicy for RefuseEverySuccess {
 
     fn name(&self) -> &'static str {
         "refuse-every-success"
+    }
+}
+
+/// A retry policy that retries the first successful response once, then accepts.
+#[derive(Debug)]
+struct RetryFirstSuccess;
+
+#[async_trait]
+impl RetryPolicy for RetryFirstSuccess {
+    async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
+        if outcome.error.is_none() && outcome.attempt == 0 {
+            return RetryDirective::Retry { backoff_ms: 1 };
+        }
+        RetryDirective::Stop
+    }
+
+    fn name(&self) -> &'static str {
+        "retry-first-success"
+    }
+}
+
+/// A bypass tier that answers every URL with a fixed page.
+#[derive(Debug)]
+struct FixedBypass;
+
+#[async_trait]
+impl BypassProvider for FixedBypass {
+    async fn fetch(&self, _url: &str) -> Result<BypassResponse, CrawlError> {
+        let body = "<html><body>bypass</body></html>";
+        Ok(BypassResponse {
+            status: 200,
+            content_type: "text/html".to_owned(),
+            body: body.to_owned(),
+            body_bytes: body.as_bytes().to_vec(),
+            headers: Default::default(),
+            final_url: String::new(),
+            cost_usd: Some(0.0),
+            vendor_request_id: None,
+        })
+    }
+
+    fn vendor_name(&self) -> &'static str {
+        "fixed"
     }
 }
 
@@ -285,4 +329,80 @@ async fn the_waf_block_counter_counts_each_refused_response_once_and_nothing_els
         delta, 1,
         "a response the retry policy refuses must count exactly one WAF block"
     );
+
+    // (h) A response the retry policy refuses, then hands back as content when the attempt cap
+    // stops the escalation, is not a block: the caller gets the page.
+    let mut capped_config = config();
+    capped_config.dispatch = Some(DispatchProfile {
+        retry_policy: Some(Arc::new(RefuseEverySuccess)),
+        bypass: Some(Arc::new(FixedBypass)),
+        strategy: EscalationStrategy::BypassOnly,
+        max_total_attempts: 1,
+        ..DispatchProfile::default()
+    });
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        capped_config,
+        ResponseTemplate::new(200)
+            .set_body_string("<html><body><h1>Release notes</h1></body></html>")
+            .append_header("content-type", "text/html"),
+    )
+    .await;
+    let page = result.expect("the attempt cap must hand back the refused page as content");
+    assert!(
+        page.html.contains("Release notes"),
+        "the caller must get the origin's page, got {}",
+        page.html
+    );
+    assert_eq!(requests, 1, "the page must be fetched once");
+    assert_eq!(
+        delta, 0,
+        "a refused response the attempt cap returns as content must not count as a WAF block"
+    );
+
+    // (i) Without the cap, the same refusal stands once the loop moves on: the origin's page and
+    // the bypass tier's page are both refused, so two responses count two blocks.
+    let mut escalating_config = config();
+    escalating_config.dispatch = Some(DispatchProfile {
+        retry_policy: Some(Arc::new(RefuseEverySuccess)),
+        bypass: Some(Arc::new(FixedBypass)),
+        strategy: EscalationStrategy::BypassOnly,
+        ..DispatchProfile::default()
+    });
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        escalating_config,
+        ResponseTemplate::new(200)
+            .set_body_string("<html><body><h1>Release notes</h1></body></html>")
+            .append_header("content-type", "text/html"),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "policy"),
+        "the retry policy must refuse the bypass tier's page too, got {result:?}"
+    );
+    assert_eq!(requests, 1, "the origin must be fetched once");
+    assert_eq!(
+        delta, 2,
+        "the refused origin page and the refused bypass page must count one block each"
+    );
+
+    // (j) A successful response a retry policy retries is not refused: the retried response and
+    // the one the caller gets count nothing.
+    let mut retry_config = config();
+    retry_config.dispatch = Some(DispatchProfile {
+        retry_policy: Some(Arc::new(RetryFirstSuccess)),
+        ..DispatchProfile::default()
+    });
+    let (result, delta, requests) = scrape_and_count_with(
+        &counter,
+        retry_config,
+        ResponseTemplate::new(200)
+            .set_body_string("<html><body><h1>Release notes</h1></body></html>")
+            .append_header("content-type", "text/html"),
+    )
+    .await;
+    assert!(result.is_ok(), "the retried 200 must be returned, got {result:?}");
+    assert_eq!(requests, 2, "the retry policy must fetch the page twice");
+    assert_eq!(delta, 0, "a retried response must not count as a WAF block");
 }

@@ -66,9 +66,10 @@ title: "Changelog"
   `WafClassifier` set on the engine flagged a 2xx to the antibot strategy and retry policy on a
   header-only match, so the built-in antibot strategy refused an ordinary 200 behind Sucuri. All
   three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
-  the body corroborates. So robots.txt, sitemap and asset fetches return a 2xx of 5000 bytes or
-  more as content, the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine
-  flags a 2xx only under the same rule. (#500)
+  the body corroborates. So sitemap and asset fetches return a 2xx of 5000 bytes or more as content,
+  the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine flags a 2xx only
+  under the same rule. A robots.txt that is a block page still denies the whole site at any size up
+  to 100 KB, as before. (#500)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
   WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block

@@ -315,7 +315,8 @@ impl Rules {
     ///    header-only fingerprint matches, its signal is returned immediately
     ///    without running the AC body scan. The 2xx decision in `http::waf` relies
     ///    on this order: when a header-only and a body fingerprint both match, it
-    ///    reports the header-only vendor and asks the body alone to corroborate it.
+    ///    reports the header-only vendor and asks the body, without the headers that
+    ///    match on their own, to corroborate it.
     ///
     /// 2. **Full scan**: Aho-Corasick runs over the body and all fingerprints
     ///    (including mixed header+body ones) are evaluated.

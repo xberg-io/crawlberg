@@ -183,7 +183,8 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
         // `WafBlocked` is here for a different reason: `http_fetch` raises it for a 403 but also for
-        // a WAF fingerprint on a *2xx* body or header (http.rs), so it does not imply a 4xx at all.
+        // a *2xx* block page (http.rs), and `fetch_robots_outcome` raises it for a 2xx robots.txt
+        // block page of any size the classifier reads, so it does not imply a 4xx at all.
         // What it does imply is that the bytes we hold are an interstitial rather than the origin's
         // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
         _ => RobotsOutcome::DisallowAll {
@@ -270,7 +271,10 @@ pub(crate) async fn fetch_robots_outcome(
             denial: RobotsDenial::Sustained,
         },
         Ok(resp) if resp.status >= 400 => RobotsOutcome::AllowAll,
-        Ok(resp) => RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+        Ok(resp) => match crate::http::robots_block_page_error(&resp) {
+            Some(error) => outcome_for_fetch_error(&error),
+            None => RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+        },
         Err(error) => outcome_for_fetch_error(&error),
     }
 }
@@ -293,6 +297,86 @@ mod tests {
             Some("invalid URL: [address hidden: it may carry credentials]"),
             "an address that does not parse must be refused without showing its credential"
         );
+    }
+
+    fn describe(outcome: &RobotsOutcome) -> String {
+        match outcome {
+            RobotsOutcome::Rules(_) => "Rules".to_owned(),
+            RobotsOutcome::AllowAll => "AllowAll".to_owned(),
+            RobotsOutcome::DisallowAll { reason, .. } => format!("DisallowAll({reason})"),
+        }
+    }
+
+    /// The robots.txt outcome for a 200 carrying `body` and `headers`.
+    async fn robots_outcome_for(body: String, headers: &[(&str, &str)]) -> RobotsOutcome {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut template = ResponseTemplate::new(200)
+            .append_header("content-type", "text/html")
+            .set_body_string(body);
+        for (name, value) in headers {
+            template = template.append_header(*name, *value);
+        }
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(template)
+            .mount(&mock)
+            .await;
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.retry_count = 0;
+        let client = crate::http::build_client(&config).expect("client must build");
+        fetch_robots_outcome(&format!("{}/page", mock.uri()), &config, &client, "bot").await
+    }
+
+    /// A robots.txt answered with a block page denies the whole origin, whatever the page's size
+    /// up to the classifier's 100 KB limit, so a WAF-protected site never gets an unrestricted crawl.
+    #[tokio::test]
+    async fn a_robots_txt_block_page_denies_the_origin_at_any_size_the_classifier_reads() {
+        let tag = "<script src=\"https://js.datadome.co/tags.js\"></script>";
+        for (label, len, headers) in [
+            (
+                "x-datadome and the tag, 400 bytes",
+                400,
+                &[("x-datadome", "protected")][..],
+            ),
+            ("x-datadome and the tag, 6 KB", 6000, &[("x-datadome", "protected")][..]),
+            ("the tag alone, 6 KB", 6000, &[][..]),
+            (
+                "x-datadome and the tag, 90 KB",
+                90_000,
+                &[("x-datadome", "protected")][..],
+            ),
+        ] {
+            let body = format!("<html>{tag}<!--{}--></html>", "x".repeat(len));
+            let outcome = robots_outcome_for(body, headers).await;
+            assert!(
+                outcome
+                    .disallow_all_reason()
+                    .is_some_and(|reason| reason.contains("datadome")),
+                "{label}: a robots.txt block page must deny the origin, got {}",
+                describe(&outcome)
+            );
+            assert!(!outcome.allows("/private"), "{label}: /private must not be allowed");
+        }
+    }
+
+    /// A real robots.txt served through a CDN that stamps its own header is read as rules.
+    #[tokio::test]
+    async fn a_robots_txt_behind_a_cdn_presence_header_is_read_as_rules() {
+        let outcome = robots_outcome_for(
+            "User-agent: *\nDisallow: /private\n".to_owned(),
+            &[("x-sucuri-id", "18012")],
+        )
+        .await;
+        assert!(
+            matches!(outcome, RobotsOutcome::Rules(_)),
+            "an ordinary robots.txt must be read as rules, got {}",
+            describe(&outcome)
+        );
+        assert!(outcome.allows("/public"), "the rules must allow /public");
+        assert!(!outcome.allows("/private"), "the rules must disallow /private");
     }
 
     #[test]

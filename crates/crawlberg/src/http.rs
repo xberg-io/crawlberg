@@ -30,9 +30,9 @@ pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
 pub(crate) use status::status_error;
-pub(crate) use waf::waf_2xx_error;
+pub(crate) use waf::robots_block_page_error;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use waf::{engine_waf_signal, record_waf_block};
+pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
 /// Browser-specific extras attached to an `HttpResponse` produced by the native
 /// browser backend. Populated when `browser_used` is true.

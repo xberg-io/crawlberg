@@ -313,11 +313,12 @@ pattern = "THIS_PATTERN_WILL_NEVER_MATCH_ANYTHING_xyzzy_12345"
     );
 }
 
-/// The corpus rule the 2xx body corroboration in `crate::http::waf` depends on: every built-in
-/// fingerprint that mixes header and body signals is Cloudflare's and keys on `server:
-/// cloudflare`, and no header-only fingerprint matches that header.
+/// The corpus rule the 2xx body corroboration in `crate::http::waf` depends on: no header that a
+/// built-in fingerprint mixing header and body signals needs matches a header-only fingerprint on
+/// its own. Corroboration sets such headers aside before it asks the body, so a mixed fingerprint
+/// whose header matched alone could never corroborate.
 #[test]
-fn every_mixed_builtin_fingerprint_is_cloudflare_keyed_on_its_server_header() {
+fn no_header_a_mixed_builtin_fingerprint_needs_matches_on_its_own() {
     use crate::waf::rules::Signal;
 
     let rules = Rules::builtin();
@@ -336,29 +337,20 @@ fn every_mixed_builtin_fingerprint_is_cloudflare_keyed_on_its_server_header() {
             continue;
         }
         mixed += 1;
-        assert_eq!(
-            fingerprint.vendor, "cloudflare",
-            "{} mixes header and body",
-            fingerprint.id
-        );
-        assert_eq!(
-            headers,
-            [("server", Some("cloudflare"))],
-            "{} must key on server: cloudflare alone",
-            fingerprint.id
-        );
+        for (name, value) in headers {
+            for status in [200, 203] {
+                let alone = make_response(status, vec![(name, value.unwrap_or("1"))], "");
+                assert_eq!(
+                    rules.classify(&alone).expect("classify must not fail"),
+                    None,
+                    "{} needs `{name}`, which must not match on its own on a {status}",
+                    fingerprint.id
+                );
+            }
+        }
     }
     assert!(
         mixed > 0,
-        "the corpus must still hold the Cloudflare header+body fingerprints"
+        "the corpus must still hold fingerprints that mix header and body signals"
     );
-
-    for status in [200, 203, 403] {
-        let cloudflare_only = make_response(status, vec![("server", "cloudflare")], "");
-        assert_eq!(
-            rules.classify(&cloudflare_only).expect("classify must not fail"),
-            None,
-            "no header-only fingerprint may match server: cloudflare on a {status}"
-        );
-    }
 }

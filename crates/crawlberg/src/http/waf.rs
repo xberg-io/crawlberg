@@ -131,8 +131,36 @@ pub(crate) fn waf_2xx_error(
     body: &str,
     headers_map: &HashMap<String, Vec<String>>,
 ) -> Option<CrawlError> {
-    let response = build_partial_response_with_bytes(status, body_bytes, body, headers_map);
-    let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, &response).ok()??;
+    refuse_2xx_with(status, body_bytes.len(), || {
+        build_partial_response_with_bytes(status, body_bytes, body, headers_map)
+    })
+}
+
+/// [`waf_2xx_error`] for a response that `response` builds on demand.
+///
+/// ~keep The status and size are checked before `response` runs, so a response the decision
+/// cannot refuse, which is every non-2xx and every real page, is never copied to be classified.
+fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> HttpResponse) -> Option<CrawlError> {
+    if !in_2xx_decision(status, body_len, Some(WAF_2XX_MAX_BODY_LEN)) {
+        return None;
+    }
+    block_page_error(&response(), Some(WAF_2XX_MAX_BODY_LEN))
+}
+
+/// The [`CrawlError::WafBlocked`] a robots.txt fetch is refused with when its 2xx `response` is a
+/// block page, or `None` when it is the site's robots.txt.
+///
+/// ~keep This is the 2xx decision without [`WAF_2XX_MAX_BODY_LEN`]: only the classifier's own
+/// body limit applies. That limit keeps a large page from being refused as content, but a
+/// robots.txt that fingerprints as a block page is an interstitial at any size, and reading
+/// one as rules hands a WAF-protected site an unrestricted crawl.
+pub(crate) fn robots_block_page_error(response: &HttpResponse) -> Option<CrawlError> {
+    block_page_error(response, None)
+}
+
+/// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
+fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
+    let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
     let message = format!("waf/blocked detected on 2xx ({}): {}", evidence.label(), signal.vendor);
     Some(waf_block(signal.vendor, message))
 }
@@ -150,27 +178,34 @@ pub(crate) fn engine_waf_signal(
     if !is_2xx(response.status) {
         return classifier.classify(response);
     }
-    Ok(confirmed_2xx_waf(classifier, response)?.map(|(signal, _)| signal))
+    Ok(confirmed_2xx_waf(classifier, response, Some(WAF_2XX_MAX_BODY_LEN))?.map(|(signal, _)| signal))
 }
 
 fn is_2xx(status: u16) -> bool {
     (200..300).contains(&status)
 }
 
+/// Whether the 2xx decision applies to `status` with a body of `body_len` bytes, when a body of
+/// `max_body_len` bytes or more is content whatever it holds.
+fn in_2xx_decision(status: u16, body_len: usize, max_body_len: Option<usize>) -> bool {
+    is_2xx(status) && max_body_len.is_none_or(|max| body_len < max)
+}
+
 /// The one decision on whether a 2xx `response` is a WAF interstitial, with the evidence class.
 ///
 /// ~keep Three conditions, all required. The status is a 2xx; any other status is not this
-/// decision's to make. The body is under [`WAF_2XX_MAX_BODY_LEN`]. And the match is not a
-/// header-only one: a fingerprint matching on headers alone proves only that a WAF or CDN is in
-/// the request path, which every page that product proxies carries, and a 2xx has no status
-/// evidence to go with it. So a header-only match refuses the response only when the body shows
-/// the interstitial too, and an ordinary page served through Akamai, Imperva, F5 or Sucuri is
-/// returned as content (crawlberg#231).
+/// decision's to make. The body is under `max_body_len` ([`WAF_2XX_MAX_BODY_LEN`] for page
+/// content). And the match is not a header-only one: a fingerprint matching on headers alone
+/// proves only that a WAF or CDN is in the request path, which every page that product proxies
+/// carries, and a 2xx has no status evidence to go with it. So a header-only match refuses the
+/// response only when the body shows the interstitial too, and an ordinary page served through
+/// Akamai, Imperva, F5 or Sucuri is returned as content (crawlberg#231).
 fn confirmed_2xx_waf(
     classifier: &dyn WafClassifier,
     response: &HttpResponse,
+    max_body_len: Option<usize>,
 ) -> Result<Option<(WafSignal, WafEvidence)>, WafClassifyError> {
-    if !is_2xx(response.status) || response.body_bytes.len() >= WAF_2XX_MAX_BODY_LEN {
+    if !in_2xx_decision(response.status, response.body_bytes.len(), max_body_len) {
         return Ok(None);
     }
     let Some(signal) = classifier.classify(response)? else {
@@ -183,14 +218,13 @@ fn confirmed_2xx_waf(
         return Ok(Some((signal, WafEvidence::Body)));
     }
 
-    // ~keep Corroboration has to be asked of the body on its own: re-classifying with the headers
-    // would stop at the same header-only fingerprint and never reach the body. So a fingerprint
-    // that needs a header and a body signal together cannot corroborate. In the built-in corpus
-    // those are Cloudflare's, keyed on `server: cloudflare`, which no header-only fingerprint
-    // matches (`waf::tests` pins both), so one of them is lost only when another vendor's
-    // header-only fingerprint matches the same response and no body-only fingerprint does.
+    // ~keep Re-classifying the whole response would stop at the same header-only fingerprint and
+    // never reach the body, so the headers that match on their own are set aside first. The
+    // others stay: a fingerprint that needs a header and a body signal together, such as
+    // Cloudflare's `server: cloudflare` with a block phrase, still corroborates when another
+    // vendor's header-only fingerprint matches the same response.
     Ok(classifier
-        .classify(&body_only(response))?
+        .classify(&without_header_only_matches(classifier, response)?)?
         .map(|_| (signal, WafEvidence::Headers)))
 }
 
@@ -202,13 +236,32 @@ fn headers_only(response: &HttpResponse) -> HttpResponse {
     }
 }
 
-/// A copy of `response` with its body and no headers.
-fn body_only(response: &HttpResponse) -> HttpResponse {
-    HttpResponse {
-        body: response.body.clone(),
-        body_bytes: response.body_bytes.clone(),
-        ..bare(response.status)
+/// A copy of `response` without the headers that fingerprint on their own, so that any match
+/// it makes has a body signal in it.
+///
+/// ~keep Each header is asked on its own, so two headers that fingerprint only together are both
+/// kept. When the kept headers still match without a body, every header is set aside and the
+/// body is asked alone.
+fn without_header_only_matches(
+    classifier: &dyn WafClassifier,
+    response: &HttpResponse,
+) -> Result<HttpResponse, WafClassifyError> {
+    let mut rest = bare(response.status);
+    for (name, values) in &response.headers {
+        let alone = HttpResponse {
+            headers: HashMap::from([(name.clone(), values.clone())]),
+            ..bare(response.status)
+        };
+        if classifier.classify(&alone)?.is_none() {
+            rest.headers.insert(name.clone(), values.clone());
+        }
     }
+    if classifier.classify(&rest)?.is_some() {
+        rest.headers.clear();
+    }
+    rest.body = response.body.clone();
+    rest.body_bytes = response.body_bytes.clone();
+    Ok(rest)
 }
 
 /// A response carrying only `status`.
@@ -388,6 +441,18 @@ mod tests {
                 content.clone(),
             ),
             (
+                "200, server cloudflare, Cloudflare block page",
+                html(200, "<html><h1>Access blocked</h1></html>".to_owned()).append_header("server", "cloudflare"),
+                Err("cloudflare".to_owned()),
+            ),
+            (
+                "200, server cloudflare and x-sucuri-id, Cloudflare block page",
+                html(200, "<html><h1>Access blocked</h1></html>".to_owned())
+                    .append_header("server", "cloudflare")
+                    .append_header("x-sucuri-id", "18012"),
+                Err("imperva".to_owned()),
+            ),
+            (
                 "200, server cloudflare, 20 KB article that says blocked",
                 html(200, article).append_header("server", "cloudflare"),
                 content.clone(),
@@ -404,6 +469,65 @@ mod tests {
             }
         }
         assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    }
+
+    /// The 2xx decision copies a response to classify it only when it may refuse it: a non-2xx or
+    /// a body at or over the size limit is never built.
+    #[test]
+    fn the_2xx_decision_copies_no_response_it_cannot_refuse() {
+        for (status, len) in [(418_u16, 400_usize), (304, 0), (200, 5000), (206, 2_000_000)] {
+            let refusal = super::refuse_2xx_with(status, len, || {
+                panic!("a {status} with {len} body bytes must not be copied to be classified")
+            });
+            assert!(
+                refusal.is_none(),
+                "a {status} with {len} body bytes must not be refused"
+            );
+        }
+
+        let body = page_of_len(DATADOME_TAG, 400);
+        let headers = std::collections::HashMap::from([("x-datadome".to_owned(), vec!["protected".to_owned()])]);
+        let refusal = super::refuse_2xx_with(200, body.len(), || {
+            super::build_partial_response_with_bytes(200, body.as_bytes(), &body, &headers)
+        });
+        assert!(
+            matches!(refusal, Some(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "datadome"),
+            "a small DataDome 200 must be built and refused, got {refusal:?}"
+        );
+    }
+
+    /// Two headers that fingerprint only together are both set aside by corroboration, so they
+    /// cannot corroborate their own match on an ordinary 2xx.
+    #[test]
+    fn headers_that_fingerprint_only_together_cannot_corroborate_themselves() {
+        let rules = crate::waf::rules::load_from_str(
+            r#"
+[[fingerprint]]
+id = "pair"
+vendor = "pair"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "response_header"
+name = "x-a"
+[[fingerprint.signals]]
+kind = "response_header"
+name = "x-b"
+"#,
+        )
+        .expect("valid rules");
+        let classifier = crate::waf::TomlClassifier::from_rules(rules);
+        let body = "<html><body><h1>Release notes</h1></body></html>";
+        let headers = std::collections::HashMap::from([
+            ("x-a".to_owned(), vec!["1".to_owned()]),
+            ("x-b".to_owned(), vec!["1".to_owned()]),
+        ]);
+        let response = super::build_partial_response_with_bytes(200, body.as_bytes(), body, &headers);
+        let decision = super::confirmed_2xx_waf(&classifier, &response, Some(super::WAF_2XX_MAX_BODY_LEN))
+            .expect("classify must not fail");
+        assert_eq!(
+            decision, None,
+            "a header-only pair must not corroborate an ordinary page"
+        );
     }
 
     /// A 2xx refusal is decided for 2xx statuses only: a 418 carrying DataDome's interstitial is

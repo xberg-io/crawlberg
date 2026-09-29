@@ -45,11 +45,47 @@ struct AttemptState {
     attempt: u32,
     /// ~keep The global attempt cap guards against RetryPolicy implementations that never return Stop.
     total_attempts: u32,
-    last_ok: Option<(crate::tower::CrawlResponse, bool)>,
+    last_ok: Option<Fallback>,
     last_err: Option<CrawlError>,
     tiers_attempted: Vec<&'static str>,
     last_escalation_reason: Option<&'static str>,
     last_content_density: f32,
+}
+
+/// A successful response kept to hand back if the attempt cap is reached.
+struct Fallback {
+    response: crate::tower::CrawlResponse,
+    browser_used: bool,
+    /// The WAF block the engine refused `response` as, if it did.
+    refusal: PendingWafBlock,
+}
+
+/// A WAF refusal that `crawl_waf_blocks_total` counts when it is dropped, unless it is cancelled.
+///
+/// ~keep A refused response kept as the [`Fallback`] stays refused unless the attempt cap hands
+/// it back as content. Dropping it, when a later attempt replaces it or the fetch ends any other
+/// way, makes the refusal final. So no exit from the loop can skip the count, and no response
+/// the caller gets is counted.
+struct PendingWafBlock(Option<String>);
+
+impl PendingWafBlock {
+    /// The count owed for a response refused for `reason`, if `reason` refuses it as a WAF block.
+    fn for_reason(reason: &EscalationReason) -> Self {
+        Self(CrawlEngine::waf_refusal_vendor(reason).map(str::to_owned))
+    }
+
+    /// Drop the count: the response is returned as content after all.
+    fn cancel(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for PendingWafBlock {
+    fn drop(&mut self) {
+        if let Some(vendor) = self.0.take() {
+            crate::http::record_waf_block(&vendor);
+        }
+    }
 }
 
 impl DispatchPlan {
@@ -187,7 +223,14 @@ impl AttemptState {
             "max_total_attempts exceeded, force-returning current result"
         );
         match self.last_ok {
-            Some((resp, browser_used)) => Ok((resp, browser_used)),
+            Some(Fallback {
+                response,
+                browser_used,
+                refusal,
+            }) => {
+                refusal.cancel();
+                Ok((response, browser_used))
+            }
             None => Err(self
                 .last_err
                 .unwrap_or_else(|| CrawlError::other("max_total_attempts exceeded with no result"))),
@@ -376,17 +419,25 @@ impl CrawlEngine {
                 // ~keep Moves (not clones) `resp` into `last_ok`: it is only read on the rare
                 // total_attempts > max_total bail-out, and this loop iteration has no other
                 // use for `resp` after this point.
-                state.last_ok = Some((resp, browser_used));
+                state.last_ok = Some(Fallback {
+                    response: resp,
+                    browser_used,
+                    refusal: PendingWafBlock(None),
+                });
                 LoopStep::Restart
             }
             RetryDirective::Escalate { reason } => {
-                Self::record_waf_refusal(&reason);
                 if let Some(next) = state.affordable_next_tier(plan).await {
                     Self::record_escalation(state.current_tier, next, &reason);
                     state.escalate_to(next, &reason);
-                    state.last_ok = Some((resp, browser_used));
+                    state.last_ok = Some(Fallback {
+                        response: resp,
+                        browser_used,
+                        refusal: PendingWafBlock::for_reason(&reason),
+                    });
                     return LoopStep::Restart;
                 }
+                Self::record_waf_refusal(&reason);
                 state.report_dispatch(url, plan);
                 LoopStep::Done(Err(Self::escalation_reason_to_error(&reason, url)))
             }
