@@ -317,7 +317,6 @@ mod tests {
     /// ~keep through a real Chrome because an integration test cannot reliably choose which window a
     /// ~keep cancellation lands in, or make a present Chrome fail to start -- see xberg-io/crawlberg#198.
     #[test]
-    #[serial_test::serial(process_table)]
     fn an_unclaimed_scratch_profile_directory_is_removed_when_it_drops() {
         let resolved = resolve_user_data_dir(&CrawlConfig::default()).expect("resolve must succeed");
         let path = resolved.path().to_path_buf();
@@ -334,7 +333,6 @@ mod tests {
     /// A one-shot launch records the Chrome it starts, so dropping its profile directory stops
     /// that Chrome and removes the directory.
     #[tokio::test(flavor = "multi_thread")]
-    #[serial_test::serial(process_table)]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn dropping_a_one_shot_launchs_profile_directory_stops_its_chrome() {
         let (browser, handler, user_data) = match launch_or_connect(&CrawlConfig::default()).await {
@@ -357,7 +355,6 @@ mod tests {
     /// ~keep No Chrome is needed: without one the launch fails before the deadline, and the
     /// ~keep profile directory drops on the same path.
     #[tokio::test]
-    #[serial_test::serial(process_table)]
     async fn a_cancelled_one_shot_launch_tears_its_profile_down_off_the_executor_thread() {
         let mut config = CrawlConfig::default();
         config.browser.overall_timeout = std::time::Duration::from_millis(1);
@@ -437,7 +434,6 @@ mod tests {
     /// Dropping a saved named profile neither removes it nor stops a Chrome still using it.
     #[cfg(unix)]
     #[test]
-    #[serial_test::serial(process_table)]
     fn a_persistent_profile_in_use_is_neither_removed_nor_its_user_killed() {
         let dir = tempfile::tempdir().expect("the directory must be creatable");
         let flag = crate::browser_pool::user_data_dir_flag(dir.path());
@@ -457,7 +453,6 @@ mod tests {
 
     /// A one-shot session whose teardown task runs to the end removes its profile directory.
     #[tokio::test(flavor = "multi_thread")]
-    #[serial_test::serial(process_table)]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
         use tokio_stream::StreamExt;
@@ -495,7 +490,6 @@ mod tests {
     /// ~keep `#[tokio::test]` ending on a one-shot fetch does, drops that task unfinished. That left one
     /// ~keep `crawlberg-browser-*` directory per fetch in the temp directory (xberg-io/crawlberg#415).
     #[test]
-    #[serial_test::serial(process_table)]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     fn a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory() {
         use tokio_stream::StreamExt;

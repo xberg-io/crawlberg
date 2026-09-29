@@ -1205,6 +1205,7 @@ dependencies = [
  "icu_normalizer",
  "idna",
  "ipnet",
+ "libc",
  "liter-llm",
  "memchr",
  "minijinja",
