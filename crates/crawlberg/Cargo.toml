@@ -125,6 +125,9 @@ web-time = "1"
 [dev-dependencies]
 async-trait = { workspace = true }
 criterion = { workspace = true }
+# ~keep `testing` provides the in-memory metric exporter that tests/test_waf_blocks_counter.rs
+# ~keep reads crawl_waf_blocks_total through.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 # ~keep in-process TLS server for the transport-error tests (#395, #463): a static
 # ~keep self-signed cert plus a pure-Rust TLS stack, instead of shelling out to the
