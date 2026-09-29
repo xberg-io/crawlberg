@@ -324,11 +324,16 @@ mod tests {
 
     /// The robots.txt outcome for a 200 carrying `body` and `headers`.
     async fn robots_outcome_for(body: String, headers: &[(&str, &str)]) -> RobotsOutcome {
+        robots_outcome_as("text/html", body, headers).await
+    }
+
+    /// [`robots_outcome_for`] with `content_type` as the response's content type.
+    async fn robots_outcome_as(content_type: &str, body: String, headers: &[(&str, &str)]) -> RobotsOutcome {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mut template = ResponseTemplate::new(200)
-            .append_header("content-type", "text/html")
+            .append_header("content-type", content_type)
             .set_body_string(body);
         for (name, value) in headers {
             template = template.append_header(*name, *value);
@@ -450,6 +455,75 @@ mod tests {
                     .disallow_all_reason()
                     .is_some_and(|reason| reason.contains("cloudflare")),
                 "{label}: a Cloudflare block page must deny the origin, got {}",
+                describe(&outcome)
+            );
+            assert!(!outcome.allows("/public"), "{label}: /public must not be allowed");
+        }
+    }
+
+    /// A 2xx text block page with a lone User-agent, Sitemap or `allow:` line is not robots.txt:
+    /// only an Allow or Disallow rule under a User-agent line makes a body read as rules, so each
+    /// of these denies the origin.
+    #[tokio::test]
+    async fn a_text_block_page_with_robots_like_lines_but_no_rule_in_a_group_still_denies_the_origin() {
+        /// A label, the content type, the body and the headers of one block page.
+        type BlockPage = (
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static [(&'static str, &'static str)],
+        );
+        const CLOUDFLARE: &[(&str, &str)] = &[("server", "cloudflare")];
+        const SUCURI: &[(&str, &str)] = &[("x-sucuri-id", "18012"), ("server", "Sucuri/Cloudproxy")];
+        let cases: [BlockPage; 7] = [
+            (
+                "a Cloudflare text page that echoes User-Agent",
+                "text/plain",
+                "Sorry, you have been blocked\nYou are unable to access example.com\nRay ID: 8c1f2a3b4d5e6f70\nUser-Agent: bot\nIP: 203.0.113.9\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare challenge script with an allow key",
+                "application/javascript",
+                "window._cf_chl_opt = {\n  cvId: '3',\n  cType: 'managed',\n  allow: false,\n  cRay: '8c1f2a3b4d5e6f70'\n};\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a DataDome text page that echoes User-Agent",
+                "text/plain",
+                "Blocked by DataDome\nUser-Agent: bot\nReference: AHrlqAAAAAMA\n",
+                &[("x-datadome", "protected")],
+            ),
+            (
+                "a Sucuri text page that echoes User-Agent",
+                "text/plain",
+                "Sucuri WebSite Firewall - Access Denied\nBlock reason: Access from your area has been temporarily denied.\nYour IP: 203.0.113.9\nURL: example.com/robots.txt\nUser-Agent: bot\nBlock ID: GEO01\n",
+                SUCURI,
+            ),
+            (
+                "a generic text page that echoes the request headers",
+                "text/plain",
+                "Request blocked.\nHost: example.com\nUser-Agent: bot\nAccept: */*\n",
+                &[],
+            ),
+            (
+                "a Cloudflare text page with a lone Sitemap line",
+                "text/plain",
+                "Access blocked\nSitemap: https://example.com/sitemap.xml\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare text page with an empty User-agent line",
+                "text/plain",
+                "Access blocked\nUser-agent:\n",
+                CLOUDFLARE,
+            ),
+        ];
+        for (label, content_type, body, headers) in cases {
+            let outcome = robots_outcome_as(content_type, body.to_owned(), headers).await;
+            assert!(
+                outcome.disallow_all_reason().is_some(),
+                "{label}: a block page with no rule in a group must deny the origin, got {}",
                 describe(&outcome)
             );
             assert!(!outcome.allows("/public"), "{label}: /public must not be allowed");

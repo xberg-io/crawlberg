@@ -161,9 +161,10 @@ fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> Http
 /// [`waf_2xx_error`] for a robots.txt fetch: `None` when the body is the site's robots.txt, else
 /// the refusal a 2xx block page gets.
 ///
-/// ~keep A body that reads as robots.txt is rules, as RFC 9309 reads any 2xx: a fingerprint
-/// such as `server: cloudflare` with "blocked" in the body also matches a comment written for a
-/// human reader (crawlberg#507). Any other body gets the 2xx decision without
+/// ~keep A body with at least one Allow or Disallow rule under a User-agent line reads as
+/// robots.txt and is rules, as RFC 9309 reads any 2xx: a fingerprint such as
+/// `server: cloudflare` with "blocked" in the body also matches a comment written for a human
+/// reader (crawlberg#507). Any other body gets the 2xx decision without
 /// [`WAF_2XX_MAX_BODY_LEN`], only the classifier's own body limit: a block page served as
 /// robots.txt is an interstitial at any size, and reading one as rules hands a WAF-protected
 /// site an unrestricted crawl.

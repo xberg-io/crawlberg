@@ -47,8 +47,8 @@ struct RobotsParseState {
     current_rules: RulesBlock,
     in_rules: bool,
     sitemaps: Vec<String>,
-    /// How many lines were a directive this parser acts on.
-    directives: usize,
+    /// How many Allow or Disallow lines came after a User-agent line, inside a group.
+    grouped_rules: usize,
 }
 
 impl RobotsParseState {
@@ -56,10 +56,9 @@ impl RobotsParseState {
     ///
     /// `key` is already lower-cased and `value` already trimmed.
     fn apply_directive(&mut self, key: &str, value: &str) {
-        let known = match key {
+        match key {
             "sitemap" if !value.is_empty() => {
                 self.sitemaps.push(value.to_owned());
-                true
             }
             "user-agent" => {
                 if self.in_rules {
@@ -72,28 +71,26 @@ impl RobotsParseState {
                     self.in_rules = false;
                 }
                 self.current_agents.push(value.to_lowercase());
-                true
             }
             "allow" => {
                 self.in_rules = true;
+                self.grouped_rules += usize::from(!self.current_agents.is_empty());
                 if !value.is_empty() {
                     self.current_rules.allow.push(value.to_owned());
                 }
-                true
             }
             "disallow" => {
                 self.in_rules = true;
+                self.grouped_rules += usize::from(!self.current_agents.is_empty());
                 if !value.is_empty() {
                     self.current_rules.disallow.push(value.to_owned());
                 }
-                true
             }
             "crawl-delay" => {
                 self.in_rules = true;
                 if let Ok(delay) = value.parse::<u64>() {
                     self.current_rules.crawl_delay = Some(delay);
                 }
-                true
             }
             "request-rate" => {
                 self.in_rules = true;
@@ -103,11 +100,16 @@ impl RobotsParseState {
                 {
                     self.current_rules.crawl_delay = Some(s);
                 }
-                true
             }
-            _ => false,
-        };
-        self.directives += usize::from(known);
+            _ => {}
+        }
+    }
+
+    /// Fold one content line into the state; a line without a `:` is not a directive.
+    fn apply_line(&mut self, line: &str) {
+        if let Some((key, value)) = line.split_once(':') {
+            self.apply_directive(&key.trim().to_lowercase(), value.trim());
+        }
     }
 
     /// Close the block still being accumulated and yield the parsed blocks and sitemaps.
@@ -174,21 +176,29 @@ fn content_lines(body: &str) -> impl Iterator<Item = &str> {
 fn scan(body: &str) -> RobotsParseState {
     let mut state = RobotsParseState::default();
     for line in content_lines(body) {
-        if let Some((key, value)) = line.split_once(':') {
-            state.apply_directive(&key.trim().to_lowercase(), value.trim());
-        }
+        state.apply_line(line);
     }
     state
 }
 
-/// Whether `body` is a robots.txt file: at least one directive this parser acts on, and no
-/// markup outside comments.
+/// Whether `body` is a robots.txt file: at least one Allow or Disallow rule under a User-agent
+/// line (an RFC 9309 group with a rule), and no markup outside comments.
 ///
-/// ~keep An HTML interstitial opens with a tag, so a `<` outside a comment marks the body as a
-/// page even when it shows robots.txt lines. A real file can say anything in a comment, such as
-/// "AI crawlers are blocked below", so comments are not read (crawlberg#507).
+/// ~keep A lone User-agent, Sitemap or `allow:` line does not count: a WAF text page that echoes
+/// the request's `User-Agent` header, or a challenge script with an `allow: false` key, would
+/// otherwise read as rules that allow the whole site. An HTML interstitial opens with a tag, so a
+/// `<` outside a comment marks the body as a page even when it shows robots.txt lines. A real
+/// file can say anything in a comment, such as "AI crawlers are blocked below", so comments are
+/// not read (crawlberg#507).
 pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
-    scan(body).directives > 0 && !content_lines(body).any(|line| line.contains('<'))
+    let mut state = RobotsParseState::default();
+    for line in content_lines(body) {
+        if line.contains('<') {
+            return false;
+        }
+        state.apply_line(line);
+    }
+    state.grouped_rules > 0
 }
 
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
@@ -529,6 +539,29 @@ mod tests {
              {:?}",
             rules.disallow
         );
+    }
+
+    #[test]
+    fn a_body_reads_as_robots_txt_only_with_an_allow_or_disallow_rule_under_a_user_agent_line() {
+        for (body, expected) in [
+            ("User-agent: *\nDisallow: /private\n", true),
+            ("User-agent: *\nAllow: /\n", true),
+            ("User-agent: *\nDisallow:\n", true),
+            ("# blocked\nUser-agent: GPTBot\nDisallow: /\n", true),
+            ("User-Agent: bot\nIP: 203.0.113.9\n", false),
+            ("User-agent:\n", false),
+            ("Sitemap: https://example.com/sitemap.xml\n", false),
+            ("User-agent: *\nCrawl-delay: 5\n", false),
+            ("allow: false,\nUser-agent: *\n", false),
+            ("Disallow: /private\n", false),
+            ("<pre>\nUser-agent: *\nDisallow: /private\n</pre>\n", false),
+        ] {
+            assert_eq!(
+                reads_as_robots_txt(body),
+                expected,
+                "{body:?} must read as robots.txt only when it has a rule inside a group"
+            );
+        }
     }
 
     #[test]
