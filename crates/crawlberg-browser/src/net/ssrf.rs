@@ -112,6 +112,29 @@ pub const NAMED_SCHEMES: [&str; 19] = [
 pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Return `Ok(())` if `url` may be fetched.
     async fn validate(&self, url: &Url) -> Result<(), String>;
+
+    /// Resolve `host` and return the addresses a connection to it may use.
+    ///
+    /// The native clients connect only to the addresses this returns (see
+    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so a validator that checks
+    /// resolved addresses does it here, on the lookup the connection uses. A check in `validate`
+    /// alone is lost: its lookup is gone by the time the client resolves the host again, and a
+    /// rebinding DNS answer differs.
+    ///
+    /// The default is the system lookup with no check, for a validator that decides by the URL
+    /// alone.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        system_lookup(host).await
+    }
+}
+
+/// Resolve `host` with the system resolver.
+async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
+    Ok(tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
+        .map(|address| address.ip())
+        .collect())
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -144,6 +167,14 @@ impl DefaultSsrfValidator {
     }
 }
 
+#[cfg(test)]
+impl DefaultSsrfValidator {
+    /// Build a validator with an explicit setting, independent of the environment.
+    pub(crate) fn with_deny_private(deny_private: bool) -> Self {
+        Self { deny_private }
+    }
+}
+
 impl Default for DefaultSsrfValidator {
     fn default() -> Self {
         Self::from_env()
@@ -169,9 +200,8 @@ impl SsrfValidator for DefaultSsrfValidator {
             return Ok(());
         }
 
-        // ~keep Localhost names are blocked before DNS to close rebinding gaps between
-        // validation and request time. This validator does not resolve; the injected
-        // crawlberg one does, and closes the gap properly.
+        // ~keep Localhost names are blocked before DNS. `validate` does not resolve; the
+        // connect-time `resolve` checks every address the connection will use.
         match url.host() {
             Some(url::Host::Ipv4(ip)) => match denial_reason(ip.into()) {
                 Some(reason) => Err(format!(
@@ -190,6 +220,19 @@ impl SsrfValidator for DefaultSsrfValidator {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Refuses the host when any address it resolves to is in the deny-list.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        let addresses = system_lookup(host).await?;
+        if self.deny_private
+            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
+        {
+            return Err(format!(
+                "{host} resolves to the private/internal address {ip}, which is not allowed"
+            ));
+        }
+        Ok(addresses)
     }
 }
 

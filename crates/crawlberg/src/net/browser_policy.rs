@@ -5,12 +5,14 @@
 //! that carries the configured policy — allowlist included — across that boundary, so
 //! the browser layer enforces exactly what the HTTP layer does.
 
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use crawlberg_browser::adapter::SsrfValidator;
 use url::Url;
 
 use crate::net::LOGGED_REFUSALS;
+use crate::net::resolver::resolve_permitted;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
 
 /// The most refused URLs one render reports.
@@ -61,6 +63,15 @@ impl SsrfValidator for CoreSsrfValidator {
             }
         }
         verdict
+    }
+
+    /// The HTTP client's connect-time resolution, so both paths decide a host the same way:
+    /// a host on the name allowlist keeps its private addresses.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        resolve_permitted(host, &self.policy)
+            .await
+            .map(|addresses| addresses.into_iter().map(|address| address.ip()).collect())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -164,6 +175,33 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_connect_time_resolution_checks_the_embedded_ipv4_address() {
+        // ~keep An IP literal resolves to itself without a DNS query, so each case reaches the
+        // check exactly as an AAAA answer carrying that address would. The bridge is what a crawl
+        // uses; the fallback governs direct use of the browser crate and names no reason.
+        let bridge = recording_validator_for(&SsrfPolicy::default()).0;
+        let fallback = crawlberg_browser::adapter::DefaultSsrfValidator::from_env();
+        let mut mismatches = Vec::new();
+        for &(literal, expected) in crate::net::ssrf::EMBEDDED_IPV4_CASES {
+            let actual = bridge.resolve(literal).await.err();
+            let wanted = expected.map(|reason| format!("denied by SSRF policy: {reason}"));
+            if actual != wanted {
+                mismatches.push(format!("{literal}: bridge expected {wanted:?}, got {actual:?}"));
+            }
+            let refused = fallback.resolve(literal).await.is_err();
+            if refused != expected.is_some() {
+                mismatches.push(format!("{literal}: fallback refused={refused}, expected {expected:?}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "browser resolution decisions differ:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[tokio::test]
     async fn default_policy_denies_loopback_through_the_bridge() {
         let validator = recording_validator_for(&SsrfPolicy::default()).0;
         let err = validator
@@ -191,6 +229,30 @@ mod tests {
             .validate(&"http://127.0.0.1/".parse::<Url>().expect("valid URL"))
             .await
             .expect("an allowlisted range must be permitted through the bridge");
+    }
+
+    #[tokio::test]
+    async fn the_bridge_resolves_a_host_under_the_configured_policy() {
+        let error = recording_validator_for(&SsrfPolicy::default())
+            .0
+            .resolve("localhost")
+            .await
+            .expect_err("localhost resolves to loopback, which the default policy denies");
+        assert_eq!(error, "denied by SSRF policy: loopback");
+
+        // ~keep A host on the name allowlist keeps its private addresses, as on the HTTP path.
+        // ~keep Checking each address as a literal instead refuses it: the name matches no IP.
+        let mut policy = SsrfPolicy::default();
+        policy.allowlist.push(HostMatcher::exact("localhost"));
+        let addresses = recording_validator_for(&policy)
+            .0
+            .resolve("localhost")
+            .await
+            .expect("an allowlisted host must resolve");
+        assert!(
+            !addresses.is_empty() && addresses.iter().all(IpAddr::is_loopback),
+            "expected the loopback answers, got {addresses:?}"
+        );
     }
 
     #[tokio::test]
