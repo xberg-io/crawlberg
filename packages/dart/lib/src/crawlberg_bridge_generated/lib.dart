@@ -1047,7 +1047,9 @@ class CrawlConfig {
 
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
   /// are surfaced as `ScrapeResult` records with the matching `status_code` rather
-  /// than raised as `CrawlError`. Default `false` preserves the historical
+  /// than raised as `CrawlError`. A WAF block reports the status of the refused
+  /// response (403, 429 or 503), and 403 when the block page came with a 2xx
+  /// status. Default `false` preserves the historical
   /// throw-on-error contract for direct fetches. Independently of this flag,
   /// 404s reached at the end of a redirect chain are *always* surfaced softly —
   /// the user opted into redirect-following, so receiving a 404 there is part of
