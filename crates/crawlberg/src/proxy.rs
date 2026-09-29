@@ -126,13 +126,14 @@ impl std::fmt::Debug for StaticProxyProvider {
     /// Redacted: [`ProxyConfig`]'s own derived `Debug` prints `username`/`password` and
     /// any userinfo embedded in `url` verbatim, and `ProxyProvider: std::fmt::Debug`
     /// means any consumer holding a trait object can trigger this via `{:?}` — including
-    /// through `tracing`'s `?field` capture. Show only the redacted URL per entry plus
-    /// whether credentials are configured, never the credentials themselves.
+    /// through `tracing`'s `?field` capture. Show only each entry's URL origin, as
+    /// `ProxyConfig` does, plus whether credentials are configured, never the credentials
+    /// themselves.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let redacted_urls: Vec<String> = self
             .entries
             .iter()
-            .map(|entry| crate::net::redact_url_credentials(&entry.url))
+            .map(|entry| crate::net::redact::redact_url_to_origin(&entry.url))
             .collect();
         let has_credentials = self
             .entries

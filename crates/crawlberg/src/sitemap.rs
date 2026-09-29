@@ -29,7 +29,7 @@ use url::Url;
 
 use crate::http::http_fetch;
 use crate::map::MapFilter;
-use crate::normalize::{resolve_redirect, rewrite_url_host};
+use crate::normalize::resolve_redirect;
 use crate::types::{CrawlConfig, SitemapUrl};
 
 /// Which text-bearing child of a `<url>` entry the reader is currently inside.
@@ -364,19 +364,19 @@ fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, 
 /// Parse a urlset document served from `document_url`, the URL after any redirects, keeping
 /// only entries the walk's filter accepts and stopping once `limit` of them have been collected.
 ///
-/// ~keep Each `<loc>` goes through the same resolver as sitemap-index children, without their
-/// ~keep host rewrite: an entry on another host is returned on that host, as before. The entry
+/// ~keep Each `<loc>` resolves the same way as a sitemap-index child, but keeps its fragment:
+/// ~keep an entry on another host is returned on that host. The entry
 /// ~keep is returned in the parser's normalized form, so a relative `<loc>` becomes absolute and
 /// ~keep two spellings of one address become one entry. An address the walk already returned,
 /// ~keep from this document or an earlier one, is skipped before it counts toward `limit`. A
-/// ~keep `<loc>` that does not parse is dropped.
+/// ~keep `<loc>` that does not parse is dropped, and so is one that names the sitemap itself.
 pub(crate) fn collect_urlset_entries(
     document_url: &str,
     xml_body: &str,
     context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
-    let document_url_parses = Url::parse(document_url).is_ok();
+    let document = Url::parse(document_url).ok();
     let mut seen = context
         .seen_entries
         .lock()
@@ -384,9 +384,12 @@ pub(crate) fn collect_urlset_entries(
     let mut urls = Vec::new();
     for mut entry in parse_sitemap_xml(xml_body) {
         let Some(resolved) = resolve_redirect(document_url, &entry.url) else {
-            log_unparseable_loc(document_url, document_url_parses, entry.url.len(), "urlset entry");
+            log_unparseable_loc(document_url, document.is_some(), entry.url.len(), "urlset entry");
             continue;
         };
+        if names_the_sitemap_itself(&entry.url, &resolved, document.as_ref()) {
+            continue;
+        }
         entry.url = resolved.into();
         if !context.filter.matches(&entry.url) || !seen.insert(entry.url.clone()) {
             continue;
@@ -397,6 +400,24 @@ pub(crate) fn collect_urlset_entries(
         }
     }
     urls
+}
+
+/// Whether a urlset `<loc>` is dropped as not a page. A `<loc>` that is only a query is
+/// dropped because it is query-only, not because it names the sitemap document. A `<loc>`
+/// that resolves to `document`'s own address once fragments are ignored is dropped because
+/// it does name the sitemap document.
+fn names_the_sitemap_itself(loc: &str, resolved: &Url, document: Option<&Url>) -> bool {
+    if loc.trim_start().starts_with('?') {
+        return true;
+    }
+    let Some(document) = document else {
+        return false;
+    };
+    let mut resolved = resolved.clone();
+    resolved.set_fragment(None);
+    let mut document = document.clone();
+    document.set_fragment(None);
+    resolved == document
 }
 
 /// Log a sitemap `<loc>` that failed to parse and is skipped. The `<loc>` is logged by
@@ -426,12 +447,13 @@ fn log_unparseable_loc(source_url: &str, source_url_parses: bool, loc_len: usize
 fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::HashSet<String>) -> bool {
     // ~keep `visited` holds every document the walk has committed to fetching, root
     // included, and is shared across the whole recursion — so its length is the
-    // running total this cap is expressed in.
+    // running total this cap is expressed in. An index that answered from another address
+    // after a redirect counts twice, once for each address.
     if visited.len() < MAX_SITEMAP_DOCUMENTS {
         return false;
     }
     tracing::warn!(
-        sitemap_url = %sitemap_url,
+        sitemap_url = %crate::net::redact_url_credentials(sitemap_url),
         fetched = visited.len(),
         max_documents = MAX_SITEMAP_DOCUMENTS,
         "stopping sitemap walk: fetched the maximum number of sitemap documents"
@@ -439,29 +461,28 @@ fn document_budget_exhausted(sitemap_url: &str, visited: &std::collections::Hash
     true
 }
 
-/// Resolve one child `<loc>` of a sitemap index against the index's own URL. `None` when
-/// `child_url` cannot be resolved against `sitemap_url` at all, which the caller treats the
-/// same as a child it could not fetch.
+/// Resolve one child `<loc>` of a sitemap index against the index's own URL, without its
+/// fragment. `None` when `child_url` cannot be resolved against `sitemap_url` at all, which the
+/// caller treats the same as a child it could not fetch. `sitemap_url_parses` says whether
+/// `sitemap_url` parsed, which decides how the refusal is logged.
 ///
-/// ~keep `sitemap_url` is the URL that served the index after redirects, so an absolute child
-/// ~keep is rewritten onto the host that served the index, the same host a relative child
-/// ~keep resolves to. After a redirect to another host, that is the redirect's target host.
+/// ~keep `sitemap_url` is the URL that served the index after redirects, so a relative child
+/// ~keep resolves against the host that served the index. An absolute child keeps its own host,
+/// ~keep as the sitemaps.org protocol allows; the SSRF policy gates each child fetch, and seed
+/// ~keep credentials go only to the seed host.
 ///
 /// ~keep Every path parses `child_url` before it is fetched or used as a dedup key. When
-/// ~keep `sitemap_url` itself failed to parse (`base` is `None`), `resolve_redirect` still
-/// ~keep parses `child_url` on its own and refuses it if that fails too, instead of handing
-/// ~keep back unparsed text.
-fn resolve_child_sitemap_url(base: Option<&Url>, sitemap_url: &str, child_url: &str) -> Option<String> {
-    if let Some(base_parsed) = base
-        && Url::parse(child_url).is_ok()
-    {
-        return Some(rewrite_url_host(child_url, base_parsed));
-    }
-    let resolved = resolve_redirect(sitemap_url, child_url);
-    if resolved.is_none() {
-        log_unparseable_loc(sitemap_url, base.is_some(), child_url.len(), "sitemap-index child");
-    }
-    resolved.map(String::from)
+/// ~keep `sitemap_url` itself failed to parse, `resolve_redirect` still parses `child_url` on
+/// ~keep its own and refuses it if that fails too, instead of handing back unparsed text. The
+/// ~keep fragment never reaches the server, so two children differing only by fragment are one
+/// ~keep fetch target and one dedup key.
+fn resolve_child_sitemap_url(sitemap_url_parses: bool, sitemap_url: &str, child_url: &str) -> Option<String> {
+    let Some(mut resolved) = resolve_redirect(sitemap_url, child_url) else {
+        log_unparseable_loc(sitemap_url, sitemap_url_parses, child_url.len(), "sitemap-index child");
+        return None;
+    };
+    resolved.set_fragment(None);
+    Some(resolved.into())
 }
 
 /// Fetch one child sitemap named by an index and walk whatever it turns out to be.
@@ -522,9 +543,13 @@ async fn process_sitemap_response_inner(
         return collect_urlset_entries(document.final_url, xml_body, context, limit);
     }
 
+    // ~keep An index reached through a redirect is also recorded under the address that served
+    // ~keep it, so a child naming that address is a cycle rather than a second fetch.
+    visited.insert(document.final_url.to_owned());
+
     if depth >= MAX_SITEMAP_INDEX_DEPTH {
         tracing::warn!(
-            sitemap_url = %document.url,
+            sitemap_url = %crate::net::redact_url_credentials(document.url),
             depth,
             max_depth = MAX_SITEMAP_INDEX_DEPTH,
             "skipping sitemap index tier: max nesting depth exceeded"
@@ -533,7 +558,7 @@ async fn process_sitemap_response_inner(
     }
 
     let child_urls = parse_sitemap_index(xml_body);
-    let base = Url::parse(document.final_url).ok();
+    let final_url_parses = Url::parse(document.final_url).is_ok();
     let mut all_urls = Vec::new();
     for child_url in child_urls.iter().take(MAX_SITEMAP_INDEX_CHILDREN) {
         if reached_limit(all_urls.len()) {
@@ -542,13 +567,13 @@ async fn process_sitemap_response_inner(
         if document_budget_exhausted(document.url, visited) {
             break;
         }
-        let Some(resolved) = resolve_child_sitemap_url(base.as_ref(), document.final_url, child_url) else {
+        let Some(resolved) = resolve_child_sitemap_url(final_url_parses, document.final_url, child_url) else {
             continue;
         };
 
         if !visited.insert(resolved.clone()) {
             tracing::warn!(
-                sitemap_url = %resolved,
+                sitemap_url = %crate::net::redact_url_credentials(&resolved),
                 "skipping sitemap index tier: cycle detected (already visited)"
             );
             continue;
@@ -633,9 +658,7 @@ mod tests {
     #[serial_test::serial(dropped_target_log)]
     fn an_unparseable_sitemap_index_child_loc_is_refused_not_followed_raw() {
         let sitemap_url = "https://example.com/sitemap-index.xml";
-        let base = Url::parse(sitemap_url).expect("valid URL");
-
-        let resolved = resolve_child_sitemap_url(Some(&base), sitemap_url, "https://ex ample.com/bad.xml");
+        let resolved = resolve_child_sitemap_url(true, sitemap_url, "https://ex ample.com/bad.xml");
 
         assert!(
             resolved.is_none(),
@@ -648,10 +671,8 @@ mod tests {
     #[serial_test::serial(dropped_target_log)]
     fn an_unparseable_sitemap_index_child_loc_with_credentials_is_never_logged() {
         let sitemap_url = "https://example.com/sitemap-index.xml";
-        let base = Url::parse(sitemap_url).expect("valid URL");
-
         let (resolved, fields) = capture_events(|| {
-            resolve_child_sitemap_url(Some(&base), sitemap_url, "https://user:hunter2@ex ample.com/bad.xml")
+            resolve_child_sitemap_url(true, sitemap_url, "https://user:hunter2@ex ample.com/bad.xml")
         });
 
         assert!(
@@ -664,9 +685,7 @@ mod tests {
     #[test]
     fn same_host_child_loc_with_stray_whitespace_normalizes_instead_of_round_tripping_raw() {
         let sitemap_url = "https://example.com/sitemap-index.xml";
-        let base = Url::parse(sitemap_url).expect("valid URL");
-
-        let resolved = resolve_child_sitemap_url(Some(&base), sitemap_url, "HTTPS://example.com:443/a\tb.xml");
+        let resolved = resolve_child_sitemap_url(true, sitemap_url, "HTTPS://example.com:443/a\tb.xml");
 
         assert_eq!(
             resolved,
@@ -678,9 +697,9 @@ mod tests {
 
     #[test]
     fn no_base_child_loc_with_stray_whitespace_normalizes_instead_of_round_tripping_raw() {
-        // ~keep `sitemap_url` fails to parse, matching how the caller derives `base = None`
-        // ~keep from `Url::parse(document.url).ok()`.
-        let resolved = resolve_child_sitemap_url(None, "not a url", "HTTPS://example.com:443/a\tb.xml");
+        // ~keep `sitemap_url` fails to parse, matching how the caller derives `false`
+        // ~keep from `Url::parse(document.final_url).is_ok()`.
+        let resolved = resolve_child_sitemap_url(false, "not a url", "HTTPS://example.com:443/a\tb.xml");
 
         assert_eq!(
             resolved,
@@ -693,7 +712,7 @@ mod tests {
     #[test]
     #[serial_test::serial(dropped_target_log)]
     fn no_base_unparseable_child_loc_is_refused_not_returned_raw() {
-        let resolved = resolve_child_sitemap_url(None, "not a url", "https://ex ample.com/bad.xml");
+        let resolved = resolve_child_sitemap_url(false, "not a url", "https://ex ample.com/bad.xml");
 
         assert!(
             resolved.is_none(),
@@ -706,7 +725,7 @@ mod tests {
     #[serial_test::serial(dropped_target_log)]
     fn no_base_unparseable_child_loc_with_credentials_is_never_logged() {
         let (resolved, fields) = capture_events(|| {
-            resolve_child_sitemap_url(None, "not a url", "https://user:hunter2@ex ample.com/bad.xml")
+            resolve_child_sitemap_url(false, "not a url", "https://user:hunter2@ex ample.com/bad.xml")
         });
 
         assert!(
@@ -724,7 +743,7 @@ mod tests {
         let sitemap_url = "https://user:hunter2@ba d.com/index.xml";
 
         let (resolved, fields) =
-            capture_events(|| resolve_child_sitemap_url(None, sitemap_url, "https://ex ample.com/bad.xml"));
+            capture_events(|| resolve_child_sitemap_url(false, sitemap_url, "https://ex ample.com/bad.xml"));
 
         assert!(
             resolved.is_none(),
@@ -820,6 +839,7 @@ mod tests {
              fetch, got {urls:?}"
         );
 
+        // ~keep The length check passes on #332's entry dedup alone; the GET count is what proves one fetch.
         let requests = mock.received_requests().await.expect("wiremock records requests");
         let a_xml_hits = requests.iter().filter(|req| req.url.path() == "/a.xml").count();
         assert_eq!(
@@ -828,7 +848,46 @@ mod tests {
         );
     }
 
+    /// GETs of `/a.xml` when the index at `/root.xml` lists `child_locs`.
+    async fn a_xml_gets_for_index_children(child_locs: impl Fn(&str) -> Vec<String>) -> usize {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = child_locs(&base);
+        let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+        mount_xml(&mock, "/root.xml", sitemap_index_xml(&loc_refs)).await;
+        mount_xml(&mock, "/a.xml", urlset(1)).await;
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        fetch_sitemap_tree(
+            &format!("{base}/root.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        let requests = mock.received_requests().await.expect("wiremock records requests");
+        requests.iter().filter(|req| req.url.path() == "/a.xml").count()
+    }
+
     #[tokio::test]
+    async fn fetch_sitemap_tree_fetches_relative_children_differing_only_by_fragment_once() {
+        let hits = a_xml_gets_for_index_children(|_| vec!["/a.xml".to_owned(), "/a.xml#x".to_owned()]).await;
+
+        assert_eq!(hits, 1, "expected exactly one GET /a.xml, got {hits}");
+    }
+
+    #[tokio::test]
+    async fn fetch_sitemap_tree_fetches_a_relative_and_an_absolute_child_differing_only_by_fragment_once() {
+        let hits = a_xml_gets_for_index_children(|base| vec!["/a.xml#x".to_owned(), format!("{base}/a.xml")]).await;
+
+        assert_eq!(hits, 1, "expected exactly one GET /a.xml, got {hits}");
+    }
+
+    #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_terminates_on_self_referential_cycle() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -853,6 +912,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_terminates_on_mutual_cycle() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -873,6 +934,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_stops_at_max_index_depth() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -909,6 +972,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
+    #[serial_test::serial(sitemap_redaction_log)]
     async fn fetch_sitemap_tree_stops_at_max_sitemap_documents() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -1046,5 +1111,170 @@ mod tests {
 
         assert_eq!(urls.len(), 2);
         assert!(urls.iter().all(|entry| entry.url.contains("keep")));
+    }
+
+    /// A sitemap address whose password must never reach a log field.
+    const CREDENTIALED_SITEMAP_URL: &str = "https://user:hunter2@example.com/sitemap.xml";
+
+    /// `Visit` that keeps the value of every `sitemap_url` field.
+    struct SitemapUrlVisitor<'a>(&'a mut Vec<String>);
+
+    impl tracing::field::Visit for SitemapUrlVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "sitemap_url" {
+                self.0.push(format!("{value:?}"));
+            }
+        }
+    }
+
+    /// Minimal `tracing::Subscriber` that records the `sitemap_url` field of every event.
+    struct SitemapUrlCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl tracing::Subscriber for SitemapUrlCapture {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut values = self.0.lock().expect("sink mutex must not be poisoned");
+            event.record(&mut SitemapUrlVisitor(&mut values));
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    fn capture_sitemap_urls() -> (
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        tracing::subscriber::DefaultGuard,
+    ) {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let guard = tracing::subscriber::set_default(SitemapUrlCapture(sink.clone()));
+        (sink, guard)
+    }
+
+    fn assert_sitemap_url_redacted(sink: &std::sync::Mutex<Vec<String>>) {
+        let values = sink.lock().expect("sink mutex must not be poisoned");
+        assert!(!values.is_empty(), "expected a warning with a 'sitemap_url' field");
+        for value in values.iter() {
+            assert!(!value.contains("hunter2"), "the password reached the log: '{value}'");
+            assert!(
+                value.contains("***:***@example.com/"),
+                "expected the redacted address, got '{value}'"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    fn document_budget_warning_redacts_the_sitemap_url() {
+        let (sink, _guard) = capture_sitemap_urls();
+        let visited: std::collections::HashSet<String> = (0..MAX_SITEMAP_DOCUMENTS)
+            .map(|i| format!("https://example.com/{i}.xml"))
+            .collect();
+
+        assert!(document_budget_exhausted(CREDENTIALED_SITEMAP_URL, &visited));
+        assert_sitemap_url_redacted(&sink);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    async fn index_depth_warning_redacts_the_sitemap_url() {
+        // ~keep #[tokio::test] defaults to a current-thread runtime, so the walk stays on
+        // the thread the subscriber guard was set on.
+        let (sink, _guard) = capture_sitemap_urls();
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let body = sitemap_index_xml(&["https://example.com/child.xml"]);
+
+        let urls = process_sitemap_response_inner(
+            &xml_document(CREDENTIALED_SITEMAP_URL, &body),
+            &walk_context(&config, &client, &filter),
+            None,
+            MAX_SITEMAP_INDEX_DEPTH,
+            &mut std::collections::HashSet::new(),
+        )
+        .await;
+
+        assert!(
+            urls.is_empty(),
+            "an index past the depth cap must not be walked, got {urls:?}"
+        );
+        assert_sitemap_url_redacted(&sink);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    async fn cycle_warning_never_logs_the_userinfo_of_the_index_or_the_child() {
+        let (sink, _guard) = capture_sitemap_urls();
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+        // ~keep Both the index and the child carry a password; the child keeps its own host
+        // ~keep and loses its userinfo before the cycle check.
+        let child = "https://user:hunter2@other.example/child.xml";
+        let body = sitemap_index_xml(&[child]);
+        // ~keep The child is already visited, so the walk logs the cycle and never fetches it.
+        let mut visited =
+            std::collections::HashSet::from([
+                resolve_child_sitemap_url(true, CREDENTIALED_SITEMAP_URL, child).expect("the child resolves")
+            ]);
+
+        let urls = process_sitemap_response_inner(
+            &xml_document(CREDENTIALED_SITEMAP_URL, &body),
+            &walk_context(&config, &client, &filter),
+            None,
+            0,
+            &mut visited,
+        )
+        .await;
+
+        assert!(
+            urls.is_empty(),
+            "an already visited child must not be walked, got {urls:?}"
+        );
+        let values = sink.lock().expect("sink mutex must not be poisoned");
+        assert_eq!(
+            *values,
+            vec!["https://other.example/child.xml".to_owned()],
+            "the cycle warning must name the child on its own host, without userinfo"
+        );
+    }
+
+    #[test]
+    fn a_child_sitemap_url_loses_its_userinfo_with_or_without_a_base() {
+        let child = "http://user:s3cret@example.com/child.xml";
+        assert_eq!(
+            resolve_child_sitemap_url(false, "not a url", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+        assert_eq!(
+            resolve_child_sitemap_url(true, "http://example.com/sitemap.xml", child).as_deref(),
+            Some("http://example.com/child.xml")
+        );
+    }
+
+    #[test]
+    fn a_sitemap_loc_loses_its_userinfo() {
+        let xml = r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>http://user:s3cret@example.com/a</loc></url></urlset>"#;
+        let config = CrawlConfig::default();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).expect("the default filter compiles");
+        let urls = collect_urlset_entries(
+            "http://example.com/sitemap.xml",
+            xml,
+            &walk_context(&config, &client, &filter),
+            None,
+        );
+        let found: Vec<&str> = urls.iter().map(|entry| entry.url.as_str()).collect();
+        assert_eq!(found, vec!["http://example.com/a"]);
     }
 }

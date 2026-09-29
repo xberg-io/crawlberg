@@ -47,6 +47,7 @@ fn default_tracking_params() -> Vec<String> {
     ]
 }
 mod credentials;
+mod debug;
 mod primitives;
 mod sections;
 
@@ -62,7 +63,7 @@ pub use sections::{BrowserConfig, ContentConfig};
 pub(crate) use primitives::duration_ms;
 
 /// Configuration for crawl, scrape, and map operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct CrawlConfig {
     /// Maximum crawl depth (number of link hops from the start URL).
@@ -150,7 +151,8 @@ pub struct CrawlConfig {
     /// enabled.
     #[serde(default = "default_tracking_params")]
     pub tracking_params: Vec<String>,
-    /// Custom HTTP headers to send with each request.
+    /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+    /// does not carry them.
     #[serde(default)]
     pub custom_headers: HashMap<String, String>,
     /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -318,6 +320,14 @@ pub struct CrawlConfig {
     #[serde(skip)]
     #[cfg_attr(alef, alef(skip))]
     pub dispatch: Option<DispatchProfile>,
+    /// The seed host that credentials are scoped to, and the credentials the seed URL carried.
+    ///
+    /// Set by the engine when it admits a seed URL; a caller cannot build one and leaves it
+    /// `None`.
+    #[doc(hidden)]
+    #[serde(skip)]
+    #[cfg_attr(alef, alef(skip))]
+    pub credential_scope: Option<crate::net::CredentialScope>,
     /// Shared browser pool for reusing Chrome across requests (not serializable).
     #[cfg(feature = "browser")]
     #[serde(skip)]
@@ -396,6 +406,7 @@ impl Default for CrawlConfig {
             ssrf: SsrfPolicy::from_env(),
             ssrf_deny_private_explicit: None,
             dispatch: None,
+            credential_scope: None,
             #[cfg(feature = "browser")]
             browser_pool: None,
             #[cfg(feature = "browser")]
@@ -563,12 +574,15 @@ impl CrawlConfig {
 
     fn validate_browser_endpoint(&self) -> Result<(), CrawlError> {
         if let Some(ref endpoint) = self.browser.endpoint
-            && !endpoint.starts_with("ws://")
-            && !endpoint.starts_with("wss://")
+            && !crate::net::is_websocket_scheme(endpoint)
         {
-            return Err(CrawlError::invalid_config(format!(
-                "browser.endpoint must start with ws:// or wss://, got: {endpoint:?}"
-            )));
+            // ~keep Do not echo the value, not even redacted. The endpoint is a capability
+            // ~keep (its path or `?token=` grants control of the browser), this error's
+            // ~keep Display reaches logs and API error bodies, and the field name is enough
+            // ~keep for the caller to find it.
+            return Err(CrawlError::invalid_config(
+                "browser.endpoint must start with ws:// or wss://",
+            ));
         }
         if self.browser.backend == BrowserBackend::Native && self.browser.endpoint.is_some() {
             return Err(CrawlError::invalid_config(
@@ -769,6 +783,71 @@ mod tests {
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+    }
+
+    #[test]
+    fn validate_accepts_upper_and_mixed_case_ws_browser_endpoint() {
+        for endpoint in [
+            "WS://localhost:9222",
+            "WSS://localhost:9222",
+            "Ws://localhost:9222",
+            "wSs://localhost:9222",
+        ] {
+            let config = CrawlConfig {
+                browser: BrowserConfig {
+                    endpoint: Some(endpoint.to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_upper_case_http_browser_endpoint() {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some("HTTP://not-websocket:3000".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("endpoint"), "error should mention 'endpoint', got: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_host_less_ws_browser_endpoint() {
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                endpoint: Some("ws://".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            config.validate().is_err(),
+            "a websocket endpoint with no host must be refused"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_no_slash_and_whitespace_padded_ws_browser_endpoint() {
+        // ~keep same WHATWG special-scheme normalization `parse_browser_endpoint` in the CLI
+        // relies on: a missing `//` or padding whitespace still parses to a real host, so
+        // both are accepted like any other spelling of the same address.
+        for endpoint in ["ws:localhost:9222", " ws://localhost:9222 "] {
+            let config = CrawlConfig {
+                browser: BrowserConfig {
+                    endpoint: Some(endpoint.to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok(), "endpoint {endpoint:?} must be accepted");
+        }
     }
 
     #[test]

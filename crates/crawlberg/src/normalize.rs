@@ -146,29 +146,8 @@ pub(crate) fn strip_fragment(url: &str) -> String {
     }
 }
 
-/// Rewrite `url_str` onto `base`'s host when the two differ, keeping only `url_str`'s path
-/// and query. Returns the URL parser's normalized form of `url_str` when the host already
-/// matches `base`'s, not the raw input: a caller using the return value as a fetch target or
-/// a dedup key must not see two spellings of the same address. The fragment is always
-/// dropped for the same reason: it never reaches the server, so two addresses differing only
-/// by fragment are one fetch target and one dedup key, not two.
-pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    let Ok(mut parsed) = Url::parse(url_str) else {
-        return url_str.to_owned();
-    };
-    parsed.set_fragment(None);
-    if parsed.host_str() != base.host_str() {
-        let mut resolved = base.clone();
-        resolved.set_fragment(None);
-        resolved.set_path(parsed.path());
-        resolved.set_query(parsed.query());
-        return resolved.to_string();
-    }
-    parsed.to_string()
-}
-
-/// Resolve a redirect target against `base_url`. `target` may be relative or absolute;
-/// `Url::join` parses either form on its own and returns the parsed URL.
+/// Resolve a redirect target against `base_url`, without userinfo. `target` may be relative
+/// or absolute; `Url::join` parses either form on its own and returns the parsed URL.
 /// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
 /// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
 /// caller must refuse the target rather than follow or report it as raw text.
@@ -178,10 +157,10 @@ pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
 /// ~keep for a target that fails to parse.
 pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
     if let Ok(base) = Url::parse(base_url) {
-        return base.join(target).ok();
+        return crate::net::userinfo::resolve(&base, target);
     }
     // base_url itself fails to parse; a target that stands on its own can still resolve.
-    Url::parse(target).ok()
+    crate::net::userinfo::parse(target)
 }
 
 /// Human-readable form of `url_str`, for matching a caller's typed search term against an
@@ -192,7 +171,9 @@ pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
 /// ~keep search term the way a host is encoded does not, in general, land inside that host's
 /// ~keep encoded label. Decoding the address instead covers both the path and the host with
 /// ~keep one pass, and an ASCII address decodes back to itself unchanged.
-/// Falls back to `url_str` unchanged if it fails to parse.
+/// Falls back to `url_str` unchanged if it fails to parse. The output exists only to match a
+/// search term: it omits userinfo and writes a non-special scheme as `scheme://`, and the check
+/// against the raw address still covers both.
 pub(crate) fn decoded_for_search(url_str: &str) -> String {
     let Ok(parsed) = Url::parse(url_str) else {
         return url_str.to_owned();
@@ -219,51 +200,24 @@ pub(crate) fn decoded_for_search(url_str: &str) -> String {
     out
 }
 
+/// The form in which a `map_search` term and an address are compared: canonical
+/// decomposition, then Unicode default case folding, then canonical composition, so `é` and
+/// `e` plus a combining acute accent match, and `ß` matches `SS`.
+///
+/// ~keep Default case folding is locale-free, so the Turkish dotted and dotless `i` never
+/// ~keep match their Turkish case partners: `İ` does not match `i`, and `ışık` does not match
+/// ~keep `IŞIK`. Joining them would need a locale, which a search term does not carry.
+pub(crate) fn search_key(text: &str) -> String {
+    let decomposed = icu_normalizer::DecomposingNormalizer::new_nfd().normalize(text);
+    let folded = icu_casemap::CaseMapper::new().fold_string(&decomposed);
+    icu_normalizer::ComposingNormalizer::new_nfc()
+        .normalize(&folded)
+        .into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rewrite_url_host_normalizes_a_same_host_input_instead_of_returning_it_raw() {
-        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
-        let rewritten = rewrite_url_host("HTTPS://example.com:443/a\tb", &base);
-        assert_eq!(
-            rewritten, "https://example.com/ab",
-            "a same-host input must come back in the parser's normalized form (lower-case \
-             scheme, default port dropped, embedded tab stripped), not raw, got {rewritten:?}"
-        );
-    }
-
-    #[test]
-    fn rewrite_url_host_drops_the_fragment_on_a_same_host_input() {
-        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
-        let rewritten = rewrite_url_host("https://example.com/a.xml#x", &base);
-        assert_eq!(
-            rewritten, "https://example.com/a.xml",
-            "a same-host input's fragment must be dropped before it is fetched and used as \
-             a dedup key, got {rewritten:?}"
-        );
-    }
-
-    #[test]
-    fn rewrite_url_host_drops_a_fragment_carried_by_base_on_a_different_host_rewrite() {
-        let base = Url::parse("https://example.com/index.xml#ignored").expect("valid URL");
-        let rewritten = rewrite_url_host("https://other.example/a/b?x=1", &base);
-        assert_eq!(
-            rewritten, "https://example.com/a/b?x=1",
-            "a different-host rewrite must not carry over a fragment from base, got {rewritten:?}"
-        );
-    }
-
-    #[test]
-    fn rewrite_url_host_still_rewrites_a_different_host_onto_base() {
-        let base = Url::parse("https://example.com/index.xml").expect("valid URL");
-        let rewritten = rewrite_url_host("https://other.example/a/b?x=1", &base);
-        assert_eq!(
-            rewritten, "https://example.com/a/b?x=1",
-            "a different-host input must still be rewritten onto base's host, got {rewritten:?}"
-        );
-    }
 
     #[test]
     fn distinct_urls_with_escaped_and_literal_separators_stay_distinct() {
@@ -477,6 +431,9 @@ mod tests {
     /// every clean target survives unchanged: parsing still rewrites an IDN host to punycode,
     /// drops a default port, lower-cases the host, adds `/` to a bare origin, removes dot
     /// segments, percent-encodes a space, and canonicalizes `127.1` to `127.0.0.1`.
+    ///
+    /// ~keep GUARD: no hand arm reddens this; a target with nothing left to normalize passes
+    /// ~keep through any resolver that round-trips clean input, so it cannot pin one mechanism.
     #[test]
     fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
         let clean = "https://example.com/page?a=1&b=2";
@@ -524,6 +481,8 @@ mod tests {
         );
     }
 
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
     #[test]
     fn decoded_for_search_leaves_an_ascii_address_unchanged() {
         let decoded = decoded_for_search("https://example.com/keep-1?a=1");
@@ -533,6 +492,8 @@ mod tests {
         );
     }
 
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
     #[test]
     fn decoded_for_search_falls_back_to_the_raw_string_when_unparseable() {
         let decoded = decoded_for_search("not a url");
