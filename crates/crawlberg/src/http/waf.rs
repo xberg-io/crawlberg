@@ -31,6 +31,15 @@ fn build_partial_response(status: u16, body: &str, headers_map: &HashMap<String,
     build_partial_response_with_bytes(status, &body_bytes, body, headers_map)
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+thread_local! {
+    /// Test-only: bytes handed to [`build_partial_response_with_bytes`] on the current test
+    /// thread. The standard library gives each `#[test]` its own thread, so this isolates one
+    /// test's count from every other test's calls into the same function, with no need for
+    /// `--test-threads=1`.
+    static PARTIAL_RESPONSE_BYTES_COPIED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Build a partial [`HttpResponse`] with a pre-computed byte vec and a pre-built header map.
 ///
 /// ~keep Takes an already-built `headers_map` (rather than a `reqwest::HeaderMap` it
@@ -43,6 +52,8 @@ fn build_partial_response_with_bytes(
     body: &str,
     headers_map: &HashMap<String, Vec<String>>,
 ) -> HttpResponse {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.set(c.get() + body_bytes.len()));
     HttpResponse {
         status,
         content_type: String::new(),
@@ -494,6 +505,34 @@ mod tests {
             matches!(refusal, Some(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "datadome"),
             "a small DataDome 200 must be built and refused, got {refusal:?}"
         );
+    }
+
+    /// `waf_2xx_error`, the call site both fetch paths share, must not build the response it
+    /// hands to the classifier when its own gate already refuses the input: a non-2xx status, or
+    /// a body at or over the size limit, is never a page the 2xx decision may act on.
+    #[test]
+    fn waf_2xx_error_at_the_call_site_copies_no_response_its_gate_would_refuse() {
+        for (status, len) in [(418_u16, 400_usize), (304, 0), (200, 5000), (206, 2_000_000)] {
+            super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.set(0));
+            let body = if len == 0 {
+                String::new()
+            } else {
+                page_of_len("<h1>Release notes</h1>", len)
+            };
+            let headers = std::collections::HashMap::new();
+
+            let refusal = super::waf_2xx_error(status, body.as_bytes(), &body, &headers);
+
+            assert!(
+                refusal.is_none(),
+                "a {status} with {len} body bytes must not be refused"
+            );
+            assert_eq!(
+                super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.get()),
+                0,
+                "a {status} with {len} body bytes must not be copied to be classified"
+            );
+        }
     }
 
     /// Two headers that fingerprint only together are both set aside by corroboration, so they
