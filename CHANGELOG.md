@@ -109,6 +109,28 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
+  fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
+  directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose
+  Tokio runtime stopped before its teardown ran. Each such directory is now removed when its owner
+  is dropped. First crawlberg stops each process of the Chrome it launched that still uses the
+  directory as its profile, and waits up to five seconds for them to exit, because Chrome's helper
+  processes outlive the browser and keep writing into it. On Linux 5.3 and later the wait lasts
+  until the last thread of each killed process has exited, because a thread still finishing a
+  write made the removal fail with "directory not empty". This also works when a launcher script
+  runs Chrome as its child, and a shell that only names the directory is left running. This work
+  runs on a background thread, so it does not stall other tasks or hold the browser pool's lock.
+  A saved `browser_profile` is never removed; only the temporary copy of it is. (#415)
+
+- **`map()` did not follow a meta refresh.** A page that forwards with a
+  `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
+  followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
+  only the same HTTP statuses (301, 302, 303, 307, 308) count as a redirect hop, each hop counts
+  toward `max_redirects`, each hop passes the SSRF policy, and the seed's credentials go only to
+  the seed host. The links come from the page it lands on. A chain that reaches the redirect
+  limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
+  the crawl does, instead of failing the whole `map()`. (#502)
+
 - **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
   refused as a WAF block ended the attempt with an error that did not keep the response status, so
   `AttemptOutcome.status` stayed empty for them. Both errors now keep the status, so the policy
@@ -152,6 +174,22 @@ All notable changes to crawlberg are documented here.
   the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine flags a 2xx only
   under the same rule. A robots.txt that is a block page still denies the whole site at any size up
   to 100 KB. (#500)
+
+- **A robots.txt that says "blocked" in a comment is read as rules.** Behind Cloudflare, a
+  `server: cloudflare` header and the word "blocked" anywhere in the body matched a block-page
+  fingerprint, so a real robots.txt with a comment such as "AI crawlers are blocked below" denied
+  the whole site. The robots.txt fetch now leaves whole-line comments (lines that start with `#`)
+  out of the fingerprint, so a file whose only match is in such a comment is read as the site's
+  rules. Any other body that fingerprints as a block page still denies the whole site at any size
+  up to 100 KB. So does a robots.txt with the word in a rule (`Disallow: /blocked-users`) or in a
+  trailing comment, and any body that contains `<`, which the check reads whole. (#507)
+
+- **A sitemap that lists a URL saying "blocked" is read behind Cloudflare.** A `server: cloudflare`
+  header and the word "blocked" anywhere in a small body matched a block-page fingerprint, so a
+  sitemap listing a URL such as `/blog/why-we-blocked-the-old-api` was refused and `map()` lost
+  every URL it listed. A body with one `urlset` or `sitemapindex` root, at least one entry, and no
+  text outside its entries is now read as a sitemap, gzipped or not. A block page served at a
+  sitemap URL is still refused. (#515)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
   WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block

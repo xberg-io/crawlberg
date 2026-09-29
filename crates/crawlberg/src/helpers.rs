@@ -4,7 +4,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::error::CrawlError;
-use crate::http::http_fetch;
+use crate::http::http_fetch_robots_txt;
 use crate::robots::{RobotsRules, is_path_allowed, parse_robots_txt};
 use crate::types::CrawlConfig;
 
@@ -156,7 +156,7 @@ impl RobotsOutcome {
 
 /// Classify a failed robots.txt fetch per RFC 9309 section 2.3.1.
 ///
-/// ~keep `http_fetch` maps most non-2xx statuses to typed errors before returning, so the
+/// ~keep The robots.txt fetch maps most non-2xx statuses to typed errors before returning, so the
 /// status code is not observable here -- the error variant is what carries it.
 fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
     match error {
@@ -182,9 +182,9 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         // `RateLimited` (429) lands here deliberately -- it is a 4xx that the RFC files under
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
-        // `WafBlocked` is here for a different reason: `http_fetch` raises it for a 403 but also for
-        // a *2xx* block page (http.rs), and `fetch_robots_document` raises it for a 2xx robots.txt
-        // block page of any size the classifier reads, so it does not imply a 4xx at all.
+        // `WafBlocked` is here for a different reason: the robots.txt fetch raises it for a 403 but
+        // also for a *2xx* block page of any size the classifier reads (http.rs), so it does not
+        // imply a 4xx at all.
         // What it does imply is that the bytes we hold are an interstitial rather than the origin's
         // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
         _ => RobotsOutcome::DisallowAll {
@@ -277,7 +277,7 @@ pub(crate) async fn fetch_robots_document(
     // from `host_str()` instead sent every port-bearing seed's robots request to the default
     // port, where it failed and silently degraded to "no rules".
     let robots_url = crate::normalize::robots_url(&parsed);
-    match http_fetch(&robots_url, config, &std::collections::HashMap::new(), client).await {
+    match http_fetch_robots_txt(&robots_url, config, client).await {
         Ok(resp) if resp.status >= 500 => {
             let outcome = RobotsOutcome::DisallowAll {
                 reason: format!("robots.txt returned HTTP {}", resp.status),
@@ -286,13 +286,10 @@ pub(crate) async fn fetch_robots_document(
             (outcome, None)
         }
         Ok(resp) if resp.status >= 400 => (RobotsOutcome::AllowAll, None),
-        Ok(resp) => match crate::http::robots_block_page_error(&resp) {
-            Some(error) => (outcome_for_fetch_error(&error), None),
-            None => (
-                RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
-                Some(resp.final_url),
-            ),
-        },
+        Ok(resp) => (
+            RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+            Some(resp.final_url),
+        ),
         Err(error) => (outcome_for_fetch_error(&error), None),
     }
 }
@@ -327,11 +324,16 @@ mod tests {
 
     /// The robots.txt outcome for a 200 carrying `body` and `headers`.
     async fn robots_outcome_for(body: String, headers: &[(&str, &str)]) -> RobotsOutcome {
+        robots_outcome_as("text/html", body, headers).await
+    }
+
+    /// [`robots_outcome_for`] with `content_type` as the response's content type.
+    async fn robots_outcome_as(content_type: &str, body: String, headers: &[(&str, &str)]) -> RobotsOutcome {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mut template = ResponseTemplate::new(200)
-            .append_header("content-type", "text/html")
+            .append_header("content-type", content_type)
             .set_body_string(body);
         for (name, value) in headers {
             template = template.append_header(*name, *value);
@@ -346,6 +348,48 @@ mod tests {
         config.retry_count = 0;
         let client = crate::http::build_client(&config).expect("client must build");
         fetch_robots_outcome(&format!("{}/page", mock.uri()), &config, &client, "bot").await
+    }
+
+    /// A robots.txt follows an HTTP redirect only: a `Refresh` header on it is not followed, so its
+    /// own rules apply.
+    #[tokio::test]
+    async fn a_robots_txt_does_not_follow_a_refresh() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .append_header("refresh", "0; url=/elsewhere.txt")
+                    .set_body_string("User-agent: *\nDisallow: /private\n"),
+            )
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/elsewhere.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .set_body_string("User-agent: *\nDisallow: /\n"),
+            )
+            .mount(&mock)
+            .await;
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.retry_count = 0;
+        let client = crate::http::build_client(&config).expect("client must build");
+
+        let outcome = fetch_robots_outcome(&format!("{}/page", mock.uri()), &config, &client, "bot").await;
+
+        assert!(
+            matches!(outcome, RobotsOutcome::Rules(_)) && outcome.allows("/public") && !outcome.allows("/private"),
+            "a robots.txt with a Refresh header must be read as its own rules, got {} with /public={} /private={}",
+            describe(&outcome),
+            outcome.allows("/public"),
+            outcome.allows("/private")
+        );
     }
 
     /// A robots.txt answered with a block page denies the whole origin, whatever the page's size
@@ -395,6 +439,351 @@ mod tests {
         );
         assert!(outcome.allows("/public"), "the rules must allow /public");
         assert!(!outcome.allows("/private"), "the rules must disallow /private");
+    }
+
+    /// The robots.txt from crawlberg#507: rules with "blocked" in a comment, served by Cloudflare.
+    fn robots_txt_with_a_blocked_comment(padding_rules: usize) -> String {
+        format!(
+            "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nDisallow: /private\n{}",
+            "Disallow: /archive/page-000000\n".repeat(padding_rules)
+        )
+    }
+
+    /// A robots.txt that says "blocked" in a comment is the site's rules, not a Cloudflare block
+    /// page, below and above the 5000-byte page limit (crawlberg#507).
+    #[tokio::test]
+    async fn a_robots_txt_that_says_blocked_in_a_comment_is_read_as_rules_behind_cloudflare() {
+        for (padding_rules, len) in [(0, 97), (200, 6297)] {
+            let body = robots_txt_with_a_blocked_comment(padding_rules);
+            assert_eq!(body.len(), len, "the fixture must be the issue's {len}-byte body");
+            let outcome = robots_outcome_for(body, &[("server", "cloudflare")]).await;
+            assert!(
+                matches!(outcome, RobotsOutcome::Rules(_)),
+                "{len} bytes: a robots.txt with rules must be read as rules, got {}",
+                describe(&outcome)
+            );
+            assert!(outcome.allows("/public"), "{len} bytes: the rules must allow /public");
+            assert!(
+                !outcome.allows("/private"),
+                "{len} bytes: the rules must disallow /private"
+            );
+        }
+    }
+
+    /// A Cloudflare block page served as /robots.txt still denies the origin: an HTML page, even
+    /// one that shows robots.txt lines, and a text page with no robots.txt directive.
+    #[tokio::test]
+    async fn a_robots_txt_block_page_behind_cloudflare_still_denies_the_origin() {
+        let block_page = "<html><head><title>Attention Required</title></head><body><h1>Sorry, you have been blocked</h1></body></html>";
+        for (label, body) in [
+            ("an HTML block page", block_page.to_owned()),
+            (
+                "an HTML block page of 6 KB",
+                format!("{block_page}<!--{}-->", "x".repeat(6000)),
+            ),
+            (
+                "an HTML block page that shows robots.txt lines",
+                "<html><body><pre>\nUser-agent: *\nDisallow: /private\n</pre><h1>Access blocked</h1></body></html>"
+                    .to_owned(),
+            ),
+            (
+                "a text block page with no robots.txt directive",
+                "Status: blocked\nReason: automated traffic\n".to_owned(),
+            ),
+        ] {
+            let outcome = robots_outcome_for(body, &[("server", "cloudflare")]).await;
+            assert!(
+                outcome
+                    .disallow_all_reason()
+                    .is_some_and(|reason| reason.contains("cloudflare")),
+                "{label}: a Cloudflare block page must deny the origin, got {}",
+                describe(&outcome)
+            );
+            assert!(!outcome.allows("/public"), "{label}: /public must not be allowed");
+        }
+    }
+
+    /// A label, the content type, the body and the headers of one 2xx robots.txt response.
+    type Served = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [(&'static str, &'static str)],
+    );
+
+    const CLOUDFLARE: &[(&str, &str)] = &[("server", "cloudflare")];
+    const SUCURI: &[(&str, &str)] = &[("x-sucuri-id", "18012"), ("server", "Sucuri/Cloudproxy")];
+
+    /// Assert that every block page in `cases`, served as /robots.txt, denies the origin.
+    async fn assert_every_block_page_denies(cases: &[Served]) {
+        for &(label, content_type, body, headers) in cases {
+            let outcome = robots_outcome_as(content_type, body.to_owned(), headers).await;
+            assert!(
+                outcome.disallow_all_reason().is_some(),
+                "{label}: a block page must deny the origin, got {}",
+                describe(&outcome)
+            );
+            assert!(!outcome.allows("/public"), "{label}: /public must not be allowed");
+        }
+    }
+
+    /// A 2xx text block page that echoes request headers, or carries a lone Sitemap, User-agent
+    /// or `allow:` line, denies the origin.
+    #[tokio::test]
+    async fn a_text_block_page_that_echoes_robots_like_lines_still_denies_the_origin() {
+        assert_every_block_page_denies(&[
+            (
+                "a Cloudflare text page that echoes User-Agent",
+                "text/plain",
+                "Sorry, you have been blocked\nYou are unable to access example.com\nRay ID: 8c1f2a3b4d5e6f70\nUser-Agent: bot\nIP: 203.0.113.9\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare challenge script with an allow key",
+                "application/javascript",
+                "window._cf_chl_opt = {\n  cvId: '3',\n  cType: 'managed',\n  allow: false,\n  cRay: '8c1f2a3b4d5e6f70'\n};\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a DataDome text page that echoes User-Agent",
+                "text/plain",
+                "Blocked by DataDome\nUser-Agent: bot\nReference: AHrlqAAAAAMA\n",
+                &[("x-datadome", "protected")],
+            ),
+            (
+                "a Sucuri text page that echoes User-Agent",
+                "text/plain",
+                "Sucuri WebSite Firewall - Access Denied\nBlock reason: Access from your area has been temporarily denied.\nYour IP: 203.0.113.9\nURL: example.com/robots.txt\nUser-Agent: bot\nBlock ID: GEO01\n",
+                SUCURI,
+            ),
+            (
+                "a generic text page that echoes the request headers",
+                "text/plain",
+                "Request blocked.\nHost: example.com\nUser-Agent: bot\nAccept: */*\n",
+                &[],
+            ),
+            (
+                "a Cloudflare text page with a lone Sitemap line",
+                "text/plain",
+                "Access blocked\nSitemap: https://example.com/sitemap.xml\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare text page with an empty User-agent line",
+                "text/plain",
+                "Access blocked\nUser-agent:\n",
+                CLOUDFLARE,
+            ),
+        ])
+        .await;
+    }
+
+    /// A 2xx block page that quotes robots.txt rules, or echoes a User-Agent header before an
+    /// Allow or Disallow line, denies the origin: its fingerprint is outside any comment.
+    #[tokio::test]
+    async fn a_block_page_that_quotes_robots_txt_rules_still_denies_the_origin() {
+        assert_every_block_page_denies(&[
+            (
+                "a Cloudflare help page that quotes rules allowing everything",
+                "text/plain",
+                "Sorry, you have been blocked\nIf you run a crawler, add these lines to your robots.txt\nUser-agent: *\nAllow: /\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare help page that quotes a rule for another bot",
+                "text/plain",
+                "Sorry, you have been blocked\nOur robots.txt reads\nUser-agent: BadBot\nDisallow: /\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare page that echoes our User-Agent and the path",
+                "text/plain",
+                "Request blocked\nUser-Agent: bot\nDisallow: /\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare page that echoes a browser User-Agent and the path",
+                "text/plain",
+                "Request blocked\nUser-Agent: Mozilla/5.0 (compatible; bot/1.0)\nDisallow: /\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare page that echoes User-Agent and an HTTP Allow header",
+                "text/plain",
+                "Request blocked\nUser-Agent: bot\nAllow: GET, HEAD\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare script after a User-agent echo",
+                "application/javascript",
+                "// blocked\nUser-agent: bot\nwindow._cf_chl_opt = {\n  cType: 'managed',\n  allow: false,\n};\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare script with quoted User-agent and allow keys",
+                "application/javascript",
+                "// blocked\nwindow.cfg = {\n  'User-agent': 'bot',\n  allow: false,\n};\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a Sucuri page with a Disallow reason line",
+                "text/plain",
+                "Sucuri WebSite Firewall - Access Denied\nUser-Agent: bot\nDisallow: automated clients\n",
+                &[("x-sucuri-id", "18012")],
+            ),
+            (
+                "a Cloudflare HTML help page that quotes rules",
+                "text/html",
+                "<p>Sorry, you have been blocked</p>\nUser-agent: *\nAllow: /\n",
+                CLOUDFLARE,
+            ),
+        ])
+        .await;
+    }
+
+    /// A real robots.txt whose only fingerprint match is in a whole-line comment is read as rules,
+    /// whatever directives it holds.
+    #[tokio::test]
+    async fn a_robots_txt_whose_fingerprint_is_only_in_a_whole_line_comment_is_read_as_rules() {
+        let cases: [Served; 6] = [
+            (
+                "Crawl-delay only",
+                "text/plain",
+                "# scrapers blocked by rate\nUser-agent: *\nCrawl-delay: 10\n",
+                CLOUDFLARE,
+            ),
+            (
+                "Sitemap only",
+                "text/plain",
+                "# nothing blocked here\nSitemap: https://example.com/sitemap.xml\n",
+                CLOUDFLARE,
+            ),
+            (
+                "an empty Disallow",
+                "text/plain",
+                "# nothing blocked\nUser-agent: *\nDisallow:\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a rule before any User-agent line",
+                "text/plain",
+                "# blocked paths\nDisallow: /private\nSitemap: https://example.com/s.xml\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a comment that names Sucuri",
+                "text/plain",
+                "# protected by Sucuri\nUser-agent: *\nDisallow: /private\n",
+                &[],
+            ),
+            (
+                "a comment that says request blocked",
+                "text/plain",
+                "# request blocked for scrapers\nUser-agent: *\nDisallow: /private\n",
+                &[],
+            ),
+        ];
+        for (label, content_type, body, headers) in cases {
+            let outcome = robots_outcome_as(content_type, body.to_owned(), headers).await;
+            assert!(
+                matches!(outcome, RobotsOutcome::Rules(_)),
+                "{label}: a robots.txt with the fingerprint only in a whole-line comment must be read as rules, got {}",
+                describe(&outcome)
+            );
+        }
+    }
+
+    /// A robots.txt whose fingerprint word is outside a whole-line comment still denies behind a
+    /// matching header, as does one with a `<` anywhere: only whole-line comments of a body with
+    /// no `<` are left out of the check.
+    #[tokio::test]
+    async fn a_robots_txt_whose_fingerprint_is_outside_a_whole_line_comment_still_denies() {
+        for (label, body) in [
+            (
+                "a word in a rule",
+                "# crawl rules\nUser-agent: *\nDisallow: /blocked-users\n",
+            ),
+            (
+                "a word in a trailing comment",
+                "User-agent: *\nDisallow: /private # blocked for bots\n",
+            ),
+            (
+                "a word in a whole-line comment of a body with a `<`",
+                "# blocked bots\nUser-agent: *\nDisallow: /private\nDisallow: /*<script\n",
+            ),
+        ] {
+            let outcome = robots_outcome_as("text/plain", body.to_owned(), CLOUDFLARE).await;
+            assert!(
+                outcome
+                    .disallow_all_reason()
+                    .is_some_and(|reason| reason.contains("cloudflare")),
+                "{label}: the fingerprint must deny the origin, got {}",
+                describe(&outcome)
+            );
+        }
+    }
+
+    /// An HTML block page with a `#` in a style rule or a link still denies: a `#` before the block
+    /// phrase on its line, or a style rule that starts a line with `#`, does not hide the phrase.
+    #[tokio::test]
+    async fn an_html_block_page_with_a_hash_still_denies_the_origin() {
+        assert_every_block_page_denies(&[
+            (
+                "a one-line Cloudflare page with a style rule before the phrase",
+                "text/html",
+                "<html><head><style>h1{color:#333}</style></head><body><h1>Sorry, you have been blocked</h1></body></html>",
+                CLOUDFLARE,
+            ),
+            (
+                "the same Cloudflare page on two lines",
+                "text/html",
+                "<html><head><style>h1{color:#333}</style></head>\n<body><h1>Sorry, you have been blocked</h1></body></html>\n",
+                CLOUDFLARE,
+            ),
+            (
+                "a one-line DataDome page with a style rule before the tag",
+                "text/html",
+                "<html><head><style>#cmsg{display:none}</style><script src=\"https://js.datadome.co/tags.js\"></script></head></html>",
+                &[("x-datadome", "protected")],
+            ),
+            (
+                "a one-line Cloudflare page with a link after the phrase",
+                "text/html",
+                "<html><body><h1>Sorry, you have been blocked</h1><a href=\"#\">x</a></body></html>",
+                CLOUDFLARE,
+            ),
+            (
+                "a Cloudflare page whose only match is a style rule that starts a line",
+                "text/html",
+                "<html><head><style>\n#blocked-msg { color: red }\n</style></head>\n<body><p>Access denied</p></body></html>\n",
+                CLOUDFLARE,
+            ),
+        ])
+        .await;
+    }
+
+    /// The classifier's body limit is taken on the robots.txt as fetched: a file over 100 KB is
+    /// read as rules even when it is mostly comments.
+    #[tokio::test]
+    async fn a_robots_txt_over_the_body_limit_is_read_as_rules_even_when_mostly_comments() {
+        let body = format!(
+            "{}User-agent: *\nDisallow: /blocked-users\n",
+            "# archive\n".repeat(11_000)
+        );
+        assert!(
+            body.len() > 100 * 1024,
+            "the fixture must be over the 100 KB body limit"
+        );
+        let outcome = robots_outcome_as("text/plain", body, CLOUDFLARE).await;
+        assert!(
+            matches!(outcome, RobotsOutcome::Rules(_)),
+            "a robots.txt over the body limit must be read as rules, got {}",
+            describe(&outcome)
+        );
+        assert!(
+            !outcome.allows("/blocked-users"),
+            "the rules must disallow /blocked-users"
+        );
     }
 
     #[test]

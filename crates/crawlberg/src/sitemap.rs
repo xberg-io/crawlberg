@@ -27,7 +27,7 @@ use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesRef, Event};
 use url::Url;
 
-use crate::http::http_fetch;
+use crate::http::http_fetch_sitemap;
 use crate::map::MapFilter;
 use crate::normalize::resolve_redirect;
 use crate::types::{CrawlConfig, SitemapUrl};
@@ -244,14 +244,7 @@ pub(crate) async fn fetch_sitemap_tree(
     context: &SitemapWalkContext<'_>,
     limit: Option<usize>,
 ) -> Vec<SitemapUrl> {
-    let resp = match http_fetch(
-        sitemap_url,
-        context.config,
-        &std::collections::HashMap::new(),
-        context.client,
-    )
-    .await
-    {
+    let resp = match http_fetch_sitemap(sitemap_url, context.config, context.client).await {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
@@ -351,13 +344,85 @@ pub(crate) async fn process_sitemap_response(
 /// else is the body as received. A gzip payload that fails to inflate falls back
 /// to the raw body rather than aborting the walk.
 fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, str> {
-    if document.content_type.contains("gzip") || document.content_type.contains("x-gzip") {
-        match decompress_gzip(document.body_bytes) {
+    let gzip = document.content_type.contains("gzip") || document.content_type.contains("x-gzip");
+    inflated(gzip, document.body_bytes, document.body)
+}
+
+/// The inflated payload when `gzip` holds and the payload inflates, else `body` as received.
+fn inflated<'a>(gzip: bool, body_bytes: &[u8], body: &'a str) -> std::borrow::Cow<'a, str> {
+    if gzip {
+        match decompress_gzip(body_bytes) {
             Ok(decompressed) => std::borrow::Cow::Owned(decompressed),
-            Err(_) => std::borrow::Cow::Borrowed(document.body),
+            Err(_) => std::borrow::Cow::Borrowed(body),
         }
     } else {
-        std::borrow::Cow::Borrowed(document.body)
+        std::borrow::Cow::Borrowed(body)
+    }
+}
+
+/// Gzip member header magic (RFC 1952 §2.3.1).
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Whether `map` inflates a fetched body before it reads it: the body starts with the gzip magic.
+///
+/// ~keep A gzip content type or a `.gz` URL adds nothing: a body without the magic does not
+/// ~keep inflate, and one with it inflates whatever its content type and URL say.
+pub(crate) fn is_gzip(body_bytes: &[u8]) -> bool {
+    body_bytes.starts_with(&GZIP_MAGIC)
+}
+
+/// Whether a fetched body is a sitemap document: the XML `map` parses, inflated when [`is_gzip`]
+/// says so, reads to the end as one `urlset` or `sitemapindex` root with nothing outside it,
+/// holds text only inside an entry's fields, and yields at least one entry to the parsers.
+///
+/// ~keep This is what the fetch asks before a WAF fingerprint may refuse a sitemap: a `<loc>` can
+/// say anything, such as "/blog/why-we-blocked-the-old-api" (crawlberg#515). A block page fails
+/// here on its root element (HTML, a CDN's XML error, JSON or text), on text outside an entry's
+/// fields, on markup the XML reader cannot close, or on carrying no `<loc>` entry.
+pub(crate) fn reads_as_sitemap(body_bytes: &[u8], body: &str) -> bool {
+    let xml = inflated(is_gzip(body_bytes), body_bytes, body);
+    has_sitemap_shape(&xml) && (!parse_sitemap_xml(&xml).is_empty() || !parse_sitemap_index(&xml).is_empty())
+}
+
+/// Whether `xml` has no top-level element but one `urlset` or `sitemapindex`, no text outside the
+/// fields of its entries, and reads to the end without an XML error. A body with no root at all
+/// passes here and fails the entry check in [`reads_as_sitemap`].
+fn has_sitemap_shape(xml: &str) -> bool {
+    /// The depth of an entry's fields: root, then `url` or `sitemap`, then `loc` and its siblings.
+    const FIELD_DEPTH: usize = 3;
+    let mut reader = Reader::from_str(xml);
+    let mut buf = Vec::new();
+    let mut depth: usize = 0;
+    let mut read_root = false;
+    // Whether the element open at depth 2 is a `url` or `sitemap` entry.
+    let mut in_entry = false;
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) if depth == 0 => {
+                if read_root || !matches!(e.name().as_ref(), "urlset" | "sitemapindex") {
+                    return false;
+                }
+                read_root = true;
+                depth = 1;
+            }
+            Ok(Event::Start(ref e)) if depth == 1 => {
+                in_entry = matches!(e.name().as_ref(), "url" | "sitemap");
+                depth = 2;
+            }
+            Ok(Event::Start(_)) => depth += 1,
+            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(Event::Empty(_)) if depth == 0 => return false,
+            Ok(Event::GeneralRef(_) | Event::CData(_)) if depth < FIELD_DEPTH || !in_entry => return false,
+            Ok(Event::Text(ref e))
+                if (depth < FIELD_DEPTH || !in_entry) && !e.xml_content(XmlVersion::default()).trim().is_empty() =>
+            {
+                return false;
+            }
+            Err(_) => return false,
+            Ok(Event::Eof) => return depth == 0,
+            _ => {}
+        }
+        buf.clear();
     }
 }
 
@@ -497,14 +562,7 @@ async fn fetch_child_sitemap(
     depth: u32,
     visited: &mut std::collections::HashSet<String>,
 ) -> Vec<SitemapUrl> {
-    let Ok(child_resp) = http_fetch(
-        child_url,
-        context.config,
-        &std::collections::HashMap::new(),
-        context.client,
-    )
-    .await
-    else {
+    let Ok(child_resp) = http_fetch_sitemap(child_url, context.config, context.client).await else {
         return Vec::new();
     };
 
@@ -652,6 +710,157 @@ mod tests {
         }
         body.push_str("</sitemapindex>");
         body
+    }
+
+    /// A urlset or sitemapindex document with an entry reads as a sitemap whatever its URLs say;
+    /// HTML, a CDN's XML error, JSON, text, an empty sitemap and text outside an entry's fields do
+    /// not.
+    #[test]
+    fn reads_as_sitemap_takes_a_sitemap_document_and_nothing_else() {
+        let urlset = "<?xml version=\"1.0\"?>\n<!-- generated -->\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://example.com/why-we-blocked-it</loc></url></urlset>\n";
+        let index = "<sitemapindex><sitemap><loc>/blocked.xml</loc></sitemap></sitemapindex>";
+        for (label, body, expected) in [
+            ("a urlset with a declaration and a comment", urlset.to_owned(), true),
+            ("a sitemap index", index.to_owned(), true),
+            ("an empty urlset", "<urlset/>".to_owned(), false),
+            ("a urlset with no entry", "<urlset></urlset>".to_owned(), false),
+            (
+                "a sitemap index with no child",
+                "<sitemapindex><sitemap></sitemap></sitemapindex>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset that holds block text",
+                "<urlset><url><loc>/a</loc></url>Access blocked</urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an entry that holds block text",
+                "<urlset><url>Access blocked<loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a CDN's XML error",
+                "<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code><Message>Request blocked</Message></Error>"
+                    .to_owned(),
+                false,
+            ),
+            (
+                "an HTML page with a loc element",
+                "<html><body><loc>https://example.com/</loc><h1>Access blocked</h1></body></html>".to_owned(),
+                false,
+            ),
+            ("a JSON body", "{\"error\":\"blocked\",\"urlset\":[]}".to_owned(), false),
+            (
+                "a text block page that names urlset",
+                "Access blocked: <urlset><url><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a CDATA section of block text before the root",
+                "<![CDATA[Access blocked]]><urlset><url><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an entry that holds a CDATA section of block text",
+                "<urlset><url><![CDATA[Access blocked]]><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with a div of block text after its entry",
+                "<urlset><url><loc>/a</loc></url><div><h1>Access blocked</h1></div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with a CDATA section of block text in a div's paragraph",
+                "<urlset><url><loc>/a</loc></url><div><p><![CDATA[Access blocked]]></p></div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with an entity in a div's paragraph",
+                "<urlset><url><loc>/a</loc></url><div><p>&lt;</p></div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an entry field that holds an entity and a CDATA section",
+                "<urlset><url><loc>/a?b=1&amp;c=2</loc><news><![CDATA[Title]]></news></url></urlset>".to_owned(),
+                true,
+            ),
+            (
+                "an empty element before the root",
+                format!("<br/>{}", "<urlset><url><loc>/a</loc></url></urlset>"),
+                false,
+            ),
+            (
+                "an entity before the root",
+                "&lt;<urlset><url><loc>/a</loc></url></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an HTML page",
+                "<html><body><h1>Access blocked</h1></body></html>".to_owned(),
+                false,
+            ),
+            (
+                "an XHTML page with a doctype",
+                "<!DOCTYPE html><html><body>blocked</body></html>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with markup after it",
+                format!("{urlset}<h1>blocked</h1>"),
+                false,
+            ),
+            ("a urlset with text after it", format!("{urlset}Access blocked"), false),
+            ("two urlset roots", format!("{urlset}{urlset}"), false),
+            (
+                "a urlset that does not close",
+                "<urlset><url><loc>/blocked</loc></url>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset followed by a comment that does not close",
+                "<urlset><url><loc>/a</loc></url></urlset><!-- blocked".to_owned(),
+                false,
+            ),
+            ("text", "Status: blocked".to_owned(), false),
+            ("an empty body", String::new(), false),
+        ] {
+            assert_eq!(
+                reads_as_sitemap(body.as_bytes(), &body),
+                expected,
+                "{label}: reads as a sitemap must be {expected}"
+            );
+        }
+    }
+
+    /// A body that starts with the gzip magic is inflated before it is read, as `map` inflates it,
+    /// whatever its content type.
+    #[test]
+    fn reads_as_sitemap_inflates_a_gzip_body_as_map_does() {
+        use std::io::Write;
+        let gzip = |text: &str| {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(text.as_bytes()).expect("gzip must encode");
+            encoder.finish().expect("gzip must finish")
+        };
+        let urlset = gzip("<urlset><url><loc>https://example.com/why-we-blocked-it</loc></url></urlset>");
+        let block_page = gzip("<html><body><h1>Sorry, you have been blocked</h1></body></html>");
+        for (label, bytes, expected) in [
+            ("a gzip urlset", &urlset, true),
+            ("a gzip block page", &block_page, false),
+        ] {
+            let lossy = String::from_utf8_lossy(bytes);
+            assert_eq!(
+                reads_as_sitemap(bytes, &lossy),
+                expected,
+                "{label}: reads as a sitemap must be {expected}"
+            );
+        }
+        assert!(
+            decompress_gzip(b"<urlset><url><loc>/a</loc></url></urlset>").is_err(),
+            "a body without the gzip magic must not inflate, whatever its content type or URL"
+        );
     }
 
     #[test]
@@ -933,6 +1142,43 @@ mod tests {
         );
     }
 
+    /// The sitemap fetch reads the sitemap it asked for and does not follow a `Refresh` header on
+    /// it, as the robots.txt fetch does not.
+    #[tokio::test]
+    async fn fetch_sitemap_tree_does_not_follow_a_refresh() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        Mock::given(method("GET"))
+            .and(path("/sitemap.xml"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "application/xml")
+                    .append_header("refresh", "0; url=/elsewhere.xml")
+                    .set_body_string(urlset(1)),
+            )
+            .mount(&mock)
+            .await;
+        mount_xml(&mock, "/elsewhere.xml", urlset(2)).await;
+
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).unwrap();
+
+        let urls = fetch_sitemap_tree(
+            &format!("{base}/sitemap.xml"),
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        let urls: Vec<String> = urls.into_iter().map(|entry| entry.url).collect();
+        assert_eq!(
+            urls,
+            vec!["https://example.com/page-0".to_owned()],
+            "the sitemap fetch must read the sitemap it asked for, not follow its refresh"
+        );
+    }
+
     #[tokio::test]
     // ~keep Serial with the redaction capture tests: tracing caches callsite interest per warning.
     #[serial_test::serial(sitemap_redaction_log)]
@@ -1083,6 +1329,35 @@ mod tests {
         .await;
 
         assert_eq!(urls.len(), 25);
+    }
+
+    /// The walk inflates a document whose content type says gzip before it parses it.
+    #[tokio::test]
+    async fn process_sitemap_response_inflates_a_gzip_document() {
+        use std::io::Write;
+        let config = CrawlConfig::default();
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = urlset(3);
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(body.as_bytes()).expect("gzip must encode");
+        let gzip = encoder.finish().expect("gzip must finish");
+        let lossy = String::from_utf8_lossy(&gzip);
+
+        let urls = process_sitemap_response(
+            &SitemapDocument {
+                url: "https://example.com/sitemap.xml.gz",
+                final_url: "https://example.com/sitemap.xml.gz",
+                body: &lossy,
+                body_bytes: &gzip,
+                content_type: "application/x-gzip",
+            },
+            &walk_context(&config, &client, &filter),
+            None,
+        )
+        .await;
+
+        assert_eq!(urls.len(), 3, "a gzip urlset of three entries must yield three entries");
     }
 
     #[tokio::test]

@@ -546,6 +546,48 @@ fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) ->
     chain.unseen_key(landed).map(|key| (parsed, key))
 }
 
+/// The parts of a fetched response the redirect sources read.
+///
+/// ~keep Implemented by the crawl's response and by the plain HTTP fetch's, so `map()` reads a
+/// ~keep refresh with the same code the crawl does rather than a second reader (#502).
+pub(crate) trait RedirectSignals {
+    fn status(&self) -> u16;
+    /// The first value of the header `name`, given in lower case.
+    fn header(&self, name: &str) -> Option<&str>;
+    fn content_type(&self) -> &str;
+    fn body(&self) -> &str;
+}
+
+impl RedirectSignals for crate::tower::CrawlResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
+impl RedirectSignals for crate::http::HttpResponse {
+    fn status(&self) -> u16 {
+        self.status
+    }
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.first()).map(String::as_str)
+    }
+    fn content_type(&self) -> &str {
+        &self.content_type
+    }
+    fn body(&self) -> &str {
+        &self.body
+    }
+}
+
 /// The next unvisited URL `resp` points at, paired with the cycle key it will occupy.
 ///
 /// ~keep The three sources are tried in order, and a target the chain has already visited
@@ -567,12 +609,28 @@ fn next_redirect_target(
     let unseen = |target: Url| chain.unseen_key(target.as_str()).map(|key| (target, key));
     http_redirect_target(resp, &chain.current_url)
         .and_then(unseen)
-        .or_else(|| refresh_header_target(resp, &chain.current_url).and_then(unseen))
-        .or_else(|| meta_refresh_target(resp, &chain.current_url, page_scan).and_then(unseen))
+        .or_else(|| refresh_redirect_target(resp, &chain.current_url, |target| chain.unseen_key(target), page_scan))
 }
 
-/// Statuses whose `Location` header this crawl follows.
-const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+/// The next unvisited URL a `Refresh` header or a `<meta http-equiv="refresh">` in `resp` points
+/// at, paired with its cycle key. `unseen_key` returns that key for a URL the caller has not
+/// visited yet, and `None` for one it has. The meta refresh check leaves its read of the body in
+/// `page_scan`.
+///
+/// ~keep For a fetch that follows its HTTP 3xx itself (`http::http_fetch_with`):
+/// ~keep these are the sources the crawl consults after `Location`, in the same order and with
+/// ~keep the same fall-through past a visited target, so `map()` follows what the crawl follows.
+pub(crate) fn refresh_redirect_target<R: RedirectSignals>(
+    resp: &R,
+    current_url: &str,
+    unseen_key: impl Fn(&str) -> Option<String>,
+    page_scan: &mut Option<PageScan>,
+) -> Option<(Url, String)> {
+    let unseen = |target: Url| unseen_key(target.as_str()).map(|key| (target, key));
+    refresh_header_target(resp, current_url)
+        .and_then(&unseen)
+        .or_else(|| meta_refresh_target(resp, current_url, page_scan).and_then(&unseen))
+}
 
 /// `target` resolved against `base`, or `None` when it does not resolve. `source` names the
 /// redirect source for the debug log a target that fails to parse gets; the log carries the
@@ -602,17 +660,17 @@ fn fetchable_target(base: &str, target: &str, source: &'static str) -> Option<Ur
 }
 
 /// The `Location` target of an HTTP 3xx, resolved against `current_url`, if the crawl can fetch it.
-fn http_redirect_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
-    if !REDIRECT_STATUSES.contains(&resp.status) {
+fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    if !crate::http::REDIRECT_STATUSES.contains(&resp.status()) {
         return None;
     }
-    let location = resp.headers.get("location").and_then(|v| v.first())?;
+    let location = resp.header("location")?;
     fetchable_target(current_url, location, "Location")
 }
 
 /// The target named by a `Refresh` response header, resolved against `current_url`.
-fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) -> Option<Url> {
-    let refresh = resp.headers.get("refresh").and_then(|v| v.first())?;
+fn refresh_header_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
+    let refresh = resp.header("refresh")?;
     let target = refresh_target(refresh)?;
     resolved_target(current_url, &target, "Refresh header")
 }
@@ -623,17 +681,17 @@ fn refresh_header_target(resp: &crate::tower::CrawlResponse, current_url: &str) 
 /// against the response's own address instead (see [`refresh_header_target`]).
 ///
 /// The read of the body is left in `page_scan`, for extraction to reuse.
-fn meta_refresh_target(
-    resp: &crate::tower::CrawlResponse,
+fn meta_refresh_target<R: RedirectSignals>(
+    resp: &R,
     current_url: &str,
     page_scan: &mut Option<PageScan>,
 ) -> Option<Url> {
-    if !is_html_content(&resp.content_type, &resp.body) {
+    if !is_html_content(resp.content_type(), resp.body()) {
         return None;
     }
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
-    let parsed_html = mask_raw_text_markup(&resp.body);
+    let parsed_html = mask_raw_text_markup(resp.body());
     let found = crate::html::parse_html(&parsed_html.text)
         .ok()
         .and_then(|doc| detect_meta_refresh(&doc))

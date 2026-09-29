@@ -1304,3 +1304,61 @@ async fn wasm_page_fetch_sends_the_pinned_agent_once() {
     );
     assert_eq!(response.sent_user_agent.as_deref(), Some("Pinned"));
 }
+
+/// The wasm page fetch keeps the page rule: a sitemap whose URL says "blocked", served by
+/// Cloudflare, is refused when it is scraped as a page (crawlberg#515 reads it only for `map`).
+#[tokio::test]
+async fn wasm_page_fetch_refuses_a_small_cloudflare_body_that_says_blocked() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "application/xml")
+                .append_header("server", "cloudflare")
+                .set_body_string(
+                    "<urlset><url><loc>https://example.com/blog/why-we-blocked-the-old-api</loc></url></urlset>",
+                ),
+        )
+        .mount(&mock)
+        .await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let result = engine.wasm_fetch_for_scrape(&mock.uri(), None).await;
+
+    assert!(
+        matches!(result, Err(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "cloudflare"),
+        "a scraped page keeps the page rule, got {:?}",
+        result.map(|(url, _, _)| url)
+    );
+}
+
+/// The wasm page fetch passes `RefreshRedirects::Ignore`, so a `<meta http-equiv="refresh">` on
+/// the page it fetches is not a hop it takes; it returns that page's own response.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_does_not_follow_a_meta_refresh() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta http-equiv="refresh" content="0; url=/next"></head><body></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/next", "<html><body>next</body></html>").await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let (final_url, _, _) = engine
+        .wasm_fetch_for_scrape(&format!("{}/", mock.uri()), None)
+        .await
+        .expect("fetch must succeed");
+
+    let next = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .filter(|r| r.url.path() == "/next")
+        .count();
+    assert_eq!(next, 0, "the wasm page fetch followed a refresh; final_url={final_url}");
+}
