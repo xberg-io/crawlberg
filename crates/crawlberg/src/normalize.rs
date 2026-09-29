@@ -146,32 +146,73 @@ pub(crate) fn strip_fragment(url: &str) -> String {
     }
 }
 
-pub(crate) fn rewrite_url_host(url_str: &str, base: &Url) -> String {
-    if let Ok(parsed) = Url::parse(url_str)
-        && parsed.host_str() != base.host_str()
-    {
-        let mut resolved = base.clone();
-        resolved.set_path(parsed.path());
-        resolved.set_query(parsed.query());
-        return resolved.to_string();
+/// Resolve a redirect target against `base_url`, without userinfo. `target` may be relative
+/// or absolute; `Url::join` parses either form on its own and returns the parsed URL.
+/// Returns `None` in two cases: `base_url` parses but `target` fails to join against it, or
+/// `base_url` fails to parse and `target` also fails to parse on its own. Either way, the
+/// caller must refuse the target rather than follow or report it as raw text.
+///
+/// ~keep The return is always a parsed URL, never raw input, so a caller that re-checks it
+/// ~keep (SSRF, policy) is checking what will actually be fetched, and cannot skip the check
+/// ~keep for a target that fails to parse.
+pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> Option<Url> {
+    if let Ok(base) = Url::parse(base_url) {
+        return crate::net::userinfo::resolve(&base, target);
     }
-    url_str.to_owned()
+    // base_url itself fails to parse; a target that stands on its own can still resolve.
+    crate::net::userinfo::parse(target)
 }
 
-/// Resolve a redirect target against a base URL.
+/// Human-readable form of `url_str`, for matching a caller's typed search term against an
+/// address the parser has percent-encoded and idna-encoded.
 ///
-/// If the target is already absolute, returns it as-is. Otherwise, resolves
-/// it relative to the base URL.
-pub(crate) fn resolve_redirect(base_url: &str, target: &str) -> String {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return target.to_owned();
+/// ~keep Percent-encoding is substring-safe (each character encodes on its own), but
+/// ~keep punycode is not: it transforms a whole host label, so encoding a substring of a
+/// ~keep search term the way a host is encoded does not, in general, land inside that host's
+/// ~keep encoded label. Decoding the address instead covers both the path and the host with
+/// ~keep one pass, and an ASCII address decodes back to itself unchanged.
+/// Falls back to `url_str` unchanged if it fails to parse. The output exists only to match a
+/// search term: it omits userinfo and writes a non-special scheme as `scheme://`, and the check
+/// against the raw address still covers both.
+pub(crate) fn decoded_for_search(url_str: &str) -> String {
+    let Ok(parsed) = Url::parse(url_str) else {
+        return url_str.to_owned();
+    };
+    let mut out = String::new();
+    out.push_str(parsed.scheme());
+    out.push_str("://");
+    if let Some(host) = parsed.host_str() {
+        out.push_str(&idna::domain_to_unicode(host).0);
     }
-    if let Ok(base) = Url::parse(base_url)
-        && let Ok(resolved) = base.join(target)
-    {
-        return resolved.to_string();
+    if let Some(port) = parsed.port() {
+        out.push(':');
+        out.push_str(&port.to_string());
     }
-    target.to_owned()
+    out.push_str(&percent_encoding::percent_decode_str(parsed.path()).decode_utf8_lossy());
+    if let Some(query) = parsed.query() {
+        out.push('?');
+        out.push_str(&percent_encoding::percent_decode_str(query).decode_utf8_lossy());
+    }
+    if let Some(fragment) = parsed.fragment() {
+        out.push('#');
+        out.push_str(&percent_encoding::percent_decode_str(fragment).decode_utf8_lossy());
+    }
+    out
+}
+
+/// The form in which a `map_search` term and an address are compared: canonical
+/// decomposition, then Unicode default case folding, then canonical composition, so `é` and
+/// `e` plus a combining acute accent match, and `ß` matches `SS`.
+///
+/// ~keep Default case folding is locale-free, so the Turkish dotted and dotless `i` never
+/// ~keep match their Turkish case partners: `İ` does not match `i`, and `ışık` does not match
+/// ~keep `IŞIK`. Joining them would need a locale, which a search term does not carry.
+pub(crate) fn search_key(text: &str) -> String {
+    let decomposed = icu_normalizer::DecomposingNormalizer::new_nfd().normalize(text);
+    let folded = icu_casemap::CaseMapper::new().fold_string(&decomposed);
+    icu_normalizer::ComposingNormalizer::new_nfc()
+        .normalize(&folded)
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -322,6 +363,143 @@ mod tests {
             normalize_url_for_dedup("http://example.com/a//b", false),
             normalize_url_for_dedup("http://example.com/a/b", false),
             "a doubled path separator must not produce a second frontier entry for one page"
+        );
+    }
+
+    #[test]
+    fn absolute_target_with_embedded_tab_and_newline_is_parser_normalized() {
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/\ta\nb").map(String::from);
+        assert_eq!(
+            resolved,
+            Some("https://example.com/ab".to_owned()),
+            "an embedded tab/newline in an absolute target must be stripped the same way \
+             the URL parser strips it from a relative target, got {resolved:?}"
+        );
+    }
+
+    /// A leading space never reached the old prefix branch (`starts_with` doesn't match), so
+    /// it was already trimmed by the relative-join fallback whenever `base_url` parsed. Using
+    /// a `base_url` that fails to parse instead exercises the case the old dispatch got wrong.
+    #[test]
+    fn absolute_target_with_leading_space_is_trimmed_even_when_base_fails_to_parse() {
+        let resolved = resolve_redirect("not a url", "   https://example.com/next").map(String::from);
+        assert_eq!(
+            resolved,
+            Some("https://example.com/next".to_owned()),
+            "a leading space on an absolute target must be trimmed even when the base \
+             doesn't parse, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn absolute_target_with_trailing_space_is_trimmed() {
+        let resolved = resolve_redirect("https://example.com/start", "https://example.com/next   ").map(String::from);
+        assert_eq!(
+            resolved,
+            Some("https://example.com/next".to_owned()),
+            "trailing spaces on an absolute target must be trimmed like a relative target's \
+             are, got {resolved:?}"
+        );
+    }
+
+    /// A `base_url` that fails to parse is the only case where the old prefix check
+    /// (`starts_with("https://")`, case-sensitive) mattered: with a valid base, the relative
+    /// branch already resolves an absolute target on its own, uppercase scheme included.
+    #[test]
+    fn uppercase_scheme_target_still_resolves_when_base_fails_to_parse() {
+        let resolved = resolve_redirect("not a url", "HTTPS://example.com/x").map(String::from);
+        assert_eq!(
+            resolved,
+            Some("https://example.com/x".to_owned()),
+            "an absolute target must resolve on its own when the base doesn't parse, \
+             whatever case its scheme is written in, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn unparseable_absolute_target_is_refused() {
+        let resolved = resolve_redirect("https://example.com/start", "https://ex ample.com/x").map(String::from);
+        assert_eq!(
+            resolved, None,
+            "a target the URL parser refuses must come back as None, so a caller refuses it \
+             instead of following or reporting it as raw text, got {resolved:?}"
+        );
+    }
+
+    /// This target already IS the parser's normalized form (lower-case host, default path,
+    /// no IDN/port/dot-segment to rewrite), so parsing it is a no-op. It does not show that
+    /// every clean target survives unchanged: parsing still rewrites an IDN host to punycode,
+    /// drops a default port, lower-cases the host, adds `/` to a bare origin, removes dot
+    /// segments, percent-encodes a space, and canonicalizes `127.1` to `127.0.0.1`.
+    ///
+    /// ~keep GUARD: no hand arm reddens this; a target with nothing left to normalize passes
+    /// ~keep through any resolver that round-trips clean input, so it cannot pin one mechanism.
+    #[test]
+    fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
+        let clean = "https://example.com/page?a=1&b=2";
+        let resolved = resolve_redirect("https://example.com/start", clean).map(String::from);
+        assert_eq!(
+            resolved,
+            Some(clean.to_owned()),
+            "a target with nothing left to normalize must come back byte-identical, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_path() {
+        let decoded = decoded_for_search("https://example.com/caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/café",
+            "expected the percent-encoded path decoded back to the UTF-8 text it encodes, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_idna_decodes_a_punycode_host() {
+        let decoded = decoded_for_search("https://xn--bcher-kva.example/x");
+        assert_eq!(
+            decoded, "https://bücher.example/x",
+            "expected the punycode host decoded back to its Unicode form, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_query_value() {
+        let decoded = decoded_for_search("https://example.com/x?q=caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/x?q=café",
+            "expected the percent-encoded query value decoded back to its UTF-8 text, got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_for_search_percent_decodes_a_non_ascii_fragment() {
+        let decoded = decoded_for_search("https://example.com/x#caf%C3%A9");
+        assert_eq!(
+            decoded, "https://example.com/x#café",
+            "expected the percent-encoded fragment decoded back to its UTF-8 text, got {decoded:?}"
+        );
+    }
+
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
+    #[test]
+    fn decoded_for_search_leaves_an_ascii_address_unchanged() {
+        let decoded = decoded_for_search("https://example.com/keep-1?a=1");
+        assert_eq!(
+            decoded, "https://example.com/keep-1?a=1",
+            "an ASCII address must decode back to itself, got {decoded:?}"
+        );
+    }
+
+    // ~keep GUARD: passes against an identity decoder; pins that ASCII and unparseable input are
+    // ~keep unchanged.
+    #[test]
+    fn decoded_for_search_falls_back_to_the_raw_string_when_unparseable() {
+        let decoded = decoded_for_search("not a url");
+        assert_eq!(
+            decoded, "not a url",
+            "an address the parser refuses must come back unchanged, got {decoded:?}"
         );
     }
 }

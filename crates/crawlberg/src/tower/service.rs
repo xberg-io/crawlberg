@@ -10,6 +10,7 @@ use tower::Service;
 
 use super::types::{CrawlRequest, CrawlResponse};
 use crate::error::{CrawlError, classify_reqwest_error};
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
 
@@ -29,49 +30,42 @@ impl HttpFetchService {
     }
 }
 
+/// The `User-Agent` value this request will actually send.
+///
+/// ~keep `crawl_req.headers` wins when it already names one -- set explicitly by a caller
+/// (`RedirectPolicy::admits`, pinning the agent it picked for this hop) or by the UA rotation
+/// layer upstream of this service. Callers that need to judge robots rules against the agent a
+/// request actually sent (crawlberg#423) must read this same value back off the response
+/// (`CrawlResponse::sent_user_agent`) rather than recomputing the engine's configured default.
+fn resolved_user_agent(config: &CrawlConfig, crawl_req: &CrawlRequest) -> String {
+    crawl_req
+        .headers
+        .get("user-agent")
+        .cloned()
+        .unwrap_or_else(|| crate::helpers::default_robots_user_agent(config).to_owned())
+}
+
 /// Helper to apply auth and custom headers to a request builder.
 fn apply_headers(
     mut req: reqwest::RequestBuilder,
     config: &CrawlConfig,
     crawl_req: &CrawlRequest,
+    url: &url::Url,
+    sent_user_agent: &str,
 ) -> reqwest::RequestBuilder {
     if !crawl_req.headers.contains_key("user-agent") {
-        if let Some(ref ua) = config.user_agent {
-            req = req.header(reqwest::header::USER_AGENT, ua.as_str());
-        } else {
-            req = req.header(
-                reqwest::header::USER_AGENT,
-                concat!("crawlberg/", env!("CARGO_PKG_VERSION")),
-            );
-        }
+        req = req.header(reqwest::header::USER_AGENT, sent_user_agent);
     }
 
-    // ~keep Withhold configured credentials once a redirect chain has left its origin host;
-    // ~keep reqwest's own cross-host stripping never runs because we follow redirects manually.
-    if let Some(ref auth) = config.auth {
-        if crawl_req.is_on_origin_host() {
-            match auth {
-                crate::types::AuthConfig::Basic { username, password } => {
-                    req = req.basic_auth(username, Some(password));
-                }
-                crate::types::AuthConfig::Bearer { token } => {
-                    req = req.bearer_auth(token);
-                }
-                crate::types::AuthConfig::Header { name, value } => {
-                    req = req.header(name.as_str(), value.as_str());
-                }
-            }
-        } else {
-            tracing::debug!(
-                origin = crawl_req.origin_host.as_deref().unwrap_or(""),
-                target = crawl_req.domain().unwrap_or_default(),
-                "withholding configured credentials from a cross-host redirect hop"
-            );
+    // ~keep A `user-agent` custom header is already reflected in `sent_user_agent`
+    // (`default_robots_user_agent` reads it, crawlberg#423), which the branch above already
+    // set on the request; re-adding it here would append a second, redundant `User-Agent`
+    // header line rather than replacing the first one.
+    for (name, value) in seed_host_headers(config, url) {
+        if name.eq_ignore_ascii_case("user-agent") {
+            continue;
         }
-    }
-
-    for (k, v) in &config.custom_headers {
-        req = req.header(k.as_str(), v.as_str());
+        req = req.header(name.as_str(), value.as_str());
     }
 
     for (k, v) in &crawl_req.headers {
@@ -91,9 +85,6 @@ const REDIRECT_STATUS_MAX: u16 = 400;
 /// ~keep A small shortfall is routinely produced by servers that miscount a compressed or
 /// chunked body, so only a clearly truncated transfer is reported.
 const CONTENT_LENGTH_SHORTFALL_TOLERANCE: usize = 100;
-
-/// Largest 2xx body still treated as a possible WAF challenge page rather than real content.
-const WAF_CHALLENGE_MAX_BODY_LEN: usize = 5000;
 
 /// Whether a status is a redirect that `do_fetch` returns to the caller unclassified.
 fn is_redirect_status(status: u16) -> bool {
@@ -125,15 +116,6 @@ fn collect_headers(resp: &reqwest::Response) -> HashMap<String, Vec<String>> {
     headers
 }
 
-/// Read the lowercase `server` header, or an empty string when absent.
-fn server_header(headers: &HashMap<String, Vec<String>>) -> String {
-    headers
-        .get("server")
-        .and_then(|v| v.first())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default()
-}
-
 /// Build the `CrawlResponse` for a 3xx without classifying it; a failed body read yields an
 /// empty body rather than an error, because the caller only needs the status and headers.
 async fn read_redirect_response(
@@ -142,6 +124,7 @@ async fn read_redirect_response(
     status: u16,
     content_type: String,
     headers: HashMap<String, Vec<String>>,
+    sent_user_agent: String,
 ) -> CrawlResponse {
     let (body_bytes, _) = crate::http::read_body_bounded(resp, crate::http::effective_max_body_size(config))
         .await
@@ -154,6 +137,7 @@ async fn read_redirect_response(
         body_bytes,
         headers,
         landed_url: None,
+        sent_user_agent: Some(sent_user_agent),
     }
 }
 
@@ -206,25 +190,6 @@ fn content_length_shortfall_error(
     None
 }
 
-/// Classify a short 2xx body as a WAF challenge page when it carries a vendor fingerprint.
-///
-/// ~keep Some WAFs return 200 challenge pages, so short 2xx bodies still need WAF classification.
-#[cfg(not(target_arch = "wasm32"))]
-fn waf_error_for_success(status: u16, body: &str, headers: &HashMap<String, Vec<String>>) -> Option<CrawlError> {
-    if status != 200 || body.len() >= WAF_CHALLENGE_MAX_BODY_LEN {
-        return None;
-    }
-    let server = server_header(headers);
-    if !crate::http::is_waf_blocked(&server, body, headers) {
-        return None;
-    }
-    let vendor = crate::http::detect_waf_vendor(&server, &body.to_lowercase());
-    Some(CrawlError::waf_blocked(
-        vendor.clone(),
-        format!("waf/blocked detected on 2xx (body): {vendor}"),
-    ))
-}
-
 /// Perform a single HTTP fetch (no retry, no redirect following) with SSRF validation.
 ///
 /// Returns the raw response — including any 3xx — without following redirects.
@@ -244,11 +209,13 @@ async fn do_fetch(
     let url =
         url::Url::parse(&req.url).map_err(|e| CrawlError::ssrf_violation(&req.url, format!("invalid URL: {e}")))?;
 
+    crate::net::userinfo::refuse(&url)?;
     validate_url(&url, &config.ssrf)
         .await
         .map_err(|e| CrawlError::ssrf_violation(req.url.clone(), e.to_string()))?;
 
-    let http_req = apply_headers(client.get(url.to_string()), config, req);
+    let sent_user_agent = resolved_user_agent(config, req);
+    let http_req = apply_headers(client.get(url.to_string()), config, req, &url, &sent_user_agent);
 
     // ~keep reqwest uses Policy::none(); redirect following is explicit and policy-checked by callers.
     let resp = http_req.send().await.map_err(classify_reqwest_error)?;
@@ -259,14 +226,13 @@ async fn do_fetch(
 
     // ~keep Return 3xx responses as-is so redirect handling stays caller-owned.
     if is_redirect_status(status) {
-        return Ok(read_redirect_response(resp, config, status, content_type, headers).await);
+        return Ok(read_redirect_response(resp, config, status, content_type, headers, sent_user_agent).await);
     }
 
     // ~keep Shares `http::challenge_status_error` with `http::fetch_one_hop` rather than keeping
     // a second copy: the two copies had already drifted. The one that stood here classified
-    // every response as if it were a 403 (`is_waf_blocked`/`detect_waf_vendor` hardcode that
-    // status) and showed the classifier only the `server` header, so a 403 identified by any
-    // other header came back as vendor "unknown".
+    // every response as if it were a 403 and showed the classifier only the `server` header, so
+    // a 403 identified by any other header came back as vendor "unknown".
     if crate::http::is_challenge_status(status) {
         return Err(crate::http::challenge_status_error(
             status,
@@ -291,8 +257,10 @@ async fn do_fetch(
 
     let body = String::from_utf8_lossy(&body_vec).into_owned();
 
+    // ~keep The same 2xx decision `http::fetch_one_hop` makes, so the engine's crawl and the plain
+    // fetch refuse exactly the same responses (crawlberg#231).
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(error) = waf_error_for_success(status, &body, &headers) {
+    if let Some(error) = crate::http::waf_2xx_error(status, &body_vec, &body, &headers) {
         return Err(error);
     }
 
@@ -303,6 +271,7 @@ async fn do_fetch(
         body_bytes: body_vec,
         headers,
         landed_url: None,
+        sent_user_agent: Some(sent_user_agent),
     })
 }
 
@@ -335,6 +304,47 @@ impl Service<CrawlRequest> for HttpFetchService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_request_url_with_userinfo_is_refused_before_the_network() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock)
+            .await;
+        let config = CrawlConfig::builder().allow_private_networks(true).build();
+        let client = crate::http::build_client(&config).expect("client must build");
+
+        let credentialed = CrawlRequest {
+            url: mock.uri().replacen("http://", "http://user:TOWER-PW-8b2c@", 1) + "/in",
+            headers: std::collections::HashMap::new(),
+            tier: None,
+        };
+        let error = do_fetch(&client, &config, &credentialed)
+            .await
+            .map(|_| ())
+            .expect_err("a URL with userinfo must be refused");
+        let text = error.to_string();
+        assert!(
+            !text.contains("TOWER-PW-8b2c"),
+            "the error must not print the password: {text}"
+        );
+
+        do_fetch(&client, &config, &CrawlRequest::new(format!("{}/out", mock.uri())))
+            .await
+            .expect("the same URL without userinfo must be fetched");
+        let paths: Vec<String> = mock
+            .received_requests()
+            .await
+            .expect("request recording is on")
+            .into_iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        assert_eq!(paths, ["/out"], "only the URL without userinfo may reach the network");
+    }
 
     #[test]
     fn only_3xx_is_returned_to_the_caller_as_a_redirect() {

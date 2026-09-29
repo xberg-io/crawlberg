@@ -223,9 +223,9 @@ fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest
         // an operator most needs to know about — so it is logged at ERROR. Failing
         // closed is not reachable from inside this closure.
         //
-        // ~keep The offending URL is deliberately NOT logged: `redact_url_credentials`
-        // returns its input unchanged when the input does not parse, which is exactly
-        // the case here — so naming it would print any embedded `user:pass@` verbatim.
+        // ~keep The offending URL is deliberately NOT logged: it does not parse, so
+        // `redact_url_credentials` would hide it whole whenever it holds an `@`, and the
+        // target host already names the request that went direct.
         let Ok(mut parsed) = reqwest::Url::parse(&cfg.url) else {
             tracing::error!(
                 target_host = %host,

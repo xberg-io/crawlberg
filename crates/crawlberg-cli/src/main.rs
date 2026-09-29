@@ -370,7 +370,7 @@ async fn run_download(args: DownloadArgs) {
                 })
             } else {
                 serde_json::json!({
-                    "url": args.url,
+                    "url": without_userinfo(&args.url).unwrap_or_else(|| result.final_url.clone()),
                     "content_type": result.content_type,
                     "status_code": result.status_code,
                     "body_size": result.body_size,
@@ -381,6 +381,15 @@ async fn run_download(args: DownloadArgs) {
         }
         Err(e) => exit_with_error(&e),
     }
+}
+
+/// `raw` without its `user:pass@`, or `None` when it does not parse.
+fn without_userinfo(raw: &str) -> Option<String> {
+    let mut url = url::Url::parse(raw).ok()?;
+    // ~keep Both setters fail only for a URL that cannot hold userinfo, which then has none.
+    let _ = url.set_password(None);
+    let _ = url.set_username("");
+    Some(url.into())
 }
 
 fn run_citations(args: CitationsArgs) {

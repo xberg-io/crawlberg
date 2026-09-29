@@ -68,7 +68,7 @@ impl BrowserJsRuntime {
         state.borrow_mut().ssrf = ssrf.clone();
         let state_clone = state.clone();
 
-        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf));
+        let module_loader = Rc::new(BrowserModuleLoader::with_ssrf(base_url, proxy_url, ssrf, state.clone()));
 
         // ~keep deno_core captures `Handle::try_current().ok()` when it registers the isolate
         // ~keep and, if that handle is `None`, calls `std::process::abort()` from a V8
@@ -150,7 +150,13 @@ impl BrowserJsRuntime {
         state.intercept_enabled = true;
     }
 
+    /// Refuse a module address that matches one of `patterns`, as the page refuses a script address.
+    pub fn set_intercept_block_patterns(&self, patterns: Vec<String>) {
+        self.state.borrow_mut().intercept_block_patterns = patterns;
+    }
+
     pub fn set_user_agent(&mut self, ua: &str) {
+        self.state.borrow_mut().user_agent = Some(ua.to_string());
         let escaped = ua.replace('\\', "\\\\").replace('\'', "\\'");
         let _ = self
             .runtime
