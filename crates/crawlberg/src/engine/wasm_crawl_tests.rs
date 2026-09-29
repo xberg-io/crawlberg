@@ -1332,3 +1332,33 @@ async fn wasm_page_fetch_refuses_a_small_cloudflare_body_that_says_blocked() {
         result.map(|(url, _, _)| url)
     );
 }
+
+/// The wasm page fetch passes `RefreshRedirects::Ignore`, so a `<meta http-equiv="refresh">` on
+/// the page it fetches is not a hop it takes; it returns that page's own response.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_does_not_follow_a_meta_refresh() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta http-equiv="refresh" content="0; url=/next"></head><body></body></html>"#,
+    )
+    .await;
+    mount_html(&mock, "/next", "<html><body>next</body></html>").await;
+    let engine = engine_with(permissive(CrawlConfig::default()));
+
+    let (final_url, _, _) = engine
+        .wasm_fetch_for_scrape(&format!("{}/", mock.uri()), None)
+        .await
+        .expect("fetch must succeed");
+
+    let next = mock
+        .received_requests()
+        .await
+        .expect("request recording must be on")
+        .iter()
+        .filter(|r| r.url.path() == "/next")
+        .count();
+    assert_eq!(next, 0, "the wasm page fetch followed a refresh; final_url={final_url}");
+}

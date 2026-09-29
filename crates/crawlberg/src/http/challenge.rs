@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use super::body::read_text_bounded;
-use super::status::status_error;
+use super::status::{HttpStatus, status_error};
 use super::waf;
 use crate::error::CrawlError;
 
@@ -62,8 +62,9 @@ pub(crate) async fn challenge_status_error(
 
     // ~keep 403 is the only member of `CHALLENGE_STATUSES` that `status_error` does not map,
     // because telling a WAF block from a plain forbidden needs exactly the body just read and
-    // rejected above.
-    status_error(status, url).unwrap_or_else(|| CrawlError::forbidden("forbidden"))
+    // rejected above. The status is attached here instead, so a custom retry policy reading
+    // `AttemptOutcome::status` sees a 403 like any other response status (crawlberg#133).
+    status_error(status, url).unwrap_or_else(|| CrawlError::forbidden_with_source("forbidden", HttpStatus(status)))
 }
 
 /// The WAF block error for a fingerprinted challenge `status`.
@@ -74,7 +75,7 @@ fn waf_blocked(status: u16, vendor: String) -> CrawlError {
         "challenge status fingerprinted as a WAF block; escalating rather than retrying"
     );
     let message = challenge_message(status, &vendor);
-    waf::waf_block(vendor, message)
+    waf::waf_block(status, vendor, message)
 }
 
 /// The freeform part of a WAF block's message.

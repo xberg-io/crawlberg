@@ -426,10 +426,7 @@ mod tests {
             attempt: 0,
             url: Arc::from("https://example.com/path"),
             status: None,
-            error: Some(crate::error::CrawlError::WafBlocked {
-                vendor: "cloudflare".into(),
-                message: "cloudflare".into(),
-            }),
+            error: Some(crate::error::CrawlError::waf_blocked("cloudflare", "cloudflare")),
             waf_signal: None,
             body_size: 0,
             content_density: 0.0,

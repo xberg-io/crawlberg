@@ -350,6 +350,48 @@ mod tests {
         fetch_robots_outcome(&format!("{}/page", mock.uri()), &config, &client, "bot").await
     }
 
+    /// A robots.txt follows an HTTP redirect only: a `Refresh` header on it is not followed, so its
+    /// own rules apply.
+    #[tokio::test]
+    async fn a_robots_txt_does_not_follow_a_refresh() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/robots.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .append_header("refresh", "0; url=/elsewhere.txt")
+                    .set_body_string("User-agent: *\nDisallow: /private\n"),
+            )
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/elsewhere.txt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .set_body_string("User-agent: *\nDisallow: /\n"),
+            )
+            .mount(&mock)
+            .await;
+        let mut config = CrawlConfig::builder().allow_private_networks(true).build();
+        config.retry_count = 0;
+        let client = crate::http::build_client(&config).expect("client must build");
+
+        let outcome = fetch_robots_outcome(&format!("{}/page", mock.uri()), &config, &client, "bot").await;
+
+        assert!(
+            matches!(outcome, RobotsOutcome::Rules(_)) && outcome.allows("/public") && !outcome.allows("/private"),
+            "a robots.txt with a Refresh header must be read as its own rules, got {} with /public={} /private={}",
+            describe(&outcome),
+            outcome.allows("/public"),
+            outcome.allows("/private")
+        );
+    }
+
     /// A robots.txt answered with a block page denies the whole origin, whatever the page's size
     /// up to the classifier's 100 KB limit, so a WAF-protected site never gets an unrestricted crawl.
     #[tokio::test]
@@ -847,10 +889,10 @@ mod tests {
     fn should_disallow_all_when_robots_txt_is_behind_a_waf() {
         // ~keep `WafBlocked` is raised for a WAF fingerprint on a 2xx body as well as for a 403, so
         // the file was not read in either case and "unavailable" would be the wrong reading.
-        let outcome = outcome_for_fetch_error(&CrawlError::WafBlocked {
-            vendor: "cloudflare".to_owned(),
-            message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
-        });
+        let outcome = outcome_for_fetch_error(&CrawlError::waf_blocked(
+            "cloudflare",
+            "waf/blocked detected on 2xx (body): cloudflare",
+        ));
         assert!(
             is_disallow_all(&outcome),
             "a WAF interstitial in place of robots.txt must fail closed"
@@ -893,10 +935,7 @@ mod tests {
             CrawlError::bad_gateway("bad_gateway"),
             CrawlError::data_loss("data_loss"),
             CrawlError::other("other"),
-            CrawlError::WafBlocked {
-                vendor: "cloudflare".to_owned(),
-                message: "waf/blocked detected on 2xx (body): cloudflare".to_owned(),
-            },
+            CrawlError::waf_blocked("cloudflare", "waf/blocked detected on 2xx (body): cloudflare"),
         ] {
             let outcome = outcome_for_fetch_error(&error);
             assert!(is_disallow_all(&outcome), "{error} must still fail closed");
