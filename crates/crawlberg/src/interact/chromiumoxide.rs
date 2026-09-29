@@ -429,13 +429,7 @@ fn action_type(action: &PageAction) -> &'static str {
 
 async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
-        let (browser, handler) = Browser::connect(endpoint).await.map_err(|e| {
-            // ~keep The endpoint is a capability (its userinfo, its CDP path GUID or a `?token=`
-            // ~keep drives the browser), and this error flows into MCP error payloads and the
-            // ~keep interact result, so only its origin prints.
-            let redacted = crate::net::redact::redact_url_to_origin(endpoint);
-            CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
-        })?;
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -552,12 +546,12 @@ mod tests {
     /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
     /// password or path token, though the failing origin must still be readable for debugging.
     ///
-    /// ~keep This is the interact path's own copy of `browser::launch::launch_or_connect`;
-    /// ~keep xberg-io/crawlberg#473 was exactly this test missing here after #424 added it
-    /// ~keep only to the launch path. A closed local port refuses the connection immediately,
-    /// ~keep so this needs no real Chrome and stays fast; `ws://` skips chromiumoxide's
-    /// ~keep `json/version` HTTP probe and goes straight to the WebSocket handshake, so this
-    /// ~keep is the only way to reach this function's error path without a real remote browser.
+    /// ~keep The launch path has the same test: xberg-io/crawlberg#473 was this test missing
+    /// ~keep here after #424 added it only there, so each connect site keeps its own. A closed
+    /// ~keep local port refuses the connection immediately, so this needs no real Chrome and
+    /// ~keep stays fast; `ws://` skips chromiumoxide's `json/version` HTTP probe and goes
+    /// ~keep straight to the WebSocket handshake, so this is the only way to reach this
+    /// ~keep function's error path without a real remote browser.
     #[tokio::test]
     async fn connect_error_prints_only_the_endpoint_origin() {
         let config = CrawlConfig {
@@ -584,5 +578,21 @@ mod tests {
             msg.contains("127.0.0.1"),
             "host must still appear in the error, got: {msg}"
         );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 }

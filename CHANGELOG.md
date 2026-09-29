@@ -204,9 +204,11 @@ All notable changes to crawlberg are documented here.
 
 - **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
   address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
-  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, so
-  a websocket endpoint with no host is still refused. The CLI's rejection error no longer prints
-  the address, the same as the config check. (#343)
+  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, and
+  a websocket endpoint with no host is still refused. The browser connection uses the same parse
+  and sends the address with a lower-case scheme, so an upper-case, space-padded or slash-less
+  spelling that the checks accept also connects. The CLI's rejection error no longer prints the
+  address, the same as the config check. (#343)
 
 - **A failed connection to a remote browser printed its password.** When crawlberg could not
   connect to a `browser.endpoint`, the connect error showed the address as configured, with its

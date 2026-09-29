@@ -138,13 +138,7 @@ pub(super) async fn launch_or_connect(
                  the remote Chrome process's profile is managed externally"
             );
         }
-        let (browser, handler) = Browser::connect(endpoint).await.map_err(|e| {
-            // ~keep The endpoint is a capability (its userinfo, its CDP path GUID or a `?token=`
-            // ~keep drives the browser), and this error flows into API error bodies and MCP
-            // ~keep error payloads, so only its origin prints.
-            let redacted = crate::net::redact::redact_url_to_origin(endpoint);
-            CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
-        })?;
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         let user_data = resolve_user_data_dir(config)?;
@@ -397,6 +391,22 @@ mod tests {
             msg.contains("127.0.0.1"),
             "host must still appear in the error, got: {msg}"
         );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 
     /// `hand_over` passes the path on and stops the guard from removing it.

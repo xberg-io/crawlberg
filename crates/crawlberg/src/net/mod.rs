@@ -21,16 +21,24 @@ pub use credentials::CredentialScope;
 pub use redact::redact_url_credentials;
 pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
 
+/// Parse `url` as a WebSocket address (`ws` or `wss` scheme), or `None` when it is not one.
+///
+/// A URL scheme is case-insensitive (RFC 3986 §3.1), so `WS://host` and `Wss://host` parse
+/// the same as `ws://host`. The returned URL is in normalized form: a lower-case scheme, no
+/// surrounding spaces, and the `//` before the host. The endpoint checks and the browser
+/// connect both use this one parse, so a spelling a check accepts is the address the
+/// connect uses.
+pub(crate) fn parse_websocket_url(url: &str) -> Option<url::Url> {
+    url::Url::parse(url)
+        .ok()
+        .filter(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
+}
+
 /// True when `url` parses as a WebSocket address (`ws` or `wss` scheme).
 ///
-/// A URL scheme is case-insensitive (RFC 3986 §3.1). This parses `url` and reads the
-/// parsed scheme instead of testing the raw text for a lower-case `ws://`/`wss://`
-/// prefix, so `WS://host` and `Wss://host` are accepted the same as `ws://host`: the
-/// `url` crate lower-cases the scheme while parsing.
+/// A URL scheme is case-insensitive, so `WS://host` is accepted the same as `ws://host`.
 pub fn is_websocket_scheme(url: &str) -> bool {
-    url::Url::parse(url)
-        .map(|parsed| matches!(parsed.scheme(), "ws" | "wss"))
-        .unwrap_or(false)
+    parse_websocket_url(url).is_some()
 }
 
 #[cfg(test)]

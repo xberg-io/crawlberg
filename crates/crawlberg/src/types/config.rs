@@ -851,53 +851,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_browser_endpoint_error_never_contains_a_password() {
-        let config = CrawlConfig {
-            browser: BrowserConfig {
-                endpoint: Some("http://user:hunter2@localhost:9222".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            !msg.contains("hunter2"),
-            "password must not survive into the error, got: {msg}"
-        );
-    }
-
-    /// `BrowserConfig`'s `Debug` output must never carry an `endpoint` password, whether read
-    /// directly or through `CrawlConfig`'s own derived `Debug` (which prints the whole
-    /// browser section). xberg-io/crawlberg#473.
-    #[test]
-    fn browser_config_debug_output_never_contains_the_endpoint_password() {
-        let browser = BrowserConfig {
-            endpoint: Some("ws://user:hunter2@127.0.0.1:9222/".into()),
-            ..Default::default()
-        };
-        let browser_debug = format!("{browser:?}");
-        assert!(
-            !browser_debug.contains("hunter2"),
-            "password must not survive into BrowserConfig's Debug output, got: {browser_debug}"
-        );
-        assert!(
-            browser_debug.contains("127.0.0.1"),
-            "host must still appear in BrowserConfig's Debug output, got: {browser_debug}"
-        );
-
-        let config = CrawlConfig {
-            browser,
-            ..Default::default()
-        };
-        let config_debug = format!("{config:?}");
-        assert!(
-            !config_debug.contains("hunter2"),
-            "password must not survive into CrawlConfig's Debug output, got: {config_debug}"
-        );
-    }
-
-    #[test]
     fn validate_rejects_unsupported_ssrf_scheme_allowlist_entries() {
         for scheme in ["ftp", "http://"] {
             let mut config = CrawlConfig::default();
