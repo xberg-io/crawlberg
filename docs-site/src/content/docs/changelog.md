@@ -16,11 +16,19 @@ title: "Changelog"
   pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
   without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
   (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
-  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
-  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
-  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
-  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
-  `--enable-features` values with commas. (#79, #80)
+  `--user-data-dir` in any form, `--headless=new` included. `BrowserPool::new` still accepts the
+  config: the refusal comes when the pool launches Chrome, as an error from `warm` and
+  `acquire_page` that names `BrowserPoolConfig.chrome_args`. Write each flag once, as `--flag` or
+  `--flag=value` with a lowercase name, and join several `--enable-features` values with commas.
+  (#79, #80)
+
+- **`BrowserProfile::chrome_args()` is removed.** It returned a single `--user-data-dir=<path>`
+  flag meant for a caller's `chrome_args` list, and `chrome_args` now refuses `--user-data-dir` in
+  any form, so the method had no valid return value left. Nothing in crawlberg ever called it: a
+  profile reaches Chrome through `CrawlConfig.browser_profile` and `save_browser_profile`, which
+  already set the launch's `--user-data-dir` directly. Code that called
+  `BrowserProfile::chrome_args()` should read `BrowserProfile.user_data_dir` instead, or set
+  `CrawlConfig.browser_profile` and let crawlberg apply it. (#254)
 
 - **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
   constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
@@ -108,6 +116,14 @@ title: "Changelog"
   seconds to render. Each module script now waits only for its own evaluation, so the stalled module
   costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
   after the next module script runs. (#486)
+
+- **The sitemap walk and the well-known `/sitemap.xml` fallback gave no URLs for a gzip sitemap
+  served with the wrong content type.** A robots.txt `Sitemap:` directive, a sitemap-index child,
+  and the `/sitemap.xml` fallback each decided whether to inflate a body by its content type, so a
+  gzip sitemap served as `application/octet-stream`, or recognised only by its gzip header bytes,
+  yielded no URLs there, while `map()`'s direct fetch read the same file. All three now inflate a
+  body that starts with the gzip header, whatever its content type says, the way the direct fetch
+  already did. (#534)
 
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
