@@ -363,8 +363,9 @@ mod tests {
     ///
     /// ~keep A closed local port refuses the connection immediately, so this needs no real
     /// ~keep Chrome and stays fast. `ws://` skips chromiumoxide's `json/version` HTTP probe
-    /// ~keep and goes straight to the WebSocket handshake, so this is the only way to reach
-    /// ~keep `launch_or_connect`'s error path without a real remote browser.
+    /// ~keep and goes straight to the WebSocket handshake. The endpoint-listener test just
+    /// ~keep below reaches the same error path with a local socket that answers HTTP 418, so
+    /// ~keep a closed port is not the only way here; it stays because it needs no listener at all.
     #[tokio::test]
     async fn connect_error_prints_only_the_endpoint_origin() {
         let config = CrawlConfig {
