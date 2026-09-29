@@ -99,6 +99,7 @@ mod tests {
                     body_bytes: vec![],
                     headers: std::collections::HashMap::new(),
                     landed: None,
+                    sent_user_agent: None,
                 })
             })
         }

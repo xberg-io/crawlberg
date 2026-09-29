@@ -25,7 +25,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, DisableParams as FetchDisableParams, EnableParams as FetchEnableParams, EventRequestPaused,
     FailRequestParams, HeaderEntry, RequestPattern, RequestStage,
 };
-use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, FrameId};
 use chromiumoxide::cdp::browser_protocol::target::{
     CloseTargetParams, EventTargetCreated, EventTargetDestroyed, GetTargetsParams, TargetId,
@@ -38,7 +38,13 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use crate::error::CrawlError;
 use crate::http::{NO_DOCUMENT_STATUSES, REDIRECT_STATUSES};
 use crate::net::LOGGED_REFUSALS;
+use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::{SsrfPolicy, validate_url};
+use crate::net::userinfo;
+use crate::types::CrawlConfig;
+
+/// What an intercepted request is recorded as when it does not parse, so its text is never echoed.
+const UNPARSEABLE_URL: &str = "(unparseable URL)";
 
 /// How long closing a watched page and its popups may take before the watch ends anyway.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -202,7 +208,9 @@ struct WatchedPage {
     /// The page's own target.
     root: TargetId,
     main_frame: FrameId,
-    policy: SsrfPolicy,
+    /// The crawl's config: the SSRF policy every request is judged by, and the headers a
+    /// request to the seed's host gets.
+    config: CrawlConfig,
     redirect_limit: usize,
     outcome: Mutex<InterceptOutcome>,
     refusals: Mutex<Vec<Refusal>>,
@@ -453,12 +461,13 @@ async fn disable_fetch(browser: &Browser) {
 }
 
 impl FirewallHandle {
-    /// Put `page` under the check with `policy`, counting its main-frame redirects against
-    /// `redirect_limit`. Interception is on when this returns.
+    /// Put `page` under the check with `config`'s SSRF policy, counting its main-frame redirects
+    /// against `redirect_limit`. A request of the page to the seed's host gets the seed-host
+    /// headers. Interception is on when this returns.
     pub(crate) async fn watch(
         &self,
         page: &chromiumoxide::Page,
-        policy: &SsrfPolicy,
+        config: &CrawlConfig,
         redirect_limit: usize,
     ) -> Result<Watch, CrawlError> {
         let main_frame = require_main_frame(page.mainframe().await.map_err(|e| e.to_string()))?;
@@ -469,7 +478,7 @@ impl FirewallHandle {
         let watched = Arc::new(WatchedPage {
             root: page.target_id().clone(),
             main_frame,
-            policy: policy.clone(),
+            config: config.clone(),
             redirect_limit,
             outcome: Mutex::new(InterceptOutcome::default()),
             refusals: Mutex::new(Vec::new()),
@@ -984,17 +993,23 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
 async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, paused_at: Instant) {
     // ~keep `_in_flight` lives to the end of this function, so the page counts the request until
     // ~keep its answer has been sent: a watch ending on a zero count has nothing still paused.
-    let (allow, _in_flight) = match attribute(browser, shared, &event.frame_id).await {
-        None => (false, None),
-        Some(Owner::Other) => (shared.origin == BrowserOrigin::External, None),
+    let (verdict, _in_flight) = match attribute(browser, shared, &event.frame_id).await {
+        None => (Verdict::Refuse, None),
+        Some(Owner::Other) if shared.origin == BrowserOrigin::External => (Verdict::Continue(None), None),
+        Some(Owner::Other) => (Verdict::Refuse, None),
         Some(Owner::Watched(page)) => {
             let in_flight = InFlight::enter(page);
             let page = &in_flight.0;
-            let allow = judge(shared, page, event, paused_at).await && !page.ending.load(Ordering::Acquire);
-            (allow, Some(in_flight))
+            let verdict = judge(shared, page, event, paused_at).await;
+            let verdict = if page.ending.load(Ordering::Acquire) {
+                Verdict::Refuse
+            } else {
+                verdict
+            };
+            (verdict, Some(in_flight))
         }
     };
-    if !allow {
+    if matches!(verdict, Verdict::Refuse) {
         *lock(&shared.last_refused) = Some(Instant::now());
     }
     #[cfg(test)]
@@ -1013,14 +1028,25 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     // ~keep differed, but that is one run each way and could be flake. Pin Chrome
     // ~keep on that leg before drawing a conclusion or revisiting the call.
     // ~keep Left as `continueRequest` only to keep this change minimal.
-    let _ = if allow {
-        browser.execute(ContinueRequestParams::new(request_id)).await.map(drop)
-    } else {
-        browser
+    let _ = match verdict {
+        Verdict::Continue(headers) => {
+            let mut params = ContinueRequestParams::new(request_id);
+            params.headers = headers;
+            browser.execute(params).await.map(drop)
+        }
+        Verdict::Refuse => browser
             .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
             .await
-            .map(drop)
+            .map(drop),
     };
+}
+
+/// How the check answers one paused request.
+enum Verdict {
+    /// Let it go out, with these headers in place of its own when set.
+    Continue(Option<Vec<HeaderEntry>>),
+    /// Fail it with `BlockedByClient`.
+    Refuse,
 }
 
 /// A paused request of a watched page, counted in the page's `in_flight` while it lives.
@@ -1039,21 +1065,31 @@ impl Drop for InFlight {
     }
 }
 
-async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> bool {
+async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, paused_at: Instant) -> Verdict {
     if page.ending.load(Ordering::Acquire) {
-        return false;
+        return Verdict::Refuse;
     }
     if is_response_stage(event) {
-        return main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome);
+        return if main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome) {
+            Verdict::Continue(None)
+        } else {
+            Verdict::Refuse
+        };
     }
     #[cfg(test)]
     tokio::time::sleep(shared.delays.verdict).await;
     #[cfg(not(test))]
     let _ = shared;
-    let Err(reason) = ssrf_verdict(&event.request.url, &page.policy).await else {
-        return true;
+    let (url, reason) = match ssrf_verdict(&event.request.url, &page.config.ssrf).await {
+        Ok(parsed) => {
+            return Verdict::Continue(headers_with_seed_host_headers(
+                &page.config,
+                &parsed,
+                &event.request.headers,
+            ));
+        }
+        Err(refused) => refused,
     };
-    let url = event.request.url.clone();
     let redacted = crate::net::redact_url_credentials(&url);
     // ~keep The page decides how many requests it sends, so it must not decide the log volume:
     // ~keep the first refusals are logged one by one, and the watch's end reports the count.
@@ -1082,17 +1118,49 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
     if refusals.len() < MAX_REFUSALS {
         refusals.push(Refusal { paused_at, url, reason });
     }
-    false
+    Verdict::Refuse
 }
 
-/// Decide whether an intercepted request URL is permitted by the SSRF policy.
-/// Returns `Err(reason)` when the request must be failed at the CDP layer. This
-/// is the per-request decision applied to every browser-issued request.
-async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<(), String> {
-    match url::Url::parse(request_url) {
-        Ok(parsed) => validate_url(&parsed, policy).await.map_err(|e| e.to_string()),
-        Err(e) => Err(format!("invalid URL: {e}")),
+/// Decide whether an intercepted request URL may go out.
+///
+/// Returns the parsed URL, or `Err((recorded_url, reason))` when the request must be failed
+/// at the CDP layer. A URL with userinfo is refused, as the Fetch standard does for
+/// subresources, and is recorded without it. This is the per-request decision applied to
+/// every browser-issued request.
+async fn ssrf_verdict(request_url: &str, policy: &SsrfPolicy) -> Result<url::Url, (String, String)> {
+    let parsed = url::Url::parse(request_url).map_err(|e| (UNPARSEABLE_URL.to_owned(), format!("invalid URL: {e}")))?;
+    if userinfo::has_userinfo(&parsed) {
+        let mut clean = parsed;
+        userinfo::strip(&mut clean);
+        return Err((clean.into(), "a URL with credentials in it is refused".to_owned()));
     }
+    validate_url(&parsed, policy)
+        .await
+        .map_err(|e| (parsed.to_string(), e.to_string()))?;
+    Ok(parsed)
+}
+
+/// The request's own headers plus the seed-host headers `url` gets, if it gets any: the
+/// custom headers and the credential.
+///
+/// ~keep They go on this one request only, never through `Network.setExtraHTTPHeaders`,
+/// ~keep which would give them to every host the page loads from. A redirect hop is paused
+/// ~keep again and gets its own decision.
+fn headers_with_seed_host_headers(config: &CrawlConfig, url: &url::Url, headers: &Headers) -> Option<Vec<HeaderEntry>> {
+    let added = seed_host_headers(config, url);
+    if added.is_empty() {
+        return None;
+    }
+    let mut entries: Vec<HeaderEntry> = headers
+        .inner()
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(existing, _)| !added.iter().any(|(name, _)| existing.eq_ignore_ascii_case(name)))
+        .filter_map(|(existing, value)| value.as_str().map(|value| HeaderEntry::new(existing.clone(), value)))
+        .collect();
+    entries.extend(added.into_iter().map(|(name, value)| HeaderEntry::new(name, value)));
+    Some(entries)
 }
 
 /// The main frame the redirect limit is counted against, or an error naming why it is unknown.
@@ -1282,7 +1350,7 @@ mod tests {
         Arc::new(WatchedPage {
             root: TargetId::new(root),
             main_frame: FrameId::new(root),
-            policy: deny_policy(),
+            config: crate::types::CrawlConfig::default(),
             redirect_limit: 0,
             outcome: Mutex::new(InterceptOutcome::default()),
             refusals: Mutex::new(Vec::new()),
@@ -1503,6 +1571,68 @@ mod tests {
             "headers are recorded with the status, keyed by lowercase name"
         );
     }
+
+    #[tokio::test]
+    async fn a_url_with_userinfo_is_refused_and_recorded_without_it() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@example.com/a", &deny_policy()).await else {
+            panic!("a URL with userinfo must be refused");
+        };
+        assert_eq!(recorded, "http://example.com/a");
+        assert!(reason.contains("credentials"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_url_is_recorded_without_its_text() {
+        let Err((recorded, reason)) = ssrf_verdict("http://user:s3cret@exa mple/", &deny_policy()).await else {
+            panic!("a malformed URL must be refused");
+        };
+        assert_eq!(recorded, "(unparseable URL)");
+        assert!(reason.contains("invalid URL"), "{reason}");
+    }
+
+    #[test]
+    fn the_seed_host_headers_replace_page_headers_of_the_same_name_and_keep_the_rest() {
+        use chromiumoxide::cdp::browser_protocol::network::Headers;
+
+        use super::headers_with_seed_host_headers;
+        use crate::types::{AuthConfig, CrawlConfig};
+
+        let seed = url::Url::parse("http://example.com/").expect("test URL must parse");
+        let config = CrawlConfig {
+            auth: Some(AuthConfig::Bearer {
+                token: "tok".to_owned(),
+            }),
+            custom_headers: std::collections::HashMap::from([("X-Custom".to_owned(), "configured".to_owned())]),
+            credential_scope: crate::net::CredentialScope::for_seed(&seed, None),
+            ..CrawlConfig::default()
+        };
+        let headers = Headers::new(serde_json::json!({
+            "Cookie": "a=b", "authorization": "page-value", "x-custom": "page-value"
+        }));
+
+        let entries = headers_with_seed_host_headers(&config, &seed, &headers).expect("the seed host gets the headers");
+        let pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.value.as_str()))
+            .collect();
+        assert!(
+            pairs.contains(&("Cookie", "a=b")),
+            "the page's headers are kept: {pairs:?}"
+        );
+        let authorization: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .collect();
+        assert_eq!(authorization, vec![&("Authorization", "Bearer tok")], "{pairs:?}");
+        let custom: Vec<&(&str, &str)> = pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("x-custom"))
+            .collect();
+        assert_eq!(custom, vec![&("X-Custom", "configured")], "{pairs:?}");
+
+        let other = url::Url::parse("http://other.test/").expect("test URL must parse");
+        assert!(headers_with_seed_host_headers(&config, &other, &headers).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -1521,7 +1651,6 @@ mod race_tests {
     use super::{
         ACTION_GRACE, BrowserFirewall, BrowserOrigin, CLOSE_TIMEOUT, DISABLE_DRAIN, FetchDisableParams, TestDelays,
     };
-    use crate::net::ssrf::{HostMatcher, SsrfPolicy};
 
     #[allow(
         clippy::print_stderr,
@@ -1553,11 +1682,10 @@ mod race_tests {
     }
 
     /// Allow `localhost`, where the test pages are served, and refuse the loopback address.
-    fn policy() -> SsrfPolicy {
+    fn config() -> crate::types::CrawlConfig {
         crate::types::CrawlConfig::builder()
             .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
             .build()
-            .ssrf
     }
 
     /// Navigate `page` to an empty page served on `localhost`, so it has a real origin.
@@ -1640,7 +1768,7 @@ mod race_tests {
         let page = browser.new_page("about:blank").await.expect("page");
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -1701,7 +1829,7 @@ mod race_tests {
         let page = browser.new_page("about:blank").await.expect("page");
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -1787,7 +1915,7 @@ mod race_tests {
         let session_target = page.target_id().clone();
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -1879,7 +2007,7 @@ mod race_tests {
         let root = page.target_id().clone();
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -1979,8 +2107,10 @@ mod race_tests {
             .expect("the listener must start");
         let page = browser.new_page("about:blank").await.expect("page");
         let root = page.target_id().clone();
-        let mut allowing = policy();
-        allowing.allowlist.push(HostMatcher::exact("a.localhost"));
+        let allowing = crate::types::CrawlConfig::builder()
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+            .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("a.localhost"))
+            .build();
         let watch = firewall
             .handle()
             .watch(&page, &allowing, 0)
@@ -2060,11 +2190,11 @@ mod race_tests {
         let enabling = Instant::now();
         let first_watch = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.watch(&first, &policy(), 0).await.map(drop) }
+            async move { handle.watch(&first, &config(), 0).await.map(drop) }
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
         let second_watch = handle
-            .watch(&second, &policy(), 0)
+            .watch(&second, &config(), 0)
             .await
             .expect("the second watch must start");
         let waited = enabling.elapsed();
@@ -2107,7 +2237,7 @@ mod race_tests {
         let (url, _hits) = denied_listener().await;
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -2135,7 +2265,7 @@ mod race_tests {
         let page = browser.new_page("about:blank").await.expect("page");
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -2264,12 +2394,12 @@ mod race_tests {
         let parked = browser.new_page("about:blank").await.expect("page");
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         let parked_watch = firewall
             .handle()
-            .watch(&parked, &policy(), 0)
+            .watch(&parked, &config(), 0)
             .await
             .expect("the watch must start");
         open_blank_site(&page).await;
@@ -2350,7 +2480,7 @@ mod race_tests {
         let page = browser.new_page("about:blank").await.expect("page");
         let watch = firewall
             .handle()
-            .watch(&page, &policy(), 0)
+            .watch(&page, &config(), 0)
             .await
             .expect("the watch must start");
         let site = no_content_site().await;
@@ -2411,7 +2541,7 @@ mod race_tests {
         let stopping = tokio::spawn(firewall.stop());
         tokio::time::sleep(Duration::from_millis(100)).await;
         let late = browser.new_page("about:blank").await.expect("page");
-        let watched = handle.watch(&late, &policy(), 0).await;
+        let watched = handle.watch(&late, &config(), 0).await;
         let _ = stopping.await;
         drop((watch, page, late));
         if let Some(mut browser) = Arc::into_inner(browser) {
@@ -2440,7 +2570,7 @@ mod race_tests {
         let closed = page.clone();
         let _ = page.close().await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let watched = firewall.handle().watch(&closed, &policy(), 0).await;
+        let watched = firewall.handle().watch(&closed, &config(), 0).await;
         firewall.stop().await;
         let error = watched.err().map(|error| error.to_string()).unwrap_or_default();
         assert!(

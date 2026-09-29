@@ -122,6 +122,7 @@ opentelemetry = { version = "0.33", features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.33", features = ["grpc-tonic", "trace", "metrics"] }
 opentelemetry-semantic-conventions = "0.33"
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
+percent-encoding = "2"
 png = "0.18"
 precomputed-hash = "0.1"
 proptest = "1"

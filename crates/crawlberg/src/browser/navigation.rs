@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
+use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, GetFrameTreeParams};
 use chromiumoxide::page::ScreenshotParams;
 
@@ -15,7 +15,7 @@ use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{StoppedResponse, Watch};
-use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
+use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
 /// so the reported metrics are unremarkable.
@@ -59,7 +59,6 @@ pub(super) async fn page_fetch(
     }
 
     apply_prior_cookies(page, prior_cookies).await;
-    apply_extra_headers(page, config).await?;
 
     let mut rendered = render(url, config, page, watch, want_screenshot).await?;
     // ~keep Read once the requests the check has taken are judged, so a request sent at the end
@@ -70,11 +69,7 @@ pub(super) async fn page_fetch(
     // ~keep the refused one can come during the load or after it, during `extra_wait`. Any other
     // ~keep refused request keeps the page and is listed on it.
     if let Some((blocked_url, reason)) = watch.blocked_navigation() {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Ok(rendered)
 }
@@ -229,34 +224,6 @@ async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&
     }
 }
 
-/// Install the configured custom headers plus any `auth`-derived header on the page.
-async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
-    let mut extra_headers = serde_json::Map::new();
-    for (k, v) in &config.custom_headers {
-        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-    if extra_headers.is_empty() {
-        return Ok(());
-    }
-    let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-    page.execute(params)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))
-        .map(|_| ())
-}
-
 /// Turn the navigation result and the interceptor's verdict into one error.
 ///
 /// ~keep A request the SSRF interceptor blocked takes precedence over both the
@@ -274,10 +241,9 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        // ~keep Built through `ssrf_violation`, never a struct literal. `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL that `ssrf_intercept` recorded, so a redirect to
-        // ~keep `https://user:secret@10.0.0.1/` arrives here with its userinfo intact, and this
-        // ~keep value goes on to API error bodies, MCP error payloads and tracing fields.
+        // ~keep Built through `ssrf_violation`, never a struct literal. `ssrf_intercept` records
+        // ~keep a URL with userinfo without it, and `ssrf_violation` redacts again as the last
+        // ~keep guard before API error bodies, MCP error payloads and tracing fields.
         // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
@@ -377,13 +343,8 @@ mod tests {
 
     /// A blocked request whose URL carries `user:pass@` userinfo.
     ///
-    /// ~keep The seed URL is deliberately NOT the vector here. `chromiumoxide_fetch_inner`
-    /// ~keep (`browser.rs`) already routes a credential-bearing *seed* through
-    /// ~keep `CrawlError::ssrf_violation`, so a test that merely passes a credential-bearing
-    /// ~keep seed passes with or without the fix this covers. The leak is the *intercepted*
-    /// ~keep URL: Chrome follows a redirect itself, `Fetch.requestPaused` reports the redirect
-    /// ~keep target verbatim, and `ssrf_intercept` stores that string unchanged — so the URL
-    /// ~keep arriving here is the refused redirect target, credentials and all.
+    /// ~keep `ssrf_intercept` records such a URL without its userinfo, so this pins the last
+    /// ~keep guard: a URL that arrives here with userinfo anyway is still redacted.
     fn blocked_with_credentials() -> Option<(String, String)> {
         Some((
             "https://user:secret@10.0.0.1/".to_owned(),

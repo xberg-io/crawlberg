@@ -2187,6 +2187,15 @@ int32_t cberg_crawl_page_result_noindex_detected(CBERGAlefHandle handle);
 int32_t cberg_crawl_page_result_nofollow_detected(CBERGAlefHandle handle);
 
 /**
+ * Get the `ssrf_refused_urls` field from a `CrawlPageResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_crawl_page_result_ssrf_refused_urls(CBERGAlefHandle handle);
+
+/**
  * Create a `CrawlResult` from a JSON string. Returns null on failure.
  * # Safety
  * JSON string must be valid UTF-8 and null-terminated.
@@ -2930,6 +2939,15 @@ char *cberg_interaction_result_final_url(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 char *cberg_interaction_result_screenshot_base64(CBERGAlefHandle handle);
+
+/**
+ * Get the `ssrf_refused_urls` field from a `InteractionResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_interaction_result_ssrf_refused_urls(CBERGAlefHandle handle);
 
 /**
  * Create a `JsonLdEntry` from a JSON string. Returns null on failure.
@@ -3985,6 +4003,15 @@ CBERGAlefHandle cberg_scrape_result_downloaded_document(CBERGAlefHandle handle);
  * Pointer must be a valid handle returned by this library.
  */
 CBERGAlefHandle cberg_scrape_result_browser(CBERGAlefHandle handle);
+
+/**
+ * Get the `ssrf_refused_urls` field from a `ScrapeResult`.
+ * A non-null returned pointer is owned by the caller.
+ * It must be freed with `cberg_free_string`.
+ * # Safety
+ * Pointer must be a valid handle returned by this library.
+ */
+char *cberg_scrape_result_ssrf_refused_urls(CBERGAlefHandle handle);
 
 /**
  * Create a `SitemapUrl` from a JSON string. Returns null on failure.

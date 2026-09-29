@@ -247,10 +247,7 @@ async fn watch_pooled_page(
     page: &chromiumoxide::Page,
     config: &CrawlConfig,
 ) -> Result<Watch, CrawlError> {
-    pool.firewall()
-        .await?
-        .watch(page, &config.ssrf, config.max_redirects)
-        .await
+    pool.firewall().await?.watch(page, config, config.max_redirects).await
 }
 
 /// Park `page` for reuse when session affinity wants it and the fetch succeeded, otherwise
@@ -386,10 +383,7 @@ impl OneShotSession {
             .await
             .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
         self.open_tab = Some(page.target_id().clone());
-        let watch = firewall
-            .handle()
-            .watch(&page, &config.ssrf, config.max_redirects)
-            .await?;
+        let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
         Ok((page, watch))
     }
 }

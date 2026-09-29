@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
@@ -13,7 +12,7 @@ use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, kill_browser, release_browser};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -150,7 +149,7 @@ async fn run_with_browser(
     // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
     // ~keep Closing the watch closes the popups, children first, then the page, and stops
     // ~keep watching only once Chrome has destroyed them, so the check answers until then.
-    match firewall.handle().watch(&page, &config.ssrf, config.max_redirects).await {
+    match firewall.handle().watch(&page, config, config.max_redirects).await {
         Ok(watch) => {
             let result = async {
                 prepare_page(&page, config).await?;
@@ -251,30 +250,6 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
             .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
-    let mut extra_headers = serde_json::Map::new();
-    for (key, value) in &config.custom_headers {
-        extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
-    }
-
     Ok(())
 }
 
@@ -344,9 +319,9 @@ fn resolve_navigation_outcome(
     };
     if let Some((blocked_url, reason)) = blocked {
         // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
-        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
-        // ~keep refused request had. xberg-io/crawlberg#180.
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `ssrf_intercept` records a URL
+        // ~keep with userinfo without it, and `ssrf_violation` redacts again as the last guard.
+        // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
