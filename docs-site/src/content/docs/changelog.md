@@ -45,8 +45,8 @@ title: "Changelog"
 ### Fixed
 
 - **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
-  request sent the same agent, and robots.txt was judged for a different agent than the one the
-  page fetch actually sent. The wasm crawl loop now picks the next rotation agent once per page,
+  request sent the fixed default agent, and robots.txt was judged for that same default agent.
+  Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
   judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
   behavior the native crawl loop already had. (#483)
 
