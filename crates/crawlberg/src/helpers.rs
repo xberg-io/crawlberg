@@ -183,7 +183,7 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
         // `WafBlocked` is here for a different reason: `http_fetch` raises it for a 403 but also for
-        // a *2xx* block page (http.rs), and `fetch_robots_outcome` raises it for a 2xx robots.txt
+        // a *2xx* block page (http.rs), and `fetch_robots_document` raises it for a 2xx robots.txt
         // block page of any size the classifier reads, so it does not imply a 4xx at all.
         // What it does imply is that the bytes we hold are an interstitial rather than the origin's
         // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
