@@ -6,6 +6,9 @@
 //! ~keep but test code belongs here: a production helper moved in would become lint-exempt
 //! ~keep by accident.
 
+use chromiumoxide::detection::{DetectionOptions, default_executable};
+use sysinfo::UpdateKind;
+
 use super::*;
 
 #[test]
@@ -287,22 +290,394 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
     );
 }
 
-/// A process is found by its profile argument both as a separate argument and inside the single
-/// space-joined command line Chrome's rewritten process titles read back as.
+/// Launch a Chrome on `user_data_dir` for a test, or announce the skip and return `None`.
+async fn launch_for(test_name: &str, user_data_dir: &std::path::Path) -> Option<(Browser, JoinHandle<()>)> {
+    launch_config(test_name, build_pool_launch_builder(user_data_dir, &[])).await
+}
+
+/// Launch the Chrome `builder` describes for a test, or announce the skip and return `None`.
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+async fn launch_config(test_name: &str, builder: BrowserConfigBuilder) -> Option<(Browser, JoinHandle<()>)> {
+    let launched = match builder.build() {
+        Ok(config) => Browser::launch(config).await.map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    match launched {
+        Ok((browser, mut handler)) => {
+            let task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+            Some((browser, task))
+        }
+        Err(error) => {
+            eprintln!("skipping {test_name} because no usable Chrome was found: {error}");
+            None
+        }
+    }
+}
+
+/// How many live processes have `text` on their command line.
+fn processes_naming(text: &str) -> usize {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_cmd(UpdateKind::Always),
+    );
+    system
+        .processes()
+        .values()
+        .filter(|process| {
+            process.status() != ProcessStatus::Zombie
+                && process
+                    .cmd()
+                    .iter()
+                    .any(|argument| argument.to_string_lossy().contains(text))
+        })
+        .count()
+}
+
+/// A killed browser's processes are found through the process tree, not by matching text, so a
+/// profile path with a space in it is no different: every process is gone and the directory is
+/// removed when the kill returns.
+#[tokio::test]
+async fn a_killed_browser_with_a_space_in_its_profile_path_leaves_no_process_and_no_directory() {
+    let test_name = "a_killed_browser_with_a_space_in_its_profile_path_leaves_no_process_and_no_directory";
+    let root = std::env::temp_dir().join(format!("crawlberg spaced {}", std::process::id()));
+    let profile = root.join("crawlberg-interact-0-0");
+    let Some((browser, task)) = launch_for(test_name, &profile).await else {
+        return;
+    };
+    let text = profile.display().to_string();
+    let before = processes_naming(&text);
+    kill_browser(browser, task, profile.clone(), Duration::from_secs(5)).await;
+    let after = processes_naming(&text);
+    let left = profile.exists();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        before > 1,
+        "{test_name}: the launched Chrome must have helper processes that name its profile, got {before}"
+    );
+    assert_eq!(
+        after, 0,
+        "{test_name}: no process may still run with the profile once the kill returns"
+    );
+    assert!(!left, "{test_name}: the profile must be removed");
+}
+
+/// The kill ends the browser it launched and nothing else: a process of another program that
+/// names crawlberg's profile on its command line, and a Chrome on a profile whose path starts
+/// with crawlberg's, both survive it.
+#[tokio::test]
+async fn kill_browser_ends_only_the_browser_it_launched() {
+    let test_name = "kill_browser_ends_only_the_browser_it_launched";
+    if !cfg!(unix) {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("crawlberg-only-ours-{}", std::process::id()));
+    let profile = root.join("crawlberg-interact-0-0");
+    let Some((browser, task)) = launch_for(test_name, &profile).await else {
+        return;
+    };
+    let Some((mut foreign, foreign_task)) = launch_for(test_name, &root.join("crawlberg-interact-0-0 copy")).await
+    else {
+        return;
+    };
+    let mut wrapper = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("sleep 60; : --user-data-dir={}", profile.display()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("sh must start");
+
+    kill_browser(browser, task, profile.clone(), Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let wrapper_alive = wrapper.try_wait().expect("the wrapper must be waitable").is_none();
+    let foreign_alive = foreign
+        .get_mut_child()
+        .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+    let foreign_answers = tokio::time::timeout(Duration::from_secs(5), foreign.version()).await;
+
+    let _ = wrapper.kill();
+    let _ = wrapper.wait();
+    let _ = foreign.kill().await;
+    foreign_task.abort();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        wrapper_alive,
+        "{test_name}: a process of another program that names crawlberg's profile must survive the kill"
+    );
+    assert!(
+        foreign_alive,
+        "{test_name}: a Chrome on a profile whose path starts with crawlberg's must survive the kill"
+    );
+    assert!(
+        matches!(foreign_answers, Ok(Ok(_))),
+        "{test_name}: the other Chrome must still answer after the kill: {foreign_answers:?}"
+    );
+}
+
+/// A family that keeps forking is stopped as it is found, and every member has taken its stop when
+/// the collection returns, so a child forked while the family is collected cannot slip past the
+/// kill.
 #[test]
-fn a_profile_argument_is_found_in_a_joined_command_line() {
-    let arg = "--user-data-dir=/tmp/crawlberg-interact-1-0";
-    assert!(names(std::ffi::OsStr::new(arg), arg));
-    assert!(names(
-        std::ffi::OsStr::new(
-            "/opt/google/chrome/chrome --type=renderer --user-data-dir=/tmp/crawlberg-interact-1-0 --lang=en"
+fn a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind() {
+    let test_name = "a_forking_family_is_stopped_as_it_is_found_and_leaves_no_child_behind";
+    if !cfg!(unix) {
+        return;
+    }
+    let marker = format!("crawlberg-family-test-{}", std::process::id());
+    let mut parent = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("while :; do sh -c 'sleep 2; :' \"$0\" & sleep 0.01; done")
+        .arg(&marker)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("sh must start");
+    std::thread::sleep(Duration::from_millis(200));
+
+    let family = ChromeFamily::freeze(parent.id());
+    let running = {
+        let mut system = System::new();
+        ChromeFamily::refresh(&mut system, ProcessesToUpdate::Some(&family.members));
+        family
+            .members
+            .iter()
+            .filter(|pid| {
+                system
+                    .process(**pid)
+                    .is_some_and(|process| !matches!(process.status(), ProcessStatus::Stop | ProcessStatus::Zombie))
+            })
+            .count()
+    };
+    family.kill();
+    let gone = family.wait(Duration::from_secs(5));
+    let _ = parent.wait();
+    std::thread::sleep(Duration::from_millis(100));
+    let survivors = processes_naming(&marker);
+
+    assert!(
+        family.members.len() > 2,
+        "{test_name}: the family must hold the shell and its children, got {}",
+        family.members.len()
+    );
+    assert_eq!(
+        running, 0,
+        "{test_name}: every member must have taken its stop when the collection returns, {running} still ran"
+    );
+    assert!(gone, "{test_name}: every member must be gone within the limit");
+    assert_eq!(
+        survivors, 0,
+        "{test_name}: no child forked while the family was collected may survive the kill"
+    );
+}
+
+/// The kill ends every process the browser started, not only the main process: Chrome is launched
+/// through a script that leaves a marked child behind before it becomes Chrome, and that child must
+/// be gone when the kill returns.
+///
+/// ~keep Chrome's own helpers exit on their own soon after the main process is killed, so a kill
+/// ~keep that collected nothing passed the profile tests on an idle host and left the directory
+/// ~keep behind only under load. The script's child never exits on its own, so the kill has to
+/// ~keep end it. The child's parent is the script's shell, which becomes Chrome's main process
+/// ~keep when it execs, so the child is family.
+#[tokio::test]
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+async fn kill_browser_ends_a_process_the_browser_started() {
+    let test_name = "kill_browser_ends_a_process_the_browser_started";
+    if !cfg!(unix) {
+        return;
+    }
+    let Ok(chrome) = default_executable(DetectionOptions::default()) else {
+        eprintln!("skipping {test_name} because no usable Chrome was found");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("crawlberg-wrapped-{}", std::process::id()));
+    let profile = root.join("crawlberg-interact-0-0");
+    let marker = format!("crawlberg-left-behind-{}", std::process::id());
+    let script = root.join("chrome-that-leaves-a-child.sh");
+    std::fs::create_dir_all(&root).expect("the test directory must be created");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nsh -c 'sleep 60; : {marker}' >/dev/null 2>&1 &\nexec \"{}\" \"$@\"\n",
+            chrome.display()
         ),
-        arg
-    ));
-    assert!(!names(
-        std::ffi::OsStr::new("/opt/google/chrome/chrome --user-data-dir=/tmp/crawlberg-interact-1-01"),
-        arg
-    ));
+    )
+    .expect("the script must be written");
+    let executable = std::process::Command::new("chmod")
+        .arg("755")
+        .arg(&script)
+        .status()
+        .is_ok_and(|status| status.success());
+    assert!(executable, "{test_name}: the script must be made executable");
+    let builder = build_pool_launch_builder(&profile, &[]).chrome_executable(&script);
+    let Some((browser, task)) = launch_config(test_name, builder).await else {
+        return;
+    };
+    let before = processes_naming(&marker);
+    kill_browser(browser, task, profile.clone(), Duration::from_secs(5)).await;
+    let after = processes_naming(&marker);
+    let _ = std::process::Command::new("pkill").args(["-f", &marker]).status();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        before, 1,
+        "{test_name}: the script must leave one child behind before it becomes Chrome, got {before}"
+    );
+    assert_eq!(
+        after, 0,
+        "{test_name}: a process the browser started must be gone when the kill returns, {after} left"
+    );
+}
+
+/// The wait for a member's stop ends once the member has taken it, and at its bound while a member
+/// has not.
+#[test]
+fn the_wait_for_a_stop_ends_when_it_is_taken_or_at_its_bound() {
+    let test_name = "the_wait_for_a_stop_ends_when_it_is_taken_or_at_its_bound";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut stopped = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("sleep must start");
+    let mut running = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("sleep must start");
+    let sent = std::process::Command::new("kill")
+        .args(["-STOP", &stopped.id().to_string()])
+        .status()
+        .is_ok_and(|status| status.success());
+    let members = [Pid::from_u32(stopped.id()), Pid::from_u32(running.id())];
+    let (report, waited) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        ChromeFamily::settle(&mut System::new(), &members);
+        let _ = report.send(started.elapsed());
+    });
+    let waited = waited.recv_timeout(ChromeFamily::SETTLE * 5);
+    let started = std::time::Instant::now();
+    ChromeFamily::settle(&mut System::new(), &members[..1]);
+    let settled_in = started.elapsed();
+    let _ = stopped.kill();
+    let _ = stopped.wait();
+    let _ = running.kill();
+    let _ = running.wait();
+
+    assert!(sent, "{test_name}: the stop must be sent");
+    assert!(
+        matches!(waited, Ok(waited) if waited >= ChromeFamily::SETTLE),
+        "{test_name}: the wait must last until its bound while a member has not taken its stop, got {waited:?}"
+    );
+    assert!(
+        settled_in < ChromeFamily::SETTLE,
+        "{test_name}: the wait must end once every member has taken its stop, it took {settled_in:?}"
+    );
+}
+
+/// The wait for a family ends when its members are gone, and at its limit while they are not.
+#[test]
+fn the_wait_for_a_family_ends_with_its_members_or_at_its_limit() {
+    let test_name = "the_wait_for_a_family_ends_with_its_members_or_at_its_limit";
+    if !cfg!(unix) {
+        return;
+    }
+    let mut child = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("sleep must start");
+    let family = ChromeFamily {
+        members: vec![Pid::from_u32(child.id())],
+    };
+    let started = std::time::Instant::now();
+    let gone_early = family.wait(Duration::from_millis(300));
+    let waited = started.elapsed();
+    let _ = child.kill();
+    let _ = child.wait();
+    let gone = family.wait(Duration::from_secs(5));
+
+    assert!(
+        !gone_early,
+        "{test_name}: the wait must report a member still running at its limit"
+    );
+    assert!(
+        waited >= Duration::from_millis(300),
+        "{test_name}: the wait must last until its limit, it ended after {waited:?}"
+    );
+    assert!(gone, "{test_name}: the wait must end once every member is gone");
+}
+
+/// A member whose main thread has exited reads as a zombie while another thread of it still
+/// runs, and the wait holds until that thread is gone too.
+///
+/// ~keep The child's main thread leaves through pthread_exit while a second thread sleeps on:
+/// ~keep the shape a killed Chrome process takes while a thread of it finishes a write.
+#[test]
+#[allow(
+    clippy::print_stderr,
+    reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
+)]
+fn the_wait_for_a_family_holds_while_a_thread_of_a_zombie_member_runs() {
+    let test_name = "the_wait_for_a_family_holds_while_a_thread_of_a_zombie_member_runs";
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let Ok(mut child) = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            "import ctypes, threading, time\nthreading.Thread(target=time.sleep, args=(30,)).start()\n\
+             ctypes.CDLL(None).pthread_exit(None)",
+        )
+        .spawn()
+    else {
+        eprintln!("skipping {test_name} because python3 is not available");
+        return;
+    };
+    let pid = Pid::from_u32(child.id());
+    let mut system = System::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut reads_as_zombie = false;
+    while std::time::Instant::now() < deadline {
+        system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+        if system
+            .process(pid)
+            .is_some_and(|process| process.status() == ProcessStatus::Zombie)
+        {
+            reads_as_zombie = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let family = ChromeFamily { members: vec![pid] };
+    let started = std::time::Instant::now();
+    let gone_while_running = family.wait(Duration::from_millis(500));
+    let held = started.elapsed();
+    let _ = child.kill();
+    let _ = child.wait();
+    let gone = family.wait(Duration::from_secs(5));
+
+    assert!(
+        reads_as_zombie,
+        "{test_name}: the child's main thread must have exited so that it reads as a zombie"
+    );
+    assert!(
+        !gone_while_running && held >= Duration::from_millis(500),
+        "{test_name}: a member with a running thread must not be taken as gone, gone={gone_while_running} after {held:?}"
+    );
+    assert!(gone, "{test_name}: the member must be gone once its threads are");
 }
 
 /// A kill that cannot run falls back to releasing the browser, and the profile is still removed.

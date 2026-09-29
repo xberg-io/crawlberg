@@ -213,8 +213,9 @@ title: "Changelog"
   interception off, or closed the browser, while they were still sending, and their requests went
   out. A browser crawlberg launches with a throwaway profile, for one `interact` session or one
   scrape, now keeps interception on until it is killed, so its requests stay paused until the
-  process is gone. crawlberg then ends every Chrome process that still uses the profile and removes
-  the profile. A scrape with a saved `browser_profile` and a scrape through a `BrowserPool` end as
+  process is gone. crawlberg then ends every process of that Chrome, waits until none of them and
+  none of their threads is left, or until `browser.shutdown_timeout` passes, and then removes the
+  profile. A scrape with a saved `browser_profile` and a scrape through a `BrowserPool` end as
   before. This applies to the Chromiumoxide backend. (#468)
 - **An `interact` session or a scrape on a `browser.endpoint` browser could send requests to a
   refused address as it ended, on a busy host.** crawlberg cannot kill a browser it does not own,
