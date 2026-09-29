@@ -343,6 +343,16 @@ fn canonical_redirect_key(url: &str) -> String {
         .unwrap_or_else(|_| url.to_owned())
 }
 
+/// How a redirect chain fetches each hop.
+#[derive(Clone, Copy)]
+pub(crate) enum Hop {
+    /// [`CrawlEngine::fetch_response`]: the tiers the configuration selects.
+    Fetch,
+    /// A render on the native browser backend that keeps the page's browser extras.
+    #[cfg(feature = "browser-native")]
+    NativeRender,
+}
+
 /// Follow HTTP 3xx, `Refresh` header, and `<meta http-equiv="refresh">` redirects.
 ///
 /// This is the shared redirect-following implementation used by both
@@ -361,11 +371,13 @@ fn canonical_redirect_key(url: &str) -> String {
 /// surface a soft `state.error` rather than aborting the request.
 /// Every URL the chain requests passes `policy` first, so a caller that passes `Some(policy)`
 /// cannot reach a URL the configuration forbids, whatever order it does its own work in.
+/// `hop` says how each hop is fetched.
 pub(crate) async fn follow_redirects(
     engine: &CrawlEngine,
     initial_url: &str,
     max_redirects: usize,
     mut policy: Option<&mut RedirectPolicy<'_>>,
+    hop: Hop,
 ) -> Result<RedirectResolution, CrawlError> {
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
@@ -393,10 +405,16 @@ pub(crate) async fn follow_redirects(
         // ~keep The browser tier follows redirects inside Chrome, so it gets the hops this
         // ~keep chain has left rather than the whole limit.
         hop_engine.config.max_redirects = max_redirects.saturating_sub(chain.redirect_count);
-        let (resp, hop_browser_used) = match hop_engine
-            .fetch_response(&chain.current_url, forced_user_agent.as_deref())
-            .await
-        {
+        let fetched = match hop {
+            Hop::Fetch => {
+                hop_engine
+                    .fetch_response(&chain.current_url, forced_user_agent.as_deref())
+                    .await
+            }
+            #[cfg(feature = "browser-native")]
+            Hop::NativeRender => hop_engine.native_render(&chain.current_url).await,
+        };
+        let (resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -729,6 +747,7 @@ mod tests {
                 url: url.to_owned(),
                 redirects: 0,
                 refused: Vec::new(),
+                extras: None,
             }));
             landed_redirect(&resp, &chain).map(|(target, _, _)| target)
         };

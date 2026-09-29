@@ -740,3 +740,74 @@ async fn native_counts_a_script_navigation_against_max_redirects() {
         }
     }
 }
+
+/// A native scrape follows a meta refresh within `max_redirects` and ends where HTTP mode ends:
+/// on the refresh target within the limit, on the refresh page past it (#530).
+#[tokio::test]
+async fn native_scrape_follows_a_meta_refresh_where_http_mode_does() {
+    for (max_redirects, expected) in [(0, (200, "/".to_owned())), (1, (200, "/n".to_owned()))] {
+        for mode in [crawlberg::BrowserMode::Never, crawlberg::BrowserMode::Always] {
+            let site = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    r#"<html><head><meta http-equiv="refresh" content="0; url=/n"></head><body>refresh</body></html>"#,
+                    "text/html",
+                ))
+                .mount(&site)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/n"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+                .mount(&site)
+                .await;
+            let config = CrawlConfig {
+                max_redirects,
+                respect_robots_txt: false,
+                ..native_config(|c| BrowserConfig {
+                    mode: mode.clone(),
+                    ..c
+                })
+            };
+            let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+                .await
+                .expect("the scrape must succeed");
+            assert_eq!(
+                (
+                    scraped.status_code,
+                    scraped.final_url.trim_start_matches(&site.uri()).to_owned()
+                ),
+                expected,
+                "{mode:?} at max_redirects={max_redirects}: the scrape must end where HTTP mode ends"
+            );
+        }
+    }
+}
+
+/// A native scrape of a seed that answers 404 fails with `not_found` as HTTP mode does, also
+/// when the seed has no trailing slash and the page's URL gains one (#529).
+#[tokio::test]
+async fn native_scrape_of_a_missing_seed_without_a_trailing_slash_is_not_found() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw("<html><body>missing</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let seed = site.uri();
+    assert!(!seed.ends_with('/'), "the seed must have no trailing slash: {seed}");
+
+    for mode in [crawlberg::BrowserMode::Never, crawlberg::BrowserMode::Always] {
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..native_config(|c| BrowserConfig {
+                mode: mode.clone(),
+                ..c
+            })
+        };
+        match scrape(&engine_with(config), &seed).await {
+            Err(crawlberg::CrawlError::NotFound { .. }) => {}
+            other => panic!("{mode:?}: a missing seed must fail with not_found, got {other:?}"),
+        }
+    }
+}

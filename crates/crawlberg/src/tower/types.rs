@@ -186,4 +186,7 @@ pub struct Landing {
     pub redirects: usize,
     /// The URLs the browser's SSRF check refused for requests the page sent, credential-redacted.
     pub refused: Vec<String>,
+    /// The eval result, network events and cookies of the page. Only a scrape on the native
+    /// backend carries them.
+    pub extras: Option<crate::http::BrowserExtras>,
 }

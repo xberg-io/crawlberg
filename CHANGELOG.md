@@ -107,6 +107,13 @@ All notable changes to crawlberg are documented here.
   only the redirects before the first document counted, so a page could lead Chrome through any
   number of refreshes or script navigations. A redirect inside an iframe does not count.
   (#117, #193)
+
+- **A native browser scrape skipped the redirect chain.** It did not follow a meta refresh, so
+  it returned the refresh page where HTTP mode returns the page the refresh points at. It also
+  reported a seed that answers 404 as a page with status 404 when the seed had no trailing
+  slash, where HTTP mode fails with `not_found`. A native scrape now takes the same redirect
+  chain as HTTP mode and uses the redirect count the backend reports. (#529, #530)
+
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports

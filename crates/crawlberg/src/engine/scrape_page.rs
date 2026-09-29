@@ -32,18 +32,10 @@ impl CrawlEngine {
         #[cfg(not(target_arch = "wasm32"))]
         self.warn_if_capture_screenshot_is_a_no_op();
 
-        // ~keep Short-circuit native BrowserMode::Always so browser_extras survive fetch_response conversion.
-        #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-        if self.config.browser.mode == crate::types::BrowserMode::Always
-            && self.config.browser.backend == crate::types::BrowserBackend::Native
-        {
-            return self.native_browser_scrape(url).await;
-        }
-
         // ~keep Short-circuit chromiumoxide BrowserMode::Always/Stealth when a screenshot was
-        // ~keep requested, for the same reason as the native short-circuit above: the generic
-        // ~keep `fetch_response`/`follow_redirects` path converts to `CrawlResponse`, which drops
-        // ~keep the screenshot bytes captured on `HttpResponse` (see `browser_http_to_crawl`).
+        // ~keep requested: the generic `fetch_response`/`follow_redirects` path converts to
+        // ~keep `CrawlResponse`, which drops the screenshot bytes captured on `HttpResponse`
+        // ~keep (see `browser_http_to_crawl`).
         #[cfg(all(not(target_arch = "wasm32"), feature = "browser"))]
         if self.config.capture_screenshot
             && self.config.browser.backend == crate::types::BrowserBackend::Chromiumoxide
@@ -57,10 +49,23 @@ impl CrawlEngine {
 
         #[cfg(not(target_arch = "wasm32"))]
         let (final_url, response, browser_used_for_fetch) = {
-            use super::redirect::{RedirectResolution, follow_redirects};
+            use super::redirect::{Hop, RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
-            let outcome = match follow_redirects(self, url, max_redirects, None).await? {
+            // ~keep A native render in BrowserMode::Always takes the same redirect chain as every
+            // ~keep other scrape, so a meta refresh and a not-found seed end as in HTTP mode, and
+            // ~keep it works on a build without the `browser` feature, which `fetch_response` needs.
+            #[cfg(feature = "browser-native")]
+            let hop = if self.config.browser.mode == crate::types::BrowserMode::Always
+                && self.config.browser.backend == crate::types::BrowserBackend::Native
+            {
+                Hop::NativeRender
+            } else {
+                Hop::Fetch
+            };
+            #[cfg(not(feature = "browser-native"))]
+            let hop = Hop::Fetch;
+            let outcome = match follow_redirects(self, url, max_redirects, None, hop).await? {
                 RedirectResolution::Fetched(outcome) => outcome,
                 // ~keep Only a crawl policy refuses a hop, and a scrape passes none: it reports
                 // ~keep robots.txt through `ScrapeResult::is_allowed` and fetches either way.
@@ -93,6 +98,14 @@ impl CrawlEngine {
         )
         .await?;
         result.browser_used = browser_used_for_fetch;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(extras) = response.landed.and_then(|landed| landed.extras) {
+            result.browser = Some(crate::types::BrowserExtras {
+                eval_result: extras.eval_result,
+                network_events: extras.network_events,
+                cookies: extras.cookies,
+            });
+        }
 
         // ~keep Without the browser feature, BrowserMode::Always still reports browser_used for binding parity.
         #[cfg(not(feature = "browser"))]
@@ -132,44 +145,31 @@ impl CrawlEngine {
         }
     }
 
-    /// Scrape through the native browser backend, keeping its `browser_extras`.
+    /// Render `url` with the native backend, as one hop of a scrape's redirect chain.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-    async fn native_browser_scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
+    pub(super) async fn native_render(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
-        let (http_resp, ssrf_refused_urls, _redirects) =
+        let (response, refused, redirects) =
             crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
-        let redirected = http_resp.final_url != url;
-        let mut http_resp = crate::http::rendered_status_outcome(http_resp, redirected, &self.config)?;
-        let raw_extras = http_resp.browser_extras.take();
+        let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
         let crawl_resp = crate::tower::CrawlResponse {
-            status: http_resp.status,
-            content_type: http_resp.content_type,
-            body: http_resp.body,
-            body_bytes: http_resp.body_bytes,
-            headers: std::collections::HashMap::new(),
-            landed: None,
+            status: response.status,
+            content_type: response.content_type,
+            body: response.body,
+            body_bytes: response.body_bytes,
+            headers: response.headers,
+            landed: Some(Box::new(crate::tower::Landing {
+                url: response.final_url,
+                redirects,
+                refused,
+                extras: response.browser_extras,
+            })),
             // ~keep The native browser backend never reads `config.user_agents`.
             sent_user_agent: None,
         };
-        let mut result = crate::scrape::scrape_from_crawl_response(
-            &http_resp.final_url,
-            &crawl_resp,
-            &self.config,
-            self.document_filter.as_deref(),
-        )
-        .await?;
-        result.browser_used = true;
-        result.ssrf_refused_urls = ssrf_refused_urls;
-        if let Some(ex) = raw_extras {
-            result.browser = Some(crate::types::BrowserExtras {
-                eval_result: ex.eval_result,
-                network_events: ex.network_events,
-                cookies: ex.cookies,
-            });
-        }
-        Ok(result)
+        Ok((crawl_resp, true))
     }
 
     /// Scrape through chromiumoxide, keeping the screenshot it captured.

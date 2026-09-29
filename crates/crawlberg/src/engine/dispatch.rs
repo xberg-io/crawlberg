@@ -198,6 +198,7 @@ impl CrawlEngine {
                     url: r.final_url,
                     redirects: page.redirects,
                     refused: page.refused,
+                    extras: None,
                 })),
                 // ~keep The browser tier never reads `config.user_agents`; it always sends the
                 // single configured agent, so callers fall back to the configured default.
