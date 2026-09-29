@@ -264,6 +264,31 @@ async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: Browser
     }
 }
 
+/// Connect to the external Chrome at a configured CDP `endpoint`. The pool, the one-shot
+/// launch path and the interact backend all connect through this one function.
+///
+/// ~keep async-tungstenite accepts only a lower-case `ws`/`wss` scheme, and `http::Uri` refuses
+/// ~keep surrounding spaces and a missing `//`, while the endpoint checks accept all of those
+/// ~keep spellings. So a WebSocket endpoint is sent in the normalized form of the same parse the
+/// ~keep checks use. Any other endpoint (chromiumoxide also takes an `http://` DevTools address,
+/// ~keep and the pool's own field has no check) is sent as written.
+///
+/// The endpoint is a capability (its userinfo, its CDP path GUID or a `?token=` drives the
+/// browser), and the error flows into API error bodies and MCP error payloads, so only its
+/// origin prints.
+///
+/// ~keep The connect future is boxed. Every crawl future that can reach a connect contains this
+/// ~keep one, and without the box the extra async layer pushes the generated Dart bridge's
+/// ~keep crawl future past rustc's layout query depth limit (`crawlberg-dart` fails to build).
+pub(crate) async fn connect_endpoint(endpoint: &str) -> Result<(Browser, chromiumoxide::Handler), CrawlError> {
+    let normalized = crate::net::parse_websocket_url(endpoint);
+    let address = normalized.as_ref().map_or(endpoint, url::Url::as_str);
+    Box::pin(Browser::connect(address)).await.map_err(|e| {
+        let redacted = crate::net::redact::redact_url_to_origin(endpoint);
+        CrawlError::browser_error(format!("failed to connect to {redacted}: {e}"))
+    })
+}
+
 /// Tear down `browser` and the task that runs its CDP handler.
 ///
 /// A Chrome that crawlberg launched is closed and reaped within `shutdown_timeout` (see
@@ -553,10 +578,9 @@ impl BrowserPool {
     /// Launch (or connect to) a Chrome process according to the pool config.
     async fn launch_browser(&self) -> Result<BrowserState, CrawlError> {
         let (browser, mut handler, data_dir) = if let Some(ref endpoint) = self.config.browser_endpoint {
-            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::connect(endpoint))
+            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, connect_endpoint(endpoint))
                 .await
-                .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))?
-                .map_err(|e| CrawlError::browser_error(format!("failed to connect to browser: {e}")))?;
+                .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))??;
             (browser, handler, None)
         } else {
             use std::sync::atomic::AtomicU64;
@@ -711,4 +735,4 @@ pub(crate) fn assert_launch_flags_are_normalized(builder: &BrowserConfigBuilder)
 
 #[cfg(test)]
 #[path = "browser_pool_tests.rs"]
-mod tests;
+pub(crate) mod tests;

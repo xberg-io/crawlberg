@@ -361,3 +361,126 @@ fn test_every_known_launch_path_calls_the_shared_apply_default_args_helper() {
         );
     }
 }
+
+/// Every spelling of a WebSocket endpoint that the endpoint checks accept, each with its own
+/// path so a recorded request names the spelling that sent it: upper case, mixed case, padded
+/// with spaces, no `//`, and the plain lower-case form as the control.
+fn accepted_endpoint_spellings(port: u16) -> Vec<(String, &'static str)> {
+    vec![
+        (format!("ws://127.0.0.1:{port}/lower"), "/lower"),
+        (format!("WS://127.0.0.1:{port}/upper"), "/upper"),
+        (format!("Ws://127.0.0.1:{port}/mixed"), "/mixed"),
+        (format!(" ws://127.0.0.1:{port}/padded "), "/padded"),
+        (format!("ws:127.0.0.1:{port}/no-slashes"), "/no-slashes"),
+    ]
+}
+
+/// Drive `connect` with every accepted endpoint spelling against a local listener, and assert
+/// that each one reaches it: an endpoint the checks accept must never fail before it connects.
+///
+/// ~keep The listener answers every request with HTTP 418 and records the request line before
+/// ~keep it answers, so the connect fails fast after the request arrived and the record is
+/// ~keep complete when `connect` returns. A closed port cannot tell the two failures apart:
+/// ~keep the TCP connect happens before the scheme check, so every spelling is refused alike.
+pub(crate) async fn assert_every_accepted_endpoint_reaches_the_browser<F, Fut, T>(mut connect: F)
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, CrawlError>>,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a local port must be free");
+    let port = listener.local_addr().expect("the listener has an address").port();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let recorder = Arc::clone(&seen);
+    let server = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let line = request.lines().next().unwrap_or_default().to_owned();
+            recorder.lock().expect("the recorder lock is never poisoned").push(line);
+            let _ = stream
+                .write_all(b"HTTP/1.1 418 I'm a teapot\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        }
+    });
+
+    let mut missed = Vec::new();
+    for (endpoint, path) in accepted_endpoint_spellings(port) {
+        assert!(
+            crate::net::is_websocket_scheme(&endpoint),
+            "the endpoint checks must accept {endpoint:?}"
+        );
+        let outcome = tokio::time::timeout(Duration::from_secs(10), connect(endpoint.clone())).await;
+        let error = match outcome {
+            Ok(Ok(_)) => panic!("a listener that answers 418 must not complete a connect for {endpoint:?}"),
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => panic!("the connect for {endpoint:?} did not finish within 10 seconds"),
+        };
+        let expected = format!("GET {path} HTTP/1.1");
+        if !seen
+            .lock()
+            .expect("the recorder lock is never poisoned")
+            .contains(&expected)
+        {
+            missed.push(format!("{endpoint:?} (connect error: {error})"));
+        }
+    }
+    server.abort();
+    assert!(
+        missed.is_empty(),
+        "accepted endpoints that never reached the browser: {missed:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_pool_connects_every_endpoint_spelling_the_checks_accept() {
+    assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+        let pool = BrowserPool::new(BrowserPoolConfig {
+            browser_endpoint: Some(endpoint),
+            launch_timeout: Duration::from_secs(5),
+            ..BrowserPoolConfig::default()
+        });
+        pool.warm().await
+    })
+    .await;
+}
+
+/// The pool's connect-error message must never carry a `browser.endpoint` password or path
+/// token, though the failing origin must still be readable for debugging.
+///
+/// ~keep The launch path and the interact backend have the same test (`browser/launch.rs`,
+/// ~keep `interact/chromiumoxide.rs`): xberg-io/crawlberg#473 was this test missing for one
+/// ~keep connect site after another added it for a different one, so each site keeps its own,
+/// ~keep including the pool. A closed local port refuses the connection immediately, so this
+/// ~keep needs no real Chrome and stays fast; `ws://` skips chromiumoxide's `json/version` HTTP
+/// ~keep probe and goes straight to the WebSocket handshake.
+#[tokio::test]
+async fn pool_connect_error_prints_only_the_endpoint_origin() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+        launch_timeout: Duration::from_secs(5),
+        ..BrowserPoolConfig::default()
+    });
+
+    let err = pool
+        .warm()
+        .await
+        .expect_err("a refused local port must fail the connect");
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("hunter2"),
+        "password must not survive into the error, got: {msg}"
+    );
+    assert!(
+        !msg.contains("b1946ac9-guid"),
+        "the CDP path token must not survive into the error, got: {msg}"
+    );
+    assert!(
+        msg.contains("127.0.0.1"),
+        "host must still appear in the error, got: {msg}"
+    );
+}

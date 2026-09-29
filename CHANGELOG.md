@@ -209,6 +209,23 @@ All notable changes to crawlberg are documented here.
   markup now goes through the URL parser against the page address, and an address that does not
   parse is skipped. (#225)
 
+- **The CLI and `browser.endpoint` config field refused an upper-case `WS://` or `Wss://`
+  address.** Both compared the raw text against a lower-case `ws://`/`wss://` prefix, but a URL
+  scheme is case-insensitive (RFC 3986 §3.1). Both now parse the address and read its scheme, and
+  a websocket endpoint with no host is still refused. The browser connection uses the same parse
+  and sends the address with a lower-case scheme, so an upper-case, space-padded or slash-less
+  spelling that the checks accept also connects. The CLI's rejection error no longer prints the
+  address, the same as the config check. (#343)
+
+- **A failed connection to a remote browser printed its password.** When crawlberg could not
+  connect to a `browser.endpoint`, the connect error showed the address as configured, with its
+  `user:pass@` credentials and its CDP path token. The error now prints only the scheme, the host
+  and the port. (#424)
+
+- **The interact backend's connect error printed a browser endpoint's password.** It built the
+  same connect error as the launch path, without redacting the address. It now prints only the
+  origin, the same as the launch path. (#473)
+
 - **The SSRF check could print a credential as the refused scheme.** An address written without
   a scheme, such as `user:token@host` or `KEY:@host:1`, parses with its user name as the scheme,
   and the refusal printed that scheme: `disallowed scheme: user`, or `Forbidden URL scheme 'user'`
