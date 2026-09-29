@@ -288,6 +288,11 @@ pub(crate) async fn http_fetch_with(
     }
 }
 
+/// Statuses whose `Location` header the crawl follows (`engine::redirect::REDIRECT_STATUSES`
+/// reads this same constant; it lives here because `engine::redirect` is native-only and this
+/// module is not).
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
 /// has requested.
 ///
@@ -302,11 +307,6 @@ pub(crate) async fn http_fetch_with(
 /// ~keep A parsed URL's serialization is already the crawl's cycle key for it
 /// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
 /// ~keep serialization is stored and compared directly.
-/// Statuses whose `Location` header the crawl follows (`engine::redirect::REDIRECT_STATUSES`
-/// reads this same constant; it lives here because `engine::redirect` is native-only and this
-/// module is not).
-pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-
 struct ChainRules(Option<std::collections::HashSet<String>>);
 
 impl ChainRules {
