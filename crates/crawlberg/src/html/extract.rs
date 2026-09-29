@@ -78,3 +78,27 @@ pub(crate) fn extract_page_data(
         json_ld,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::html::{mask_raw_text_markup, parse_html};
+
+    /// The metadata raw-body fallback reads whatever `tl`'s DOM pass missed, so this call site
+    /// must hand it the page's own masked text, not a placeholder: an empty `dom` (standing in
+    /// for a DOM pass that found nothing) still gets the description from `page.text`.
+    #[test]
+    fn extract_page_data_feeds_the_page_text_to_the_metadata_raw_fallback() {
+        let page = mask_raw_text_markup(r#"<meta name="description" content="from raw text">"#);
+        let dom = parse_html("").expect("valid HTML");
+        let document_url = Url::parse("https://example.com/").unwrap();
+
+        let extraction = extract_page_data(&dom, &page, &document_url, true, false);
+
+        assert_eq!(
+            extraction.metadata.description.as_deref(),
+            Some("from raw text"),
+            "the raw-body metadata fallback must read the page's own text, not an empty one"
+        );
+    }
+}

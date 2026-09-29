@@ -233,6 +233,25 @@ mod tests {
     }
 
     #[test]
+    fn should_keep_a_wide_tag_bounded_when_the_document_also_needs_raw_text_masking() {
+        // Past html5ever's attribute limit (1024), so the scan returns an owned, space-bounded
+        // text: mask_raw_text_markup must mask raw text and comments against THAT text, not the
+        // unbounded source, or the returned text stops being the one html5ever (and tl) read.
+        let attrs: String = (0..2000).map(|i| format!(" a{i}=\"v\"")).collect();
+        let html = format!(r#"<div{attrs}></div><script>"<a>"</script><a href="/real">r</a>"#);
+        let masked = mask_raw_text_markup(&html).text;
+        assert!(
+            !masked.contains("a1999=\"v\""),
+            "an attribute past the limit must stay overwritten with spaces even when the \
+             document also needs its raw text masked"
+        );
+        assert!(
+            !masked.contains(r#""<a>""#),
+            "the `<` inside script text must still be masked alongside the attribute bound"
+        );
+    }
+
+    #[test]
     fn should_not_mask_past_the_end_tag_of_a_raw_text_element() {
         let html = r#"<script><a></script><a href="/real">r</a>"#;
         assert_eq!(

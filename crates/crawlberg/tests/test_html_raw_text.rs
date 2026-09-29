@@ -235,6 +235,45 @@ async fn should_not_follow_a_link_that_only_appears_inside_raw_text_when_crawlin
     );
 }
 
+/// A crawl runs page extraction through a different call site than a scrape does (the loop's
+/// blocking extraction, not `scrape_from_crawl_response`), so raw-text safety must hold there
+/// too, for data a browser never treats as markup: an image discovered inside script text.
+#[tokio::test]
+async fn should_not_extract_images_that_only_appear_inside_raw_text_when_crawling() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"<html><body>
+                    <script>var t = '<img src="/from-script.png">';</script>
+                    <img src="/real.png" alt="real">
+                    </body></html>"#,
+                )
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+
+    let mut config = CrawlConfig {
+        max_depth: Some(0),
+        max_pages: Some(1),
+        ..allow_private_config()
+    };
+    config.browser.mode = BrowserMode::Never;
+    let handle = create_engine(Some(config)).expect("engine should build");
+    let base = mock.uri();
+    let result = crawl(&handle, &base).await.expect("crawl should succeed");
+
+    let urls: Vec<&str> = result.pages[0].images.iter().map(|i| i.url.as_str()).collect();
+    assert_eq!(
+        urls,
+        vec![format!("{base}/real.png")],
+        "an image inside script text must be ignored during a crawl, not only a scrape"
+    );
+}
+
 /// The URLs of the links `scrape()` extracts from `html`, and the address the page was served at.
 async fn link_urls(html: &str) -> (String, Vec<String>) {
     let (base, result) = scrape_html(html).await;
