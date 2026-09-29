@@ -123,6 +123,7 @@ fn response_from_cache(cached: CachedPage, sent_user_agent: Option<String>) -> C
         headers,
         landed_url: None,
         sent_user_agent,
+        soft_error: false,
     }
 }
 
@@ -309,6 +310,7 @@ mod tests {
                     headers: HashMap::new(),
                     landed_url: None,
                     sent_user_agent: None,
+                    soft_error: false,
                 })
             })
         }
@@ -398,6 +400,7 @@ mod tests {
                     headers,
                     landed_url: None,
                     sent_user_agent,
+                    soft_error: false,
                 })
             })
         }

@@ -89,7 +89,7 @@ impl Drop for PendingWafBlock {
 }
 
 /// Whether `status` is one a `soft_http_errors` page can report: a 4xx or a 5xx.
-pub(super) fn is_soft_error_status(status: u16) -> bool {
+fn is_soft_error_status(status: u16) -> bool {
     (400..600).contains(&status)
 }
 
@@ -312,6 +312,7 @@ impl CrawlEngine {
                     headers: bypass_resp.headers,
                     landed_url: None,
                     sent_user_agent: None,
+                    soft_error: false,
                 },
                 false,
             ));

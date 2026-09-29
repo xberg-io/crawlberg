@@ -10,6 +10,8 @@
 //!    2xx refused as a block page.
 //! 7. Every soft error page has the same shape, whatever its status: no body, no markdown and no
 //!    response metadata.
+//! 8. `soft_http_errors` changes only the responses it turns into soft error pages: an empty 400,
+//!    418 or 501 comes back as the same full page with the flag on and off.
 
 use crawlberg::{BrowserMode, CrawlConfig, CrawlError, CrawlEvent, ScrapeResult, crawl_stream, create_engine, scrape};
 use futures::StreamExt;
@@ -236,11 +238,46 @@ async fn waf_block_on_2xx_reports_403_when_soft_errors_enabled() {
     assert_eq!(status, 403, "a 2xx refused as a WAF block must report 403");
 }
 
-/// An empty 4xx response the fetch does not refuse comes back with the same shape as a refused one.
+/// An empty error response the fetch does not refuse is not a soft error page, so the flag must
+/// not change it: with the flag on and off it comes back as the same full page.
 #[tokio::test]
-async fn empty_error_response_has_the_soft_page_shape_when_soft_errors_enabled() {
-    let status = soft_status_of("/teapot", ResponseTemplate::new(418)).await;
-    assert_eq!(status, 418, "an empty 418 must report 418");
+async fn empty_error_response_the_fetch_accepts_is_the_same_page_whatever_the_flag() {
+    for status in [400_u16, 418, 501] {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/empty"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&mock)
+            .await;
+        let url = format!("{}/empty", mock.uri());
+
+        let mut pages = Vec::new();
+        for soft_http_errors in [false, true] {
+            let handle = engine_with_config(CrawlConfig {
+                soft_http_errors,
+                ..allow_private_config()
+            });
+            let page = scrape(&handle, &url)
+                .await
+                .unwrap_or_else(|err| panic!("{status} soft={soft_http_errors}: expected a page, got Err: {err:?}"));
+            assert_eq!(page.status_code, status, "{status} soft={soft_http_errors}: status");
+            assert!(
+                page.markdown.is_some(),
+                "{status} soft={soft_http_errors}: the page must keep its markdown"
+            );
+            assert!(
+                page.response_meta.is_some(),
+                "{status} soft={soft_http_errors}: the page must keep its response metadata"
+            );
+            pages.push(page);
+        }
+        let markdown = |page: &ScrapeResult| serde_json::to_string(&page.markdown).expect("markdown serializes");
+        assert_eq!(
+            markdown(&pages[0]),
+            markdown(&pages[1]),
+            "{status}: the flag must not change the markdown"
+        );
+    }
 }
 
 /// A 403 WAF block reports 403.
