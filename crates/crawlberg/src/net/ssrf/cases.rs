@@ -12,37 +12,51 @@
 /// assumed, by running this table against the previous extraction (IPv4-mapped and NAT64
 /// well-known only): 22 of the 51 rows failed, and they are precisely the 22 that carry no
 /// `GUARD`. No row failed the other way, so nothing this table permits was newly refused.
+///
+/// ~keep The 9 rows for `240.0.0.0/4`, one per embedding form plus the boundary control just
+/// below `224.0.0.0/4`, are outside that measurement and carry no `GUARD`: they fail on the
+/// extraction before `240.0.0.0/4` joined the deny-list.
 pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     // IPv4-mapped, RFC 4291 section 2.5.5.2. Already unwrapped before this change.
     ("::ffff:127.0.0.1", Some("loopback")),         // GUARD
     ("::ffff:10.0.0.5", Some("private_network")),   // GUARD
     ("::ffff:169.254.169.254", Some("link_local")), // GUARD
     ("::ffff:8.8.8.8", None),                       // GUARD
+    // The reserved range 240.0.0.0/4, which holds the broadcast address 255.255.255.255.
+    ("::ffff:240.0.0.1", Some("private_network")),
     // IPv4-compatible, RFC 4291 section 2.5.5.1.
     ("::127.0.0.1", Some("loopback")),
     ("::10.0.0.5", Some("private_network")),
     ("::169.254.169.254", Some("link_local")),
     ("::8.8.8.8", None), // GUARD
+    ("::240.0.0.1", Some("private_network")),
     // IPv4-translated, RFC 2765 section 2.1.
     ("::ffff:0:127.0.0.1", Some("loopback")),
     ("::ffff:0:10.0.0.5", Some("private_network")),
     ("::ffff:0:169.254.169.254", Some("link_local")),
     ("::ffff:0:8.8.8.8", None), // GUARD
+    ("::ffff:0:240.0.0.1", Some("private_network")),
     // NAT64 well-known prefix, RFC 6052 section 2.1. Already unwrapped before this change.
     ("64:ff9b::127.0.0.1", Some("loopback")),         // GUARD
     ("64:ff9b::10.0.0.5", Some("private_network")),   // GUARD
     ("64:ff9b::169.254.169.254", Some("link_local")), // GUARD
     ("64:ff9b::8.8.8.8", None),                       // GUARD
+    ("64:ff9b::240.0.0.1", Some("private_network")),
     // 6to4, RFC 3056 section 2: the IPv4 address sits in bits 16 to 47.
     ("2002:7f00:1::", Some("loopback")),
     ("2002:a00:5::", Some("private_network")),
     ("2002:a9fe:a9fe::", Some("link_local")),
     ("2002:808:808::", None), // GUARD
+    ("2002:f000:1::", Some("private_network")),
+    // Boundary: the last address below 224.0.0.0/4 stays permitted; only 224.0.0.0/4
+    // (multicast) and 240.0.0.0/4 (reserved) above it are denied.
+    ("2002:dfff:ff01::", None),
     // Local-use NAT64 prefix, RFC 8215, read at the /96 position: the last 32 bits.
     ("64:ff9b:1::10.0.0.5", Some("private_network")),
     ("64:ff9b:1::127.0.0.1", Some("loopback")),
     ("64:ff9b:1::169.254.169.254", Some("link_local")),
     ("64:ff9b:1::8.8.8.8", None), // GUARD
+    ("64:ff9b:1::240.0.0.1", Some("private_network")),
     // A /96 network whose prefix bytes are not zero. 64:ff9b:1:a00::/96 once had every
     // destination refused, because a /48 reading of its prefix is 10.0.0.0.
     ("64:ff9b:1:a00::808:808", None), // GUARD
@@ -77,12 +91,15 @@ pub(crate) const EMBEDDED_IPV4_CASES: &[(&str, Option<&str>)] = &[
     // Teredo, because only 2001:0::/32 is.
     ("2001:0:4136:e378:8000:63bf:3fff:fdd2", None), // GUARD
     ("2001:db8::1", None),                          // GUARD
+    // 5fe:fdfc inverts to 250.1.2.3, inside the reserved range.
+    ("2001:0:4136:e378:8000:63bf:5fe:fdfc", Some("private_network")),
     // ISATAP, RFC 5214 section 6.1: the interface identifier 0000:5efe or 0200:5efe carries
     // the IPv4 address under any prefix.
     ("2001:db8::5efe:10.0.0.5", Some("private_network")),
     ("2001:db8::200:5efe:127.0.0.1", Some("loopback")),
     ("2001:db8::5efe:8.8.8.8", None),     // GUARD
     ("2001:db8::200:5efe:8.8.8.8", None), // GUARD
+    ("2001:db8::5efe:240.0.0.1", Some("private_network")),
     // A fixed-position form has no skip rule, so an address only shaped like ISATAP is refused
     // for what it reads as: 0.1.0.1 here.
     ("2001:db8::5efe:1:1", Some("unspecified")),

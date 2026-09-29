@@ -6,6 +6,10 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
+  `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
+  iterates it does not.
+
 - **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
   The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
   ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
@@ -42,6 +46,15 @@ All notable changes to crawlberg are documented here.
   gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
   remove that step. (#126)
 
+- **A 503 or 429 behind Akamai, Imperva or F5 is retried again instead of escalating.** The three
+  fingerprints in `rules/waf_fingerprints.toml` whose only signal is the CDN's own `server` header
+  (`AkamaiGHost`, `Incapsula`, `BIG-IP`) now decide a 403 only. An overloaded or redeploying origin
+  behind one of those CDNs is therefore retried per `retry_codes` as it was before challenge
+  statuses were fingerprinted, instead of being classified as a WAF block and escalated to the
+  bypass or browser tier. A real block from those vendors is still caught on a 403, and no other
+  fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
+  `statuses` array of the codes it may decide; an empty array is rejected. (#197)
+
 ### Fixed
 
 - **`map()` did not follow a meta refresh.** A page that forwards with a
@@ -52,6 +65,33 @@ All notable changes to crawlberg are documented here.
   the seed host. The links come from the page it lands on. A chain that reaches the redirect
   limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
   the crawl does, instead of failing the whole `map()`. (#502)
+
+- **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
+  products stamp their own header on every response they proxy, and a WAF fingerprint that matches
+  on response headers alone was enough to refuse the response. Robots.txt, sitemap and asset
+  fetches refused every 2xx served through one of them, and the crawl refused such a 200 when its
+  body was under 5000 bytes, with the real page already in hand. A header-only fingerprint now
+  needs the body to show the interstitial before a 2xx is refused. A 403 behind one of those CDNs
+  still blocks. (#231)
+
+- **Every fetch path now makes the same call on a 2xx.** Robots.txt, sitemap and asset fetches
+  checked the body of any 2xx up to 100 KB, the crawl checked only a 200 under 5000 bytes, and a
+  `WafClassifier` set on the engine flagged a 2xx to the antibot strategy and retry policy on a
+  header-only match, so the built-in antibot strategy refused an ordinary 200 behind Sucuri. All
+  three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
+  the body corroborates. So sitemap and asset fetches return a 2xx of 5000 bytes or more as content,
+  the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine flags a 2xx only
+  under the same rule. A robots.txt that is a block page still denies the whole site at any size up
+  to 100 KB. (#500)
+
+- **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
+  WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
+  added one or two, and a `TomlClassifier` set on the engine added one for every match it made. It
+  now moves once for each response refused as a WAF block: by the fetch path, for a 403, 429 or
+  503 challenge or a 2xx interstitial, or by the engine, when its antibot strategy or retry policy
+  refuses a response as a WAF block. A response that is returned as content does not count, and no
+  response counts twice.
+
 - **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
   caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
   and `Https://example.com/` were rejected even though the URL parser accepts them. A URL scheme is
@@ -105,6 +145,12 @@ All notable changes to crawlberg are documented here.
   and its unused bits read as zeros at that position, so a reading whose last three octets are
   zero is skipped unless the prefix bytes after the /48 are zero too. Addresses of those three
   network sizes are checked as IPv6 only, as before. (#108)
+
+- **The reserved range `240.0.0.0/4` passed the SSRF deny-list.** With `deny_private` on,
+  `http://255.255.255.255/` and every other address in the range was fetched, plain or embedded
+  in an IPv6 form that carries an IPv4 address. The range is now refused everywhere the deny-list
+  applies, with reason `private_network`, the same reason the shared address space and the other
+  RFC 1918 ranges already report. (#173)
 
 - **A denial reason could name an address the allowlist permits.** The reason was classified from
   the first deny-listed candidate rather than the first one the allowlist did not admit, so an
