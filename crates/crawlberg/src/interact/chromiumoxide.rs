@@ -11,7 +11,9 @@ use tokio_stream::StreamExt;
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
+use crate::ssrf_intercept::{
+    ACTION_GRACE, BrowserFirewall, BrowserOrigin, CookieSharing, INPUT_ACTION_GRACE, StoppedResponse, Watch,
+};
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
@@ -26,11 +28,12 @@ pub(super) async fn run(
     let result = match BrowserFirewall::start(
         Arc::clone(&browser),
         BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
+        CookieSharing::of_endpoint(config.browser.endpoint.as_deref()),
     )
     .await
     {
         Ok(firewall) => {
-            let result = run_with_browser(&browser, &firewall, url, actions, config).await;
+            let result = run_with_browser(&firewall, url, actions, config).await;
             firewall.stop().await;
             result
         }
@@ -129,22 +132,19 @@ async fn run_action_with_timeout(
 }
 
 async fn run_with_browser(
-    browser: &Browser,
     firewall: &BrowserFirewall,
     url: &str,
     actions: &[PageAction],
     config: &CrawlConfig,
 ) -> Result<InteractionResult, CrawlError> {
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+    let page = firewall.handle().new_page().await?;
 
     // ~keep The SSRF check holds for the whole session, not just the first navigation: the
     // ~keep actions click, submit forms and run scripts, and each can send the page, a frame,
     // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
-    // ~keep Closing the watch closes the popups, children first, then the page, and stops
-    // ~keep watching only once Chrome has destroyed them, so the check answers until then.
+    // ~keep Closing the watch disposes the page's browser context, which takes the page, its
+    // ~keep popups and their pending requests, and stops watching only once Chrome has
+    // ~keep destroyed them, so the check answers until then.
     match firewall.handle().watch(&page, config, config.max_redirects).await {
         Ok(watch) => {
             let result = async {

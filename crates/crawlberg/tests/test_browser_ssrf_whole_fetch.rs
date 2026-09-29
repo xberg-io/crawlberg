@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, CrawlConfig, CrawlError, HostMatcher,
-    ScrapeResult, crawl, create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
+    CrawlError, HostMatcher, ScrapeResult, crawl, create_engine, scrape,
 };
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -333,6 +333,26 @@ async fn cancelled_pooled_scrape_leaks_nothing() {
     pool.shutdown().await;
 }
 
+/// A page parked for session reuse keeps running its scripts. When the pool shuts down while
+/// such a page still floods a denied address, nothing it sent reaches that address.
+#[tokio::test]
+async fn pool_shutdown_with_a_parked_flooding_page_leaks_nothing() {
+    let test_name = "pool_shutdown_with_a_parked_flooding_page_leaks_nothing";
+    let denied = denied_server().await;
+    let (_site, seed) = seed_site(&fetch_flood(&denied_url(&denied))).await;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    let mut config = pooled_config(&pool);
+    config.browser.session_affinity = true;
+    config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
+    if run(test_name, &seed, config).await.is_none() {
+        pool.shutdown().await;
+        return;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    pool.shutdown().await;
+    assert_refused(test_name, &denied).await;
+}
+
 /// A permissive policy (private networks allowed) for a second engine on the same pool.
 fn permissive_pooled_config(pool: &Arc<BrowserPool>) -> CrawlConfig {
     let mut config = CrawlConfig {
@@ -515,6 +535,89 @@ async fn an_external_browser_keeps_other_clients_tabs_working() {
         count(&received, "popup"),
         0,
         "{test_name}: crawlberg's popup must be refused"
+    );
+}
+
+/// On an external browser reached through `browser.endpoint`, the scrape's page starts with the
+/// browser's own cookies, and the cookies the page sets stay out of the browser.
+#[tokio::test]
+async fn an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out() {
+    use chromiumoxide::cdp::browser_protocol::network::CookieParam;
+    use chromiumoxide::cdp::browser_protocol::storage::{GetCookiesParams, SetCookiesParams};
+    use tokio_stream::StreamExt;
+
+    let test_name = "an_external_browsers_cookies_reach_the_scrape_and_its_own_stay_out";
+    let external = match chromiumoxide::browser::BrowserConfig::builder()
+        .no_sandbox()
+        .new_headless_mode()
+        .user_data_dir(std::env::temp_dir().join(format!("crawlberg-{test_name}-{}", std::process::id())))
+        .build()
+    {
+        Ok(config) => chromiumoxide::Browser::launch(config).await,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error);
+            return;
+        }
+    };
+    let (mut other_client, mut handler) = match external {
+        Ok(pair) => pair,
+        Err(error) => {
+            announce_chrome_skip(test_name, &error.to_string());
+            return;
+        }
+    };
+    tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(html("start").append_header("set-cookie", "fresh=1; Path=/"))
+        .mount(&site)
+        .await;
+    let seed = format!("http://localhost:{}/", site.address().port());
+    other_client
+        .execute(SetCookiesParams {
+            cookies: vec![CookieParam {
+                url: Some(seed.clone()),
+                ..CookieParam::new("owner", "1")
+            }],
+            browser_context_id: None,
+        })
+        .await
+        .expect("the browser's own cookie must be set");
+    let mut config = config();
+    config.browser.endpoint = Some(other_client.websocket_address().clone());
+    let result = run(test_name, &seed, config).await;
+    let received = site.received_requests().await.expect("recording");
+    let sent = received
+        .iter()
+        .find(|request| request.url.path() == "/")
+        .and_then(|request| request.headers.get("cookie"))
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let mut names: Vec<String> = other_client
+        .execute(GetCookiesParams::default())
+        .await
+        .expect("the browser must list its cookies")
+        .result
+        .cookies
+        .into_iter()
+        .map(|cookie| cookie.name)
+        .collect();
+    names.sort();
+    let _ = other_client.close().await;
+    let _ = other_client.wait().await;
+    if result.is_none() {
+        return;
+    }
+    assert!(
+        sent.contains("owner=1"),
+        "{test_name}: the page must start with the external browser's cookie, sent {sent:?}"
+    );
+    assert_eq!(
+        names,
+        vec!["owner".to_owned()],
+        "{test_name}: the page's own cookie must stay out of the external browser"
     );
 }
 

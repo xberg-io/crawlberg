@@ -19,7 +19,7 @@ use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin};
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, CookieSharing};
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -545,10 +545,9 @@ impl BrowserPool {
         }
 
         let bs = guard.as_ref().expect("browser state was just set above");
-        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.browser.new_page("about:blank"))
+        let page = tokio::time::timeout(PAGE_OPEN_TIMEOUT, bs.firewall.handle().new_page())
             .await
-            .map_err(|_| CrawlError::browser_error("timeout opening page"))?
-            .map_err(|e| CrawlError::browser_error(format!("failed to open page: {e}")))?;
+            .map_err(|_| CrawlError::browser_error("timeout opening page"))??;
         Ok((page, Arc::clone(&bs.pending_closes)))
     }
 
@@ -608,6 +607,7 @@ impl BrowserPool {
         let firewall = match BrowserFirewall::start(
             Arc::clone(&browser),
             BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
+            CookieSharing::of_endpoint(self.config.browser_endpoint.as_deref()),
         )
         .await
         {

@@ -119,8 +119,9 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &dest_path)?;
         } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &dest_path)
-                .map_err(|e| CrawlError::other(format!("failed to copy profile file: {e}")))?;
+            std::fs::copy(entry.path(), &dest_path).map_err(|e| {
+                CrawlError::other(format!("failed to copy profile file {}: {e}", entry.path().display()))
+            })?;
         }
     }
     Ok(())
