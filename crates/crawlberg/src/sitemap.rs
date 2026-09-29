@@ -382,6 +382,8 @@ fn has_sitemap_shape(xml: &str) -> bool {
     let mut buf = Vec::new();
     let mut depth: usize = 0;
     let mut read_root = false;
+    // Whether the element open at depth 2 is a `url` or `sitemap` entry.
+    let mut in_entry = false;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) if depth == 0 => {
@@ -391,12 +393,16 @@ fn has_sitemap_shape(xml: &str) -> bool {
                 read_root = true;
                 depth = 1;
             }
+            Ok(Event::Start(ref e)) if depth == 1 => {
+                in_entry = matches!(e.name().as_ref(), "url" | "sitemap");
+                depth = 2;
+            }
             Ok(Event::Start(_)) => depth += 1,
             Ok(Event::End(_)) => depth = depth.saturating_sub(1),
             Ok(Event::Empty(_)) if depth == 0 => return false,
-            Ok(Event::GeneralRef(_) | Event::CData(_)) if depth < FIELD_DEPTH => return false,
+            Ok(Event::GeneralRef(_) | Event::CData(_)) if depth < FIELD_DEPTH || !in_entry => return false,
             Ok(Event::Text(ref e))
-                if depth < FIELD_DEPTH && !e.xml_content(XmlVersion::default()).trim().is_empty() =>
+                if (depth < FIELD_DEPTH || !in_entry) && !e.xml_content(XmlVersion::default()).trim().is_empty() =>
             {
                 return false;
             }
@@ -747,6 +753,26 @@ mod tests {
                 "an entry that holds a CDATA section of block text",
                 "<urlset><url><![CDATA[Access blocked]]><loc>/a</loc></url></urlset>".to_owned(),
                 false,
+            ),
+            (
+                "a urlset with a div of block text after its entry",
+                "<urlset><url><loc>/a</loc></url><div><h1>Access blocked</h1></div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with a CDATA section of block text in a div",
+                "<urlset><url><loc>/a</loc></url><div><![CDATA[Access blocked]]></div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "a urlset with an entity in a div",
+                "<urlset><url><loc>/a</loc></url><div>&lt;</div></urlset>".to_owned(),
+                false,
+            ),
+            (
+                "an entry field that holds an entity and a CDATA section",
+                "<urlset><url><loc>/a?b=1&amp;c=2</loc><news><![CDATA[Title]]></news></url></urlset>".to_owned(),
+                true,
             ),
             (
                 "an empty element before the root",

@@ -550,6 +550,9 @@ mod tests {
     /// The `<loc>` [`SITEMAP_WITH_A_BLOCKED_URL`] lists.
     const BLOCKED_LOC: &str = "https://example.com/blog/why-we-blocked-the-old-api";
 
+    /// The heading of Cloudflare's block page.
+    const BLOCK_TEXT: &str = "Sorry, you have been blocked";
+
     /// A 200 `content_type` response served by Cloudflare with `body`.
     fn cloudflare(content_type: &str, body: impl Into<Vec<u8>>) -> ResponseTemplate {
         ResponseTemplate::new(200)
@@ -678,7 +681,7 @@ mod tests {
 
     /// A block page served by Cloudflare at a sitemap URL is still refused as a WAF block, whatever
     /// sitemap text it carries: HTML or text that shows sitemap XML, a CDN's XML error, JSON, and
-    /// a sitemap followed by or holding block text.
+    /// a sitemap, gzipped or not, followed by block text or holding it outside its entries.
     #[tokio::test]
     async fn a_block_page_served_at_a_sitemap_url_is_still_refused_behind_cloudflare() {
         let cases = [
@@ -717,15 +720,40 @@ mod tests {
                 "a urlset that holds block text",
                 "<urlset><url><loc>/a</loc></url>Sorry, you have been blocked</urlset>".to_owned(),
             ),
+            (
+                "a urlset with a div of block text after its entry",
+                format!("<urlset><url><loc>{BLOCKED_LOC}</loc></url><div><h1>{BLOCK_TEXT}</h1></div></urlset>"),
+            ),
+            (
+                "a urlset that wraps an HTML block page after its entry",
+                format!(
+                    "<urlset><url><loc>{BLOCKED_LOC}</loc></url><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>{BLOCK_TEXT}</h1></body></html></urlset>"
+                ),
+            ),
+            (
+                "a sitemap index with a div of block text after its child",
+                format!(
+                    "<sitemapindex><sitemap><loc>/s.xml</loc></sitemap><div><p>{BLOCK_TEXT}</p></div></sitemapindex>"
+                ),
+            ),
+            (
+                "a urlset with a table of block text after its entry",
+                format!(
+                    "<urlset><url><loc>{BLOCKED_LOC}</loc></url><table><tr><td>{BLOCK_TEXT}</td></tr></table></urlset>"
+                ),
+            ),
         ];
+        let gzip_div = format!("<urlset><url><loc>{BLOCKED_LOC}</loc></url><div><h1>{BLOCK_TEXT}</h1></div></urlset>");
+        let served = cases
+            .into_iter()
+            .map(|(label, body)| (label, cloudflare("application/xml", body)))
+            .chain([(
+                "a gzip urlset with a div of block text after its entry",
+                cloudflare("application/x-gzip", stored_gzip(&gzip_div)),
+            )]);
         let mut disagreements = Vec::new();
-        for (label, body) in cases {
-            let verdicts = sitemap_paths(
-                vec![("/sitemap.xml", cloudflare("application/xml", body))],
-                "/sitemap.xml",
-                "/sitemap.xml",
-            )
-            .await;
+        for (label, template) in served {
+            let verdicts = sitemap_paths(vec![("/sitemap.xml", template)], "/sitemap.xml", "/sitemap.xml").await;
             let [walk, engine, hooked] = &verdicts;
             let refused = |verdict: &Result<Vec<String>, String>| {
                 verdict

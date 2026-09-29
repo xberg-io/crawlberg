@@ -167,7 +167,7 @@ title: "Changelog"
   header and the word "blocked" anywhere in a small body matched a block-page fingerprint, so a
   sitemap listing a URL such as `/blog/why-we-blocked-the-old-api` was refused and `map()` lost
   every URL it listed. A body with one `urlset` or `sitemapindex` root, at least one entry, and no
-  text outside the entries' fields is now read as a sitemap, gzipped or not. A block page served at a
+  text outside its entries is now read as a sitemap, gzipped or not. A block page served at a
   sitemap URL is still refused. (#515)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
