@@ -48,7 +48,8 @@ All notable changes to crawlberg are documented here.
   crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
   page followed under `allow_subdomains` or a document link on another host got the credentials
   set for the seed host. Each page now keeps the seed's credential scope, as the native crawl
-  already did. (#404)
+  already did. The same loop also dropped the user name and password written into a seed URL, so
+  no page got them, not even the seed; every page on the seed host now gets them. (#404)
 
 - **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
   within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
