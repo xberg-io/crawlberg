@@ -545,15 +545,24 @@ async fn stalling_origin() -> String {
 }
 
 /// Navigates to `html` with a bound on the whole render, so a stalled module fails the test rather than hanging it.
+///
+/// One stalled module costs one 10-second module budget. The render must finish within that one
+/// budget plus a margin, however many modules run after the stalled one.
 async fn navigate_bounded(html: &str, extra: &[(&str, &str, &str)]) -> Page {
     let mut entries = vec![("/", "text/html", html)];
     entries.extend_from_slice(extra);
     let base = serve(routes(&entries)).await;
     let mut page = test_page();
+    let started = std::time::Instant::now();
     tokio::time::timeout(std::time::Duration::from_secs(40), page.navigate(&base))
         .await
         .expect("the render must finish although a module server never answers")
         .expect("navigation must succeed");
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(15),
+        "one stalled module must cost the page one module budget, not one per later module: took {took:?}"
+    );
     page
 }
 
@@ -617,6 +626,253 @@ async fn an_inline_module_whose_top_level_await_never_settles_does_not_hold_the_
     let mut page = navigate_bounded(&html, &[("/ok.js", "text/javascript", &ok)]).await;
 
     assert_eq!(order(&mut page), vec!["tla-before", "ok"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_stalled_module_src_costs_one_budget_however_many_module_srcs_follow() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/tla.js\"></script>\
+                <script type=\"module\" src=\"/a.js\"></script>\
+                <script type=\"module\" src=\"/b.js\"></script></body></html>";
+    let tla = format!("{}\nawait fetch('{stall}/never');", push("tla-before"));
+    let (a, b) = (push("a"), push("b"));
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/tla.js", "text/javascript", &tla),
+            ("/a.js", "text/javascript", &a),
+            ("/b.js", "text/javascript", &b),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "a", "b"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_stalled_inline_module_costs_one_budget_however_many_inline_modules_follow() {
+    let stall = stalling_origin().await;
+    let html = format!(
+        "<html><body><script type=\"module\">{}\nawait fetch('{stall}/never');</script>\
+         <script type=\"module\">{}</script>\
+         <script type=\"module\">{}</script></body></html>",
+        push("tla-before"),
+        push("a"),
+        push("b"),
+    );
+    let mut page = navigate_bounded(&html, &[]).await;
+
+    assert_eq!(order(&mut page), vec!["tla-before", "a", "b"]);
+}
+
+/// A module whose top-level await needs the event loop: a timer, then a fetch of `/data.txt`.
+fn awaits_a_timer_and_a_fetch() -> String {
+    format!(
+        "await new Promise(resolve => setTimeout(resolve, 20));\n{}\n\
+         const text = await (await fetch('/data.txt')).text();\n\
+         (globalThis.order = globalThis.order || []).push(text);",
+        push("timer"),
+    )
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_awaiting_a_timer_and_a_fetch_finishes_before_the_next_module_runs() {
+    let html = "<html><body><script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_inline_module_awaiting_a_timer_and_a_fetch_finishes_before_the_next_module_runs() {
+    let html = format!(
+        "<html><body><script type=\"module\">{}</script>\
+         <script type=\"module\">{}</script></body></html>",
+        awaits_a_timer_and_a_fetch(),
+        push("next"),
+    );
+    let mut page = navigate_bounded(&html, &[("/data.txt", "text/plain", "fetched")]).await;
+
+    assert_eq!(order(&mut page), vec!["timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fetch_a_module_starts_without_awaiting_does_not_hold_the_next_module() {
+    let html = format!(
+        "<html><body><script type=\"module\">\
+         fetch('/data.txt').then(r => r.text()).then(t => (globalThis.order = globalThis.order || []).push(t));\n{}\
+         </script><script type=\"module\">{}</script></body></html>",
+        push("first"),
+        push("second"),
+    );
+    let mut page = navigate_bounded(&html, &[("/data.txt", "text/plain", "fetched")]).await;
+
+    assert_eq!(order(&mut page), vec!["first", "second", "fetched"]);
+}
+
+/// The file names of the scripts the page recorded as loaded, in load order.
+fn recorded_scripts(page: &Page) -> Vec<&str> {
+    page.network_events
+        .iter()
+        .filter(|event| event.resource_type == "Script")
+        .map(|event| event.url.rsplit('/').next().unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_awaiting_a_promise_nothing_settles_is_not_recorded_and_does_not_hold_the_page() {
+    let html = "<html><body><script type=\"module\" src=\"/forever.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let forever = format!(
+        "{}\nawait new Promise(() => {{}});\n{}",
+        push("forever-before"),
+        push("forever-after")
+    );
+    let ok = push("ok");
+    let started = std::time::Instant::now();
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/forever.js", "text/javascript", &forever),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+    let took = started.elapsed();
+
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "with nothing left to run, a module awaiting a promise nothing settles ends its wait at once: took {took:?}"
+    );
+    assert_eq!(order(&mut page), vec!["forever-before", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module left waiting on a promise nothing can settle is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_that_throws_does_not_cut_short_the_next_modules_await() {
+    let html = "<html><body><script type=\"module\" src=\"/throws.js\"></script>\
+                <script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let throws = format!("{}\nthrow new Error('throws');", push("throws"));
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/throws.js", "text/javascript", &throws),
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["throws", "timer", "fetched", "next"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_late_error_from_work_an_earlier_module_did_not_await_does_not_cut_short_the_next_module() {
+    let html = "<html><body><script type=\"module\" src=\"/background.js\"></script>\
+                <script type=\"module\" src=\"/wait.js\"></script>\
+                <script type=\"module\" src=\"/next.js\"></script></body></html>";
+    let background = format!(
+        "fetch('/data.txt').then(() => {{ throw new Error('late'); }});\n{}",
+        push("background")
+    );
+    let wait = awaits_a_timer_and_a_fetch();
+    let next = push("next");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/background.js", "text/javascript", &background),
+            ("/wait.js", "text/javascript", &wait),
+            ("/next.js", "text/javascript", &next),
+            ("/data.txt", "text/plain", "fetched"),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["background", "timer", "fetched", "next"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["background.js", "wait.js", "next.js"],
+        "a module that ran to the end is recorded, whatever failed elsewhere on the page meanwhile"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_that_throws_or_rejects_is_not_recorded_and_does_not_stop_the_page() {
+    let html = "<html><body><script type=\"module\" src=\"/throws.js\"></script>\
+                <script type=\"module\" src=\"/rejects.js\"></script>\
+                <script type=\"module\">throw new Error('inline');</script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let throws = format!("{}\nthrow new Error('throws');", push("throws"));
+    let rejects = format!(
+        "{}\nawait new Promise((_, reject) => setTimeout(() => reject(new Error('rejects')), 10));",
+        push("rejects")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/throws.js", "text/javascript", &throws),
+            ("/rejects.js", "text/javascript", &rejects),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["throws", "rejects", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["ok.js"],
+        "a module whose evaluation fails is not recorded as a loaded script"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_module_src_that_rejects_while_other_work_runs_is_not_recorded() {
+    let stall = stalling_origin().await;
+    let html = "<html><body><script type=\"module\" src=\"/background.js\"></script>\
+                <script type=\"module\" src=\"/rejects.js\"></script>\
+                <script type=\"module\" src=\"/ok.js\"></script></body></html>";
+    let background = format!("fetch('{stall}/never');\n{}", push("background"));
+    let rejects = format!(
+        "{}\nawait new Promise((_, reject) => setTimeout(() => reject(new Error('rejects')), 10));",
+        push("rejects")
+    );
+    let ok = push("ok");
+    let mut page = navigate_bounded(
+        html,
+        &[
+            ("/background.js", "text/javascript", &background),
+            ("/rejects.js", "text/javascript", &rejects),
+            ("/ok.js", "text/javascript", &ok),
+        ],
+    )
+    .await;
+
+    assert_eq!(order(&mut page), vec!["background", "rejects", "ok"]);
+    assert_eq!(
+        recorded_scripts(&page),
+        vec!["background.js", "ok.js"],
+        "a module whose evaluation fails is not recorded, although other work on the page still runs"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

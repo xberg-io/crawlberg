@@ -101,6 +101,14 @@ title: "Changelog"
 
 ### Fixed
 
+- **A stalled module script cost 10 seconds for every module script after it.** The native browser
+  backend waited, after each module script, until nothing at all was pending on the page. A module
+  whose top-level `await` never settled left work pending forever, so each later module script also
+  waited out its full 10-second budget: a page with one stalled module and two after it took 30
+  seconds to render. Each module script now waits only for its own evaluation, so the stalled module
+  costs the page one budget. Work a module starts without awaiting it, such as a fetch, now finishes
+  after the next module script runs. (#486)
+
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
   directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose

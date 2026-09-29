@@ -1,5 +1,9 @@
 //! ES-module loading and evaluation for module scripts, by address or inline.
 
+use std::task::Poll;
+
+use deno_core::error::{CoreError, CoreErrorKind};
+
 use super::BrowserJsRuntime;
 
 /// How long fetching a module graph may take, and then how long running it may take.
@@ -18,30 +22,7 @@ impl BrowserJsRuntime {
             .map_err(|_| format!("Module load timed out after {:?}", MODULE_BUDGET))?
             .map_err(|e| format!("Module load error: {}", e))?;
 
-        let result = self.runtime.mod_evaluate(module_id);
-
-        let timeout = tokio::time::timeout(
-            MODULE_BUDGET,
-            self.runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
-        )
-        .await;
-
-        match timeout {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(format!("Module event loop error: {}", e)),
-            Err(_) => {
-                tracing::warn!("Module evaluation timed out after {:?}: {}", MODULE_BUDGET, url);
-                return Ok(());
-            }
-        }
-
-        match result.await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                tracing::warn!("Module eval error: {}", e);
-                Ok(())
-            }
-        }
+        self.evaluate_module(module_id, url).await
     }
 
     pub async fn load_inline_module(&mut self, code: &str, base_url: &str) -> Result<(), String> {
@@ -60,27 +41,60 @@ impl BrowserJsRuntime {
         .map_err(|_| format!("Inline module load timed out after {:?}", MODULE_BUDGET))?
         .map_err(|e| format!("Inline module load error: {}", e))?;
 
-        let result = self.runtime.mod_evaluate(module_id);
+        self.evaluate_module(module_id, "inline module").await
+    }
 
-        let timeout = tokio::time::timeout(
+    /// Run a loaded module and drive the event loop until the module's own evaluation settles.
+    async fn evaluate_module(&mut self, module_id: deno_core::ModuleId, name: &str) -> Result<(), String> {
+        // ~keep Wait for this module, not for the whole event loop to go idle: an earlier module's
+        // ~keep stalled await leaves an op that never settles, and every later module would wait on it.
+        let mut evaluation = Box::pin(self.runtime.mod_evaluate(module_id));
+        let options = deno_core::PollEventLoopOptions::default();
+        let runtime = &mut self.runtime;
+        let waited = tokio::time::timeout(
             MODULE_BUDGET,
-            self.runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
+            std::future::poll_fn(|cx| {
+                if let Poll::Ready(own) = evaluation.as_mut().poll(cx) {
+                    return Poll::Ready(own);
+                }
+                let error = match runtime.poll_event_loop(cx, options) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        return Poll::Ready(match evaluation.as_mut().poll(cx) {
+                            Poll::Ready(own) => own,
+                            Poll::Pending => Err(CoreError(Box::new(CoreErrorKind::PendingPromiseResolution))),
+                        });
+                    }
+                    Poll::Ready(Err(error)) => error,
+                };
+                // ~keep An error the event loop reports while this module is still running belongs to other
+                // ~keep work on the page, such as a fetch an earlier module did not await, and must not cut this
+                // ~keep module short. The wait goes on only while the loop has other work: with none left, the
+                // ~keep error is deno_core reporting this module's await as stalled, and it repeats on every poll.
+                match runtime.poll_event_loop(cx, options) {
+                    Poll::Pending => {
+                        tracing::warn!("Script error while {} ran: {}", name, error);
+                        Poll::Pending
+                    }
+                    Poll::Ready(_) => Poll::Ready(Err(error)),
+                }
+            }),
         )
         .await;
 
-        match timeout {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(format!("Module event loop error: {}", e)),
+        match waited {
+            // ~keep deno_core reports a module that throws as an unhandled rejection on the event loop, not
+            // ~keep through its evaluation. One more pass collects it here, so the module is not taken
+            // ~keep for a success and the rejection does not fail the next module's wait.
+            Ok(Ok(())) => std::future::poll_fn(|cx| match self.runtime.poll_event_loop(cx, options) {
+                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                _ => Poll::Ready(Ok(())),
+            })
+            .await
+            .map_err(|e| format!("Module evaluation error: {}", e)),
+            Ok(Err(e)) => Err(format!("Module evaluation error: {}", e)),
             Err(_) => {
-                tracing::warn!("Inline module timed out after {:?}", MODULE_BUDGET);
-                return Ok(());
-            }
-        }
-
-        match result.await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                tracing::warn!("Inline module eval error: {}", e);
+                tracing::warn!("Module evaluation timed out after {:?}: {}", MODULE_BUDGET, name);
                 Ok(())
             }
         }
