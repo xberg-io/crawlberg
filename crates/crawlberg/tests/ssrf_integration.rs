@@ -271,8 +271,9 @@ async fn redirect_to_private_outside_allowlist_refused() {
 /// from the redirect, not from the seed.
 ///
 /// ~keep GUARD: passes even if the redirect chain's own SSRF check (engine/redirect.rs)
-/// ~keep is removed, because `http_fetch` re-runs `validate_url` on every hop it follows;
-/// ~keep it cannot pin the chain-level check, only that some layer refuses the target.
+/// ~keep is removed, because the Tower service's fetch (`do_fetch` in tower/service.rs)
+/// ~keep re-validates the URL before it sends every hop; it cannot pin the chain-level
+/// ~keep check, only that some layer refuses the target.
 #[tokio::test]
 async fn scrape_refuses_a_redirect_to_a_private_address_outside_the_allowlist() {
     let mock = MockServer::start().await;

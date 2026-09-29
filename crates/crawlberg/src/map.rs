@@ -852,7 +852,8 @@ mod tests {
         assert_eq!(
             urls,
             vec![format!("{base}/page")],
-            "a <loc> that is only a query or a fragment, or the sitemap's own address, is not a page"
+            "a <loc> that is only a query is dropped for being query-only; one that is only a \
+             fragment, or that names the sitemap's own address, is dropped for naming the sitemap itself"
         );
     }
 

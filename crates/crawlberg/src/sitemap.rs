@@ -402,8 +402,10 @@ pub(crate) fn collect_urlset_entries(
     urls
 }
 
-/// Whether a urlset `<loc>` names the sitemap document rather than a page: a `<loc>` that is
-/// only a query, or one that resolves to `document`'s own address once fragments are ignored.
+/// Whether a urlset `<loc>` is dropped as not a page. A `<loc>` that is only a query is
+/// dropped because it is query-only, not because it names the sitemap document. A `<loc>`
+/// that resolves to `document`'s own address once fragments are ignored is dropped because
+/// it does name the sitemap document.
 fn names_the_sitemap_itself(loc: &str, resolved: &Url, document: Option<&Url>) -> bool {
     if loc.trim_start().starts_with('?') {
         return true;
