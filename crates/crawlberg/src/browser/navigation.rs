@@ -94,7 +94,8 @@ async fn render(
 ) -> Result<BrowserPage, CrawlError> {
     let timeout = config.browser.timeout;
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
 

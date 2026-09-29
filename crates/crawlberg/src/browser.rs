@@ -206,7 +206,8 @@ async fn pooled_fetch(
         Err(_) => Err(overall_deadline_error(overall_timeout)),
     };
 
-    release_pooled_page(url, config, page, watch, permit, result.is_ok()).await;
+    let reusable = result.is_ok() && watch.page_reusable();
+    release_pooled_page(url, config, page, watch, permit, reusable).await;
 
     result
 }
@@ -250,9 +251,10 @@ async fn watch_pooled_page(
     pool.firewall().await?.watch(page, config, config.max_redirects).await
 }
 
-/// Park `page` for reuse when session affinity wants it and the fetch succeeded, otherwise
-/// close its CDP target and release the permit. Either way its watch ends: parking closes the
-/// popups it opened, closing closes them and the page.
+/// Park `page` for reuse when session affinity wants it and the page is `reusable` (the fetch
+/// succeeded and a new navigation can start on the page), otherwise close its CDP target and
+/// release the permit. Either way its watch ends: parking closes the popups it opened, closing
+/// closes them and the page.
 ///
 /// ~keep This runs on the overall-deadline path too, which is the whole reason `pooled_fetch`
 /// ~keep bounds its stages individually, so the close here must itself be bounded: an

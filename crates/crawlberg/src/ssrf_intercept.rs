@@ -27,7 +27,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
     RequestStage,
 };
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, Headers, ResourceType};
-use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, FrameId};
+use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, EventFrameStoppedLoading, FrameId};
 use chromiumoxide::cdp::browser_protocol::target::{
     CloseTargetParams, EventTargetCreated, EventTargetDestroyed, GetTargetsParams, TargetId,
 };
@@ -102,6 +102,11 @@ pub(crate) struct InterceptOutcome {
     navigation_started: bool,
     /// Set once the requested navigation is over: later navigations are not counted.
     navigation_ended: bool,
+    /// Whether the check has dropped a main-frame navigation past the redirect limit.
+    navigation_dropped: bool,
+    /// Whether [`Watch::goto`] ended on a frame's stop instead of the page's load.
+    #[cfg(feature = "browser")]
+    goto_unsettled: bool,
 }
 
 /// A main-frame response the navigation ends on without a document, reported as is.
@@ -499,6 +504,51 @@ impl Watch {
     #[cfg(feature = "browser")]
     pub(crate) fn redirects_followed(&self) -> usize {
         lock(&self.page.outcome).redirects_followed
+    }
+
+    /// Navigate the watched page to `url` and wait for it to load, as `Page::goto` does.
+    ///
+    /// ~keep A navigation the check drops leaves chromiumoxide 0.9.1's `goto` waiting for a load
+    /// ~keep event that never comes. Chrome reports the dropped navigation's start, which clears
+    /// ~keep the load chromiumoxide recorded, and commits no document after it. A navigation a
+    /// ~keep script starts while the page is parsing also stops the page's parser, so the page
+    /// ~keep never fires its own load. Chrome still sends `Page.frameStoppedLoading` once a
+    /// ~keep frame is idle, and chromiumoxide ignores that event, so once a navigation was dropped
+    /// ~keep the navigation also ends on the first frame that stops. Which frame does not matter:
+    /// ~keep no document commits after the drop, so the page keeps the one it has.
+    pub(crate) async fn goto(
+        &self,
+        page: &chromiumoxide::Page,
+        url: &str,
+    ) -> Result<(), chromiumoxide::error::CdpError> {
+        let mut stops = page.event_listener::<EventFrameStoppedLoading>().await?;
+        let stopped_after_a_drop = async {
+            while stops.next().await.is_some() {
+                if lock(&self.page.outcome).navigation_dropped {
+                    return;
+                }
+            }
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            biased;
+            loaded = page.goto(url) => loaded.map(drop),
+            () = stopped_after_a_drop => {
+                #[cfg(feature = "browser")]
+                {
+                    lock(&self.page.outcome).goto_unsettled = true;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Whether a new navigation can start on the page at once. It cannot after [`Watch::goto`]
+    /// ended on a frame's stop: chromiumoxide then waits on the old navigation until its own
+    /// 30 s deadline, and the page's next `goto` waits behind it.
+    #[cfg(feature = "browser")]
+    pub(crate) fn page_reusable(&self) -> bool {
+        !lock(&self.page.outcome).goto_unsettled
     }
 
     /// End the requested navigation: the navigations the page makes from now on are the
@@ -932,6 +982,9 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             } else {
                 verdict
             };
+            if matches!(verdict, Verdict::Abort) {
+                lock(&page.outcome).navigation_dropped = true;
+            }
             (verdict, Some(in_flight))
         }
     };
@@ -955,7 +1008,7 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             .await
             .map(drop),
         // ~keep Chrome commits no error page for an aborted navigation, so the page keeps the
-        // ~keep document it has.
+        // ~keep document it has: all of it, or the part it had parsed when a script navigated.
         Verdict::Abort => browser
             .execute(FailRequestParams::new(request_id, ErrorReason::Aborted))
             .await

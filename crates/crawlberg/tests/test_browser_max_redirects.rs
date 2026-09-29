@@ -8,11 +8,12 @@
 
 #![cfg(feature = "browser")]
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crawlberg::{
-    BrowserBackend, BrowserConfig, BrowserMode, CrawlConfig, CrawlError, CrawlPageResult, CrawlResult, crawl,
-    create_engine, scrape,
+    BrowserBackend, BrowserConfig, BrowserMode, BrowserPool, BrowserPoolConfig, BrowserSessionPool, CrawlConfig,
+    CrawlError, CrawlPageResult, CrawlResult, crawl, create_engine, scrape,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -483,8 +484,9 @@ async fn scrape_stops_at_max_redirects_with_and_without_a_screenshot() {
 /// Only the page's own navigation is limited: a redirect inside an iframe does not count.
 ///
 /// ~keep The seed lands on itself here, so the redirect chain would report `(0, "/", 200)` even
-/// ~keep if Chrome were never limited. What turns this red is an iframe redirect counted against
-/// ~keep the seed: at `max_redirects = 0` the fetch then ends on the iframe's 301.
+/// ~keep if Chrome were never limited. What turns this red is an iframe navigation counted
+/// ~keep against the seed: at `max_redirects = 0` the check then drops the iframe's request or its
+/// ~keep redirect, and the iframe never reaches `/f` or `/f1`.
 #[tokio::test]
 async fn a_redirect_inside_an_iframe_does_not_count() {
     let site = MockServer::start().await;
@@ -508,8 +510,118 @@ async fn a_redirect_inside_an_iframe_does_not_count() {
 
     let requested = requested_paths(&site).await;
     assert!(
-        requested.iter().any(|p| p == "/f"),
-        "Chrome must load the iframe, or the test proves nothing, requested: {requested:?}"
+        requested.iter().any(|p| p == "/f") && requested.iter().any(|p| p == "/f1"),
+        "Chrome must follow the iframe's redirect to its target, requested: {requested:?}"
     );
     assert_eq!(chain_outcome(&result, &site.uri()), (0, "/".to_owned(), 200));
+}
+
+/// A script that navigates while the page is still parsing counts as one redirect. Past the
+/// limit the crawl and the scrape end on the seed's document, as far as Chrome parsed it.
+///
+/// ~keep Chrome stops parsing a page whose script navigates, so once the check drops that
+/// ~keep navigation the seed never fires its load event, and a fetch that waits for it runs into
+/// ~keep the browser timeout.
+#[tokio::test]
+async fn a_script_navigation_while_the_page_parses_counts_as_one_redirect() {
+    let test_name = "a_script_navigation_while_the_page_parses_counts_as_one_redirect";
+    let site = MockServer::start().await;
+    mount_html(
+        &site,
+        "/",
+        r#"<p id="seed">seed</p><script>location.replace('/n')</script>"#,
+    )
+    .await;
+    mount_html(&site, "/n", r#"<p id="landed">landed</p>"#).await;
+    let seed = format!("{}/", site.uri());
+
+    let Some(stopped) = crawl_with(test_name, config(BrowserMode::Always, 0), &seed).await else {
+        return;
+    };
+    assert_eq!(
+        chain_outcome(&stopped, &site.uri()),
+        (0, "/".to_owned(), 200),
+        "past the limit the crawl must end on the seed"
+    );
+    let page = seed_page(&stopped);
+    assert!(
+        page.html.contains("id=\"seed\""),
+        "the crawl must keep the seed's document: {}",
+        page.html
+    );
+
+    let engine = create_engine(Some(config(BrowserMode::Always, 0))).expect("engine must build");
+    let scraped = scrape(&engine, &seed)
+        .await
+        .expect("past the limit the scrape must end on the seed");
+    assert_eq!(
+        (scraped.status_code, scraped.final_url.trim_start_matches(&site.uri())),
+        (200, "/"),
+        "past the limit the scrape must end on the seed"
+    );
+    assert!(
+        scraped.html.contains("id=\"seed\""),
+        "the scrape must keep the seed's document: {}",
+        scraped.html
+    );
+    let requested = requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| p == "/n"),
+        "Chrome must not follow the navigation past the limit, requested: {requested:?}"
+    );
+
+    let Some(followed) = crawl_with(test_name, config(BrowserMode::Always, 1), &seed).await else {
+        return;
+    };
+    assert_eq!(
+        chain_outcome(&followed, &site.uri()),
+        (1, "/n".to_owned(), 200),
+        "within the limit the navigation counts as one redirect"
+    );
+}
+
+/// A pooled page kept for session reuse serves the next fetch on the same site at once, after
+/// a script navigated it past the limit while it parsed.
+///
+/// ~keep The first fetch ends on the seed without the load event chromiumoxide waits for, and
+/// ~keep chromiumoxide keeps that navigation open for 30 s. A page parked in that state holds the
+/// ~keep next fetch's navigation until the browser timeout.
+#[tokio::test]
+async fn the_next_pooled_fetch_on_the_site_is_prompt_after_a_script_navigation_past_the_limit() {
+    let test_name = "the_next_pooled_fetch_on_the_site_is_prompt_after_a_script_navigation_past_the_limit";
+    let site = MockServer::start().await;
+    mount_html(
+        &site,
+        "/",
+        r#"<p id="seed">seed</p><script>location.replace('/n')</script>"#,
+    )
+    .await;
+    mount_html(&site, "/next", r#"<p id="landed">landed</p>"#).await;
+
+    let mut config = config(BrowserMode::Always, 0);
+    config.browser.session_affinity = true;
+    let pool = BrowserPool::new(BrowserPoolConfig::default());
+    config.browser_pool = Some(Arc::clone(&pool));
+    config.browser_session_pool = Some(Arc::new(BrowserSessionPool::new()));
+    let engine = create_engine(Some(config)).expect("engine must build");
+
+    match scrape(&engine, &format!("{}/", site.uri())).await {
+        Ok(first) => assert!(first.html.contains("id=\"seed\""), "{}", first.html),
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            pool.shutdown().await;
+            return;
+        }
+        Err(error) => panic!("{test_name}: the first scrape must end on the seed: {error:?}"),
+    }
+    let started = Instant::now();
+    let next = scrape(&engine, &format!("{}/next", site.uri())).await;
+    let elapsed = started.elapsed();
+    pool.shutdown().await;
+    let next = next.expect("the next scrape on the site must succeed");
+    assert!(next.html.contains("landed"), "{}", next.html);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the next scrape must not wait on the first page's navigation, took {elapsed:?}"
+    );
 }

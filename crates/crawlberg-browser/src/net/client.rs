@@ -988,6 +988,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_limit_above_the_hop_cap_follows_the_whole_chain() {
+        let hop = "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n";
+        let (base, requests) = spawn_recording_server(vec![hop; MAX_REDIRECTS + 5]).await;
+
+        let resp = client_with(Arc::new(RecordingValidator::default()))
+            .fetch_following(
+                reqwest::Method::GET,
+                &base.parse::<Url>().expect("valid URL"),
+                None,
+                Some(30),
+            )
+            .await
+            .expect("a limit of 30 must follow a chain of 25 redirects");
+
+        assert_eq!(
+            (resp.status, resp.redirected_from.len()),
+            (200, MAX_REDIRECTS + 5),
+            "the limit, not the cap of {MAX_REDIRECTS} hops, bounds the chain"
+        );
+        assert_eq!(requests.lock().expect("lock").len(), MAX_REDIRECTS + 6);
+    }
+
+    #[tokio::test]
     async fn request_and_response_callbacks_fire_for_each_hop() {
         let (base, _requests) = spawn_recording_server(vec![
             "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n",

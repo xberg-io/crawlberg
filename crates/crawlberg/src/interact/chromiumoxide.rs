@@ -265,7 +265,8 @@ async fn navigate_and_wait(
     let timeout = config.browser.timeout;
 
     let navigation = tokio::time::timeout(timeout, async {
-        page.goto(url)
+        watch
+            .goto(page, url)
             .await
             .map_err(|e| CrawlError::browser_error(format!("navigation failed: {e}")))?;
         wait_for_ready(page, config)

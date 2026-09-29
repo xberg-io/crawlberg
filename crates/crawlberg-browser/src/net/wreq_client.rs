@@ -314,6 +314,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_limit_above_the_hop_cap_follows_past_it() {
+        let (addr, requests) = recording_server(
+            "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        )
+        .await;
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        let url = format!("http://{addr}/").parse::<Url>().expect("valid URL");
+
+        let stopped = client
+            .fetch_following(&url, Some(30))
+            .await
+            .expect("a limit of 30 must follow 30 redirects");
+
+        assert_eq!(
+            (stopped.status, stopped.redirected_from.len()),
+            (302, 30),
+            "the limit, not the cap of 20 hops, bounds the chain"
+        );
+        assert_eq!(requests.lock().expect("lock").len(), 31);
+    }
+
+    #[tokio::test]
     async fn a_limited_fetch_ends_on_the_redirect_at_the_limit() {
         let (end, end_requests) =
             recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
