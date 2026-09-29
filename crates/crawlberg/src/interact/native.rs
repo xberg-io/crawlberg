@@ -7,7 +7,7 @@ use crawlberg_browser::adapter::{
 
 use super::{DEFAULT_ACTION_TIMEOUT, PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult, ProxyConfig};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -82,7 +82,7 @@ fn build_native_config(
         extra_headers: std::collections::HashMap::new(),
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
-        proxy_url: resolved_proxy(config)?,
+        proxy: crate::native_browser::native_proxy(config)?,
         prior_cookies: Vec::<NativeCookie>::new(),
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
@@ -93,23 +93,6 @@ fn build_native_config(
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
     })
-}
-
-/// Resolve the proxy URL string handed to the native browser worker.
-///
-/// Delegates to [`crate::proxy::proxy_url_with_credentials`], which embeds
-/// credentials via percent-encoded userinfo rather than a naive string
-/// splice, and refuses to parse a scheme out of a credential when the URL
-/// has no explicit `scheme://` prefix.
-fn resolved_proxy(config: &CrawlConfig) -> Result<Option<String>, CrawlError> {
-    let Some(proxy) = config.browser.proxy.as_ref().or(config.proxy.as_ref()) else {
-        return Ok(None);
-    };
-    apply_proxy_credentials(proxy).map(Some)
-}
-
-fn apply_proxy_credentials(proxy: &ProxyConfig) -> Result<String, CrawlError> {
-    crate::proxy::proxy_url_with_credentials(proxy)
 }
 
 fn post_navigation_wait(config: &CrawlConfig) -> Option<Duration> {
@@ -180,123 +163,6 @@ fn map_action_result(result: NativeActionResult) -> ActionResult {
         success: result.success,
         data: result.data,
         error: result.error,
-    }
-}
-
-#[cfg(test)]
-mod proxy_credential_tests {
-    use super::apply_proxy_credentials;
-    use crate::types::ProxyConfig;
-
-    fn proxy(url: &str, username: Option<&str>, password: Option<&str>) -> ProxyConfig {
-        ProxyConfig {
-            url: url.to_owned(),
-            username: username.map(str::to_owned),
-            password: password.map(str::to_owned),
-        }
-    }
-
-    #[test]
-    fn http_credentials_are_embedded_and_percent_encoded() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", Some("alice"), Some("s3cr3t")))
-            .expect("http proxy with plain credentials must resolve");
-        assert_eq!(
-            resolved, "http://alice:s3cr3t@proxy.test:8080/",
-            "plain alphanumeric credentials must round-trip unchanged"
-        );
-    }
-
-    #[test]
-    fn socks5_credentials_are_no_longer_silently_dropped() {
-        let resolved = apply_proxy_credentials(&proxy("socks5://proxy.test:1080", Some("alice"), Some("s3cr3t")))
-            .expect("socks5 proxy with credentials must resolve");
-        assert_eq!(
-            resolved, "socks5://alice:s3cr3t@proxy.test:1080",
-            "SOCKS5 credentials must be embedded, not dropped"
-        );
-    }
-
-    #[test]
-    fn socks5h_credentials_are_embedded() {
-        let resolved = apply_proxy_credentials(&proxy("socks5h://proxy.test:1080", Some("bob"), Some("hunter2")))
-            .expect("socks5h proxy with credentials must resolve");
-        assert_eq!(resolved, "socks5h://bob:hunter2@proxy.test:1080");
-    }
-
-    #[test]
-    fn special_characters_in_credentials_are_percent_encoded_not_spliced() {
-        // A `:`/`@`/`/` in a credential must not be able to terminate the userinfo early and
-        // smuggle in a different host, or split a single credential into `user:pass` pairs.
-        let resolved = apply_proxy_credentials(&proxy(
-            "http://proxy.test:8080",
-            Some("weird:user@name"),
-            Some("p/a:s@s"),
-        ))
-        .expect("proxy with special-character credentials must still resolve");
-
-        // The credentials must decode back to the exact original values, and the host must
-        // still be `proxy.test:8080` — not hijacked by a `@` or `:` inside a credential.
-        let parsed = url::Url::parse(&resolved).expect("resolved proxy URL must itself be valid");
-        assert_eq!(parsed.host_str(), Some("proxy.test"));
-        assert_eq!(parsed.port(), Some(8080));
-        assert_eq!(parsed.username(), "weird%3Auser%40name");
-        assert_eq!(
-            urlencoding_decode(parsed.username()),
-            "weird:user@name",
-            "username must decode back to the exact original value"
-        );
-        assert_eq!(
-            urlencoding_decode(parsed.password().expect("password must be present")),
-            "p/a:s@s",
-            "password must decode back to the exact original value"
-        );
-    }
-
-    #[test]
-    fn credential_free_proxy_url_is_returned_as_parsed() {
-        let resolved = apply_proxy_credentials(&proxy("http://proxy.test:8080", None, None))
-            .expect("credential-free proxy must resolve");
-        assert_eq!(resolved, "http://proxy.test:8080/");
-    }
-
-    #[test]
-    fn invalid_proxy_url_returns_invalid_config_error() {
-        let result = apply_proxy_credentials(&proxy("not a url", Some("alice"), Some("s3cr3t")));
-        assert!(
-            matches!(result, Err(crate::error::CrawlError::InvalidConfig { .. })),
-            "malformed proxy URL with credentials must return InvalidConfig, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn scheme_less_url_reads_the_username_as_a_username() {
-        // ~keep `alice` sits where a naive `url::Url::parse` reads a scheme from. The address is
-        // ~keep read as reqwest reads it, so `alice` stays the user name and never becomes a
-        // ~keep scheme that an error could print.
-        let resolved = apply_proxy_credentials(&proxy("alice:s3cr3t@proxy.test:8080", Some("alice"), Some("s3cr3t")))
-            .expect("reqwest takes this address as an HTTP proxy, so it must resolve");
-        assert_eq!(resolved, "http://alice:s3cr3t@proxy.test:8080/");
-    }
-
-    /// Minimal percent-decoder sufficient for the ASCII userinfo characters this module encodes.
-    fn urlencoding_decode(input: &str) -> String {
-        let bytes = input.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%'
-                && i + 2 < bytes.len()
-                && let Ok(text) = std::str::from_utf8(&bytes[i + 1..i + 3])
-                && let Ok(value) = u8::from_str_radix(text, 16)
-            {
-                out.push(value);
-                i += 3;
-                continue;
-            }
-            out.push(bytes[i]);
-            i += 1;
-        }
-        String::from_utf8(out).expect("decoded bytes must be valid UTF-8")
     }
 }
 

@@ -402,3 +402,24 @@ fn test_every_known_launch_path_calls_the_shared_apply_default_args_helper() {
         );
     }
 }
+
+#[test]
+fn the_pool_config_debug_hides_a_credential_in_a_chrome_flag() {
+    let config = BrowserPoolConfig {
+        chrome_args: vec![
+            "--proxy-server=http://operator:IMPL385-CA-PW@proxy.test:8080".to_owned(),
+            "--proxy-server=operator:IMPL385-CA-BARE@proxy.test:8080".to_owned(),
+            "--disable-gpu".to_owned(),
+        ],
+        ..BrowserPoolConfig::default()
+    };
+    let shown = format!("{config:?}");
+    assert!(
+        !shown.contains("IMPL385-CA"),
+        "a chrome flag shows its credential: {shown}"
+    );
+    assert!(
+        shown.contains("--proxy-server") && shown.contains("--disable-gpu"),
+        "positive twin: the flag names are shown: {shown}"
+    );
+}

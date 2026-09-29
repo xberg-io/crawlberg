@@ -12,6 +12,7 @@ use crate::net::cookies::CookieJar;
 use crate::net::credential::{OriginHeaders, refuse_userinfo, without_userinfo};
 use crate::net::error_with_causes;
 use crate::net::interceptor::{InterceptAction, RequestInterceptor};
+use crate::net::proxy::UpstreamProxy;
 use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 use crate::redact::{RedactedHeaders, RedactedValues};
@@ -232,7 +233,7 @@ async fn fetch_file_url(url: &Url) -> Result<Response, NetError> {
 
 pub struct HttpClient {
     client: tokio::sync::OnceCell<Client>,
-    proxy_url: Option<String>,
+    upstream: Option<UpstreamProxy>,
     proxy: Option<reqwest::Proxy>,
     /// SSRF policy applied to the initial URL and every redirect hop.
     pub ssrf: Arc<dyn SsrfValidator>,
@@ -259,12 +260,12 @@ impl HttpClient {
         Self::build(cookie_jar, None, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
-    /// Build a client that sends every request through `proxy_url`, if given.
+    /// Build a client that sends every request through `proxy`, if given.
     ///
     /// Fails with [`NetError::InvalidProxy`] when the proxy cannot be used, rather than
     /// building a client that silently connects directly.
-    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy_url: Option<&str>) -> Result<Self, NetError> {
-        Self::with_ssrf(cookie_jar, proxy_url, Arc::new(DefaultSsrfValidator::from_env()), false)
+    pub fn with_options(cookie_jar: Arc<CookieJar>, proxy: Option<&UpstreamProxy>) -> Result<Self, NetError> {
+        Self::with_ssrf(cookie_jar, proxy, Arc::new(DefaultSsrfValidator::from_env()), false)
     }
 
     /// Build a client with an explicit SSRF policy.
@@ -274,12 +275,12 @@ impl HttpClient {
     /// [`NetError::InvalidProxy`] when the proxy cannot be used.
     pub fn with_ssrf(
         cookie_jar: Arc<CookieJar>,
-        proxy_url: Option<&str>,
+        proxy: Option<&UpstreamProxy>,
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
     ) -> Result<Self, NetError> {
-        let proxy = match proxy_url {
-            Some(url) => Some((url.to_string(), crate::net::proxy::reqwest_proxy(url)?)),
+        let proxy = match proxy {
+            Some(upstream) => Some((upstream.clone(), upstream.reqwest_proxy()?)),
             None => None,
         };
         Ok(Self::build(cookie_jar, proxy, ssrf, allow_file_access))
@@ -287,14 +288,14 @@ impl HttpClient {
 
     fn build(
         cookie_jar: Arc<CookieJar>,
-        proxy: Option<(String, reqwest::Proxy)>,
+        proxy: Option<(UpstreamProxy, reqwest::Proxy)>,
         ssrf: Arc<dyn SsrfValidator>,
         allow_file_access: bool,
     ) -> Self {
-        let (proxy_url, proxy) = proxy.unzip();
+        let (upstream, proxy) = proxy.unzip();
         HttpClient {
             client: tokio::sync::OnceCell::new(),
-            proxy_url,
+            upstream,
             proxy,
             ssrf,
             allow_file_access,
@@ -329,11 +330,11 @@ impl HttpClient {
             .await
     }
 
-    /// Read-only accessor for the proxy URL the client was configured with
+    /// Read-only accessor for the proxy the client was configured with
     /// (if any). Exposed so the JS fetch bridge can route its own reqwest
     /// requests through the same upstream proxy.
-    pub fn proxy_url(&self) -> Option<&str> {
-        self.proxy_url.as_deref()
+    pub fn proxy(&self) -> Option<&UpstreamProxy> {
+        self.upstream.as_ref()
     }
 
     /// Apply the SSRF policy to `url`.
@@ -1045,36 +1046,69 @@ mod tests {
     }
 
     fn proxied_client(proxy: &str) -> Result<HttpClient, NetError> {
+        let proxy = crate::net::proxy::test_proxy(proxy)?;
         HttpClient::with_ssrf(
             Arc::new(CookieJar::new()),
-            Some(proxy),
+            Some(&proxy),
             Arc::new(RecordingValidator::default()),
             false,
         )
     }
 
-    #[test]
-    fn an_unusable_proxy_url_refuses_the_client_without_showing_it() {
-        for proxy in crate::net::proxy::credential_urls::URLS {
-            let Err(err) = proxied_client(proxy) else {
-                panic!("{proxy} must refuse the client, not build one that connects directly");
-            };
-            assert!(matches!(err, NetError::InvalidProxy(_)), "{proxy}: got {err:?}");
-            crate::net::proxy::credential_urls::assert_not_shown(proxy, &err.to_string());
-        }
+    #[tokio::test]
+    async fn a_credentialed_proxy_carries_the_request_with_its_credentials() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let client = HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&proxy),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+        .expect("an http proxy must build");
+
+        let response = client
+            .fetch(&"http://origin.test/page".parse::<Url>().expect("valid URL"))
+            .await
+            .expect("the proxy accepts the credentials, so the fetch must succeed");
+
+        assert_eq!(response.body, b"via-proxy");
+        credentialed_proxy::assert_one_authenticated_request(&requests, "http://origin.test/page");
     }
 
-    #[test]
-    fn a_socks5_or_other_unsupported_proxy_scheme_refuses_the_client() {
-        for (proxy, scheme) in [("socks5://proxy.test:1080", "socks5"), ("ftp://proxy.test:21", "ftp")] {
-            let Err(err) = proxied_client(proxy) else {
-                panic!("{proxy} must refuse the client");
-            };
-            assert!(
-                matches!(err, NetError::InvalidProxy(crate::net::proxy::ProxyError::UnsupportedScheme(ref s)) if s == scheme),
-                "{proxy}: got {err:?}"
-            );
-        }
+    #[tokio::test]
+    async fn a_proxy_that_refuses_the_credentials_fails_the_fetch_instead_of_connecting_directly() {
+        use crate::net::proxy::credentialed_proxy;
+        let (proxy, requests) = credentialed_proxy::start().await;
+        let (target, direct) = spawn_recording_server(vec!["HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\ndirect"]).await;
+        let client = HttpClient::with_ssrf(
+            Arc::new(CookieJar::new()),
+            Some(&credentialed_proxy::with_wrong_password(&proxy)),
+            Arc::new(RecordingValidator::default()),
+            false,
+        )
+        .expect("an http proxy must build");
+
+        let result = client
+            .fetch(&format!("{target}/page").parse::<Url>().expect("valid URL"))
+            .await;
+
+        assert!(
+            !matches!(result, Ok(ref response) if response.status == 200),
+            "a refused proxy must not serve the page: {result:?}"
+        );
+        assert!(direct.lock().expect("lock").is_empty(), "the fetch connected directly");
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "the fetch must go to the proxy: {requests:?}");
+        let sent = credentialed_proxy::proxy_authorization(&requests[0]);
+        assert!(
+            sent.is_some() && sent != Some(credentialed_proxy::expected_authorization()),
+            "the configured wrong credentials must be sent: {sent:?}"
+        );
+        assert!(
+            !format!("{result:?}").contains(credentialed_proxy::PASSWORD),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]
@@ -1181,6 +1215,7 @@ mod tests {
         let policy = Arc::new(RebindingPolicy::default());
         // ~keep A proxy named by host: a client that asked the policy for it would be refused.
         let proxy = proxy.replacen("127.0.0.1", "localhost", 1);
+        let proxy = crate::net::proxy::test_proxy(&proxy).expect("an http proxy");
         let client = HttpClient::with_ssrf(Arc::new(CookieJar::new()), Some(&proxy), policy.clone(), false)
             .expect("an http proxy must build");
 

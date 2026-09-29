@@ -200,12 +200,7 @@ fn apply_proxy(builder: reqwest::ClientBuilder, config: &CrawlConfig) -> Result<
         return Ok(builder);
     };
 
-    let mut proxy = reqwest::Proxy::all(&proxy_config.url)
-        .map_err(|e| CrawlError::invalid_config(format!("invalid proxy URL: {e}")))?;
-    if let (Some(user), Some(pass)) = (&proxy_config.username, &proxy_config.password) {
-        proxy = proxy.basic_auth(user, pass);
-    }
-    Ok(builder.proxy(proxy))
+    Ok(builder.proxy(crate::proxy::admit_proxy(proxy_config)?.reqwest_proxy()?))
 }
 
 /// A `reqwest::Proxy` that asks `provider` which proxy to use, per request.

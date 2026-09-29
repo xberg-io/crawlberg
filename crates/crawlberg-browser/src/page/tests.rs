@@ -1428,8 +1428,15 @@ async fn a_stealth_page_fetches_through_the_context_proxy() {
             .await;
     });
 
-    let context = BrowserContext::with_ssrf("test".to_string(), Some(proxy), true, None, Arc::new(AllowAll), false)
-        .expect("an http proxy must build the context");
+    let context = BrowserContext::with_ssrf(
+        "test".to_string(),
+        Some(crate::net::proxy::test_proxy(&proxy).expect("an http proxy")),
+        true,
+        None,
+        Arc::new(AllowAll),
+        false,
+    )
+    .expect("an http proxy must build the context");
     let context = Arc::new(context);
     let page = Page::new("page-1".to_string(), context.clone());
     let (Some(from_page), Some(from_context)) = (&page.stealth_client, &context.stealth_client) else {
@@ -1901,7 +1908,7 @@ async fn a_proxied_page_leaves_its_fetches_and_module_imports_to_the_proxy() {
     // ~keep A proxy named by host: a client that asked the policy for it would be refused.
     let context = BrowserContext::with_ssrf(
         "test".to_string(),
-        Some(format!("http://localhost:{port}")),
+        Some(crate::net::proxy::test_proxy(&format!("http://localhost:{port}")).expect("an http proxy")),
         false,
         None,
         policy.clone(),

@@ -6,6 +6,20 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **The config check refuses a proxy password that is not percent-encoded.** A `#`, `/` or `?`
+  in a proxy user name or password ends the address early, so `http://user:4242#rest@proxy:8080`
+  was read as the host `user` on port 4242. Such an address now fails `CrawlConfig::validate`,
+  and the error asks to percent-encode the credential or to set it in `username` and `password`.
+  The error never shows the address.
+- **The config check refuses proxy credentials set in two places.** A proxy URL that holds a user
+  name or password, together with `username` or `password`, now fails `CrawlConfig::validate`.
+  Set the credentials in the URL or in the two fields, not both.
+- **`crawlberg-browser`: the native backend takes a proxy with its credentials apart.**
+  `NativeBrowserConfig.proxy_url` is now `proxy`, an `UpstreamProxy`: an address that holds no
+  user name or password, and optional `ProxyCredentials`. `UpstreamProxy::new` refuses an address
+  that holds credentials. The same type replaces the proxy URL string in the browser context, the
+  HTTP clients, the module loader and the JS runtime constructors.
+
 - **The config check refuses a SOCKS proxy where no client can use it.** A `socks5://` or
   `socks5h://` address in `proxy` now fails `CrawlConfig::validate` with "SOCKS proxies are not
   supported". Crawlberg's HTTP clients are built without SOCKS support, so every HTTP fetch
@@ -75,6 +89,18 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **The native browser backend logged the proxy password.** The backend put the proxy user
+  name and password back into the proxy URL, and every module import logged that URL at debug
+  level. The credentials now stay apart from the proxy address from the config check to the
+  connection, where the HTTP clients send them as `Proxy-Authorization`. No proxy URL that a log
+  line or an error can show holds a password. (#238, #385)
+- **The `Debug` text of a proxy showed part of an unencoded password.** For
+  `http://user:4242#rest@proxy:8080`, the `Debug` text of `ProxyConfig` and of
+  `StaticProxyProvider` showed `http://user:4242`. It now shows `***` for an address that the
+  config check refuses. (#285)
+- **The `Debug` text of `BrowserPoolConfig` showed a credential in a Chrome flag.** A flag value
+  that holds an `@`, such as `--proxy-server=http://user:pass@proxy:8080`, now prints as
+  `--proxy-server=***`. The flag name stays.
 - **The native browser backend could ignore its proxy and connect directly.** A proxy URL that
   did not parse, or one whose scheme the HTTP client cannot speak, such as `ftp://`, was dropped
   without an error, and every request of the render then went direct. A caller who relied on the
