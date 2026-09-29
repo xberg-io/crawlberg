@@ -297,6 +297,7 @@ impl CrawlEngine {
             &extra_headers,
             &client,
             crate::http::RefreshRedirects::Ignore,
+            crate::http::Fetched::Page,
         )
         .await?
         .response;
