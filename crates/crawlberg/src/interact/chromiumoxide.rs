@@ -522,9 +522,11 @@ fn action_type(action: &PageAction) -> &'static str {
 
 async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        crate::types::warn_ignored_launch_options(
+            &config.browser,
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally",
+        );
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -541,8 +543,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
             .as_ref()
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
-        let builder = build_interact_launch_builder(&user_data_dir, proxy_url);
-        let browser_config = builder
+        let browser_config = build_interact_launch_builder(&user_data_dir, proxy_url, &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -564,19 +565,27 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Op
 fn build_interact_launch_builder(
     user_data_dir: &std::path::Path,
     proxy_url: Option<&str>,
-) -> chromiumoxide::browser::BrowserConfigBuilder {
+    browser: &crate::types::BrowserConfig,
+) -> Result<chromiumoxide::browser::BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
         .disable_default_args();
-    builder = crate::browser_pool::apply_default_args(builder);
-    if let Some(proxy) = proxy_url {
+    builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
+    if let Some(proxy) = proxy_url
+        && !crate::browser_pool::caller_sets_switch(&browser.chrome_args, "proxy-server")
+    {
         // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
         // ~keep `----proxy-server=...` and the proxy was silently never applied.
         builder = builder.arg(format!("proxy-server={proxy}"));
     }
-    builder
+    crate::browser_pool::apply_launch_overrides(
+        builder,
+        "browser",
+        browser.chrome_path.as_deref(),
+        &browser.chrome_args,
+    )
 }
 
 #[cfg(test)]
@@ -588,8 +597,50 @@ mod tests {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` fails here because the returned flags actually change.
-        let builder = build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), None);
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            None,
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            Some("http://127.0.0.1:9"),
+            &crate::types::BrowserConfig {
+                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+                ..Default::default()
+            },
+        )
+        .expect("no binary is named, so there is nothing to check");
+        let debug = format!("{builder:?}");
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
+            "the caller's proxy-server flag is missing: {debug}"
+        );
+        assert!(
+            !debug.contains("proxy-server=http://127.0.0.1:9"),
+            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
+        );
+    }
+
+    #[test]
+    fn the_interact_launch_builder_uses_the_configured_chrome_path_and_args() {
+        crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+            build_interact_launch_builder(
+                std::path::Path::new("/tmp/interact-test-profile"),
+                Some("http://127.0.0.1:9"),
+                &crate::types::BrowserConfig {
+                    chrome_path,
+                    chrome_args,
+                    ..Default::default()
+                },
+            )
+        });
     }
 
     #[test]
@@ -597,7 +648,9 @@ mod tests {
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
             Some("http://127.0.0.1:9"),
-        );
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         let debug = format!("{builder:?}");
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
@@ -636,5 +689,59 @@ mod tests {
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
         );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password or path token, though the failing origin must still be readable for debugging.
+    ///
+    /// ~keep The launch path has the same test: xberg-io/crawlberg#473 was this test missing
+    /// ~keep here after #424 added it only there, so each connect site keeps its own. A closed
+    /// ~keep local port refuses the connection immediately, so this needs no real Chrome and
+    /// ~keep stays fast; `ws://` skips chromiumoxide's `json/version` HTTP probe and goes
+    /// ~keep straight to the WebSocket handshake. The endpoint-listener test just below reaches
+    /// ~keep the same error path with a local socket that answers HTTP 418, so a closed port is
+    /// ~keep no longer the only way here; it stays because it needs no listener at all.
+    #[tokio::test]
+    async fn connect_error_prints_only_the_endpoint_origin() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            !msg.contains("b1946ac9-guid"),
+            "the CDP path token must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
+        );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 }

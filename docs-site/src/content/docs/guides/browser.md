@@ -123,6 +123,33 @@ let config = CrawlConfig {
 
 This is the recommended pattern when running Chrome in a sidecar container or a remote debugging session. `endpoint` is rejected when `BrowserBackend::Native` is selected.
 
+## Choosing the Chrome binary and flags
+
+Set `chrome_path` to launch one specific Chrome or Chromium build, and `chrome_args` to add Chrome flags:
+
+```rust
+use crawlberg::{BrowserConfig, CrawlConfig};
+
+let config = CrawlConfig {
+    browser: BrowserConfig {
+        chrome_path: Some("/opt/chrome/chrome".into()),
+        chrome_args: vec!["--disable-gpu".into(), "--lang=fr".into()],
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+When `chrome_path` is set, crawlberg launches only that binary. A missing or non-executable path is an error that names the path; crawlberg never falls back to another Chrome. When it is unset, crawlberg uses the `CHROME` environment variable, then searches for an installed Chrome, Chromium or Edge.
+
+Write each entry in `chrome_args` as `--flag` or `--flag=value`. Crawlberg rejects any other entry, so `["--user-agent", "x"]` fails instead of turning `x` into a flag. A flag that names one of crawlberg's default flags replaces that default: `--lang=fr` above replaces the default `--lang=en_US`. Crawlberg rejects a flag name with an uppercase letter, because Chrome lowercases flag names on Windows only, and it rejects a flag named twice. Crawlberg rejects `--headless`, `--remote-debugging-port` and `--user-data-dir` in `chrome_args`, because it sets them itself. Use `browser_profile` to choose the profile directory.
+
+The Rust `BrowserPoolConfig` applies the same rules to its own `chrome_args` when the pool launches Chrome. `BrowserPool::new` accepts any list; a refused entry makes `warm` and `acquire_page` return an error that names `BrowserPoolConfig.chrome_args`.
+
+Set `chrome_args` only from trusted configuration, as you would `proxy`. Flags such as `--proxy-server` and `--host-resolver-rules` send Chrome's traffic around the `ssrf` policy, and crawlberg does not refuse them.
+
+Both fields are ignored, with a warning, when `endpoint` is set or the native backend is in use, and crawlberg does not check them then. Scrapes and crawls that use a shared browser pool also ignore them with a warning, because the pool launches Chrome from its own config; `interact()` still launches Chrome from them, so crawlberg checks them.
+
 ## Browser profiles
 
 Persistent browser profiles retain cookies, localStorage, and other browser state across crawl sessions. Configure them through `CrawlConfig::browser_profile` (named profile to attach) and `CrawlConfig::save_browser_profile` (persist changes on exit):

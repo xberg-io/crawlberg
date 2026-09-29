@@ -10,6 +10,9 @@
 //! reimplementing the check.
 #![allow(dead_code, clippy::print_stderr)]
 
+#[cfg(all(feature = "api", feature = "mcp"))]
+pub mod mcp;
+
 /// Whether an error message indicates the runner has no usable Chrome, rather
 /// than a genuine regression in the code under test. Three message variants are
 /// known:

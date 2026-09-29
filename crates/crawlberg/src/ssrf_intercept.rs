@@ -1640,7 +1640,7 @@ mod race_tests {
             .no_sandbox()
             .new_headless_mode()
             .user_data_dir(dir);
-        let launched = match crate::browser_pool::apply_default_args(builder).build() {
+        let launched = match crate::browser_pool::apply_default_args(builder, &[]).build() {
             Ok(config) => Browser::launch(config).await,
             Err(error) => {
                 eprintln!("skipping {test_name}: no usable Chrome: {error}");

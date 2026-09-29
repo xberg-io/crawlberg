@@ -630,6 +630,26 @@ class BrowserConfig {
   /// Default: true. When false, each request gets a fresh Page.
   final bool sessionAffinity;
 
+  /// Chrome or Chromium executable to launch. When set, crawlberg launches only this
+  /// binary, and a path that is missing or not executable is an error that names the
+  /// path; crawlberg never falls back to a different Chrome. When unset, crawlberg uses
+  /// the `CHROME` environment variable, then searches the machine for an installed Chrome,
+  /// Chromium or Edge. Chromiumoxide backend only: ignored, with a warning, when `endpoint`
+  /// is set, with the native backend, and by scrapes and crawls that use a shared browser pool.
+  final String? chromePath;
+
+  /// Extra Chrome command-line flags, each written as `--flag` or `--flag=value`, for example
+  /// `--user-agent=...`. A flag here replaces a crawlberg default flag of the same name
+  /// (`--lang=fr` replaces crawlberg's `--lang=en_US`). Rejected: an entry that does not
+  /// start with `--`, a flag name with an uppercase letter (Chrome flag names are lowercase),
+  /// a flag named twice, and `--headless`, `--remote-debugging-port` and `--user-data-dir`,
+  /// which crawlberg sets itself to run Chrome. Set this only from trusted configuration,
+  /// like `proxy`: flags such as `--proxy-server` and `--host-resolver-rules` send Chrome's
+  /// traffic around the `ssrf` policy. Chromiumoxide backend only: ignored, with a warning,
+  /// when `endpoint` is set, with the native backend, and by scrapes and crawls that use a
+  /// shared browser pool.
+  final List<String> chromeArgs;
+
   const BrowserConfig({
     required this.mode,
     required this.backend,
@@ -646,6 +666,8 @@ class BrowserConfig {
     this.robotsUserAgent,
     required this.captureNetworkEvents,
     required this.sessionAffinity,
+    this.chromePath,
+    required this.chromeArgs,
   });
 
   @override
@@ -664,7 +686,9 @@ class BrowserConfig {
       evalScript.hashCode ^
       robotsUserAgent.hashCode ^
       captureNetworkEvents.hashCode ^
-      sessionAffinity.hashCode;
+      sessionAffinity.hashCode ^
+      chromePath.hashCode ^
+      chromeArgs.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -685,7 +709,9 @@ class BrowserConfig {
           evalScript == other.evalScript &&
           robotsUserAgent == other.robotsUserAgent &&
           captureNetworkEvents == other.captureNetworkEvents &&
-          sessionAffinity == other.sessionAffinity;
+          sessionAffinity == other.sessionAffinity &&
+          chromePath == other.chromePath &&
+          chromeArgs == other.chromeArgs;
 }
 
 /// Browser-specific extras populated when the native browser backend was used.
