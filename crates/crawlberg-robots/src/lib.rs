@@ -118,6 +118,9 @@ impl RobotsParseState {
 /// `crawlberg` claim rules written for a different, more specific bot such as `crawlberg-news`.
 /// Shared with the `X-Robots-Tag` / meta-robots directive scoping so one rule decides which
 /// crawler a named directive binds, wherever that name appears.
+///
+/// Hidden from the docs: it is public only so the `crawlberg` crate can call it.
+#[doc(hidden)]
 pub fn product_token_addresses_us(token_lower: &str, ua_lower: &str) -> bool {
     !token_lower.is_empty() && ua_lower != "*" && ua_lower.starts_with(token_lower)
 }

@@ -156,13 +156,20 @@ title: "Changelog"
     a token that contained the user agent, or that the user agent contained anywhere, also
     matched.
   - A trailing `# comment` on a rule line is ignored. Before, it became part of the pattern.
+  - When a group names the crawler, only the groups that name it apply. Before, the
+    `User-agent: *` rules applied as well.
+  - A rule before the first `User-agent` line joins the first group. Before, the browser
+    fallback ignored it.
+  - An unknown directive between two `User-agent` lines joins them into one group. Before,
+    only the second `User-agent` line counted.
 
 - **When a robots.txt had two groups for the crawler, the crawl engine obeyed only the last
   one.** A file with `User-agent: crawlberg` / `Disallow: /a` and, further down, a second
   `User-agent: crawlberg` group with `Disallow: /c` let the crawler fetch `/a`. The parser now
   combines every group that names the crawler into one, as RFC 9309 section 2.2.1 says, and
-  does the same for several `User-agent: *` groups. The browser fallback uses the same parser
-  (#540).
+  does the same for several `User-agent: *` groups. When two combined groups set a
+  `Crawl-delay`, the later one wins. When only an earlier group sets one, that value applies.
+  The browser fallback uses the same parser (#540).
 
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
