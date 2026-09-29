@@ -304,11 +304,23 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         .get(current_url.to_string())
         .timeout(context.config.request_timeout);
 
-    // ~keep Reads `custom_headers["user-agent"]` ahead of `config.user_agent`, the same
-    // ~keep precedence every other sender uses (crawlberg#423); this hop's own robots.txt,
-    // ~keep sitemap and asset fetches used to read `config.user_agent` only, so a
-    // ~keep custom-header agent never reached them.
-    req = req.header(USER_AGENT, crate::helpers::default_robots_user_agent(context.config));
+    // ~keep `extra_headers["user-agent"]` outranks everything else: on wasm, where every
+    // ~keep request (including the page fetch) goes through this function, it is the crawl
+    // ~keep loop's own per-page rotation pick (crawlberg#483). Falls back to
+    // ~keep `custom_headers["user-agent"]` ahead of `config.user_agent`, the same precedence
+    // ~keep every other sender uses (crawlberg#423); this hop's own robots.txt, sitemap and
+    // ~keep asset fetches used to read `config.user_agent` only, so a custom-header agent
+    // ~keep never reached them. Native's own Tower-routed page fetch never reaches this
+    // ~keep function at all -- it sets its `User-Agent` header in `tower/service.rs` instead.
+    let extra_user_agent = context
+        .extra_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, value)| value.as_str());
+    req = req.header(
+        USER_AGENT,
+        extra_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(context.config)),
+    );
 
     // ~keep Redirects are followed manually under `Policy::none()`, so reqwest's own
     // ~keep strip-credentials-on-cross-host behaviour never runs; asking per hop for the
@@ -324,7 +336,14 @@ async fn send_hop_request(context: &FetchContext<'_>, current_url: &url::Url) ->
         req = req.header(name.as_str(), value.as_str());
     }
 
+    // ~keep `user-agent` is already reflected in the line above (as `extra_user_agent`);
+    // ~keep re-adding it here would append a second, redundant header line instead of
+    // ~keep replacing the first one -- the same duplicate-header bug the loop above already
+    // ~keep guards against for `seed_host_headers` (crawlberg#423, crawlberg#483).
     for (k, v) in context.extra_headers {
+        if k.eq_ignore_ascii_case("user-agent") {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -1341,5 +1360,40 @@ mod tests {
             "a custom_headers user-agent must replace the configured default, not duplicate it: {user_agent_values:?}"
         );
         assert_eq!(user_agent_values, ["Custom"]);
+    }
+
+    /// A fetch that names its own `user-agent` (the wasm page fetch, pinning the agent its
+    /// robots decision judged) must send that agent once, in place of the configured one.
+    #[tokio::test]
+    async fn an_extra_header_user_agent_replaces_the_configured_one() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/probe"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let config = CrawlConfig {
+            user_agent: Some("Configured".to_owned()),
+            ..permissive_config()
+        };
+        let client = build_client(&config).expect("client must build");
+        let extra_headers = HashMap::from([("user-agent".to_owned(), "Pinned".to_owned())]);
+        http_fetch(&format!("{}/probe", mock.uri()), &config, &extra_headers, &client)
+            .await
+            .expect("fetch must succeed");
+
+        let requests = mock.received_requests().await.expect("request recording is on");
+        let user_agent_values: Vec<&str> = requests[0]
+            .headers
+            .get_all("user-agent")
+            .iter()
+            .map(|v| v.to_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            user_agent_values,
+            ["Pinned"],
+            "an extra-header user-agent must replace the configured one, not add a second line"
+        );
     }
 }
