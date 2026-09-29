@@ -284,9 +284,9 @@ pub(crate) async fn http_fetch_with(
     }
 }
 
-/// Statuses whose `Location` header the crawl follows (`engine::redirect::REDIRECT_STATUSES`
-/// reads this same constant; it lives here because `engine::redirect` is native-only and this
-/// module is not).
+/// Statuses whose `Location` header the crawl follows (`engine::redirect::http_redirect_target`
+/// reads this same constant as `crate::http::REDIRECT_STATUSES`; it lives here because
+/// `engine::redirect` is native-only and this module is not).
 pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
