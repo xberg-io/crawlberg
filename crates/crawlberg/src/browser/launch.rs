@@ -196,6 +196,7 @@ mod user_data_dir_tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn no_profile_resolves_to_ephemeral_temp_dir_marked_for_cleanup() {
         let config = CrawlConfig::default();
         let resolved = resolve_user_data_dir(&config).expect("resolve must succeed without a profile configured");
@@ -206,6 +207,7 @@ mod user_data_dir_tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn missing_named_profile_is_created_and_used_directly_when_saved() {
         let name = unique_profile_name("create-save");
         let profile = BrowserProfile::new(&name).expect("profile name must be valid");
@@ -235,6 +237,7 @@ mod user_data_dir_tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn unsaved_profile_launches_from_a_scratch_copy_that_preserves_the_original() {
         let name = unique_profile_name("no-save");
         let profile = BrowserProfile::new(&name).expect("profile name must be valid");
@@ -281,6 +284,7 @@ mod user_data_dir_tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn copy_dir_recursive_copies_nested_files_and_skips_symlinks() {
         let root = std::env::temp_dir().join(unique_profile_name("copy"));
         let src = root.join("src");
@@ -313,6 +317,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn the_one_shot_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
@@ -327,6 +332,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn the_one_shot_launch_builder_uses_the_configured_chrome_path_and_args() {
         crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
             build_one_shot_launch_builder(
@@ -347,6 +353,7 @@ mod tests {
     /// ~keep through a real Chrome because an integration test cannot reliably choose which window a
     /// ~keep cancellation lands in -- see xberg-io/crawlberg#198.
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn an_unclaimed_scratch_profile_directory_is_removed_when_it_drops() {
         let resolved = resolve_user_data_dir(&CrawlConfig::default()).expect("resolve must succeed");
         let path = resolved.path().to_path_buf();
@@ -364,6 +371,7 @@ mod tests {
     /// that Chrome and removes the directory.
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn dropping_a_one_shot_launchs_profile_directory_stops_its_chrome() {
         let (browser, handler, user_data) = match launch_or_connect(&CrawlConfig::default()).await {
             Ok(launched) => launched,
@@ -379,12 +387,62 @@ mod tests {
             .await;
     }
 
+    /// A refused `chrome_path` removes the scratch directory `resolve_user_data_dir` created for
+    /// the launch it never made.
+    ///
+    /// ~keep Pins the call site in `launch_or_connect`: `resolve_user_data_dir(config)?` then
+    /// ~keep `build_one_shot_launch_builder(..)?`, whose `?` drops the guard on a refusal. No
+    /// ~keep Chrome is needed: the check on the path fails before any process would be spawned.
+    #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
+    async fn a_one_shot_launch_refused_by_a_missing_chrome_path_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-one-shot-chrome")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-browser-", || {
+                launch_or_connect(&config)
+            })
+            .await;
+        assert!(
+            error.contains("cannot be used"),
+            "the error must name the path, got: {error}"
+        );
+    }
+
+    /// The same call site refused by a `chrome_args` entry instead of `chrome_path`.
+    #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
+    async fn a_one_shot_launch_refused_by_a_user_data_dir_flag_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_args: vec!["--user-data-dir=/tmp/crawlberg-one-shot-elsewhere".to_owned()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-browser-", || {
+                launch_or_connect(&config)
+            })
+            .await;
+        assert!(
+            error.contains("must not set --user-data-dir"),
+            "the error must name the refused flag, got: {error}"
+        );
+    }
+
     /// A one-shot launch cut off by the overall deadline hands its profile teardown off the
     /// executor thread.
     ///
     /// ~keep No Chrome is needed: without one the launch fails before the deadline, and the
     /// ~keep profile directory drops on the same path.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn a_cancelled_one_shot_launch_tears_its_profile_down_off_the_executor_thread() {
         let mut config = CrawlConfig::default();
         config.browser.overall_timeout = std::time::Duration::from_millis(1);
@@ -405,6 +463,7 @@ mod tests {
     /// ~keep below reaches the same error path with a local socket that answers HTTP 418, so
     /// ~keep a closed port is not the only way here; it stays because it needs no listener at all.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn connect_error_prints_only_the_endpoint_origin() {
         let config = CrawlConfig {
             browser: crate::types::BrowserConfig {
@@ -434,6 +493,7 @@ mod tests {
 
     /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn connects_every_endpoint_spelling_the_checks_accept() {
         crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
             let config = CrawlConfig {
@@ -450,6 +510,7 @@ mod tests {
 
     /// A saved named profile is never removed when its value drops.
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn a_persistent_profile_directory_is_never_removed() {
         let dir = tempfile::tempdir().expect("the directory must be creatable");
 
@@ -464,6 +525,7 @@ mod tests {
     /// Dropping a saved named profile neither removes it nor stops a Chrome still using it.
     #[cfg(unix)]
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn a_persistent_profile_in_use_is_neither_removed_nor_its_user_killed() {
         let dir = tempfile::tempdir().expect("the directory must be creatable");
         let flag = crate::browser_pool::user_data_dir_flag(dir.path());
@@ -484,6 +546,7 @@ mod tests {
     /// A one-shot session whose teardown task runs to the end removes its profile directory.
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn a_one_shot_session_torn_down_by_its_task_leaves_no_profile_directory() {
         use tokio_stream::StreamExt;
 
@@ -521,6 +584,7 @@ mod tests {
     /// ~keep `crawlberg-browser-*` directory per fetch in the temp directory (xberg-io/crawlberg#415).
     #[test]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn a_one_shot_session_dropped_as_its_runtime_stops_leaves_no_profile_directory() {
         use tokio_stream::StreamExt;
 

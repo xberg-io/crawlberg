@@ -507,6 +507,7 @@ mod tests {
     /// process left using it.
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it() {
         let config = CrawlConfig::default();
         let launched = match launch_or_connect(&config).await {
@@ -541,6 +542,7 @@ mod tests {
     /// ~keep `launch_or_connect` itself, so a call site that stops dropping the directory on a
     /// ~keep failed launch fails here.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn a_failed_interact_launch_removes_its_profile_directory() {
         let not_chrome = crate::types::executable_temp_file("interact-launch");
         let config = CrawlConfig {
@@ -565,10 +567,60 @@ mod tests {
         crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
     }
 
+    /// A refused `chrome_path` removes the scratch directory `launch_or_connect` created for the
+    /// launch it never made.
+    ///
+    /// ~keep Pins the call site in `launch_or_connect`: `ScratchProfileDir::create(..)?` then
+    /// ~keep `build_interact_launch_builder(..)?`, whose `?` drops the guard on a refusal. No
+    /// ~keep Chrome is needed: the check on the path fails before any process would be spawned.
+    #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
+    async fn an_interact_launch_refused_by_a_missing_chrome_path_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-interact-chrome")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-interact-", || {
+                launch_or_connect(&config)
+            })
+            .await;
+        assert!(
+            error.contains("cannot be used"),
+            "the error must name the path, got: {error}"
+        );
+    }
+
+    /// The same call site refused by a `chrome_args` entry instead of `chrome_path`.
+    #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
+    async fn an_interact_launch_refused_by_a_user_data_dir_flag_leaves_no_profile_directory() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_args: vec!["--user-data-dir=/tmp/crawlberg-interact-elsewhere".to_owned()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error =
+            crate::browser_pool::tests::assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-interact-", || {
+                launch_or_connect(&config)
+            })
+            .await;
+        assert!(
+            error.contains("must not set --user-data-dir"),
+            "the error must name the refused flag, got: {error}"
+        );
+    }
+
     /// An interact launch records the Chrome it starts, so dropping its profile directory stops
     /// that Chrome and removes the directory.
     #[tokio::test(flavor = "multi_thread")]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn dropping_an_interact_launchs_profile_directory_stops_its_chrome() {
         let (browser, handler, dir) = match launch_or_connect(&CrawlConfig::default()).await {
             Ok(launched) => launched,
@@ -588,6 +640,7 @@ mod tests {
     /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
     /// ~keep directory drops on the same path.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn a_cancelled_interact_run_tears_its_profile_down_off_the_executor_thread() {
         let config = CrawlConfig::default();
         let before = crate::browser_pool::tests::profile_drops_here();
@@ -598,6 +651,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn the_interact_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
@@ -612,6 +666,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
@@ -634,6 +689,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn the_interact_launch_builder_uses_the_configured_chrome_path_and_args() {
         crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
             build_interact_launch_builder(
@@ -649,6 +705,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn the_interact_launch_builder_still_normalizes_the_proxy_server_flag() {
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
@@ -672,6 +729,7 @@ mod tests {
     /// ~keep follows the redirect itself and `Fetch.requestPaused` reports the target verbatim,
     /// ~keep which `ssrf_intercept` records unchanged. xberg-io/crawlberg#180.
     #[test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
         let blocked = Some((
             "https://user:secret@10.0.0.1/".to_owned(),
@@ -707,6 +765,7 @@ mod tests {
     /// ~keep the same error path with a local socket that answers HTTP 418, so a closed port is
     /// ~keep no longer the only way here; it stays because it needs no listener at all.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn connect_error_prints_only_the_endpoint_origin() {
         let config = CrawlConfig {
             browser: crate::types::BrowserConfig {
@@ -736,6 +795,7 @@ mod tests {
 
     /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
     #[tokio::test]
+    #[serial_test::serial(crawlberg_scratch_dir)]
     async fn connects_every_endpoint_spelling_the_checks_accept() {
         crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
             let config = CrawlConfig {

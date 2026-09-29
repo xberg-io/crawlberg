@@ -9,6 +9,7 @@
 use super::*;
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_config_defaults() {
     let config = BrowserPoolConfig::default();
     assert_eq!(config.max_pages, 8);
@@ -19,12 +20,14 @@ fn test_config_defaults() {
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_pool_creation() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     assert!(!pool.shutdown.load(Ordering::Relaxed));
 }
 
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn test_shutdown_idempotent() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.shutdown().await;
@@ -32,6 +35,7 @@ async fn test_shutdown_idempotent() {
 }
 
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn test_acquire_after_shutdown_fails() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     pool.shutdown().await;
@@ -129,6 +133,66 @@ pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) 
     );
 }
 
+/// The entries directly inside the system temp directory whose name starts with `prefix`, for a
+/// before/after snapshot around a launch that must not leave one behind.
+fn scratch_dirs_named(prefix: &str) -> std::collections::BTreeSet<std::path::PathBuf> {
+    std::fs::read_dir(std::env::temp_dir())
+        .expect("the system temp directory must be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(prefix))
+        })
+        .collect()
+}
+
+/// Wait up to [`PROCESS_TEST_WAIT`] for the entries named `prefix` to settle back to `before`: the
+/// teardown a dropped [`ScratchProfileDir`] schedules runs on another task, not before the call that
+/// dropped it returns.
+async fn settled_scratch_dirs_named(
+    prefix: &str,
+    before: &std::collections::BTreeSet<std::path::PathBuf>,
+) -> std::collections::BTreeSet<std::path::PathBuf> {
+    let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
+    loop {
+        let now = scratch_dirs_named(prefix);
+        if &now == before || tokio::time::Instant::now() >= deadline {
+            return now;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Run `attempt`, a launch expected to fail before any Chrome starts, and assert it leaves no
+/// entry under the system temp directory whose name starts with `prefix` beyond what was already
+/// there: the scratch directory the launch's guard created for the launch it never made is removed
+/// on the same refusal that failed it. Returns the error message for the caller's own assertion.
+///
+/// ~keep The check is a before/after snapshot restricted to `prefix` (each launch path's own,
+/// ~keep never a bare temp-dir listing), taken immediately around `attempt`, with a settle wait
+/// ~keep for the teardown task: this fails only when THIS call's own guard is the one left behind,
+/// ~keep not a concurrent test's directory under the same shared system temp directory.
+pub(crate) async fn assert_refused_launch_leaves_no_new_scratch_dir<F, Fut, T>(prefix: &str, attempt: F) -> String
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, CrawlError>>,
+{
+    let before = scratch_dirs_named(prefix);
+    let error = match attempt().await {
+        Ok(_) => panic!("a refused launch must return an error, not launch"),
+        Err(e) => e.to_string(),
+    };
+    let after = settled_scratch_dirs_named(prefix, &before).await;
+    assert_eq!(
+        after,
+        before,
+        "a refused launch left a scratch directory behind under {}",
+        std::env::temp_dir().display()
+    );
+    error
+}
+
 /// Stopping a profile's users kills a process of the named Chrome still writing into it.
 ///
 /// ~keep The stand-in carries `--user-data-dir=<dir>` on its command line, as each of Chrome's
@@ -140,6 +204,7 @@ pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) 
 /// ~keep instead of waiting on the zombie.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zombie() {
     let dir = ScratchProfileDir::create("crawlberg-profile-users-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -184,6 +249,7 @@ fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zom
 /// ~keep readable while any thread of it runs, so the wait runs to its deadline.
 #[cfg(target_os = "linux")]
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn the_wait_on_a_killed_process_lasts_until_it_has_ended() {
     let mut child = std::process::Command::new("sleep")
         .arg("30")
@@ -300,6 +366,7 @@ fn hold_two_threads_in(dir: &std::path::Path) -> ! {
 #[cfg(target_os = "linux")]
 #[test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn the_teardown_removes_the_profile_only_after_every_thread_of_a_killed_process_has_exited() {
     if let Some(dir) = std::env::var_os(HELD_THREAD_CHILD) {
         hold_two_threads_in(std::path::Path::new(&dir));
@@ -391,6 +458,7 @@ fn the_teardown_removes_the_profile_only_after_every_thread_of_a_killed_process_
 /// A profile directory dropped outside a Tokio runtime is torn down on another thread, so a host's
 /// finalizer thread that drops the last owner is not held for up to the five-second wait.
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn a_profile_directory_dropped_outside_a_runtime_is_torn_down_on_another_thread() {
     let dir = ScratchProfileDir::create("crawlberg-no-runtime-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -407,6 +475,7 @@ fn a_profile_directory_dropped_outside_a_runtime_is_torn_down_on_another_thread(
 /// ~keep A user this process cannot kill, such as another account's process naming the flag, would
 /// ~keep otherwise hold the teardown forever.
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn stopping_gives_up_on_a_user_that_never_exits_once_its_timeout_passes() {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -420,6 +489,7 @@ fn stopping_gives_up_on_a_user_that_never_exits_once_its_timeout_passes() {
 
 /// The flag counts only as a whole token of the command line, bounded by a space or an end.
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn a_command_line_names_the_flag_only_as_a_whole_token() {
     let flag = "--user-data-dir=/tmp/crawlberg-chrome-a1";
     let names = |arguments: &[&str]| {
@@ -476,6 +546,7 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
 /// ~keep tells the two apart.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
     let mut dir =
         ScratchProfileDir::create("crawlberg-profile-bystander-test-").expect("the directory must be creatable");
@@ -509,6 +580,7 @@ fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
 /// ~keep `/` holds every executable, so only the check of the command line spares the process.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
     let mut other = std::process::Command::new("cat")
@@ -712,6 +784,7 @@ fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
 /// ~keep because its helpers must run the executable the launch reads from the process tree.
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
     let dir = ScratchProfileDir::create("crawlberg-running-chrome-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -789,6 +862,7 @@ fn write_launcher(path: &std::path::Path, chrome: &std::path::Path, exec: bool) 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_the_launcher() {
     let detection = chromiumoxide::detection::DetectionOptions {
         msedge: false,
@@ -885,6 +959,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
 /// ~keep `crawlberg-chrome-*` directory in the temp directory (xberg-io/crawlberg#415).
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     if let Err(error) = pool.warm().await {
@@ -925,6 +1000,7 @@ async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
 /// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_pool_shut_down_leaves_no_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     if let Err(error) = pool.warm().await {
@@ -945,6 +1021,7 @@ async fn a_pool_shut_down_leaves_no_profile_directory() {
 /// A pool that relaunches a Chrome whose handler ended removes the old Chrome's profile directory.
 #[tokio::test]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
     if let Err(error) = pool.warm().await {
@@ -985,6 +1062,7 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
 ///
 /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome runs.
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_failed_launch_removes_its_profile_directory() {
     let dir = ScratchProfileDir::create("crawlberg-failed-launch-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -1008,6 +1086,7 @@ async fn a_failed_launch_removes_its_profile_directory() {
 /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
 /// ~keep directory drops on the same path.
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread() {
     let pool = BrowserPool::new(BrowserPoolConfig {
         launch_timeout: Duration::from_millis(1),
@@ -1033,6 +1112,7 @@ async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread(
 /// ~keep `Browser` was not practical here (`chromiumoxide::Browser` wraps a real child
 /// ~keep process and CDP connection with no test seam for either).
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -1131,6 +1211,7 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
 /// ~keep handler loop that a killed Chrome can never end, so it returned about one
 /// ~keep `shutdown_timeout` plus five seconds after it started.
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -1217,6 +1298,7 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
 /// Releasing a connected browser disconnects from it: the handler task that owns the CDP
 /// websocket stops at once, and the Chrome at the other end keeps running.
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -1273,6 +1355,7 @@ async fn release_browser_disconnects_from_a_connected_browser_without_closing_it
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
     // ~keep chromiumoxide's BrowserConfig::arg renders every entry as `--{arg}`; an
     // ~keep already-`--`-prefixed entry would render as `----...` and Chrome discards
@@ -1284,6 +1367,7 @@ fn test_safe_default_args_never_double_prefixes_for_chromiumoxide() {
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
     let args = safe_default_args();
     if cfg!(target_os = "macos") {
@@ -1300,12 +1384,14 @@ fn test_safe_default_args_adds_use_mock_keychain_on_macos_only() {
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_apply_default_args_produces_normalized_flags() {
     let builder = apply_default_args(BrowserConfig::builder(), &[]);
     assert_launch_flags_are_normalized(&builder);
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn the_pool_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_flag() {
     // ~keep Behavioral, not textual: this calls the exact function `launch_browser`
     // ~keep uses to build its `BrowserConfig`, so a path that stops calling
@@ -1320,6 +1406,7 @@ fn the_pool_launch_builder_carries_no_double_dashed_flag_and_the_macos_keychain_
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn the_pool_launch_builder_uses_the_configured_chrome_path_and_args() {
     assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
         build_pool_launch_builder(
@@ -1334,6 +1421,7 @@ fn the_pool_launch_builder_uses_the_configured_chrome_path_and_args() {
 }
 
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_the_pool_key() {
     for (chrome_args, expected) in [
         (
@@ -1367,6 +1455,7 @@ fn the_pool_launch_builder_refuses_the_chrome_args_validate_refuses_and_names_th
 }
 
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn a_pool_with_a_missing_chrome_path_fails_to_launch_and_names_the_path() {
     let pool = BrowserPool::new(BrowserPoolConfig {
         chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-pool-chrome")),
@@ -1382,7 +1471,46 @@ async fn a_pool_with_a_missing_chrome_path_fails_to_launch_and_names_the_path() 
     );
 }
 
+/// The pool is the one launch path a caller reaches without going through `CrawlConfig::validate`,
+/// so a refused `chrome_path` must remove the scratch directory the guard created for the launch it
+/// never made, not only fail with the right message.
+///
+/// ~keep Pins the call site in `launch_browser`: `ScratchProfileDir::create` then
+/// ~keep `build_pool_launch_builder(..)?`, whose `?` drops the guard on a refusal. A future call
+/// ~keep site that reorders this (or forgets the `?`) leaks the directory and every shipped test
+/// ~keep before this one still passes, because none of them checked for the directory.
+#[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
+async fn a_pool_refused_by_a_missing_chrome_path_leaves_no_profile_directory() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_path: Some(std::path::PathBuf::from("/nonexistent/crawlberg-pool-chrome")),
+        ..BrowserPoolConfig::default()
+    });
+    let error = assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-chrome-", || pool.acquire_page()).await;
+    assert!(
+        error.contains("BrowserPoolConfig.chrome_path '/nonexistent/crawlberg-pool-chrome' cannot be used"),
+        "the error must name the pool key and the path, got: {error}"
+    );
+}
+
+/// The same call site refused by a `chrome_args` entry instead of `chrome_path`: `--user-data-dir`
+/// is a flag the launch itself sets, so `CrawlConfig::validate`'s own rule refuses it here too.
+#[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
+async fn a_pool_refused_by_a_user_data_dir_flag_leaves_no_profile_directory() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        chrome_args: vec!["--user-data-dir=/tmp/crawlberg-pool-elsewhere".to_owned()],
+        ..BrowserPoolConfig::default()
+    });
+    let error = assert_refused_launch_leaves_no_new_scratch_dir("crawlberg-chrome-", || pool.acquire_page()).await;
+    assert!(
+        error.contains("must not set --user-data-dir"),
+        "the error must name the refused flag, got: {error}"
+    );
+}
+
 #[test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 fn test_every_known_launch_path_calls_the_shared_apply_default_args_helper() {
     // ~keep Textual guard, kept alongside the behavioral tests above and in browser.rs's
     // ~keep and interact/chromiumoxide.rs's own test modules (each builds the real
@@ -1494,6 +1622,7 @@ where
 }
 
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn the_pool_connects_every_endpoint_spelling_the_checks_accept() {
     assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
         let pool = BrowserPool::new(BrowserPoolConfig {
@@ -1516,6 +1645,7 @@ async fn the_pool_connects_every_endpoint_spelling_the_checks_accept() {
 /// ~keep needs no real Chrome and stays fast; `ws://` skips chromiumoxide's `json/version` HTTP
 /// ~keep probe and goes straight to the WebSocket handshake.
 #[tokio::test]
+#[serial_test::serial(crawlberg_scratch_dir)]
 async fn pool_connect_error_prints_only_the_endpoint_origin() {
     let pool = BrowserPool::new(BrowserPoolConfig {
         browser_endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
