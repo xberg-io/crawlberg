@@ -199,3 +199,269 @@ async fn unsaved_profile_changes_are_not_written_back() {
         "pre-existing profile content must be unmodified"
     );
 }
+
+/// A raw HTTP server that records the `Cookie` header each `GET /` carried. By default its n-th
+/// `GET /` sets the cookie `seen=<n>` on the marker page; given `pages`, the n-th answers with the
+/// n-th `(header line, body)`, the last one for every request after.
+struct CookieServer {
+    base_url: String,
+    cookies_seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl CookieServer {
+    async fn start() -> Self {
+        Self::serving(Vec::new()).await
+    }
+
+    async fn serving(pages: Vec<(String, String)>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("test server should bind");
+        let addr = listener.local_addr().expect("test server should have local addr");
+        let cookies_seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&cookies_seen);
+        let pages = std::sync::Arc::new(pages);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = std::sync::Arc::clone(&seen);
+                let pages = std::sync::Arc::clone(&pages);
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 4096];
+                    let n = stream.read(&mut buffer).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let mut header = String::new();
+                    let mut body = "<html><body>profile-wiring-marker</body></html>".to_owned();
+                    if head.starts_with("GET / ") {
+                        let cookie = head
+                            .lines()
+                            .find(|line| line.to_ascii_lowercase().starts_with("cookie:"))
+                            .map(|line| line[7..].trim().to_owned())
+                            .unwrap_or_default();
+                        let mut seen = seen.lock().expect("lock");
+                        seen.push(cookie);
+                        match pages.get((seen.len() - 1).min(pages.len().saturating_sub(1))) {
+                            Some((page_header, page_body)) => {
+                                header = page_header.clone();
+                                body = page_body.clone();
+                            }
+                            None => header = format!("set-cookie: seen={}; Path=/; Max-Age=3600\r\n", seen.len()),
+                        }
+                    }
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n{header}content-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        Self {
+            base_url: format!("http://{addr}"),
+            cookies_seen,
+        }
+    }
+
+    fn cookies_seen(&self) -> Vec<String> {
+        self.cookies_seen.lock().expect("lock").clone()
+    }
+}
+
+/// The newest modification time of a file under `dir`, if there is one.
+fn newest_mtime(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mut newest = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let candidate = if metadata.is_dir() {
+            newest_mtime(&entry.path())
+        } else {
+            metadata.modified().ok()
+        };
+        if let Some(candidate) = candidate
+            && newest.is_none_or(|newest| candidate > newest)
+        {
+            newest = Some(candidate);
+        }
+    }
+    newest
+}
+
+/// Scrape `url` with the profile and return the page, then wait until its Chrome has left the
+/// profile: its `SingletonLock` is gone and nothing under the profile changed for half a second.
+/// `None` without Chrome.
+///
+/// ~keep The one-shot session returns before its Chrome has exited. A second session on the same
+/// ~keep profile before that races the exit: with `save_browser_profile: false` the copy of the
+/// ~keep profile fails on a file Chrome renames meanwhile ("failed to copy profile file
+/// ~keep .../Default/.com.google.Chrome.TransportSecurity.hp1rB0: No such file or directory",
+/// ~keep 3 of 3 runs; Chrome removes the lock before its last profile writes). That is the
+/// ~keep session's defect, reported separately; these tests wait so they measure cookies.
+async fn scrape_with_profile(
+    test_name: &str,
+    profile: &BrowserProfile,
+    save_browser_profile: bool,
+    url: &str,
+) -> Option<String> {
+    let engine =
+        create_engine(Some(config_with_profile(&profile.name, save_browser_profile))).expect("engine must build");
+    match scrape(&engine, url).await {
+        Ok(result) => {
+            let lock = profile.user_data_dir.join("SingletonLock");
+            let quiet = Duration::from_millis(500);
+            let mut left = false;
+            for _ in 0..100 {
+                left = std::fs::symlink_metadata(&lock).is_err()
+                    && newest_mtime(&profile.user_data_dir)
+                        .is_none_or(|newest| newest.elapsed().is_ok_and(|since| since > quiet));
+                if left {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            assert!(
+                left,
+                "{test_name}: the session's Chrome must leave the profile within ten seconds"
+            );
+            Some(result.html)
+        }
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+            None
+        }
+        Err(error) => panic!("{test_name}: scrape must succeed: {error:?}"),
+    }
+}
+
+/// A cookie a page sets under a saved profile reaches the next scrape with that profile: the
+/// page runs in a browser context of its own, and the profile's cookies are copied in and back.
+#[tokio::test]
+async fn a_saved_profile_keeps_the_cookies_a_page_set() {
+    let test_name = "a_saved_profile_keeps_the_cookies_a_page_set";
+    let name = unique_profile_name("cookies-saved");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let server = CookieServer::start().await;
+    let url = format!("{}/", server.base_url);
+    for _ in 0..2 {
+        if scrape_with_profile(test_name, &profile, true, &url).await.is_none() {
+            return;
+        }
+    }
+    let seen = server.cookies_seen();
+    assert_eq!(
+        seen.len(),
+        2,
+        "{test_name}: both scrapes must reach the server: {seen:?}"
+    );
+    assert_eq!(
+        seen[0], "",
+        "{test_name}: the first scrape of a new profile must carry no cookie"
+    );
+    assert!(
+        seen[1].contains("seen=1"),
+        "{test_name}: the cookie the first scrape set must reach the second, got {:?}",
+        seen[1]
+    );
+}
+
+/// A scrape that does not save its profile still starts with the profile's cookies, and the
+/// cookies it sets are gone from the profile afterwards.
+#[tokio::test]
+async fn an_unsaved_profile_offers_its_cookies_and_keeps_none() {
+    let test_name = "an_unsaved_profile_offers_its_cookies_and_keeps_none";
+    let name = unique_profile_name("cookies-unsaved");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let server = CookieServer::start().await;
+    let url = format!("{}/", server.base_url);
+    for save in [true, false, true] {
+        if scrape_with_profile(test_name, &profile, save, &url).await.is_none() {
+            return;
+        }
+    }
+    let seen = server.cookies_seen();
+    assert_eq!(
+        seen.len(),
+        3,
+        "{test_name}: all three scrapes must reach the server: {seen:?}"
+    );
+    assert!(
+        seen[1].contains("seen=1"),
+        "{test_name}: the unsaved scrape must start with the profile's cookie, got {:?}",
+        seen[1]
+    );
+    assert!(
+        seen[2].contains("seen=1") && !seen[2].contains("seen=2"),
+        "{test_name}: the profile must keep the saved scrape's cookie and none of the unsaved one's, got {:?}",
+        seen[2]
+    );
+}
+
+/// The localStorage a page writes under a saved profile reaches the next scrape with that
+/// profile: the page runs in the profile's own storage, not in a context that starts empty.
+#[tokio::test]
+async fn a_saved_profile_keeps_the_local_storage_a_page_wrote() {
+    let test_name = "a_saved_profile_keeps_the_local_storage_a_page_wrote";
+    let name = unique_profile_name("storage-saved");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let page = "<html><body><p id=o>x</p><script>const v = localStorage.getItem('k') || 'none'; \
+                document.getElementById('o').textContent = 'prior=' + v; localStorage.setItem('k', 'v1');</script></body></html>";
+    let server = CookieServer::serving(vec![(String::new(), page.to_owned())]).await;
+    let url = format!("{}/", server.base_url);
+    let Some(first) = scrape_with_profile(test_name, &profile, true, &url).await else {
+        return;
+    };
+    let Some(second) = scrape_with_profile(test_name, &profile, true, &url).await else {
+        return;
+    };
+    assert!(
+        first.contains("prior=none"),
+        "{test_name}: the first scrape of a new profile must find no localStorage: {first}"
+    );
+    assert!(
+        second.contains("prior=v1"),
+        "{test_name}: the second scrape must find the localStorage the first wrote: {second}"
+    );
+}
+
+/// A cookie a page deletes under a saved profile is gone from the profile: the third scrape
+/// sends nothing after the second one expired the cookie the first one set.
+#[tokio::test]
+async fn a_saved_profile_forgets_the_cookie_a_page_deleted() {
+    let test_name = "a_saved_profile_forgets_the_cookie_a_page_deleted";
+    let name = unique_profile_name("cookie-deleted");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let body = "<html><body>profile-wiring-marker</body></html>".to_owned();
+    let server = CookieServer::serving(vec![
+        ("set-cookie: a=1; Path=/; Max-Age=3600\r\n".to_owned(), body.clone()),
+        ("set-cookie: a=gone; Path=/; Max-Age=0\r\n".to_owned(), body.clone()),
+        (String::new(), body),
+    ])
+    .await;
+    let url = format!("{}/", server.base_url);
+    for _ in 0..3 {
+        if scrape_with_profile(test_name, &profile, true, &url).await.is_none() {
+            return;
+        }
+    }
+    let seen = server.cookies_seen();
+    assert_eq!(
+        seen.len(),
+        3,
+        "{test_name}: all three scrapes must reach the server: {seen:?}"
+    );
+    assert!(
+        seen[1].contains("a=1"),
+        "{test_name}: the second scrape must carry the cookie the first set: {seen:?}"
+    );
+    assert!(
+        !seen[2].contains("a="),
+        "{test_name}: the cookie the second scrape deleted must be gone from the saved profile: {seen:?}"
+    );
+}
