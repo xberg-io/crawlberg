@@ -103,6 +103,47 @@ fn resolve_user_data_dir(config: &CrawlConfig) -> Result<UserDataDir, CrawlError
     }
 }
 
+/// A saved profile session's hold on its profile directory. The session keeps it until its
+/// Chrome has been reaped, so no other session in this process copies the directory or launches
+/// on it while that Chrome can still write to it.
+pub(super) type ProfileHold = tokio::sync::OwnedRwLockWriteGuard<()>;
+
+type ProfileLocks = std::collections::HashMap<std::path::PathBuf, std::sync::Arc<tokio::sync::RwLock<()>>>;
+
+/// One lock per profile directory used by a session in this process; see [`profile_lock`].
+static PROFILE_LOCKS: std::sync::LazyLock<std::sync::Mutex<ProfileLocks>> = std::sync::LazyLock::new(Default::default);
+
+/// The lock that orders every session on the profile directory `dir`: a saved session holds it
+/// for writing until its Chrome is reaped, an unsaved one for reading while it copies.
+///
+/// ~keep Chrome removes its `SingletonLock` before its last profile writes, so a copy that starts
+/// ~keep once the previous session has only been asked to close fails on a file Chrome renames
+/// ~keep meanwhile (xberg-io/crawlberg#524). Copies read the directory together; only a Chrome
+/// ~keep writing it needs the directory alone. An entry nothing holds is dropped at the next lookup.
+fn profile_lock(dir: &std::path::Path) -> std::sync::Arc<tokio::sync::RwLock<()>> {
+    let mut locks = PROFILE_LOCKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| std::sync::Arc::strong_count(lock) > 1);
+    std::sync::Arc::clone(locks.entry(dir.to_path_buf()).or_default())
+}
+
+/// Wait until this session may use `config.browser_profile`, then resolve its `--user-data-dir`.
+///
+/// A saved profile comes back with the session's hold on it. An unsaved profile is copied under a
+/// read hold that ends with the copy, since its Chrome writes only to the copy.
+async fn claim_user_data_dir(config: &CrawlConfig) -> Result<(UserDataDir, Option<ProfileHold>), CrawlError> {
+    let Some(name) = config.browser_profile.as_deref() else {
+        return Ok((resolve_user_data_dir(config)?, None));
+    };
+    let lock = profile_lock(&crate::browser_profile::BrowserProfile::new(name)?.user_data_dir);
+    if config.save_browser_profile {
+        let hold = lock.write_owned().await;
+        Ok((resolve_user_data_dir(config)?, Some(hold)))
+    } else {
+        let _copying = lock.read_owned().await;
+        Ok((resolve_user_data_dir(config)?, None))
+    }
+}
+
 /// Recursively copy `src` into `dst`, creating `dst` if needed. Symlinks inside
 /// `src` are skipped rather than followed or copied as links.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), CrawlError> {
@@ -128,9 +169,12 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 }
 
 /// Launch a new managed browser or connect to an external CDP endpoint.
+///
+/// A launch on a saved profile also returns the session's hold on that profile, which the
+/// session keeps until its Chrome is reaped.
 pub(super) async fn launch_or_connect(
     config: &CrawlConfig,
-) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
+) -> Result<(Browser, Handler, Option<std::path::PathBuf>, Option<ProfileHold>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
         crate::types::warn_ignored_launch_options(
             &config.browser,
@@ -144,16 +188,17 @@ pub(super) async fn launch_or_connect(
             );
         }
         let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
-        Ok((browser, handler, None))
+        Ok((browser, handler, None, None))
     } else {
-        let user_data = resolve_user_data_dir(config)?;
+        // ~keep Inside the caller's launch deadline, so a wait for the profile ends with it.
+        let (user_data, hold) = claim_user_data_dir(config).await?;
 
         let browser_config = build_one_shot_launch_builder(&user_data.path, &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
         match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over())),
+            Ok((browser, handler)) => Ok((browser, handler, user_data.hand_over(), hold)),
             // ~keep `user_data`'s `Drop` removes the directory on this path and on cancellation.
             Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
         }
@@ -365,6 +410,33 @@ mod user_data_dir_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_profile_directory_has_one_lock_until_nothing_holds_it() {
+        let held_dir = std::env::temp_dir().join(unique_profile_name("lock-held"));
+        let other_dir = std::env::temp_dir().join(unique_profile_name("lock-other"));
+        let is_listed = |dir: &std::path::Path| {
+            PROFILE_LOCKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(dir)
+        };
+
+        let held = profile_lock(&held_dir);
+        assert!(
+            std::sync::Arc::ptr_eq(&held, &profile_lock(&held_dir)),
+            "every session on one profile directory must share one lock"
+        );
+        drop(profile_lock(&other_dir));
+        assert!(is_listed(&held_dir), "a lock a session holds must stay listed");
+
+        drop(held);
+        drop(profile_lock(&other_dir));
+        assert!(
+            !is_listed(&held_dir),
+            "a lock nothing holds must be dropped at the next lookup"
+        );
     }
 }
 

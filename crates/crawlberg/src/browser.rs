@@ -316,11 +316,12 @@ async fn one_shot_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
-    let (browser, mut handler, data_dir) = match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
-        Ok(Ok(launched)) => launched,
-        Ok(Err(error)) => return Err(error),
-        Err(_) => return Err(overall_deadline_error(overall_timeout)),
-    };
+    let (browser, mut handler, data_dir, profile_hold) =
+        match tokio::time::timeout_at(deadline, launch_or_connect(config)).await {
+            Ok(Ok(launched)) => launched,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => return Err(overall_deadline_error(overall_timeout)),
+        };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
     let mut session = OneShotSession {
@@ -329,6 +330,7 @@ async fn one_shot_fetch(
         open_tab: None,
         handler_handle: Some(handler_handle),
         data_dir,
+        profile_hold,
         shutdown_timeout: config.browser.shutdown_timeout,
     };
 
@@ -369,6 +371,8 @@ struct OneShotSession {
     open_tab: Option<TargetId>,
     handler_handle: Option<JoinHandle<()>>,
     data_dir: Option<std::path::PathBuf>,
+    /// The hold on a saved `browser_profile`, released only once teardown has reaped Chrome.
+    profile_hold: Option<launch::ProfileHold>,
     shutdown_timeout: Duration,
 }
 
@@ -406,6 +410,7 @@ impl Drop for OneShotSession {
         };
         let firewall = self.firewall.take();
         let data_dir = self.data_dir.take();
+        let profile_hold = self.profile_hold.take();
         let shutdown_timeout = self.shutdown_timeout;
 
         match tokio::runtime::Handle::try_current() {
@@ -423,6 +428,10 @@ impl Drop for OneShotSession {
                     if let Some(dir) = data_dir {
                         let _ = tokio::fs::remove_dir_all(&dir).await;
                     }
+                    // ~keep `release_browser` returns once Chrome has exited and been reaped, or
+                    // ~keep been killed and reaped after `shutdown_timeout`; only then may the next
+                    // ~keep session on the profile start.
+                    drop(profile_hold);
                 });
             }
             Err(_) => {
