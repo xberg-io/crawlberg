@@ -76,13 +76,38 @@ pub(crate) fn assert_profile_teardown_left_this_thread(before: (usize, usize)) {
     );
 }
 
-/// Wait up to ten seconds for the teardown another thread runs to remove `path`.
+/// How long a process test waits for what another thread or process brings about: a profile
+/// directory removed, a process started or ended.
+///
+/// ~keep A bound for a poll, not a timing claim: each wait ends as soon as its condition holds.
+/// ~keep Every test that starts a process, reads the process table, kills, or waits for a profile
+/// ~keep directory to go runs under `#[serial_test::serial(process_table)]`, here and in the
+/// ~keep `browser::launch` and `interact::chromiumoxide` tests. The forced-reuse tests rewind
+/// ~keep `ns_last_pid`, which hands recently freed pids out again, so while one runs, a pid another
+/// ~keep test read earlier can name a stranger's process.
+pub(crate) const PROCESS_TEST_WAIT: Duration = Duration::from_secs(10);
+
+/// Wait up to [`PROCESS_TEST_WAIT`] for the teardown another thread runs to remove `path`.
 pub(crate) fn wait_for_removal(path: &std::path::Path) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     while path.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
     !path.exists()
+}
+
+/// The entries still in the profile directory at `path` and the processes still naming it, for a
+/// failure message.
+pub(crate) fn what_is_left(path: &std::path::Path) -> String {
+    let entries: Vec<_> = std::fs::read_dir(path)
+        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.file_name()).collect())
+        .unwrap_or_default();
+    let mut system = sysinfo::System::new();
+    let users: Vec<_> = processes_naming(&mut system, &user_data_dir_flag(path))
+        .iter()
+        .map(|process| (process.pid(), process.exe().map(std::path::Path::to_path_buf)))
+        .collect();
+    format!("entries left {entries:?}, processes naming it {users:?}")
 }
 
 /// Assert that the profile directory at `path` is removed, that no process uses it, and that it is
@@ -90,8 +115,9 @@ pub(crate) fn wait_for_removal(path: &std::path::Path) -> bool {
 pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) {
     assert!(
         wait_for_removal(path),
-        "the profile directory must be removed: {}",
-        path.display()
+        "the profile directory must be removed: {}; {}",
+        path.display(),
+        what_is_left(path)
     );
     let mut system = sysinfo::System::new();
     let users: Vec<_> = processes_naming(&mut system, &user_data_dir_flag(path))
@@ -118,6 +144,7 @@ pub(crate) fn assert_profile_directory_is_gone_for_good(path: &std::path::Path) 
 /// ~keep instead of waiting on the zombie.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(process_table)]
 fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zombie() {
     let dir = ScratchProfileDir::create("crawlberg-profile-users-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -127,7 +154,7 @@ fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zom
         .arg(user_data_dir_flag(&path))
         .spawn()
         .expect("sh must start");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     while !path.join("state").exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -155,9 +182,45 @@ fn stopping_a_profiles_users_kills_the_process_writing_into_it_and_skips_its_zom
     assert_profile_directory_is_gone_for_good(&path);
 }
 
+/// The teardown's wait on a process it killed lasts while the process runs and ends once it has
+/// ended, before anything reaps it.
+///
+/// ~keep `sleep` stands in for a killed Chrome whose threads are still exiting: its pidfd is not
+/// ~keep readable while any thread of it runs, so the wait runs to its deadline.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial_test::serial(process_table)]
+fn the_wait_on_a_killed_process_lasts_until_it_has_ended() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("sleep must start");
+    let pinned = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .expect("the pid must be valid");
+    let pidfd = rustix::process::pidfd_open(pinned, rustix::process::PidfdFlags::empty()).expect("the pidfd must open");
+    let killed = [pidfd];
+
+    let ended_while_running = wait_until_ended(&killed, std::time::Instant::now() + Duration::from_millis(200));
+    let _ = child.kill();
+    let ended_once_killed = wait_until_ended(&killed, std::time::Instant::now() + PROCESS_TEST_WAIT);
+    let _ = child.wait();
+
+    assert!(
+        !ended_while_running,
+        "the wait must not end while the killed process still runs"
+    );
+    assert!(
+        ended_once_killed,
+        "the wait must end once the killed process has ended, before anything reaps it"
+    );
+}
+
 /// A profile directory dropped outside a Tokio runtime is torn down on another thread, so a host's
 /// finalizer thread that drops the last owner is not held for up to the five-second wait.
 #[test]
+#[serial_test::serial(process_table)]
 fn a_profile_directory_dropped_outside_a_runtime_is_torn_down_on_another_thread() {
     let dir = ScratchProfileDir::create("crawlberg-no-runtime-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -222,7 +285,7 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
         .spawn()
         .expect("sh must start");
     let mut system = sysinfo::System::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + PROCESS_TEST_WAIT;
     while processes_naming(&mut system, argument).is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -243,6 +306,7 @@ pub(crate) fn spawn_bystander(argument: &str) -> std::process::Child {
 /// ~keep tells the two apart.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(process_table)]
 fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
     let mut dir =
         ScratchProfileDir::create("crawlberg-profile-bystander-test-").expect("the directory must be creatable");
@@ -276,6 +340,7 @@ fn dropping_a_profile_directory_leaves_a_process_that_is_not_chrome_running() {
 /// ~keep `/` holds every executable, so only the check of the command line spares the process.
 #[cfg(unix)]
 #[test]
+#[serial_test::serial(process_table)]
 fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
     let mut other = std::process::Command::new("cat")
@@ -290,10 +355,14 @@ fn a_scanned_pid_whose_process_no_longer_names_the_profile_is_not_killed() {
     );
     std::thread::sleep(Duration::from_millis(200));
 
-    let running = other.try_wait().expect("the status must be readable").is_none();
+    let exited = other.try_wait().expect("the status must be readable");
     let _ = other.kill();
     let _ = other.wait();
-    assert!(running, "a process that does not name the profile must not be killed");
+    assert!(
+        exited.is_none(),
+        "a process that does not name the profile must not be killed: pid {} ended with {exited:?}",
+        other.id()
+    );
 }
 
 /// How many times a forced-reuse test repeats its whole scenario before it gives up.
@@ -370,11 +439,10 @@ fn spawn_scanned(dir: &std::path::Path, flag: &str) -> (std::process::Child, std
 /// ~keep Forces the reuse as the review did: the scanned process exits and is reaped, then
 /// ~keep `ns_last_pid` hands its pid to a new process. Writing `ns_last_pid` needs root, so the test
 /// ~keep returns early without it, and says so. See [`PID_REUSE_ATTEMPTS`] for why it repeats.
-/// ~keep `#[serial_test::serial]` keeps it from racing the recheck-window test, which writes the
-/// ~keep same setting, as `sitemap.rs` and `map.rs` do for their host-wide state.
+/// ~keep It runs under the `process_table` serial key; see [`PROCESS_TEST_WAIT`] for why.
 #[cfg(target_os = "linux")]
 #[test]
-#[serial_test::serial(ns_last_pid)]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
@@ -418,10 +486,10 @@ fn a_pid_reused_between_the_scan_and_the_kill_is_not_killed() {
 /// ~keep the [`REUSE_WINDOW_HOOK`] the production code fires right there, and inside it reaps the
 /// ~keep scanned process and forces its pid onto a new, innocent one, so the reuse lands after the
 /// ~keep re-check has already passed. Root, like the test above; returns early without it, and says so.
-/// ~keep Repeats on a miss like the test above, and shares its `ns_last_pid` serial key.
+/// ~keep Repeats on a miss like the test above, and shares its `process_table` serial key.
 #[cfg(target_os = "linux")]
 #[test]
-#[serial_test::serial(ns_last_pid)]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
     let dir = tempfile::tempdir().expect("the directory must be creatable");
@@ -473,6 +541,7 @@ fn a_pid_reused_between_the_recheck_and_the_kill_is_not_killed() {
 /// ~keep one space-joined string, which a stand-in started with separate arguments does not do, and
 /// ~keep because its helpers must run the executable the launch reads from the process tree.
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn removing_a_running_chromes_profile_directory_stops_that_chrome() {
     let dir = ScratchProfileDir::create("crawlberg-running-chrome-test-").expect("the directory must be creatable");
@@ -507,7 +576,7 @@ pub(crate) async fn assert_dropping_the_profile_stops_its_chrome<P>(
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     drop(profile);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
     let mut exited = browser.try_wait().expect("the browser's status must be readable");
     while exited.is_none() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -547,6 +616,7 @@ fn write_launcher(path: &std::path::Path, chrome: &std::path::Path, exec: bool) 
 /// ~keep The launched process is `sh` and ends on its own once its Chrome child is killed.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_the_launcher() {
     let detection = chromiumoxide::detection::DetectionOptions {
@@ -585,7 +655,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
         let mut bystander = spawn_bystander(&user_data_dir_flag(&path));
 
         drop(dir);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
         let mut exited = browser
             .try_wait()
             .expect("the launched process's status must be readable");
@@ -604,9 +674,14 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
             let _ = browser.kill().await;
         }
         handler_handle.abort();
+        let flag = user_data_dir_flag(&path);
         let mut system = sysinfo::System::new();
-        for left in processes_naming(&mut system, &user_data_dir_flag(&path)) {
-            left.kill();
+        let left: Vec<_> = processes_naming(&mut system, &flag)
+            .iter()
+            .filter_map(|process| Some((process.pid(), process.exe()?.to_path_buf())))
+            .collect();
+        for (pid, executable) in left {
+            kill_if_chrome_using(pid, &flag, &executable);
         }
         let _ = std::fs::remove_dir_all(&path);
 
@@ -620,7 +695,13 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
             "{launcher}: the teardown must stop the Chrome it launched"
         );
         if let Err(error) = gone {
-            std::panic::resume_unwind(error.into_panic());
+            let panic = error.into_panic();
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("the removal check panicked");
+            panic!("{launcher}: {message}");
         }
     }
 }
@@ -631,6 +712,7 @@ async fn a_profile_teardown_stops_the_launched_chrome_and_no_bystander_whatever_
 /// ~keep Tests and embedders drop pools without shutting them down, and each such drop left one
 /// ~keep `crawlberg-chrome-*` directory in the temp directory (xberg-io/crawlberg#415).
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_pool_dropped_without_shutdown_leaves_no_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
@@ -665,6 +747,7 @@ async fn pool_profile_dir(pool: &BrowserPool) -> std::path::PathBuf {
 
 /// A pool shut down stops its Chrome and removes its profile directory, off the executor thread.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_pool_shut_down_leaves_no_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
@@ -685,6 +768,7 @@ async fn a_pool_shut_down_leaves_no_profile_directory() {
 
 /// A pool that relaunches a Chrome whose handler ended removes the old Chrome's profile directory.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
 async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
     let pool = BrowserPool::new(BrowserPoolConfig::default());
@@ -697,7 +781,7 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
     if let Some(state) = pool.state.lock().await.as_ref() {
         state.handler_handle.abort();
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + PROCESS_TEST_WAIT;
     while !pool
         .state
         .lock()
@@ -726,6 +810,7 @@ async fn a_relaunched_pool_removes_the_old_chromes_profile_directory() {
 ///
 /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome runs.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 async fn a_failed_launch_removes_its_profile_directory() {
     let dir = ScratchProfileDir::create("crawlberg-failed-launch-test-").expect("the directory must be creatable");
     let path = dir.path().to_path_buf();
@@ -748,6 +833,7 @@ async fn a_failed_launch_removes_its_profile_directory() {
 /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
 /// ~keep directory drops on the same path.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread() {
     let pool = BrowserPool::new(BrowserPoolConfig {
         launch_timeout: Duration::from_millis(1),
@@ -773,6 +859,7 @@ async fn a_timed_out_pool_launch_tears_its_profile_down_off_the_executor_thread(
 /// ~keep `Browser` was not practical here (`chromiumoxide::Browser` wraps a real child
 /// ~keep process and CDP connection with no test seam for either).
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -822,12 +909,16 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
     let start = std::time::Instant::now();
     let close_outcome = close_browser_within(&mut browser, shutdown_timeout).await;
     let elapsed = start.elapsed();
+    let still_running = browser
+        .try_wait()
+        .expect("the browser's status must be readable")
+        .is_none();
 
     // ~keep Always sent, even if the assertions below fail: a stopped process left behind
-    // ~keep by a broken implementation would otherwise leak past this test.
-    let _ = std::process::Command::new("kill")
-        .args(["-KILL", &pid.to_string()])
-        .status();
+    // ~keep by a broken implementation would otherwise leak past this test. Sent through the
+    // ~keep browser's own handle, which signals nothing once the process is reaped: a kill by pid
+    // ~keep after the reap reaches whatever process has the pid now.
+    let _ = browser.kill().await;
     handler_task.abort();
 
     assert!(
@@ -836,11 +927,6 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
          even when close()/wait() cannot make progress on a stopped process; took {elapsed:?}"
     );
 
-    let still_running = std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .expect("`kill -0` must run")
-        .success();
     assert!(
         !still_running,
         "the Chrome process (pid {pid}) must be dead after close_browser_within returns, \
@@ -869,6 +955,7 @@ async fn close_browser_within_returns_promptly_when_the_process_is_stopped() {
 /// ~keep handler loop that a killed Chrome can never end, so it returned about one
 /// ~keep `shutdown_timeout` plus five seconds after it started.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"
@@ -930,11 +1017,9 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
     };
     release_browser(browser, handler_task, cleanup, shutdown_timeout).await;
     let released_after = start.elapsed();
+    // ~keep No kill by pid follows: the release owns the process and chromiumoxide's handle kills
+    // ~keep it on drop, and once it is reaped the pid can name another process.
     let died_after = died_after.join().expect("the watcher thread must not panic");
-
-    let _ = std::process::Command::new("kill")
-        .args(["-KILL", &pid.to_string()])
-        .status();
 
     // ~keep The kill lands one `shutdown_timeout` after the release starts. A tab close run
     // ~keep ahead of the close-and-kill would add a second timeout before it.
@@ -954,6 +1039,7 @@ async fn release_browser_kills_a_stopped_launched_chrome_within_one_shutdown_tim
 /// Releasing a connected browser disconnects from it: the handler task that owns the CDP
 /// websocket stops at once, and the Chrome at the other end keeps running.
 #[tokio::test]
+#[serial_test::serial(process_table)]
 #[allow(
     clippy::print_stderr,
     reason = "test-only skip announcement, matching tests/common/mod.rs's convention"

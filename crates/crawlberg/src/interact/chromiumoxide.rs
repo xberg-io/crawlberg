@@ -519,6 +519,7 @@ mod tests {
     /// An interact run removes the profile directory of the Chrome it launched, with no Chrome
     /// process left using it.
     #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial(process_table)]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn an_interact_run_leaves_no_profile_directory_and_no_chrome_using_it() {
         let config = CrawlConfig::default();
@@ -559,6 +560,7 @@ mod tests {
     /// ~keep runs. The test goes through `launch_or_connect` itself, so a call site that stops
     /// ~keep dropping the directory on a failed launch fails here.
     #[tokio::test]
+    #[serial_test::serial(process_table)]
     async fn a_failed_interact_launch_removes_its_profile_directory() {
         let missing = tempfile::tempdir().expect("the directory must be creatable");
         LAUNCH_EXECUTABLE.with(|executable| *executable.borrow_mut() = Some(missing.path().join("no-such-chrome")));
@@ -574,6 +576,7 @@ mod tests {
     /// An interact launch records the Chrome it starts, so dropping its profile directory stops
     /// that Chrome and removes the directory.
     #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial(process_table)]
     #[allow(clippy::print_stderr, reason = "test-only skip announcement")]
     async fn dropping_an_interact_launchs_profile_directory_stops_its_chrome() {
         let (browser, handler, dir) = match launch_or_connect(&CrawlConfig::default()).await {
@@ -594,6 +597,7 @@ mod tests {
     /// ~keep No Chrome is needed: without one the launch fails before the timeout, and the profile
     /// ~keep directory drops on the same path.
     #[tokio::test]
+    #[serial_test::serial(process_table)]
     async fn a_cancelled_interact_run_tears_its_profile_down_off_the_executor_thread() {
         let config = CrawlConfig::default();
         let before = crate::browser_pool::tests::profile_drops_here();

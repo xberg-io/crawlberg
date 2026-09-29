@@ -337,7 +337,8 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
 }
 
 /// Kill every process of `chrome`, as [`chrome_started_by`] names it, whose command line names `dir`
-/// as its profile, and wait until none is left or [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
+/// as its profile, and wait until none is left and each one killed has ended, or until
+/// [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
 ///
 /// ~keep A process counts only when its executable is `chrome` or lies in it and its command line
 /// ~keep carries the flag for `dir`, a directory a [`ScratchProfileDir`] created under a random
@@ -347,6 +348,8 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
 fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) {
     let flag = user_data_dir_flag(dir);
     let mut system = sysinfo::System::new();
+    let mut killed = Vec::new();
+    let deadline = std::time::Instant::now() + PROFILE_USERS_EXIT_TIMEOUT;
     let stopped = kill_until_gone(PROFILE_USERS_EXIT_TIMEOUT, || {
         let users: Vec<_> = processes_naming(&mut system, &flag)
             .into_iter()
@@ -354,11 +357,11 @@ fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) 
             .map(sysinfo::Process::pid)
             .collect();
         for &pid in &users {
-            kill_if_chrome_using(pid, &flag, chrome);
+            killed.extend(kill_if_chrome_using(pid, &flag, chrome));
         }
         !users.is_empty()
     });
-    if !stopped {
+    if !(stopped && wait_until_ended(&killed, deadline)) {
         tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
     }
 }
@@ -368,7 +371,21 @@ fn runs(process: &sysinfo::Process, chrome: &std::path::Path) -> bool {
     process.exe().is_some_and(|exe| exe.starts_with(chrome))
 }
 
-/// Kill the process `pid` if it still runs `chrome` and its command line still holds `flag`.
+/// A process [`kill_if_chrome_using`] killed, for [`wait_until_ended`] to wait on.
+///
+/// ~keep On Linux it is the pidfd the kill went through. The scan stops seeing a killed process once
+/// ~keep its main thread is a zombie, but its other threads can still be finishing a file operation
+/// ~keep then, and a killed Chrome's browser process has a dozen or more. One that lands in the
+/// ~keep directory while it is being removed makes the removal fail with "directory not empty" and
+/// ~keep leaves the profile behind (xberg-io/crawlberg#415). A pidfd turns readable only once every
+/// ~keep thread of its process has exited. Elsewhere the kill goes by pid and leaves nothing to wait on.
+#[cfg(target_os = "linux")]
+type KilledProcess = rustix::fd::OwnedFd;
+#[cfg(not(target_os = "linux"))]
+type KilledProcess = std::convert::Infallible;
+
+/// Kill the process `pid` if it still runs `chrome` and its command line still holds `flag`, and
+/// return what to wait on until it has ended.
 ///
 /// ~keep `pid` comes from an earlier scan, and its process can have exited and the pid gone to a new
 /// ~keep process since. A pidfd does not stop the pid number from being reused once its process is
@@ -376,7 +393,7 @@ fn runs(process: &sysinfo::Process, chrome: &std::path::Path) -> bool {
 /// ~keep only the pinned process, failing with no such process if it has already exited, even if the
 /// ~keep re-check ran just before the reuse. Elsewhere, and on a Linux kernel older than 5.3, the kill
 /// ~keep goes by pid, so the re-check running right before it narrows the gap but does not close it.
-fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) {
+fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) -> Option<KilledProcess> {
     #[cfg(target_os = "linux")]
     if let Some(pinned) = i32::try_from(pid.as_u32())
         .ok()
@@ -388,10 +405,11 @@ fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path)
                     #[cfg(test)]
                     tests::fire_reuse_window_hook();
                     let _ = rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::KILL);
+                    return Some(pidfd);
                 }
-                return;
+                return None;
             }
-            Err(rustix::io::Errno::SRCH) => return,
+            Err(rustix::io::Errno::SRCH) => return None,
             Err(_) => {}
         }
     }
@@ -400,6 +418,35 @@ fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path)
         tests::fire_reuse_window_hook();
         process.kill();
     }
+    None
+}
+
+/// Wait until every process in `killed` has ended, or until `deadline` passes. Return whether all
+/// of them ended.
+#[cfg(target_os = "linux")]
+fn wait_until_ended(killed: &[KilledProcess], deadline: std::time::Instant) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+
+    killed.iter().all(|pidfd| {
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let Ok(timeout) = Timespec::try_from(left) else {
+                return false;
+            };
+            match poll(&mut [PollFd::new(pidfd, PollFlags::IN)], Some(&timeout)) {
+                Ok(0) => return false,
+                Ok(_) => return true,
+                Err(rustix::io::Errno::INTR) => {}
+                Err(_) => return false,
+            }
+        }
+    })
+}
+
+/// Wait until every process in `killed` has ended: none can be in it off Linux.
+#[cfg(not(target_os = "linux"))]
+fn wait_until_ended(killed: &[KilledProcess], _deadline: std::time::Instant) -> bool {
+    killed.is_empty()
 }
 
 /// The process `pid`, read afresh into `system`, if it runs `chrome` and its command line holds `flag`.

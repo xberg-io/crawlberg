@@ -124,9 +124,10 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
 
-# ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed.
+# ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed,
+# ~keep and polls it to wait until the killed process has ended.
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, optional = true, features = ["process", "std"] }
+rustix = { workspace = true, optional = true, features = ["event", "process", "std"] }
 
 [dev-dependencies]
 async-trait = { workspace = true }
