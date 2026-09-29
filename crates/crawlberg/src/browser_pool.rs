@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -131,9 +132,11 @@ const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// ~keep the browser process for a moment and keep writing into the directory, so a removal made
 /// ~keep while they run fails part-way or is undone, which left a profile behind in 6 of 20 drops
 /// ~keep on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
-/// ~keep process group and kills only the browser process, which orphans the helpers. They are
-/// ~keep found by the `--user-data-dir` flag that Chrome passes to each of them, which still names
-/// ~keep them after the browser process is gone.
+/// ~keep process group and kills only the browser process, which orphans the helpers: their
+/// ~keep parent is then init or a subreaper, so no parent pid or process group leads back to the
+/// ~keep browser. They are found by the `--user-data-dir` flag that Chrome passes to each of them,
+/// ~keep which still names them after the browser process is gone, and by the executable of the
+/// ~keep browser process [`Self::launch`] started, which each of them runs.
 /// ~keep The drop hands that work to another thread and returns at once: the scan, the kills, the
 /// ~keep wait of up to five seconds and the delete ran for up to a second on a tokio worker, and in
 /// ~keep the pool while it held its state lock.
@@ -145,12 +148,43 @@ impl ScratchProfileDir {
         tempfile::Builder::new()
             .prefix(prefix)
             .tempdir()
-            .map(|dir| Self(Some(ProfileTeardown(dir.keep()))))
+            .map(|dir| {
+                Self(Some(ProfileTeardown {
+                    dir: dir.keep(),
+                    chrome: None,
+                }))
+            })
             .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
     }
 
     pub(crate) fn path(&self) -> &std::path::Path {
-        &self.0.as_ref().expect("the teardown is taken only by Drop").0
+        &self.teardown().dir
+    }
+
+    /// Launch Chrome on this directory and record the Chrome it started, whose processes the
+    /// teardown stops. A failed launch drops the directory, which removes it.
+    pub(crate) async fn launch(
+        mut self,
+        config: BrowserConfig,
+    ) -> Result<(Browser, Handler, Self), chromiumoxide::error::CdpError> {
+        let (mut browser, handler) = Browser::launch(config).await?;
+        if let Some(pid) = browser.get_mut_child().and_then(|child| child.as_mut_inner().id()) {
+            self.record_chrome(pid);
+        }
+        Ok((browser, handler, self))
+    }
+
+    /// Record the Chrome running as `pid` as the one using this directory.
+    fn record_chrome(&mut self, pid: u32) {
+        let chrome = chrome_of(pid);
+        if chrome.is_none() {
+            tracing::warn!(pid, "the launched Chrome's executable is unreadable; its profile teardown stops no process");
+        }
+        self.0.as_mut().expect("the teardown is taken only by Drop").chrome = chrome;
+    }
+
+    fn teardown(&self) -> &ProfileTeardown {
+        self.0.as_ref().expect("the teardown is taken only by Drop")
     }
 }
 
@@ -183,37 +217,52 @@ impl Drop for ScratchProfileDir {
 /// ~keep closure holding it is dropped: tokio drops a blocking task queued as the runtime shuts
 /// ~keep down without running it, and `std::thread::Builder::spawn` drops its closure when the OS
 /// ~keep refuses a thread.
-struct ProfileTeardown(std::path::PathBuf);
+struct ProfileTeardown {
+    dir: std::path::PathBuf,
+    /// The executables of the Chrome launched on `dir`, from [`chrome_of`]. `None` when no launch
+    /// succeeded, so no Chrome of crawlberg's can be using the directory.
+    chrome: Option<std::path::PathBuf>,
+}
 
 impl Drop for ProfileTeardown {
     fn drop(&mut self) {
         #[cfg(test)]
         tests::PROFILE_TEARDOWNS_HERE.with(|count| count.set(count.get() + 1));
-        if let Some(chrome_dir) = chrome_install_dir() {
-            stop_chrome_processes_using(&self.0, &chrome_dir);
+        if let Some(chrome) = &self.chrome {
+            stop_chrome_processes_using(&self.dir, chrome);
         }
-        if let Err(error) = std::fs::remove_dir_all(&self.0)
+        if let Err(error) = std::fs::remove_dir_all(&self.dir)
             && error.kind() != std::io::ErrorKind::NotFound
         {
-            tracing::warn!(dir = %self.0.display(), %error, "failed to remove the Chrome profile directory");
+            tracing::warn!(dir = %self.dir.display(), %error, "failed to remove the Chrome profile directory");
         }
     }
 }
 
-/// The directory holding the executables of the Chrome that crawlberg launches, or `None` when
-/// no Chrome can be found, in which case no Chrome can be using a profile.
+/// The executables of the Chrome running as `pid`: its executable, or on macOS the `.app` bundle
+/// that holds it. `None` when that process's executable cannot be read.
 ///
-/// ~keep crawlberg never names an executable, so chromiumoxide launches the one this same call
-/// ~keep finds. Links are resolved first: `google-chrome-stable` links to a launcher script that
-/// ~keep sits beside the `chrome` binary it runs. On macOS each helper is an executable of its own
-/// ~keep inside the `.app` bundle, so the bundle is the directory there.
-fn chrome_install_dir() -> Option<std::path::PathBuf> {
-    let executable = chromiumoxide::detection::default_executable(Default::default()).ok()?;
-    let executable = std::fs::canonicalize(executable).ok()?;
+/// ~keep Read from the process crawlberg launched, not from the path it launched. A launcher such
+/// ~keep as Debian's `/usr/bin/chromium` script, or `/usr/bin/snap` behind `/snap/bin/chromium`,
+/// ~keep execs the real binary, and Chrome starts each helper from that binary. On macOS each
+/// ~keep helper is an executable of its own inside the bundle. The path comes from the process table,
+/// ~keep as each helper's does, so the two compare equal on every platform, where a canonicalized
+/// ~keep path carries a `\\?\` prefix on Windows that the process table does not.
+fn chrome_of(pid: u32) -> Option<std::path::PathBuf> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
+    );
+    let executable = system.process(pid)?.exe()?;
     let bundle = executable
         .ancestors()
         .find(|dir| dir.extension().is_some_and(|extension| extension == "app"));
-    bundle.or_else(|| executable.parent()).map(std::path::Path::to_path_buf)
+    Some(bundle.unwrap_or(executable).to_path_buf())
 }
 
 /// The flag a Chrome process using `dir` as its profile carries on its command line.
@@ -263,21 +312,21 @@ fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
     })
 }
 
-/// Kill every process of the Chrome in `chrome_dir` whose command line names `dir` as its
-/// profile, and wait until none is left or [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
+/// Kill every process of `chrome`, as [`chrome_of`] names it, whose command line names `dir` as
+/// its profile, and wait until none is left or [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
 ///
-/// ~keep A process counts only when its executable lies in `chrome_dir` and its command line
+/// ~keep A process counts only when its executable is `chrome` or lies in it and its command line
 /// ~keep carries the flag for `dir`, a directory a [`ScratchProfileDir`] created under a random
 /// ~keep name. A shell, `strace` or `grep` that names the flag runs another executable and is left
 /// ~keep alone. A saved profile the caller named is never a `ScratchProfileDir`, so its Chrome is
 /// ~keep never killed here and it is never removed.
-fn stop_chrome_processes_using(dir: &std::path::Path, chrome_dir: &std::path::Path) {
+fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) {
     let flag = user_data_dir_flag(dir);
     let mut system = sysinfo::System::new();
     let stopped = kill_until_gone(PROFILE_USERS_EXIT_TIMEOUT, || {
         let users: Vec<_> = processes_naming(&mut system, &flag)
             .into_iter()
-            .filter(|process| process.exe().is_some_and(|exe| exe.starts_with(chrome_dir)))
+            .filter(|process| process.exe().is_some_and(|exe| exe.starts_with(chrome)))
             .collect();
         for process in &users {
             process.kill();
@@ -703,10 +752,11 @@ impl BrowserPool {
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::launch(browser_config))
-                .await
-                .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
-                .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
+            let (browser, handler, user_data_dir) =
+                tokio::time::timeout(self.config.launch_timeout, user_data_dir.launch(browser_config))
+                    .await
+                    .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
+                    .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
             (browser, handler, Some(user_data_dir))
         };
 

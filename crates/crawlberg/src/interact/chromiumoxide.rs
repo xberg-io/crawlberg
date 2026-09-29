@@ -459,10 +459,11 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-        match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, Some(user_data_dir))),
-            Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
-        }
+        let (browser, handler, user_data_dir) = user_data_dir
+            .launch(browser_config)
+            .await
+            .map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
+        Ok((browser, handler, Some(user_data_dir)))
     }
 }
 

@@ -111,11 +111,19 @@ pub(super) async fn launch_or_connect(
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-        match Browser::launch(browser_config).await {
-            Ok((browser, handler)) => Ok((browser, handler, Some(user_data))),
-            // ~keep Dropping `user_data` removes a scratch directory on this path and on cancellation.
-            Err(e) => Err(CrawlError::browser_error(format!("failed to launch browser: {e}"))),
-        }
+        // ~keep A failed or cancelled launch drops `user_data`, which removes a scratch directory.
+        let launched = match user_data {
+            UserDataDir::Scratch(dir) => dir
+                .launch(browser_config)
+                .await
+                .map(|(browser, handler, dir)| (browser, handler, UserDataDir::Scratch(dir))),
+            UserDataDir::Persistent(path) => Browser::launch(browser_config)
+                .await
+                .map(|(browser, handler)| (browser, handler, UserDataDir::Persistent(path))),
+        };
+        let (browser, handler, user_data) =
+            launched.map_err(|e| CrawlError::browser_error(format!("failed to launch browser: {e}")))?;
+        Ok((browser, handler, Some(user_data)))
     }
 }
 

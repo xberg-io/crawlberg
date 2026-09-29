@@ -37,7 +37,7 @@ All notable changes to crawlberg are documented here.
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
   directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose
   Tokio runtime stopped before its teardown ran. Each such directory is now removed when its owner
-  is dropped. First crawlberg stops each process of its Chrome install that still uses the
+  is dropped. First crawlberg stops each process of the Chrome it launched that still uses the
   directory as its profile, and waits up to five seconds for them to exit, because Chrome's helper
   processes outlive the browser and keep writing into it. This work runs on a background thread,
   so it does not stall other tasks or hold the browser pool's lock. A saved `browser_profile`
