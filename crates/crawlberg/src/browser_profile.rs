@@ -97,11 +97,6 @@ impl BrowserProfile {
         let base = profiles_base_dir()?;
         list_profiles_in(&base)
     }
-
-    /// Return Chrome/Chromium CLI arguments that point to this profile's data directory.
-    pub fn chrome_args(&self) -> Vec<String> {
-        vec![format!("--user-data-dir={}", self.user_data_dir.display())]
-    }
 }
 
 /// Base directory for all browser profiles: `<data_dir>/crawlberg/profiles`.
@@ -237,23 +232,6 @@ mod tests {
         assert!(BrowserProfile::new("profile.bak").is_ok());
         assert!(BrowserProfile::new("a").is_ok());
         assert!(BrowserProfile::new(&"x".repeat(255)).is_ok());
-    }
-
-    #[test]
-    fn test_chrome_args_contains_user_data_dir() {
-        let profile = BrowserProfile::new("test-chrome").unwrap();
-        let args = profile.chrome_args();
-        assert_eq!(args.len(), 1);
-        assert!(
-            args[0].starts_with("--user-data-dir="),
-            "arg should start with flag: {}",
-            args[0]
-        );
-        assert!(
-            args[0].contains("test-chrome"),
-            "arg should contain profile name: {}",
-            args[0]
-        );
     }
 
     #[test]
