@@ -6,6 +6,27 @@ All notable changes to crawlberg are documented here.
 
 ### Upgrading
 
+- **`BrowserConfig` gained two fields and rejects unknown ones.** `chrome_path` and `chrome_args`
+  are always serialised, and `BrowserConfig` rejects unknown fields, so **a browser configuration
+  serialised by this version is rejected by every older crawlberg**, even when both are unset.
+  The break is one-directional: an older configuration still loads here, because both fields
+  have defaults. (#79, #80)
+
+- **`BrowserPoolConfig.chrome_args` now refuses entries that the pool used to launch with.** The
+  pool applies the rules of `BrowserConfig.chrome_args`, so these entries now fail: an entry
+  without a leading `--` (`disable-gpu`), a flag name with an uppercase letter, a flag named twice
+  (`--enable-features` given two times), and `--headless`, `--remote-debugging-port` or
+  `--user-data-dir` in any form, `--headless=new` and the output of `BrowserProfile::chrome_args()`
+  included. `BrowserPool::new` still accepts the config: the refusal comes when the pool launches
+  Chrome, as an error from `warm` and `acquire_page` that names `BrowserPoolConfig.chrome_args`.
+  Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
+  `--enable-features` values with commas. (#79, #80)
+
+- **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
+  constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
+  to Swift's `init` and the Java record constructor, and `chromeArgs` to Dart's constructor. The
+  Java builder and the other bindings give both settings defaults. (#79, #80)
+
 - **`crawlberg_browser::net::ssrf::DEFAULT_DENY_NET_CIDRS` grows from 13 to 14 entries**, adding
   `240.0.0.0/4`. Code that pattern-matches or hardcodes the array's length breaks; code that
   iterates it does not.
@@ -55,6 +76,29 @@ All notable changes to crawlberg are documented here.
   fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
   `statuses` array of the codes it may decide; an empty array is rejected. (#197)
 
+- **`CrawlError::WafBlocked` has a `source` field.** Rust code that builds the variant by hand
+  must pass `source: None`, or call `CrawlError::waf_blocked(vendor, message)` instead.
+  `CrawlError::waf_blocked_with_source` attaches an underlying error. A match on the variant with
+  `..` does not change. The Swift and Kotlin Android bindings give the WAF block case a `source`
+  value, as their other error cases already have: Swift code that matches
+  `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
+  `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
+
+### Added
+
+- **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
+  Chrome or Chromium executable a browser-mode fetch launches; a missing or non-executable path is
+  an error that names it, never a fallback to another Chrome. `BrowserConfig.chrome_args` adds
+  Chrome flags, each written as `--flag` or `--flag=value` with a lowercase flag name, and a flag
+  that names one of crawlberg's defaults replaces that default. The Rust `BrowserPoolConfig`
+  applies the same checks to its own `chrome_args` when it launches Chrome. Both settings reach
+  every Chrome that crawlberg launches, and both are ignored with a warning, and not checked,
+  when `browser.endpoint` is set or the native backend is in use. Flags such as
+  `--proxy-server` and `--host-resolver-rules` route around the SSRF policy, so set
+  `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
+  warning give the number of flags, not their values, because a flag value can carry a
+  credential. (#79, #80)
+
 ### Fixed
 
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
@@ -69,6 +113,41 @@ All notable changes to crawlberg are documented here.
   runs Chrome as its child, and a shell that only names the directory is left running. This work
   runs on a background thread, so it does not stall other tasks or hold the browser pool's lock.
   A saved `browser_profile` is never removed; only the temporary copy of it is. (#415)
+
+- **`map()` did not follow a meta refresh.** A page that forwards with a
+  `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
+  followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
+  only the same HTTP statuses (301, 302, 303, 307, 308) count as a redirect hop, each hop counts
+  toward `max_redirects`, each hop passes the SSRF policy, and the seed's credentials go only to
+  the seed host. The links come from the page it lands on. A chain that reaches the redirect
+  limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
+  the crawl does, instead of failing the whole `map()`. (#502)
+
+- **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
+  refused as a WAF block ended the attempt with an error that did not keep the response status, so
+  `AttemptOutcome.status` stayed empty for them. Both errors now keep the status, so the policy
+  reads 403 for a plain forbidden, and 403, 429, 503 or the 2xx status for a block. The built-in
+  retry decisions do not change: a forbidden and a WAF block still escalate, and listing 403 in
+  `retry_codes` still does not retry them. (#133)
+
+- **Link extraction read markup inside raw-text elements and took the wrong `<base>`.** Only
+  `script`, `style`, `textarea` and `title` were treated as raw text, by a hand-written scanner.
+  Links and a `<base href>` inside `xmp`, `iframe`, `noembed`, `noframes` and `plaintext`, after
+  `<script/>` and in a script inside SVG `foreignObject` were read as real, and a `<!--` in such
+  text hid every link after it. Links inside a bogus comment (`<? ... >`, `<!x ... >`, `<![CDATA[`
+  outside SVG) and inside an SVG or MathML CDATA section were read as real too. A crawled or
+  scraped page is now read once by html5ever with scripting off, and that read decides the raw
+  text, the link tags, the base, the meta refresh target and the render hint. Two kinds of page
+  are still read twice: a page decoded again from a declared non-UTF-8 charset, and a body cut to
+  `max_body_size`. The base is the first `<base href>` in the finished document, as in a browser:
+  a `<base>` in a table moves in front of it, and a `<frameset>` drops the body with its `<base>`.
+  (#201, #287)
+
+- **One tag with tens of thousands of attributes slowed link extraction quadratically.** The
+  HTML parser compares each new attribute name of a tag with every earlier one. Attributes past
+  the 1,024th of one tag are now overwritten with spaces before the parser reads the page, so the
+  cost grows linearly. Repeated attribute names count toward the limit, so an `href` after the
+  1,024th attribute of an `<a>` or `<base>` tag is not read. (#269)
 
 - **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
   products stamp their own header on every response they proxy, and a WAF fingerprint that matches
@@ -872,8 +951,7 @@ Four changes can affect an existing setup:
   was always empty when the attempt ended in an error, so a policy written outside crawlberg saw
   the error but not the 503 or 500 behind it. The field now holds the status for every status the
   built-in mapping turns into an error itself (401, 404, 408, 410, 429, 500, 502, 503, 504). It
-  stays empty when no response caused the error, such as a connection failure, and also for a
-  plain 403 or a 429/503 fingerprinted as a WAF block; #133 tracks giving those a status too. (#99)
+  stays empty when no response caused the error, such as a connection failure. (#99)
 - **A crawl ignored the page's own robots instructions.** With `respect_robots_txt` on, a crawl
   now leaves the links of a page marked `nofollow` (by its robots meta tag or any of its
   `X-Robots-Tag` headers) unfollowed. A link marked `rel="nofollow"` is still followed, because

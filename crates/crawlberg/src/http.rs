@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::html::is_fetchable_scheme;
+use crate::html::{PageScan, is_fetchable_scheme};
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
@@ -108,6 +108,21 @@ enum HopOutcome {
     Complete(HttpResponse),
 }
 
+/// The response a 404 past the first hop of a followed chain stops on: the crawl's chain reports
+/// the same empty 404 at the missing URL.
+fn not_found_response(url: &url::Url) -> HttpResponse {
+    HttpResponse {
+        status: 404,
+        content_type: String::new(),
+        body: String::new(),
+        body_bytes: Vec::new(),
+        headers: HashMap::new(),
+        browser_extras: None,
+        final_url: url.to_string(),
+        screenshot: None,
+    }
+}
+
 /// Where a 3xx response points.
 enum RedirectTarget {
     /// The `Location` header, resolved against the URL that served the redirect.
@@ -168,6 +183,18 @@ impl ResponseHead {
     }
 }
 
+/// Whether a fetch follows a `Refresh` header or a `<meta http-equiv="refresh">` the way it
+/// follows an HTTP 3xx.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshRedirects {
+    /// Follow them as the crawl does, and stop the whole chain where the crawl's chain stops.
+    /// The refresh itself is followed on native only: wasm has no refresh reader, and its crawl
+    /// follows no refresh either.
+    Follow,
+    /// Return the response that names them.
+    Ignore,
+}
+
 /// Perform a single HTTP GET request with the given configuration.
 ///
 /// Handles user-agent, authentication, custom headers, error status codes,
@@ -181,6 +208,42 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
+    http_fetch_with(url, config, extra_headers, client, RefreshRedirects::Ignore)
+        .await
+        .map(|page| page.response)
+}
+
+/// A fetched response, with the refresh check's read of its body when that check read one.
+pub(crate) struct FetchedPage {
+    pub(crate) response: HttpResponse,
+    /// The meta refresh check's read of `response`'s body, so the caller does not read the page
+    /// again.
+    pub(crate) page_scan: Option<PageScan>,
+}
+
+impl FetchedPage {
+    fn unread(response: HttpResponse) -> Self {
+        Self {
+            response,
+            page_scan: None,
+        }
+    }
+}
+
+/// [`http_fetch`], following a refresh as well when `refresh` says so, with the refresh check's
+/// read of the last page.
+///
+/// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
+/// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
+/// ~keep `send_hop_request`. When refreshes are followed, every hop also takes the crawl's chain
+/// ~keep rules (see `ChainRules`): the chain stops, and never fails, where the crawl's does.
+pub(crate) async fn http_fetch_with(
+    url: &str,
+    config: &CrawlConfig,
+    extra_headers: &std::collections::HashMap<String, String>,
+    client: &reqwest::Client,
+    refresh: RefreshRedirects,
+) -> Result<FetchedPage, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
@@ -193,13 +256,32 @@ pub(crate) async fn http_fetch(
         extra_headers,
         client,
     };
+    let mut rules = ChainRules::new(refresh, &initial_url);
     let mut current_url = initial_url;
     let mut redirects_followed: usize = 0;
 
     loop {
-        let next_url = match fetch_one_hop(&context, &current_url).await? {
-            HopOutcome::Complete(response) => return Ok(response),
+        let hop_left = redirects_followed < config.max_redirects;
+        let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
+        let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
+            Ok(outcome) => outcome,
+            Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
+                return Ok(FetchedPage::unread(not_found_response(&current_url)));
+            }
+            Err(error) => return Err(error),
+        };
+        let next_url = match outcome {
             HopOutcome::Redirect(next_url) => next_url,
+            HopOutcome::Complete(response) => {
+                if !hop_left {
+                    return Ok(FetchedPage::unread(response));
+                }
+                let mut page_scan = None;
+                match rules.refresh_target(&response, &current_url, &mut page_scan) {
+                    Some(next_url) => next_url,
+                    None => return Ok(FetchedPage { response, page_scan }),
+                }
+            }
         };
 
         if let Err(e) = validate_url(&next_url, &config.ssrf).await {
@@ -218,21 +300,109 @@ pub(crate) async fn http_fetch(
             return Err(CrawlError::ssrf_violation(&next_url, "too many redirects"));
         }
 
+        rules.insert(&next_url);
         current_url = next_url;
     }
 }
 
+/// Statuses whose `Location` header the crawl follows (`engine::redirect::http_redirect_target`
+/// reads this same constant as `crate::http::REDIRECT_STATUSES`; it lives here because
+/// `engine::redirect` is native-only and this module is not).
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
+/// The crawl's chain rules, applied only when a fetch follows refreshes, with the URLs the fetch
+/// has requested.
+///
+/// ~keep The rules are the crawl's (`engine/redirect.rs`'s `follow_redirects` and
+/// ~keep `next_redirect_target`): the limit is checked first, a `Location` is followed only to a
+/// ~keep URL not yet requested and otherwise falls through to the refresh sources, a 3xx that
+/// ~keep leads nowhere new is the response, and a 404 past the first hop is the response. The
+/// ~keep crawl fails none of these chains, so a map of the same chain does not fail either.
+/// ~keep A fetch that ignores refreshes keeps the plain rules: every `Location` is followed and a
+/// ~keep hop past the limit or a 404 is an error.
+///
+/// ~keep A parsed URL's serialization is already the crawl's cycle key for it
+/// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
+/// ~keep serialization is stored and compared directly.
+struct ChainRules(Option<std::collections::HashSet<String>>);
+
+impl ChainRules {
+    fn new(refresh: RefreshRedirects, initial_url: &url::Url) -> Self {
+        let mut visited = Self((refresh == RefreshRedirects::Follow).then(std::collections::HashSet::new));
+        visited.insert(initial_url);
+        visited
+    }
+
+    fn insert(&mut self, url: &url::Url) {
+        if let Some(seen) = self.0.as_mut() {
+            seen.insert(url.as_str().to_owned());
+        }
+    }
+
+    /// Whether the fetch goes on to the `Location` target `target` of a hop that answered with
+    /// `status`, given whether a hop is left. `status` is checked against the crawl's own
+    /// `REDIRECT_STATUSES` so a 300, 304 or 305 naming a `Location` stays unfollowed here too.
+    fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|seen| REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str()))
+    }
+
+    /// Whether `error`, raised past the first hop, ends the chain on a response instead.
+    fn stops_on(&self, error: &CrawlError) -> bool {
+        self.0.is_some() && matches!(error, CrawlError::NotFound { .. })
+    }
+
+    /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
+    /// The meta refresh check leaves its read of the body in `page_scan`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_target(
+        &self,
+        response: &HttpResponse,
+        current_url: &url::Url,
+        page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
+        let seen = self.0.as_ref()?;
+        crate::engine::redirect::refresh_redirect_target(
+            response,
+            current_url.as_str(),
+            |target| (!seen.contains(target)).then(|| target.to_owned()),
+            page_scan,
+        )
+        .map(|(target, _)| target)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn refresh_target(
+        &self,
+        _response: &HttpResponse,
+        _current_url: &url::Url,
+        _page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
+        None
+    }
+}
+
 /// Fetch `current_url` once, without following any redirect it returns.
-async fn fetch_one_hop(context: &FetchContext<'_>, current_url: &url::Url) -> Result<HopOutcome, CrawlError> {
+///
+/// A 3xx names its `Location` as the next hop when `follows_location` accepts it; otherwise the
+/// 3xx is the response.
+async fn fetch_one_hop(
+    context: &FetchContext<'_>,
+    current_url: &url::Url,
+    follows_location: impl Fn(u16, &url::Url) -> bool,
+) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     let head = ResponseHead::from_response(&resp);
 
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
-            Some(RedirectTarget::Follow(next_url)) => return Ok(HopOutcome::Redirect(next_url)),
-            Some(RedirectTarget::Unfollowable) => {
+            Some(RedirectTarget::Follow(next_url)) if follows_location(head.status, &next_url) => {
+                return Ok(HopOutcome::Redirect(next_url));
+            }
+            Some(_) => {
                 return Ok(HopOutcome::Complete(
-                    unfollowable_redirect_response(context.config, resp, head).await,
+                    unfollowed_redirect_response(context.config, resp, head).await,
                 ));
             }
             None => {}
@@ -349,8 +519,9 @@ fn redirect_target(current_url: &url::Url, headers: &HeaderMap) -> Option<Redire
     })
 }
 
-/// Return a 3xx whose `Location` names no URL the crawler can fetch as the response itself.
-async fn unfollowable_redirect_response(
+/// Return a 3xx whose `Location` is not followed as the response itself: it names no URL the
+/// crawler can fetch, or the chain's rules stop before it.
+async fn unfollowed_redirect_response(
     config: &CrawlConfig,
     resp: reqwest::Response,
     head: ResponseHead,
@@ -989,6 +1160,59 @@ mod tests {
         }
     }
 
+    /// A custom retry policy decides on the status of the response that failed, so a plain 403
+    /// and a fingerprinted block must both carry the status they were raised for (crawlberg#133).
+    #[tokio::test]
+    async fn http_fetch_carries_the_response_status_on_a_403_and_on_a_fingerprinted_block() {
+        let plain = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain 403 must carry its status: {plain:?}"
+        );
+
+        let fingerprinted = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
+        assert_eq!(
+            status::error_status(&fingerprinted),
+            Some(403),
+            "a fingerprinted 403 must carry its status: {fingerprinted:?}"
+        );
+
+        for status in [429_u16, 503] {
+            let blocked = fetch_status(
+                status,
+                ResponseTemplate::new(status)
+                    .append_header("x-datadome", "blocked")
+                    .set_body_string("<html>challenge</html>"),
+            )
+            .await;
+            assert!(
+                matches!(&blocked, CrawlError::WafBlocked { .. }),
+                "status {status} must fingerprint as a block: {blocked:?}"
+            );
+            assert_eq!(
+                status::error_status(&blocked),
+                Some(status),
+                "a block fingerprinted from a {status} must carry it: {blocked:?}"
+            );
+        }
+
+        let refused = fetch_status(
+            200,
+            ResponseTemplate::new(200).set_body_string("<html>cf-chl- x</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&refused, CrawlError::WafBlocked { .. }),
+            "a 2xx interstitial must be refused as a block: {refused:?}"
+        );
+        assert_eq!(
+            status::error_status(&refused),
+            Some(200),
+            "a block refused from a 2xx must carry its status: {refused:?}"
+        );
+    }
+
     /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
     #[tokio::test]
     async fn http_fetch_reports_a_plain_403_as_forbidden() {
@@ -1218,6 +1442,49 @@ mod tests {
 
         assert_eq!(response.status, 302, "the 3xx itself must be returned");
         assert_eq!(response.body, "moved", "its body must be read");
+    }
+
+    #[tokio::test]
+    async fn a_followed_chain_stops_on_a_404_past_the_first_hop_as_the_crawl_does() {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/here"))
+            .respond_with(ResponseTemplate::new(301).append_header("location", "/missing"))
+            .mount(&mock)
+            .await;
+        let config = permissive_config();
+        let client = build_client(&config).expect("client must build");
+        let fetch = |route: &str, refresh| {
+            let url = format!("{}{route}", mock.uri());
+            let (config, client) = (&config, &client);
+            async move {
+                http_fetch_with(&url, config, &HashMap::new(), client, refresh)
+                    .await
+                    .map(|page| page.response)
+            }
+        };
+
+        let response = fetch("/here", RefreshRedirects::Follow)
+            .await
+            .expect("a 404 past the first hop must not fail a followed chain");
+        assert_eq!(response.status, 404);
+        assert_eq!(response.final_url, format!("{}/missing", mock.uri()));
+        assert!(response.body.is_empty(), "the crawl's chain reports an empty 404");
+
+        assert!(
+            matches!(
+                fetch("/missing", RefreshRedirects::Follow).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a 404 on the first hop still fails, as in the crawl"
+        );
+        assert!(
+            matches!(
+                fetch("/here", RefreshRedirects::Ignore).await,
+                Err(CrawlError::NotFound { .. })
+            ),
+            "a plain fetch keeps failing on a 404 anywhere in the chain"
+        );
     }
 
     #[tokio::test]

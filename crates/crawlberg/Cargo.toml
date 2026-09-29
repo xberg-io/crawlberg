@@ -147,6 +147,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-stream = { workspace = true }
+tracing-subscriber = { workspace = true }
 wiremock = "0.6"
 
 # ~keep A profile teardown test holds a thread of its child at its exit with ptrace.

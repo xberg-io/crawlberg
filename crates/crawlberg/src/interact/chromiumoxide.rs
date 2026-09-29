@@ -440,6 +440,10 @@ type Launched = (Browser, Handler, Option<ScratchProfileDir>);
 
 async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
+        crate::types::warn_ignored_launch_options(
+            &config.browser,
+            "connecting to an external browser.endpoint, whose Chrome process is launched externally",
+        );
         let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
@@ -452,9 +456,7 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
             .as_ref()
             .or(config.proxy.as_ref())
             .map(|p| p.url.as_str());
-        let builder = build_interact_launch_builder(user_data_dir.path(), proxy_url);
-        let builder = apply_launch_executable_override(builder);
-        let browser_config = builder
+        let browser_config = build_interact_launch_builder(user_data_dir.path(), proxy_url, &config.browser)?
             .build()
             .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
@@ -466,29 +468,6 @@ async fn launch_or_connect(config: &CrawlConfig) -> Result<Launched, CrawlError>
     }
 }
 
-/// The Chrome executable a test installed on [`tests::LAUNCH_EXECUTABLE`], applied to `builder` in
-/// place of the one [`build_interact_launch_builder`] chose.
-///
-/// ~keep The override itself stays test-only; only this call is unconditional, so
-/// ~keep `launch_or_connect` carries no `#[cfg(test)]` of its own.
-#[cfg(test)]
-fn apply_launch_executable_override(
-    builder: chromiumoxide::browser::BrowserConfigBuilder,
-) -> chromiumoxide::browser::BrowserConfigBuilder {
-    match tests::LAUNCH_EXECUTABLE.with(|executable| executable.borrow().clone()) {
-        Some(executable) => builder.chrome_executable(executable),
-        None => builder,
-    }
-}
-
-/// `builder` unchanged: no executable override exists outside tests.
-#[cfg(not(test))]
-fn apply_launch_executable_override(
-    builder: chromiumoxide::browser::BrowserConfigBuilder,
-) -> chromiumoxide::browser::BrowserConfigBuilder {
-    builder
-}
-
 /// Build the [`ChromeBrowserConfig`] builder for a fresh interact-mode launch (not the
 /// `browser.endpoint` connect branch).
 ///
@@ -497,19 +476,27 @@ fn apply_launch_executable_override(
 fn build_interact_launch_builder(
     user_data_dir: &std::path::Path,
     proxy_url: Option<&str>,
-) -> chromiumoxide::browser::BrowserConfigBuilder {
+    browser: &crate::types::BrowserConfig,
+) -> Result<chromiumoxide::browser::BrowserConfigBuilder, CrawlError> {
     let mut builder = ChromeBrowserConfig::builder()
         .no_sandbox()
         .new_headless_mode()
         .user_data_dir(user_data_dir)
         .disable_default_args();
-    builder = crate::browser_pool::apply_default_args(builder);
-    if let Some(proxy) = proxy_url {
+    builder = crate::browser_pool::apply_default_args(builder, &browser.chrome_args);
+    if let Some(proxy) = proxy_url
+        && !crate::browser_pool::caller_sets_switch(&browser.chrome_args, "proxy-server")
+    {
         // ~keep No `--` prefix: chromiumoxide adds it. With one, this rendered as
         // ~keep `----proxy-server=...` and the proxy was silently never applied.
         builder = builder.arg(format!("proxy-server={proxy}"));
     }
-    builder
+    crate::browser_pool::apply_launch_overrides(
+        builder,
+        "browser",
+        browser.chrome_path.as_deref(),
+        &browser.chrome_args,
+    )
 }
 
 #[cfg(test)]
@@ -547,27 +534,34 @@ mod tests {
         .expect("an interact run must stop its Chrome and remove its profile directory");
     }
 
-    thread_local! {
-        /// The Chrome executable `launch_or_connect` launches on this thread, instead of the detected one.
-        pub(super) static LAUNCH_EXECUTABLE: std::cell::RefCell<Option<std::path::PathBuf>> =
-            const { std::cell::RefCell::new(None) };
-    }
-
     /// An interact launch that fails drops its profile directory, off the executor thread.
     ///
-    /// ~keep No Chrome is needed: the executable is missing, so the launch fails before any Chrome
-    /// ~keep runs. The test goes through `launch_or_connect` itself, so a call site that stops
-    /// ~keep dropping the directory on a failed launch fails here.
+    /// ~keep No Chrome is needed: `chrome_path` names a script that exits at once, so the check
+    /// ~keep on the binary passes and the launch itself fails. The test goes through
+    /// ~keep `launch_or_connect` itself, so a call site that stops dropping the directory on a
+    /// ~keep failed launch fails here.
     #[tokio::test]
     async fn a_failed_interact_launch_removes_its_profile_directory() {
-        let missing = tempfile::tempdir().expect("the directory must be creatable");
-        LAUNCH_EXECUTABLE.with(|executable| *executable.borrow_mut() = Some(missing.path().join("no-such-chrome")));
+        let not_chrome = crate::types::executable_temp_file("interact-launch");
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                chrome_path: Some(not_chrome.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let before = crate::browser_pool::tests::profile_drops_here();
 
-        let launched = launch_or_connect(&CrawlConfig::default()).await;
+        let launched = launch_or_connect(&config).await;
 
-        LAUNCH_EXECUTABLE.with(|executable| executable.borrow_mut().take());
-        assert!(launched.is_err(), "a launch of a missing executable must fail");
+        let _ = std::fs::remove_file(&not_chrome);
+        let Err(error) = launched else {
+            panic!("a launch of a binary that is not Chrome must fail");
+        };
+        assert!(
+            error.to_string().contains("failed to launch browser"),
+            "the launch itself must fail, not the check on the binary: {error}"
+        );
         crate::browser_pool::tests::assert_profile_teardown_left_this_thread(before);
     }
 
@@ -608,8 +602,50 @@ mod tests {
         // ~keep Behavioral, not textual: this calls the exact function `launch_or_connect`
         // ~keep uses to build its `BrowserConfig`, so a path that stops calling
         // ~keep `apply_default_args` fails here because the returned flags actually change.
-        let builder = build_interact_launch_builder(std::path::Path::new("/tmp/interact-test-profile"), None);
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            None,
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         crate::browser_pool::assert_launch_flags_are_normalized(&builder);
+    }
+
+    #[test]
+    fn a_caller_proxy_server_flag_replaces_the_configured_proxy() {
+        let builder = build_interact_launch_builder(
+            std::path::Path::new("/tmp/interact-test-profile"),
+            Some("http://127.0.0.1:9"),
+            &crate::types::BrowserConfig {
+                chrome_args: vec!["--proxy-server=http://127.0.0.1:7".to_owned()],
+                ..Default::default()
+            },
+        )
+        .expect("no binary is named, so there is nothing to check");
+        let debug = format!("{builder:?}");
+        assert!(
+            debug.contains("key: \"proxy-server=http://127.0.0.1:7\""),
+            "the caller's proxy-server flag is missing: {debug}"
+        );
+        assert!(
+            !debug.contains("proxy-server=http://127.0.0.1:9"),
+            "the configured proxy must not sit beside the caller's proxy-server flag: {debug}"
+        );
+    }
+
+    #[test]
+    fn the_interact_launch_builder_uses_the_configured_chrome_path_and_args() {
+        crate::browser_pool::assert_launch_overrides_reach_the_builder(|chrome_path, chrome_args| {
+            build_interact_launch_builder(
+                std::path::Path::new("/tmp/interact-test-profile"),
+                Some("http://127.0.0.1:9"),
+                &crate::types::BrowserConfig {
+                    chrome_path,
+                    chrome_args,
+                    ..Default::default()
+                },
+            )
+        });
     }
 
     #[test]
@@ -617,7 +653,9 @@ mod tests {
         let builder = build_interact_launch_builder(
             std::path::Path::new("/tmp/interact-test-profile"),
             Some("http://127.0.0.1:9"),
-        );
+            &crate::types::BrowserConfig::default(),
+        )
+        .expect("the default browser config names no binary to check");
         let debug = format!("{builder:?}");
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),

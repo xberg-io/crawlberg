@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use opentelemetry::KeyValue;
 
 use super::HttpResponse;
+use super::status::HttpStatus;
 use crate::error::CrawlError;
 use crate::types::{WafClassifier, WafClassifyError, WafSignal};
 use crate::waf::TomlClassifier;
@@ -98,10 +99,14 @@ pub(crate) fn record_waf_block(vendor: &str) {
         .add(1, &[KeyValue::new("vendor", vendor.to_owned())]);
 }
 
-/// The [`CrawlError::WafBlocked`] the fetch path refuses a response with, counted once.
-pub(super) fn waf_block(vendor: String, message: String) -> CrawlError {
+/// The [`CrawlError::WafBlocked`] the fetch path refuses a `status` response with, counted once.
+///
+/// ~keep The status rides along as the error's source, as it does on every error
+/// `status_error` builds, so a custom retry policy reads the status of a refused response
+/// whether it was a 403, 429, 503 or 2xx (crawlberg#133).
+pub(super) fn waf_block(status: u16, vendor: String, message: String) -> CrawlError {
     record_waf_block(&vendor);
-    CrawlError::WafBlocked { message, vendor }
+    CrawlError::waf_blocked_with_source(vendor, message, HttpStatus(status))
 }
 
 /// Largest 2xx body that can still be refused as a WAF interstitial rather than returned as content.
@@ -173,7 +178,7 @@ pub(crate) fn robots_block_page_error(response: &HttpResponse) -> Option<CrawlEr
 fn block_page_error(response: &HttpResponse, max_body_len: Option<usize>) -> Option<CrawlError> {
     let (signal, evidence) = confirmed_2xx_waf(&*WAF_CLASSIFIER, response, max_body_len).ok()??;
     let message = format!("waf/blocked detected on 2xx ({}): {}", evidence.label(), signal.vendor);
-    Some(waf_block(signal.vendor, message))
+    Some(waf_block(response.status, signal.vendor, message))
 }
 
 /// The WAF signal the engine hands its antibot strategy and retry policy for `response`.
@@ -505,6 +510,24 @@ mod tests {
             matches!(refusal, Some(CrawlError::WafBlocked { ref vendor, .. }) if vendor == "datadome"),
             "a small DataDome 200 must be built and refused, got {refusal:?}"
         );
+    }
+
+    /// A refused 2xx keeps its own status, on the fetch paths and on the robots.txt fetch, so a
+    /// custom retry policy reads that status rather than `None` (crawlberg#133).
+    #[test]
+    fn a_refused_2xx_carries_its_own_status() {
+        let body = page_of_len(DATADOME_TAG, 400);
+        let headers = std::collections::HashMap::from([("x-datadome".to_owned(), vec!["protected".to_owned()])]);
+        for status in [200_u16, 203] {
+            let refusal = super::waf_2xx_error(status, body.as_bytes(), &body, &headers)
+                .unwrap_or_else(|| panic!("a small DataDome {status} must be refused"));
+            assert_eq!(crate::http::status::error_status(&refusal), Some(status), "{refusal:?}");
+
+            let response = super::build_partial_response_with_bytes(status, body.as_bytes(), &body, &headers);
+            let robots = super::robots_block_page_error(&response)
+                .unwrap_or_else(|| panic!("a DataDome {status} robots.txt must be refused"));
+            assert_eq!(crate::http::status::error_status(&robots), Some(status), "{robots:?}");
+        }
     }
 
     /// `waf_2xx_error`, the call site both fetch paths share, must not build the response it
