@@ -71,8 +71,8 @@ pub(crate) struct Fingerprint {
     pub(crate) weight: f32,
     /// The response statuses this fingerprint is allowed to decide; empty means every status.
     ///
-    /// ~keep This is what keeps a signal that only proves *CDN presence* — `server:
-    /// AkamaiGHost` and the like — from deciding a 429 or 503, where the origin is the far more
+    /// ~keep This is what keeps a signal that only proves *CDN presence*, such as `server:
+    /// AkamaiGHost`, from deciding a 429 or 503, where the origin is the far more
     /// likely author of the status, and from deciding a 2xx that is ordinary content
     /// (crawlberg#197). A fingerprint that names a block leaves it empty and decides all of them.
     pub(crate) statuses: Vec<u16>,
@@ -313,8 +313,9 @@ impl Rules {
     /// 1. **Header-first short-circuit**: fingerprints whose signals are ALL
     ///    `response_header` are evaluated before the body is scanned. If any
     ///    header-only fingerprint matches, its signal is returned immediately
-    ///    without running the AC body scan. `http::waf_2xx_error` relies on this
-    ///    order to tell a header-only match from one a body signal took part in.
+    ///    without running the AC body scan. The 2xx decision in `http::waf` relies
+    ///    on this order: when a header-only and a body fingerprint both match, it
+    ///    reports the header-only vendor and asks the body alone to corroborate it.
     ///
     /// 2. **Full scan**: Aho-Corasick runs over the body and all fingerprints
     ///    (including mixed header+body ones) are evaluated.

@@ -53,22 +53,30 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
-- **An ordinary 200 from a site behind Akamai, Imperva or F5 is returned as content again.** Those
-  products stamp their own `server` header on every response they proxy, and a WAF fingerprint that
-  matches on response headers alone was enough to refuse the response: every 2xx served through one
-  of them failed as `WafBlocked` with the real page already in hand. A header-only fingerprint now
-  has to be corroborated by the body before a 2xx is refused, so a 200 whose only WAF evidence is
-  the CDN's presence is returned as the page it is. This change does not touch a non-2xx response:
-  a 403 behind one of those CDNs still blocks. The Tower fetch service, which is the path the
-  engine's own crawl uses, shares that decision with `http_fetch` instead of classifying every 2xx
-  as if it were a 403. (#231)
+- **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
+  products stamp their own header on every response they proxy, and a WAF fingerprint that matches
+  on response headers alone was enough to refuse the response. Robots.txt, sitemap and asset
+  fetches refused every 2xx served through one of them, and the crawl refused such a 200 when its
+  body was under 5000 bytes, with the real page already in hand. A header-only fingerprint now
+  needs the body to show the interstitial before a 2xx is refused. A 403 behind one of those CDNs
+  still blocks. (#231)
+
+- **Every fetch path now makes the same call on a 2xx.** Robots.txt, sitemap and asset fetches
+  checked the body of any 2xx up to 100 KB, the crawl checked only a 200 under 5000 bytes, and a
+  `WafClassifier` set on the engine flagged a 2xx to the antibot strategy and retry policy on a
+  header-only match, so the built-in antibot strategy refused an ordinary 200 behind Sucuri. All
+  three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
+  the body corroborates. So robots.txt, sitemap and asset fetches return a 2xx of 5000 bytes or
+  more as content, the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine
+  flags a 2xx only under the same rule. (#NNN)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
-  WAF fingerprint match, and the fetch path fingerprints one response more than once, so a single
-  block added two or three. It now moves once for each response the fetch path refuses as a WAF
-  block. A response that a fingerprint matches but that is returned as content, such as an ordinary
-  200 behind Sucuri, does not count, and neither does a match from a `WafClassifier` set on the
-  engine.
+  WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
+  added one or two, and a `TomlClassifier` set on the engine added one for every match it made. It
+  now moves once for each response refused as a WAF block: by the fetch path, for a 403, 429 or
+  503 challenge or a 2xx interstitial, or by the engine, when its antibot strategy or retry policy
+  refuses a response as a WAF block. A response that is returned as content does not count, and no
+  response counts twice.
 
 - **The native browser backend connected to a rebinding host's second DNS answer.** It checked
   a host's addresses against the SSRF policy, and then its HTTP clients resolved the host again
