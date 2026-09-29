@@ -22,6 +22,11 @@ All notable changes to crawlberg are documented here.
   Write each flag once, as `--flag` or `--flag=value` with a lowercase name, and join several
   `--enable-features` values with commas. (#79, #80)
 
+- **The regenerated bindings add required `BrowserConfig` constructor arguments.** Code that
+  constructs a `BrowserConfig` by hand must pass the new settings: `chrome_path` and `chrome_args`
+  to Swift's `init` and the Java record constructor, and `chromeArgs` to Dart's constructor. The
+  Java builder and the other bindings give both settings defaults. (#79, #80)
+
 - **An IPv6 allowlist entry no longer admits an address that carries a denied IPv4 address.**
   The IPv4-compatible (`::/96`), IPv4-translated, 6to4 (`2002::/16`), Teredo (`2001:0::/32`),
   ISATAP and local-use NAT64 (`64:ff9b:1::/48`) forms are now checked as the IPv4 address they
@@ -78,7 +83,9 @@ All notable changes to crawlberg are documented here.
   every Chrome that crawlberg launches, and both are ignored with a warning, and not checked,
   when `browser.endpoint` is set or the native backend is in use. Flags such as
   `--proxy-server` and `--host-resolver-rules` route around the SSRF policy, so set
-  `chrome_args` only from trusted configuration. (#79, #80)
+  `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
+  warning give the number of flags, not their values, because a flag value can carry a
+  credential. (#79, #80)
 
 ### Fixed
 

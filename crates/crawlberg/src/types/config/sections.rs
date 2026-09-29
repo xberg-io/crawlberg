@@ -179,8 +179,9 @@ impl std::fmt::Debug for BrowserConfig {
     /// `ws://host:9222/devtools/browser/<GUID>` drives the browser), so only its scheme, host
     /// and port print, and an endpoint that does not parse prints as `***`. `eval_script`
     /// prints as `***` with its length, because a script can embed a token. `proxy` redacts
-    /// its own secrets. The exhaustive destructure makes a new field a compile error here,
-    /// not a silent gap.
+    /// its own secrets. `chrome_args` prints as a count, because a flag value such as
+    /// `--proxy-server=http://user:password@host` can carry a credential. The exhaustive
+    /// destructure makes a new field a compile error here, not a silent gap.
     // ~keep alef extracts public inherent AND trait-impl methods; `Formatter` has no
     // binding representation, so without this the surface fails generation with
     // lossy_sanitized_surface.
@@ -228,7 +229,7 @@ impl std::fmt::Debug for BrowserConfig {
             .field("capture_network_events", capture_network_events)
             .field("session_affinity", session_affinity)
             .field("chrome_path", chrome_path)
-            .field("chrome_args", chrome_args)
+            .field("chrome_args", &format_args!("{} flags", chrome_args.len()))
             .finish()
     }
 }
@@ -333,13 +334,14 @@ pub(crate) fn check_chrome_executable(section: &str, path: &Path) -> Result<(), 
 }
 
 /// Warn that `chrome_path` and `chrome_args` have no effect on this fetch, when either is set.
-/// `reason` completes the sentence "... are ignored when ...".
+/// `reason` completes the sentence "... are ignored when ...". The warning gives the number of
+/// flags, not their values, for the reason given on the `Debug` impl of `BrowserConfig`.
 #[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
 pub(crate) fn warn_ignored_launch_options(browser: &BrowserConfig, reason: &str) {
     if browser.chrome_path.is_some() || !browser.chrome_args.is_empty() {
         tracing::warn!(
             chrome_path = ?browser.chrome_path,
-            chrome_args = ?browser.chrome_args,
+            chrome_args = %format!("{} flags", browser.chrome_args.len()),
             "browser.chrome_path and browser.chrome_args are ignored when {reason}"
         );
     }
