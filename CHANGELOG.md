@@ -48,7 +48,9 @@ All notable changes to crawlberg are documented here.
   request sent the fixed default agent, and robots.txt was judged for that same default agent.
   Neither used the rotation list. The wasm crawl loop now picks the next rotation agent once per page,
   judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
-  behavior the native crawl loop already had. (#483)
+  behavior the native crawl loop already had. A page on another origin, such as a subdomain
+  under `allow_subdomains`, is now judged by that origin's own robots.txt, as on native. Before,
+  every page was judged by the seed origin's robots.txt, so such a page can now be refused. (#483)
 
 - **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
   crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain
