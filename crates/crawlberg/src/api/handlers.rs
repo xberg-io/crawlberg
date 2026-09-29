@@ -347,19 +347,21 @@ pub async fn map_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_url(&req.url)?;
 
-    let mut result = if let Some(respect_robots_txt) = req.respect_robots_txt {
+    // ~keep `search` becomes `map_search`, so this endpoint matches a term the same way as the
+    // ~keep CLI and the MCP `map` tool.
+    let mut result = if req.respect_robots_txt.is_some() || req.search.is_some() {
         let mut config = state.engine.config.clone();
-        config.respect_robots_txt = respect_robots_txt;
+        if let Some(respect_robots_txt) = req.respect_robots_txt {
+            config.respect_robots_txt = respect_robots_txt;
+        }
+        if let Some(search) = &req.search {
+            config.map_search = Some(search.clone());
+        }
         let engine = rebuild_engine_with_config(&state.engine, config)?;
         engine.map(&req.url).await?
     } else {
         state.engine.map(&req.url).await?
     };
-
-    if let Some(ref search) = req.search {
-        let term = search.to_lowercase();
-        result.urls.retain(|u| u.url.to_lowercase().contains(&term));
-    }
 
     if let Some(limit) = req.limit {
         result.urls.truncate(limit);
