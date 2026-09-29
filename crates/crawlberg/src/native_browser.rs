@@ -24,6 +24,19 @@ pub(crate) async fn native_browser_fetch(
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
+    let mut jar = to_native_cookies(prior_cookies);
+    native_browser_render(url, config, &mut jar, native_executor).await
+}
+
+/// Render `url` with the native backend, starting from the cookies in `jar` and leaving in it the
+/// jar the render ended with. The records keep their `secure` and `http_only` flags, so a chain
+/// of renders carries its cookies from one render to the next as one browser would.
+pub(crate) async fn native_browser_render(
+    url: &str,
+    config: &CrawlConfig,
+    jar: &mut Vec<NBCookie>,
+    native_executor: &NativeBrowserExecutor,
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -43,7 +56,7 @@ pub(crate) async fn native_browser_fetch(
     }
     let _guard = SessionGuard;
 
-    native_browser_fetch_inner(url, config, prior_cookies, native_executor)
+    native_browser_fetch_inner(url, config, jar, native_executor)
         .instrument(span)
         .await
 }
@@ -51,7 +64,7 @@ pub(crate) async fn native_browser_fetch(
 async fn native_browser_fetch_inner(
     url: &str,
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    jar: &mut Vec<NBCookie>,
     native_executor: &NativeBrowserExecutor,
 ) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     if config.browser.endpoint.is_some() {
@@ -75,7 +88,7 @@ async fn native_browser_fetch_inner(
     }
 
     let (ssrf, refused) = crate::net::browser_policy::recording_validator_for(&config.ssrf);
-    let native_config = build_native_config(config, prior_cookies, ssrf)?;
+    let native_config = build_native_config(config, jar.clone(), ssrf)?;
 
     let timeout = config.browser.timeout;
     let rendered = native_executor.render_url(url, &native_config).await.map_err(|e| {
@@ -116,8 +129,9 @@ async fn native_browser_fetch_inner(
             .into_iter()
             .map(response_meta_from_event)
             .collect(),
-        cookies: rendered.cookies.into_iter().map(cookie_info_from_native).collect(),
+        cookies: rendered.cookies.iter().cloned().map(cookie_info_from_native).collect(),
     };
+    *jar = rendered.cookies;
 
     let refused = crate::net::browser_policy::take_refused(&refused);
     let response = HttpResponse {
@@ -192,7 +206,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
 /// Assemble the native backend's render configuration from the crawl config.
 fn build_native_config(
     config: &CrawlConfig,
-    prior_cookies: Option<&[CookieInfo]>,
+    prior_cookies: Vec<NBCookie>,
     ssrf: std::sync::Arc<dyn crawlberg_browser::adapter::SsrfValidator>,
 ) -> Result<crawlberg_browser::adapter::NativeBrowserConfig, CrawlError> {
     Ok(crawlberg_browser::adapter::NativeBrowserConfig {
@@ -203,7 +217,7 @@ fn build_native_config(
         respect_robots_txt: config.respect_robots_txt,
         stealth: matches!(config.browser.mode, crate::types::BrowserMode::Stealth),
         proxy_url: resolve_proxy_url(config)?,
-        prior_cookies: to_native_cookies(prior_cookies),
+        prior_cookies,
         block_url_patterns: config.browser.block_url_patterns.clone(),
         eval_script: config.browser.eval_script.clone(),
         wait_selector: config.browser.wait_selector.clone(),
@@ -279,7 +293,7 @@ mod tests {
         );
 
         let native =
-            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
+            build_native_config(&config, Vec::new(), test_validator(&config)).expect("an admitted config must build");
 
         assert!(
             native.extra_headers.is_empty(),
@@ -309,7 +323,7 @@ mod tests {
             std::collections::HashMap::new(),
         );
 
-        let scoped = build_native_config(&config, None, test_validator(&config))
+        let scoped = build_native_config(&config, Vec::new(), test_validator(&config))
             .expect("an admitted config must build")
             .origin_headers
             .expect("the header must be scoped to the seed host");
@@ -325,7 +339,7 @@ mod tests {
         };
 
         let native =
-            build_native_config(&config, None, test_validator(&config)).expect("an admitted config must build");
+            build_native_config(&config, Vec::new(), test_validator(&config)).expect("an admitted config must build");
         assert_eq!(native.origin_headers, None);
     }
 

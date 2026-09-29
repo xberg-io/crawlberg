@@ -171,6 +171,12 @@ All notable changes to crawlberg are documented here.
   slash, where HTTP mode fails with `not_found`. A native scrape now takes the same redirect
   chain as HTTP mode and uses the redirect count the backend reports. (#529, #530)
 
+- **A native browser scrape lost the cookies a meta refresh page set.** Each hop of the redirect
+  chain is its own native render, and each render started with an empty cookie jar, so the request
+  to the refresh target did not carry the refresh page's cookies and the result did not list them.
+  The chain now carries the jar from one hop to the next, with the Secure and HttpOnly flags of
+  each cookie.
+
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports

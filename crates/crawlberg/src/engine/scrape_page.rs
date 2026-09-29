@@ -170,14 +170,19 @@ impl CrawlEngine {
         }
     }
 
-    /// Render `url` with the native backend, as one hop of a scrape's redirect chain.
+    /// Render `url` with the native backend, as one hop of a scrape's redirect chain. The render
+    /// starts from the cookies in `jar` and leaves its own jar there for the next hop.
     #[cfg(all(not(target_arch = "wasm32"), feature = "browser-native"))]
-    pub(super) async fn native_render(&self, url: &str) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
+    pub(super) async fn native_render(
+        &self,
+        url: &str,
+        jar: &mut Vec<crawlberg_browser::adapter::NativeCookie>,
+    ) -> Result<(crate::tower::CrawlResponse, bool), CrawlError> {
         let native_executor = self.native_browser_executor.as_deref().ok_or_else(|| {
             CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
         })?;
         let (response, refused, redirects) =
-            crate::native_browser::native_browser_fetch(url, &self.config, None, native_executor).await?;
+            crate::native_browser::native_browser_render(url, &self.config, jar, native_executor).await?;
         let response = crate::http::rendered_status_outcome(response, redirects > 0, &self.config)?;
         let crawl_resp = crate::tower::CrawlResponse {
             status: response.status,

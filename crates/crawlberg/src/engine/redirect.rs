@@ -391,6 +391,10 @@ pub(crate) async fn follow_redirects(
     let mut chain = RedirectChain::new(initial_url, max_redirects);
 
     let mut browser_used = false;
+    // ~keep Each native hop is its own render, so the chain carries the jar from one to the next,
+    // ~keep as a single browser session would: the refresh target gets the refresh page's cookies.
+    #[cfg(feature = "browser-native")]
+    let mut native_jar: Vec<crawlberg_browser::adapter::NativeCookie> = Vec::new();
     loop {
         if let Some(policy) = policy.as_deref_mut()
             && let Some(refusal) = policy.admits(&chain.current_url, chain.redirect_count > 0).await?
@@ -425,7 +429,7 @@ pub(crate) async fn follow_redirects(
                     .await
             }
             #[cfg(feature = "browser-native")]
-            Hop::NativeRender => hop_engine.native_render(&chain.current_url).await,
+            Hop::NativeRender => hop_engine.native_render(&chain.current_url, &mut native_jar).await,
         };
         let (resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,

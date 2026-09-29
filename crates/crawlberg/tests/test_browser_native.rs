@@ -784,6 +784,94 @@ async fn native_scrape_follows_a_meta_refresh_where_http_mode_does() {
     }
 }
 
+/// A native scrape through a meta refresh keeps the cookies the refresh page set: the request to
+/// the refresh target carries them, the result lists them, and a Secure or HttpOnly cookie keeps
+/// its flag on the next hop.
+#[tokio::test]
+async fn native_scrape_through_a_meta_refresh_keeps_the_refresh_page_cookies() {
+    let site = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    r#"<html><head><meta http-equiv="refresh" content="0; url=/n"></head><body>refresh</body></html>"#,
+                    "text/html",
+                )
+                .append_header("set-cookie", "first=1; Path=/")
+                .append_header("set-cookie", "hidden=h; Path=/; HttpOnly")
+                .append_header("set-cookie", "sec=s; Path=/; Secure"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<html><body>landed</body></html>", "text/html")
+                .append_header("set-cookie", "second=2; Path=/"),
+        )
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig {
+            eval_script: Some("document.cookie".to_owned()),
+            ..c
+        })
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url.trim_start_matches(&site.uri()), "/n");
+    let target_request = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .into_iter()
+        .find(|r| r.url.path() == "/n")
+        .expect("the scrape must request the refresh target");
+    let sent: Vec<String> = target_request
+        .headers
+        .get_all("cookie")
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or_default().split("; ").map(str::to_owned))
+        .collect();
+    assert!(
+        sent.iter().any(|c| c == "first=1") && sent.iter().any(|c| c == "hidden=h"),
+        "the request to the refresh target must carry the refresh page's cookies, sent {sent:?}"
+    );
+    assert!(
+        !sent.iter().any(|c| c.starts_with("sec=")),
+        "a Secure cookie must not go out over plain http, sent {sent:?}"
+    );
+    let browser = scraped.browser.expect("a native render reports browser extras");
+    let mut names: Vec<&str> = browser.cookies.iter().map(|c| c.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["first", "hidden", "sec", "second"],
+        "the result must list every cookie of the scrape"
+    );
+    let script_cookies = browser
+        .eval_result
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        script_cookies.contains("first=1") && script_cookies.contains("second=2"),
+        "the target page's script must see the carried cookie and its own, saw {script_cookies:?}"
+    );
+    assert!(
+        !script_cookies.contains("hidden="),
+        "an HttpOnly cookie must stay hidden from script on the next hop, saw {script_cookies:?}"
+    );
+}
+
 /// A native scrape of a seed that answers 404 fails with `not_found` as HTTP mode does, also
 /// when the seed has no trailing slash and the page's URL gains one (#529).
 #[tokio::test]
