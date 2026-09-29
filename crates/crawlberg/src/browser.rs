@@ -142,6 +142,10 @@ async fn pooled_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "a shared browser_pool is configured; the pool launches Chrome from its own BrowserPoolConfig",
+    );
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
         // ~keep profile named later cannot retroactively change that process's
