@@ -1758,6 +1758,10 @@ extension CrawlConfigRef {
         __swift_bridge__$CrawlConfig$path_patterns_match_query(ptr)
     }
 
+    public func pathPatternsMatchUrl() -> Bool {
+        __swift_bridge__$CrawlConfig$path_patterns_match_url(ptr)
+    }
+
     public func dedupIncludeQuery() -> Bool {
         __swift_bridge__$CrawlConfig$dedup_include_query(ptr)
     }

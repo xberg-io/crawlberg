@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use regex::Regex;
+use crate::helpers::PathPattern;
 use url::Url;
 
 use crate::error::CrawlError;
@@ -238,9 +238,9 @@ fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<Sitemap
 /// while sitemaps are fetched — this bounds peak memory instead of materializing
 /// the entire sitemap tree before filtering.
 pub(crate) struct MapFilter {
-    exclude_paths: Vec<Regex>,
+    exclude_paths: Vec<PathPattern>,
     search: Option<String>,
-    match_query: bool,
+    target: crate::helpers::PathPatternTarget,
 }
 
 impl MapFilter {
@@ -253,7 +253,7 @@ impl MapFilter {
         Ok(Self {
             exclude_paths,
             search,
-            match_query: config.path_patterns_match_query,
+            target: crate::helpers::PathPatternTarget::from_config(config),
         })
     }
 
@@ -275,7 +275,7 @@ impl MapFilter {
                 &self.exclude_paths,
                 &[],
                 false,
-                self.match_query,
+                self.target,
                 &mut urls_filtered,
             ) {
                 return false;
@@ -776,6 +776,60 @@ mod tests {
             result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
             vec!["https://example.com/blog/two".to_owned()],
             "with path_patterns_match_query on, /blog?p=42 must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_exclude_paths_matches_the_full_url_when_path_patterns_match_url_is_set() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://example.com/private/one".to_owned(),
+            "https://example.org/private/two".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^https://example\.com/private/".to_owned()],
+            path_patterns_match_url: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.org/private/two".to_owned()],
+            "with path_patterns_match_url on, only the example.com URL must be excluded"
+        );
+    }
+
+    /// The final filter applies a host-anchored exclude pattern against the full URL to links
+    /// extracted from a direct HTML fetch too, not only to sitemap entries.
+    #[tokio::test]
+    async fn map_exclude_paths_matches_the_full_url_for_html_extracted_links() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><body><a href=\"/private/x\">x</a><a href=\"/public/y\">y</a></body></html>".to_owned(),
+        )
+        .await;
+
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^https?://127\.0\.0\.1:\d+/private/".to_owned()],
+            path_patterns_match_url: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/public/y")],
+            "with path_patterns_match_url on, the HTML-extracted /private/x link must be excluded too"
         );
     }
 

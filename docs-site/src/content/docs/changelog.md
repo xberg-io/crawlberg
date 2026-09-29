@@ -92,6 +92,20 @@ title: "Changelog"
   `.wafBlocked(vendor:message:)` must bind the third value, and Kotlin code that builds
   `CrawlError.WafBlocked` must pass `source`. The other bindings do not change. (#133)
 
+- **`CrawlConfig` gained `path_patterns_match_url`, which older versions reject.** The field is
+  always serialised, and `CrawlConfig` already carries `#[serde(deny_unknown_fields)]`, so **a config
+  serialised by this version is rejected by every older crawlberg**, even when the value is
+  `false`. The break is one-directional: an older config still loads here, because the field
+  defaults to `false`.
+
+  What this affects:
+
+  - A config serialised on one crawlberg and read by another. Upgrade the readers before, or
+    with, the writers.
+  - Any binding that round-trips a config through JSON across the FFI boundary
+    (`cberg_crawl_config_to_json`, `cberg_crawl_config_from_json`), where the core and the binding
+    can be at different versions.
+
 ### Added
 
 - **Choose the Chrome binary and add Chrome flags.** `BrowserConfig.chrome_path` names the one
@@ -106,6 +120,11 @@ title: "Changelog"
   `chrome_args` only from trusted configuration. The `BrowserConfig` debug output and the
   warning give the number of flags, not their values, because a flag value can carry a
   credential. (#79, #80)
+
+- `CrawlConfig.path_patterns_match_url` matches `include_paths`/`exclude_paths` against the full
+  URL, `scheme://host[:port]/path?query`, so a pattern can scope by host. The matched text leaves
+  out any userinfo and the fragment, and the host is in punycode. It defaults to `false` and takes
+  precedence over `path_patterns_match_query`. (#78)
 
 ### Fixed
 
@@ -713,6 +732,22 @@ title: "Changelog"
   page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
   fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
   redirects; the HTML link branch now does too, matching the crawl engine. (#360)
+
+- **One look-around pattern refused the whole configuration.** `include_paths` and `exclude_paths`
+  compiled on an engine without look-around or backreferences, so a single `(?!...)` pattern made
+  `create_engine` reject every pattern in the list. A pattern that engine accepts still compiles
+  there, with the same meaning. A pattern compiles with `fancy-regex` only when the `regex` crate's
+  first error is an unsupported look-around or a numbered backreference, so look-around and
+  numbered backreferences such as `\1` work. A pattern whose first error is anything else, such as
+  `a{2,1}`, still refuses the configuration and names the pattern. When a look-around comes before
+  a malformed part in the same pattern, the look-around is the first error and the pattern still
+  goes to `fancy-regex` (#283).
+  A look-around or backreference pattern is evaluated only on a matched text (the path by default)
+  of up to 2048 bytes, and gives up after 100,000 backtracks. A URL whose text is longer, or that
+  hits that limit, stays out of the crawl: an exclude pattern counts as a match, an include pattern
+  as no match, and one warning per crawl names the pattern. The seed is exempt from the include
+  check. The REST API refuses a look-around or backreference pattern in `includePaths` or
+  `excludePaths` with a 400. (#78)
 
 ## [1.8.0] - 2026-09-27
 
