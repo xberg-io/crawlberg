@@ -7,8 +7,8 @@ use crate::browser_detect;
 use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    detect_charset, extract_page_data, is_binary_content_type, is_binary_url, is_html_content, is_pdf_content,
-    mask_raw_text_markup, robots_meta_contents,
+    MaskedHtml, detect_charset, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
+    is_html_content, is_pdf_content, mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
 use crate::robots::is_path_allowed;
@@ -134,11 +134,11 @@ fn extract_from_body(
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&decoded.body);
-    let doc =
-        crate::html::parse_html(&parsed_html).map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
+    let doc = crate::html::parse_html(&parsed_html.text)
+        .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
     let page_robots = header_robots.with_meta_tags(&doc, sent_user_agent);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
-    let asset_refs = discover_page_assets(&doc, parsed_url, decoded.is_html, config);
+    let asset_refs = discover_page_assets(&doc, &parsed_html, parsed_url, decoded.is_html, config);
     Ok(BodyExtraction {
         extraction,
         asset_refs,
@@ -361,12 +361,13 @@ fn strip_crawler_scope<'a>(value: &'a str, ua_lower: &str) -> Option<&'a str> {
 /// Asset references to download for this page, if asset downloading is enabled.
 fn discover_page_assets(
     doc: &tl::VDom<'_>,
+    page: &MaskedHtml<'_>,
     parsed_url: &Url,
     is_html: bool,
     config: &CrawlConfig,
 ) -> Vec<crate::assets::AssetRef> {
     if config.download_assets && is_html {
-        assets::discover_assets(doc, parsed_url)
+        assets::discover_assets(doc, &effective_base_url(page.base_href.as_deref(), parsed_url))
     } else {
         Vec::new()
     }

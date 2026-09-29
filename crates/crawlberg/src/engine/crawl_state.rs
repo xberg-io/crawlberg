@@ -225,7 +225,7 @@ pub(super) fn blocking_extract_page(
     // ~keep Parse the masked source, never `body`: `tl` reads the contents of raw-text elements
     // ~keep as markup, which both invents tags and hides real ones.
     let parsed_html = mask_raw_text_markup(&body);
-    let (extraction, robots) = if let Ok(doc) = crate::html::parse_html(&parsed_html) {
+    let (extraction, robots) = if let Ok(doc) = crate::html::parse_html(&parsed_html.text) {
         (
             extract_page_data(&doc, &parsed_html, &parsed_url, is_html && !is_binary && !is_pdf, false),
             header_robots.with_meta_tags(&doc, user_agent),

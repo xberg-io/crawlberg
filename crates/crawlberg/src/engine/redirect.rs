@@ -594,10 +594,10 @@ fn meta_refresh_target(resp: &crate::tower::CrawlResponse, current_url: &str) ->
     // ~keep A `<meta http-equiv="refresh">` written inside script or style text is not a
     // ~keep redirect a browser would follow, so mask raw text before looking for one.
     let parsed_html = mask_raw_text_markup(&resp.body);
-    let doc = crate::html::parse_html(&parsed_html).ok()?;
+    let doc = crate::html::parse_html(&parsed_html.text).ok()?;
     let target = detect_meta_refresh(&doc)?;
     let base = Url::parse(current_url)
-        .map(|document_url| effective_base_url(&doc, &document_url).to_string())
+        .map(|document_url| effective_base_url(parsed_html.base_href.as_deref(), &document_url).to_string())
         .unwrap_or_else(|_| current_url.to_owned());
     fetchable_target(&base, &target)
 }

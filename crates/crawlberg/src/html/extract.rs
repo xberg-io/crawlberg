@@ -10,6 +10,7 @@ use super::images::extract_images;
 use super::json_ld::extract_json_ld;
 use super::links::{effective_base_url, extract_links};
 use super::metadata::extract_metadata;
+use super::raw_text::MaskedHtml;
 
 /// All data extracted from an HTML document in a single pass.
 pub(crate) struct HtmlExtraction {
@@ -20,17 +21,17 @@ pub(crate) struct HtmlExtraction {
     pub(crate) json_ld: Vec<JsonLdEntry>,
 }
 
-/// Extract all structured data from a parsed HTML document.
+/// Extract all structured data from a parsed HTML document, `dom` parsed from `page.text`.
 ///
 /// Every relative address resolves against the document's base URL, computed once here from
-/// `document_url` and the first `<base href>`.
+/// `document_url` and the page's first `<base href>` in tree order.
 ///
 /// When `is_html` is false, returns defaults for all fields.
 /// When `include_extended` is true, also extracts hreflangs, favicons,
 /// headings, and word count into the metadata.
 pub(crate) fn extract_page_data(
     dom: &VDom<'_>,
-    body: &str,
+    page: &MaskedHtml<'_>,
     document_url: &Url,
     is_html: bool,
     include_extended: bool,
@@ -45,8 +46,8 @@ pub(crate) fn extract_page_data(
         };
     }
 
-    let base_url = &effective_base_url(dom, document_url);
-    let mut metadata = extract_metadata(dom, body, base_url);
+    let base_url = &effective_base_url(page.base_href.as_deref(), document_url);
+    let mut metadata = extract_metadata(dom, &page.text, base_url);
 
     if include_extended {
         let hreflangs = extract_hreflangs(dom, base_url);
@@ -64,7 +65,7 @@ pub(crate) fn extract_page_data(
         metadata.word_count = Some(super::content::compute_word_count(dom));
     }
 
-    let links = extract_links(body, base_url);
+    let links = extract_links(page, base_url);
     let images = extract_images(dom, base_url);
     let feeds = extract_feeds(dom, base_url);
     let json_ld = extract_json_ld(dom);

@@ -32,7 +32,7 @@ pub(crate) fn detect_js_render_needed(body: &str, word_count: usize) -> bool {
     }
 
     let parsed_html = crate::html::mask_raw_text_markup(body);
-    let Ok(dom) = crate::html::parse_html(&parsed_html) else {
+    let Ok(dom) = crate::html::parse_html(&parsed_html.text) else {
         return false;
     };
     let parser = dom.parser();
