@@ -46,7 +46,42 @@ title: "Changelog"
   gives `https://example.com/de/`. If your code joins a relative hreflang address to the page URL,
   remove that step. (#126)
 
+- **A 503 or 429 behind Akamai, Imperva or F5 is retried again instead of escalating.** The three
+  fingerprints in `rules/waf_fingerprints.toml` whose only signal is the CDN's own `server` header
+  (`AkamaiGHost`, `Incapsula`, `BIG-IP`) now decide a 403 only. An overloaded or redeploying origin
+  behind one of those CDNs is therefore retried per `retry_codes` as it was before challenge
+  statuses were fingerprinted, instead of being classified as a WAF block and escalated to the
+  bypass or browser tier. A real block from those vendors is still caught on a 403, and no other
+  fingerprint changes. A custom corpus can scope any fingerprint the same way with an optional
+  `statuses` array of the codes it may decide; an empty array is rejected. (#197)
+
 ### Fixed
+
+- **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
+  products stamp their own header on every response they proxy, and a WAF fingerprint that matches
+  on response headers alone was enough to refuse the response. Robots.txt, sitemap and asset
+  fetches refused every 2xx served through one of them, and the crawl refused such a 200 when its
+  body was under 5000 bytes, with the real page already in hand. A header-only fingerprint now
+  needs the body to show the interstitial before a 2xx is refused. A 403 behind one of those CDNs
+  still blocks. (#231)
+
+- **Every fetch path now makes the same call on a 2xx.** Robots.txt, sitemap and asset fetches
+  checked the body of any 2xx up to 100 KB, the crawl checked only a 200 under 5000 bytes, and a
+  `WafClassifier` set on the engine flagged a 2xx to the antibot strategy and retry policy on a
+  header-only match, so the built-in antibot strategy refused an ordinary 200 behind Sucuri. All
+  three now apply one rule: any 2xx status, a body under 5000 bytes, and a header-only match that
+  the body corroborates. So sitemap and asset fetches return a 2xx of 5000 bytes or more as content,
+  the crawl refuses a 202 or 203 interstitial, and a classifier set on the engine flags a 2xx only
+  under the same rule. A robots.txt that is a block page still denies the whole site at any size up
+  to 100 KB. (#500)
+
+- **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
+  WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block
+  added one or two, and a `TomlClassifier` set on the engine added one for every match it made. It
+  now moves once for each response refused as a WAF block: by the fetch path, for a 403, 429 or
+  503 challenge or a 2xx interstitial, or by the engine, when its antibot strategy or retry policy
+  refuses a response as a WAF block. A response that is returned as content does not count, and no
+  response counts twice.
 
 - **An address with an upper-case scheme was refused.** The REST API and the MCP tools tested a
   caller-supplied address against a lower-case `http://`/`https://` prefix, so `HTTP://example.com/`
