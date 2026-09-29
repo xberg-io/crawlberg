@@ -7,7 +7,7 @@ use crate::browser_detect;
 use crate::error::CrawlError;
 use crate::helpers::{RobotsOutcome, default_robots_user_agent, fetch_robots_outcome};
 use crate::html::{
-    MaskedHtml, detect_charset, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
+    MaskedHtml, PageScan, detect_charset, effective_base_url, extract_page_data, is_binary_content_type, is_binary_url,
     is_html_content, is_pdf_content, mask_raw_text_markup, robots_meta_contents,
 };
 use crate::http::build_client;
@@ -32,9 +32,11 @@ fn header_robots_directives(
 /// `document_filter` is the engine's byte-aware document predicate, threaded through so a
 /// `scrape()` and the wasm crawl loop (which takes its document from here) honour it too; the
 /// native crawl loop builds its own document record in `engine::page_result`.
+/// `page_scan` is the redirect check's read of `resp`'s body, when it made one.
 pub(crate) async fn scrape_from_crawl_response(
     url: &str,
     resp: &crate::tower::CrawlResponse,
+    page_scan: Option<PageScan>,
     config: &CrawlConfig,
     document_filter: Option<&crate::document::DocumentFilter>,
 ) -> Result<ScrapeResult, CrawlError> {
@@ -52,7 +54,7 @@ pub(crate) async fn scrape_from_crawl_response(
     let robots = resolve_robots_status(url, &parsed_url, config, &client, sent_user_agent).await;
     let response_meta = crate::http::extract_response_meta_from_hashmap(&resp.headers);
     let content_type = resp.content_type.clone();
-    let decoded = decode_response_body(resp, &content_type, &parsed_url, config);
+    let mut decoded = decode_response_body(resp, page_scan, &content_type, &parsed_url, config);
 
     let (x_robots_tag, header_robots) = header_robots_directives(&resp.headers, sent_user_agent);
 
@@ -69,11 +71,17 @@ pub(crate) async fn scrape_from_crawl_response(
     )
     .await;
 
-    let body = extract_from_body(&decoded, &parsed_url, config, &header_robots, sent_user_agent)?;
+    let page_scan = decoded.page_scan.take();
+    let body = extract_from_body(
+        &decoded,
+        page_scan,
+        &parsed_url,
+        config,
+        &header_robots,
+        sent_user_agent,
+    )?;
     let extraction = body.extraction;
-
-    let word_count = extraction.metadata.word_count.unwrap_or(0);
-    let js_render_hint = decoded.is_html && browser_detect::detect_js_render_needed(&decoded.body, word_count);
+    let js_render_hint = body.js_render_hint;
     let downloaded_assets = download_discovered_assets(body.asset_refs, config, &client).await;
     let markdown =
         crate::markdown::convert_to_markdown(&decoded.body, &parsed_url, &merged_content_config(config)).await;
@@ -117,15 +125,17 @@ struct BodyExtraction {
     extraction: crate::html::HtmlExtraction,
     asset_refs: Vec<crate::assets::AssetRef>,
     page_robots: RobotsDirectives,
+    js_render_hint: bool,
 }
 
 /// Everything the extraction pipeline reads out of the response body.
 ///
-/// ~keep The document is parsed exactly once here: `extract_page_data`, the meta-robots probes
-/// ~keep and asset discovery all read the same `VDom`. The `VDom` borrows the masked source, so
-/// ~keep both stay local to this function and only owned values cross back out.
+/// ~keep The document is parsed exactly once here: `extract_page_data`, the meta-robots probes,
+/// ~keep asset discovery and the render hint all read the same `VDom`. The `VDom` borrows the
+/// ~keep masked source, so both stay local to this function and only owned values cross back out.
 fn extract_from_body(
     decoded: &DecodedBody,
+    page_scan: Option<PageScan>,
     parsed_url: &Url,
     config: &CrawlConfig,
     header_robots: &RobotsDirectives,
@@ -133,16 +143,22 @@ fn extract_from_body(
 ) -> Result<BodyExtraction, CrawlError> {
     // ~keep Parse the masked source, never `decoded.body`: `tl` reads the contents of
     // ~keep raw-text elements as markup, which both invents tags and hides real ones.
-    let parsed_html = mask_raw_text_markup(&decoded.body);
+    let parsed_html = match page_scan {
+        Some(page_scan) => page_scan.attach(&decoded.body),
+        None => mask_raw_text_markup(&decoded.body),
+    };
     let doc = crate::html::parse_html(&parsed_html.text)
         .map_err(|e| CrawlError::other(format!("HTML parse error: {e:?}")))?;
     let page_robots = header_robots.with_meta_tags(&doc, sent_user_agent);
     let extraction = extract_page_data(&doc, &parsed_html, parsed_url, decoded.is_html, true);
     let asset_refs = discover_page_assets(&doc, &parsed_html, parsed_url, decoded.is_html, config);
+    let word_count = extraction.metadata.word_count.unwrap_or(0);
+    let js_render_hint = decoded.is_html && browser_detect::detect_js_render_needed(&doc, word_count);
     Ok(BodyExtraction {
         extraction,
         asset_refs,
         page_robots,
+        js_render_hint,
     })
 }
 
@@ -211,6 +227,9 @@ async fn resolve_robots_status(
 /// truncated to `max_body_size`, together with the content verdicts derived from it.
 struct DecodedBody {
     body: String,
+    /// The redirect check's read of the response body, dropped when the charset re-decode
+    /// replaces the body. A body cut to `max_body_size` is read again (see [`PageScan::attach`]).
+    page_scan: Option<PageScan>,
     body_size: usize,
     detected_charset: Option<String>,
     is_pdf: bool,
@@ -225,6 +244,7 @@ struct DecodedBody {
 /// verdict, and `was_skipped` is derived from it.
 fn decode_response_body(
     resp: &crate::tower::CrawlResponse,
+    mut page_scan: Option<PageScan>,
     content_type: &str,
     parsed_url: &Url,
     config: &CrawlConfig,
@@ -236,6 +256,7 @@ fn decode_response_body(
         && let Some(decoded) = crate::http::redecode_with_charset(charset, &resp.body_bytes)
     {
         body = decoded;
+        page_scan = None;
     }
     let is_pdf = is_pdf_content(content_type, &body);
 
@@ -250,6 +271,7 @@ fn decode_response_body(
 
     DecodedBody {
         body,
+        page_scan,
         body_size,
         detected_charset,
         is_pdf,
@@ -425,6 +447,33 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn scrape_reads_the_render_hint_from_the_masked_page() {
+        // ~keep Between 20 and 50 words, so only the SPA mount decides the hint.
+        let prose = "<p>This server-rendered article has real prose in it, enough words that the \
+                     sparse-content rule cannot decide the page on its own.</p>";
+        let in_script =
+            format!(r#"<html><body>{prose}<script>var s = '<div id="root"></div>';</script></body></html>"#);
+        let real = format!(r#"<html><body>{prose}<div id="root"></div></body></html>"#);
+        let hint = |html: String| async move {
+            scrape_from_crawl_response(
+                "https://example.com/page",
+                &response("text/html", &html),
+                None,
+                &offline_config(),
+                None,
+            )
+            .await
+            .expect("scrape succeeds")
+            .js_render_hint
+        };
+        assert!(hint(real).await, "an empty SPA mount on the page asks for a browser");
+        assert!(
+            !hint(in_script).await,
+            "an SPA mount written inside script text is not an element a browser sees"
+        );
+    }
+
     fn response_with_bytes(content_type: &str, body_bytes: Vec<u8>) -> crate::tower::CrawlResponse {
         crate::tower::CrawlResponse {
             status: 200,
@@ -443,7 +492,7 @@ mod tests {
             "text/html",
             "<html><head><title>Hi</title></head><body>hello</body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -461,7 +510,7 @@ mod tests {
         resp.headers
             .insert("x-robots-tag".to_owned(), vec!["NoIndex, NoFollow".to_owned()]);
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -478,7 +527,7 @@ mod tests {
             vec!["noarchive".to_owned(), "nofollow".to_owned()],
         );
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -495,7 +544,7 @@ mod tests {
             "text/html",
             r#"<html><head><meta name="robots" content="noindex nofollow"></head><body>x</body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -509,7 +558,7 @@ mod tests {
             "text/html",
             r#"<html><head><meta name="robots" content="None"></head><body>x</body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -525,7 +574,7 @@ mod tests {
             vec!["googlebot: noindex, nofollow".to_owned()],
         );
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -546,7 +595,7 @@ mod tests {
             vec!["googlebot: noindex".to_owned(), "nofollow".to_owned()],
         );
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -569,7 +618,7 @@ mod tests {
             vec!["nofollow, unavailable_after: 25 Jun 2010 15:00:00 PST".to_owned()],
         );
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -587,7 +636,7 @@ mod tests {
             vec!["unavailable_after: 25 Jun 2010 15:00:00 PST, nofollow".to_owned()],
         );
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -603,7 +652,7 @@ mod tests {
             "text/html",
             r#"<html><head><meta name="robots" content="noindex"></head><body>x</body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -622,7 +671,7 @@ mod tests {
             "text/html",
             r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -646,7 +695,7 @@ mod tests {
         );
         resp.sent_user_agent = Some("AgentB".to_owned());
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
         assert!(
@@ -659,7 +708,7 @@ mod tests {
             r#"<html><head><meta name="AgentB" content="noindex"></head><body>x</body></html>"#,
         );
         resp.sent_user_agent = Some("AgentB".to_owned());
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
         assert!(
@@ -681,7 +730,7 @@ mod tests {
         );
         assert_eq!(resp.sent_user_agent, None);
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
         assert!(
@@ -721,7 +770,7 @@ mod tests {
         resp.sent_user_agent = Some("AgentB".to_owned());
 
         let url = format!("{}/page", mock.uri());
-        let result = scrape_from_crawl_response(&url, &resp, &config, None)
+        let result = scrape_from_crawl_response(&url, &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
 
@@ -740,7 +789,7 @@ mod tests {
         body_bytes.extend_from_slice(b"</body></html>");
 
         let resp = response_with_bytes("text/html", body_bytes);
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -761,7 +810,7 @@ mod tests {
             ..offline_config()
         };
 
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
 
@@ -774,7 +823,7 @@ mod tests {
         let html = "<html><body><p>keep this</p><aside>drop this</aside></body></html>";
         let resp = response("text/html", html);
 
-        let baseline = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let baseline = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
         let baseline_markdown = baseline.markdown.expect("markdown").content;
@@ -787,7 +836,7 @@ mod tests {
             remove_tags: vec!["aside".to_owned()],
             ..offline_config()
         };
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &config, None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &config, None)
             .await
             .expect("scrape should succeed");
         let markdown = result.markdown.expect("markdown").content;
@@ -805,7 +854,7 @@ mod tests {
     #[tokio::test]
     async fn scrape_marks_a_pdf_response_as_skipped() {
         let resp = response("application/pdf", "%PDF-1.7 not really a pdf");
-        let result = scrape_from_crawl_response("https://example.com/doc.pdf", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/doc.pdf", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -824,7 +873,7 @@ mod tests {
             r#"<html><body><a href="list?a=1&amp;b=2">q</a> <a href="&#47;root.html">r</a>
             <img src="i.png?a=1&amp;b=2" alt="Tom &amp; Jerry"></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -847,7 +896,7 @@ mod tests {
             <LINK REL="canonical" HREF="/canon"></HEAD>
             <BODY><A HREF="up.html">x</A><IMG SRC="u.png"></BODY></HTML>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -870,7 +919,7 @@ mod tests {
             <body><a href="leaf.html">l</a><img src="logo.png">
             <picture><source srcset="wide.png 2x"></picture></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -902,7 +951,7 @@ mod tests {
             <script type="application/LD+JSON">{"@type":"Thing","name":"t"}</script></head>
             <body><a href="https://other.example/" rel="External NoFollow">x</a></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -935,7 +984,7 @@ mod tests {
             r#"<html><body><a href="/a" rel="ugc,nofollow">a</a><a href="/b" rel="nofollow,ugc">b</a>
             <a href="/c" rel="UGC , NoFollow">c</a><a href="/d" rel="ugc,sponsored">d</a></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -955,9 +1004,15 @@ mod tests {
             <link rel="alternate" type="application/rss+xml" href="feed.xml">
             <link rel="icon" href="fav.ico"><link rel="canonical" href="c.html"></head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
-            .await
-            .expect("scrape should succeed");
+        let result = scrape_from_crawl_response(
+            "https://example.com/dir/page.html",
+            &resp,
+            None,
+            &offline_config(),
+            None,
+        )
+        .await
+        .expect("scrape should succeed");
 
         assert_eq!(urls(&result.feeds, |f| &f.url), ["https://example.com/other/feed.xml"]);
         let favicons = result.metadata.favicons.as_deref().unwrap_or_default();
@@ -986,10 +1041,15 @@ mod tests {
                     <body><p><a href="leaf.html">leaf</a><img src="logo.png"></p></body></html>"#
                 ),
             );
-            let result =
-                scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
-                    .await
-                    .expect("scrape should succeed");
+            let result = scrape_from_crawl_response(
+                "https://example.com/dir/page.html",
+                &resp,
+                None,
+                &offline_config(),
+                None,
+            )
+            .await
+            .expect("scrape should succeed");
 
             assert_eq!(
                 urls(&result.links, |l| &l.url),
@@ -1031,7 +1091,7 @@ mod tests {
             <script type="application/LD+JSON; charset=utf-8">{"@type":"Thing","name":"t"}</script>
             </head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1052,7 +1112,7 @@ mod tests {
             "<link rel=\"canonical\" href=\" \t\n\">",
         ] {
             let resp = response("text/html", &format!("<html><head>{head}</head></html>"));
-            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
                 .await
                 .expect("scrape should succeed");
             assert_eq!(result.metadata.canonical_url, None, "for {head}");
@@ -1070,9 +1130,15 @@ mod tests {
             <link rel="alternate" hreflang=" en-GB " href="en.html">
             <link rel="alternate" hreflang=" " href="blank.html"></head></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page.html", &resp, &offline_config(), None)
-            .await
-            .expect("scrape should succeed");
+        let result = scrape_from_crawl_response(
+            "https://example.com/dir/page.html",
+            &resp,
+            None,
+            &offline_config(),
+            None,
+        )
+        .await
+        .expect("scrape should succeed");
 
         let hreflangs = result.metadata.hreflangs.as_deref().unwrap_or_default();
         assert_eq!(
@@ -1088,7 +1154,7 @@ mod tests {
 
     async fn scrape_head(head: &str) -> ScrapeResult {
         let resp = response("text/html", &format!("<html><head>{head}</head><body></body></html>"));
-        scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed")
     }
@@ -1236,7 +1302,7 @@ mod tests {
                      <picture><source srcset=\"https://example.com/s.png 1x\"></picture></body></html>"
                 ),
             );
-            let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+            let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
                 .await
                 .expect("scrape should succeed");
             let expected: Vec<&str> = match resolved {
@@ -1272,7 +1338,7 @@ mod tests {
             "<html><body><a href=\"a.html\" rel=\"nofollow\r\nexternal\">a</a>\
              <img src=\"i.png\" alt=\"one\rtwo\0three\"><img src=\"j.png\" alt=\"a\0b\"></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1293,7 +1359,7 @@ mod tests {
              <link rel=\"icon\" href=\" \">\
              <link rel=\"icon\" href=\"fav.ico\"></head></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1311,7 +1377,7 @@ mod tests {
              <script type=\"\x0Capplication/ld+json\x0C\">{\"@type\":\"Thing\",\"name\":\"t\"}</script>\
              </head></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1336,7 +1402,7 @@ mod tests {
             <picture><source srcset="&#32;&#32;"></picture>
             <picture><source srcset="s&#46;png 2x"></picture></body></html>"#,
         );
-        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/dir/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1365,7 +1431,7 @@ mod tests {
              <picture><source srcset=\"\u{1} 1x, d.png 2x\"></picture>\
              <picture><source srcset=\"data:image/png;base64,AA 1x\"></picture></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1383,7 +1449,7 @@ mod tests {
              <img src=\"DATA:image/png;base64,AA\"><img src=\"i.png\">\
              <picture><source srcset=\"Data:image/png;base64,AA 1x\"></picture></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1398,7 +1464,7 @@ mod tests {
              <a href=\"vbscript:msgbox(1)\">a</a><a href=\"VBScript:msgbox(1)\">b</a>\
              <a href=\"next.html\">c</a></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1415,7 +1481,7 @@ mod tests {
              <img src=\"javascript:alert(1)\"><img src=\"VBScript:msgbox(1)\"><img src=\"i.png\">\
              <picture><source srcset=\"JAVASCRIPT:alert(1) 1x\"></picture></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1431,7 +1497,7 @@ mod tests {
              <meta name=\"twitter:image\" content=\"data:image/png;base64,AA\">\
              <meta property=\"og:image\" content=\"og.png\"></head><body></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1445,7 +1511,7 @@ mod tests {
             "<html><head><meta property=\"og:image\" content=\"DATA://h:99999\"></head><body>\
              <img src=\"data://[a\"><picture><source srcset=\"data://[b 1x\"></picture></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1467,7 +1533,7 @@ mod tests {
              <a href=\"\u{1}\">a</a><a href=\"java\tscript:alert(1)\">j</a>\
              <a href=\"\u{B}next.html\">b</a></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/page", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/page", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1488,7 +1554,7 @@ mod tests {
              <a href=\"\u{A0}\">c</a>\
              <a href=\" \t\">d</a></body></html>",
         );
-        let result = scrape_from_crawl_response("https://example.com/", &resp, &offline_config(), None)
+        let result = scrape_from_crawl_response("https://example.com/", &resp, None, &offline_config(), None)
             .await
             .expect("scrape should succeed");
 
@@ -1505,7 +1571,7 @@ mod tests {
     #[tokio::test]
     async fn scrape_rejects_an_unparseable_url() {
         let resp = response("text/html", "<html></html>");
-        let error = scrape_from_crawl_response("not a url", &resp, &offline_config(), None)
+        let error = scrape_from_crawl_response("not a url", &resp, None, &offline_config(), None)
             .await
             .expect_err("an unparseable URL must be rejected");
 

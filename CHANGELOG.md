@@ -48,15 +48,18 @@ All notable changes to crawlberg are documented here.
   `script`, `style`, `textarea` and `title` were treated as raw text, by a hand-written scanner.
   Links and a `<base href>` inside `xmp`, `iframe`, `noembed`, `noframes` and `plaintext`, after
   `<script/>` and in a script inside SVG `foreignObject` were read as real, and a `<!--` in such
-  text hid every link after it. The page is now read once by html5ever with scripting off, and
-  that read decides the raw text, the link tags and the base. The base is the first `<base href>`
-  in the finished document, as in a browser: a `<base>` in a table moves in front of it, and a
-  `<frameset>` drops the body with its `<base>`. (#201, #287)
+  text hid every link after it. Links inside a bogus comment (`<? ... >`, `<!x ... >`, `<![CDATA[`
+  outside SVG) and inside an SVG or MathML CDATA section were read as real too. A crawled or
+  scraped page is now read once by html5ever with scripting off, and that read decides the raw
+  text, the link tags, the base, the meta refresh target and the render hint. The base is the
+  first `<base href>` in the finished document, as in a browser: a `<base>` in a table moves in
+  front of it, and a `<frameset>` drops the body with its `<base>`. (#201, #287)
 
 - **One tag with tens of thousands of attributes slowed link extraction quadratically.** The
   HTML parser compares each new attribute name of a tag with every earlier one. Attributes past
   the 1,024th of one tag are now overwritten with spaces before the parser reads the page, so the
-  cost grows linearly. (#269)
+  cost grows linearly. Repeated attribute names count toward the limit, so an `href` after the
+  1,024th attribute of an `<a>` or `<base>` tag is not read. (#269)
 
 - **The WASM crawl sent `auth` and `custom_headers` to every host it followed.** The sequential
   crawl loop, which the WASM build runs, scraped each page as if it were a new seed, so a subdomain

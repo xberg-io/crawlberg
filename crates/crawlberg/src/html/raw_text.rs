@@ -14,7 +14,9 @@
 //! [`mask_raw_text_markup`] reads the page once with html5ever (see [`super::real_tags`]),
 //! which finds raw-text content where a browser finds it, and overwrites every `<` in that
 //! content with a space. Afterwards no raw-text content contains a `<`, so tl cannot build a
-//! node, or start a comment, from it, and every extractor is fixed at once.
+//! node, or start a comment, from it, and every extractor is fixed at once. The content of a
+//! CDATA section in SVG or MathML, and of a bogus comment such as `<? ... >`, is text to a
+//! browser as well, and is masked the same way.
 //!
 //! The same read carries a comment fix. A browser ends a comment at forms tl does not
 //! ([`comment_edit`] has the exact mechanism of each): `<!-->`, `<!--->` and `<!---->`, which
@@ -38,7 +40,7 @@ use std::ops::Range;
 
 use tracing::debug;
 
-use super::real_tags::{RealTags, scan};
+use super::real_tags::{RealTags, Scan, scan};
 
 /// Byte written over a `<` inside raw-text content.
 ///
@@ -66,16 +68,16 @@ pub(crate) struct MaskedHtml<'h> {
 }
 
 /// Read `source` once as an HTML parser does, with scripting off, and mask it for tl: overwrite
-/// every `<` inside raw-text content with a space, and patch every abrupt comment ending tl
-/// mis-parses.
+/// every `<` inside raw-text content, CDATA sections and bogus comments with a space, and patch
+/// every abrupt comment ending tl mis-parses.
 ///
 /// The returned text is borrowed from `source` when there is nothing to edit, and always has
 /// the source's byte length.
 pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
     let read = scan(source, |name| name == "a");
     let text = match read.text {
-        Cow::Borrowed(text) => mask(text, &read.raw_text, &read.comments),
-        Cow::Owned(text) => Cow::Owned(mask(&text, &read.raw_text, &read.comments).into_owned()),
+        Cow::Borrowed(text) => mask(text, &read),
+        Cow::Owned(ref text) => Cow::Owned(mask(text, &read).into_owned()),
     };
     MaskedHtml {
         text,
@@ -84,10 +86,56 @@ pub(crate) fn mask_raw_text_markup(source: &str) -> MaskedHtml<'_> {
     }
 }
 
+/// A [`MaskedHtml`] apart from the page it borrows: what reading the page found, carried from the
+/// redirect check to extraction so the page is read once.
+pub(crate) struct PageScan {
+    /// The masked text, when masking changed the page.
+    edited: Option<String>,
+    /// The byte length of the page that was read.
+    len: usize,
+    base_href: Option<String>,
+    anchors: RealTags,
+}
+
+impl MaskedHtml<'_> {
+    /// Keep what the read found, without the borrow of the page.
+    ///
+    /// ~keep Only the redirect check detaches a read, and wasm has none.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn detach(self) -> PageScan {
+        // ~keep The masked text has the page's byte length.
+        let len = self.text.len();
+        PageScan {
+            edited: match self.text {
+                Cow::Borrowed(_) => None,
+                Cow::Owned(text) => Some(text),
+            },
+            len,
+            base_href: self.base_href,
+            anchors: self.anchors,
+        }
+    }
+}
+
+impl PageScan {
+    /// The [`MaskedHtml`] of `source`, which must be the page this scan read. A `source` of
+    /// another length, such as the page cut to `max_body_size`, is read again.
+    pub(crate) fn attach(self, source: &str) -> MaskedHtml<'_> {
+        if source.len() != self.len {
+            return mask_raw_text_markup(source);
+        }
+        MaskedHtml {
+            text: self.edited.map_or(Cow::Borrowed(source), Cow::Owned),
+            base_href: self.base_href,
+            anchors: self.anchors,
+        }
+    }
+}
+
 /// A single overwrite to apply before tl parses the page. Every edit replaces one existing
 /// byte, or every `<` in an existing range, and never inserts or removes a byte.
 enum Edit {
-    /// Raw-text content, at least one `<` of which should become a space.
+    /// Text an HTML parser reads as text, at least one `<` of which should become a space.
     RawText(Range<usize>),
     /// The single byte at this offset should become `with`.
     Byte { at: usize, with: u8 },
@@ -102,17 +150,23 @@ impl Edit {
     }
 }
 
-/// Overwrite every `<` inside `raw_text` with a space, and patch each of `comments` that tl
-/// would read past its end.
+/// Overwrite every `<` inside the raw text and CDATA sections of `read` with a space, and patch
+/// each of its comments that tl would read differently.
 ///
 /// Returns the source unchanged (and unallocated) when there is nothing to edit.
-fn mask<'h>(source: &'h str, raw_text: &[Range<usize>], comments: &[Range<usize>]) -> Cow<'h, str> {
+fn mask<'h>(source: &'h str, read: &Scan<'_>) -> Cow<'h, str> {
     let bytes = source.as_bytes();
-    let mut edits: Vec<Edit> = raw_text
+    let mut edits: Vec<Edit> = read
+        .raw_text
         .iter()
+        .chain(&read.cdata)
         .filter(|region| bytes[(*region).clone()].contains(&b'<'))
         .map(|region| Edit::RawText(region.clone()))
-        .chain(comments.iter().filter_map(|span| comment_edit(bytes, span.clone())))
+        .chain(
+            read.comments
+                .iter()
+                .filter_map(|span| comment_edit(bytes, span.clone())),
+        )
         .collect();
     if edits.is_empty() {
         return Cow::Borrowed(source);
@@ -167,9 +221,21 @@ fn mask<'h>(source: &'h str, raw_text: &[Range<usize>], comments: &[Range<usize>
 /// the `-->` it creates, which the four adjacent shapes above cannot rely on.
 ///
 /// ~keep Every other comment (content between the opener and the close) keeps tl's plain
-/// ~keep `-->` search unpatched. A bogus comment (`<!x>`, `<?x>`, `</3>`) needs nothing.
+/// ~keep `-->` search unpatched.
+///
+/// A bogus comment (`<?x>`, `<!x>`, `</3>`, and `<![CDATA[` outside SVG and MathML) runs to its
+/// first `>`, where tl reads a tag at any `<` inside it, so every `<` after its opener is masked
+/// as in raw text.
 fn comment_edit(bytes: &[u8], span: Range<usize>) -> Option<Edit> {
-    let content = bytes[span.clone()].strip_prefix(b"<!--")?;
+    // ~keep The span takes in any empty end tag `</>` just before the comment.
+    let mut span = span;
+    while bytes[span.clone()].starts_with(b"</>") {
+        span.start += b"</>".len();
+    }
+    let Some(content) = bytes[span.clone()].strip_prefix(b"<!--") else {
+        let inside = span.start + 1..span.end;
+        return bytes[inside.clone()].contains(&b'<').then_some(Edit::RawText(inside));
+    };
     if IMMEDIATE_COMMENT_CLOSERS.contains(&content) {
         return Some(Edit::Byte {
             at: span.start + 1,
@@ -474,6 +540,88 @@ mod tests {
         );
     }
 
+    #[test]
+    fn should_mask_markup_inside_a_bogus_comment() {
+        let wrong: Vec<_> = [
+            ("<? <a href=x><p>", "<?  a href=x><p>"),
+            ("<!x <a href=x><p>", "<!x  a href=x><p>"),
+            ("</3 <a href=x><p>", "</3  a href=x><p>"),
+            ("<![CDATA[<a href=x>]]><p>", "<![CDATA[ a href=x>]]><p>"),
+            ("<? a<<b", "<? a  b"),
+        ]
+        .into_iter()
+        .filter(|(html, masked)| mask_raw_text_markup(html).text != *masked)
+        .collect();
+        assert!(
+            wrong.is_empty(),
+            "a `<` inside a bogus comment should become a space: {wrong:?}"
+        );
+    }
+
+    #[test]
+    fn should_patch_a_comment_after_an_empty_end_tag() {
+        // ~keep An empty end tag `</>` emits no token, so the comment's span starts at it.
+        assert_eq!(
+            mask_raw_text_markup("</><!--><a href=x>").text,
+            "</>< --><a href=x>",
+            "the comment after `</>` is patched at its own opener"
+        );
+        assert_eq!(
+            mask_raw_text_markup("</></><? <a href=x>").text,
+            "</></><?  a href=x>",
+            "the bogus comment after `</>` keeps its own opener"
+        );
+    }
+
+    #[test]
+    fn should_mask_markup_inside_a_cdata_section_in_foreign_content() {
+        assert_eq!(
+            mask_raw_text_markup("<svg><![CDATA[<a href=x>]]><a href=y></svg>").text,
+            "<svg><![CDATA[ a href=x>]]><a href=y></svg>",
+            "CDATA content is text, and the tag after the section is markup"
+        );
+        assert_eq!(
+            mask_raw_text_markup("<math><![CDATA[a<b").text,
+            "<math><![CDATA[a b",
+            "an unclosed CDATA section runs to the end of the document"
+        );
+    }
+
+    #[test]
+    fn should_rebuild_a_detached_read_without_reading_the_page_again() {
+        let html = format!(
+            "{}<script>'<a href=/x>'</script><base href=/b/><a href=/y>",
+            super::super::reads::MARKER
+        );
+        let fresh = mask_raw_text_markup(&html);
+        let (text, base_href, anchors) = (
+            fresh.text.clone().into_owned(),
+            fresh.base_href.clone(),
+            fresh.anchors.iter().count(),
+        );
+        let before = super::super::reads::count("<a href=/y>");
+
+        let attached = fresh.detach().attach(&html);
+
+        assert_eq!(
+            super::super::reads::count("<a href=/y>"),
+            before,
+            "the page is not read again"
+        );
+        assert_eq!(attached.text, text);
+        assert_eq!(attached.base_href, base_href);
+        assert_eq!(attached.anchors.iter().count(), anchors);
+    }
+
+    #[test]
+    fn should_read_a_page_again_when_a_detached_read_is_attached_to_another_length() {
+        let html = "<a href=/x>x</a><title><a href=/t></title>";
+        let cut = &html[..16];
+        let attached = mask_raw_text_markup(html).detach().attach(cut);
+        assert_eq!(attached.text, cut, "the cut page is masked on its own");
+        assert_eq!(attached.anchors.iter().count(), 1);
+    }
+
     /// Run the same pipeline every call site does: mask, parse, then extract links.
     fn extract_links_through_the_pipeline(html: &str) -> Vec<String> {
         let masked = mask_raw_text_markup(html);
@@ -497,6 +645,7 @@ mod tests {
             html in r#"(<[a-z]{1,4}( [a-z]{1,3}="[^"<>]{0,6}")?/?>|</[a-z]{1,4}>|<!--[^<>-]{1,6}-->|[a-z0-9 <>&;"'/!?=-]){0,40}"#
         ) {
             prop_assume!(!contains_raw_text_element(&html));
+            prop_assume!(!has_markup_in_a_bogus_comment(&html));
             let masked = mask_raw_text_markup(&html).text;
             prop_assert_eq!(masked.as_ref(), html.as_str());
         }
@@ -504,13 +653,21 @@ mod tests {
         /// Masking is idempotent and length-preserving on arbitrary markup-ish input.
         #[test]
         fn masking_is_idempotent_and_length_preserving(
-            html in r#"(<script>|</script>|<style>|</style>|<title>|</title>|<textarea>|</textarea>|<svg>|</svg>|<!--|-->|<a href="/x">|</a>|[a-z0-9 <>"'/!-]){0,60}"#
+            html in r#"(<script>|</script>|<style>|</style>|<title>|</title>|<textarea>|</textarea>|<svg>|</svg>|<math>|<!\[CDATA\[|\]\]>|<!--|-->|<\?|<!x|</3|<a href="/x">|</a>|[a-z0-9 <>"'/!-]){0,60}"#
         ) {
             let once = mask_raw_text_markup(&html).text.into_owned();
             prop_assert_eq!(once.len(), html.len(), "masking changed the byte length");
             let twice = mask_raw_text_markup(&once).text.into_owned();
             prop_assert_eq!(&twice, &once, "masking is not idempotent");
         }
+    }
+
+    /// Whether a bogus comment in `html`, such as `<? ... >`, holds a `<` after its opener.
+    fn has_markup_in_a_bogus_comment(html: &str) -> bool {
+        scan(html, |_| false).comments.into_iter().any(|span| {
+            let comment = html[span].trim_start_matches("</>");
+            !comment.starts_with("<!--") && comment[1..].contains('<')
+        })
     }
 
     /// Whether `html` opens any element this pass treats as raw text.

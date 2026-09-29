@@ -34,8 +34,12 @@ pub(super) struct Scan<'h> {
     pub(super) tags: RealTags,
     /// The byte ranges of raw-text content, in document order.
     pub(super) raw_text: Vec<Range<usize>>,
-    /// The span of each comment, from its `<` to just past its `>`, in document order.
+    /// The span of each comment, from its `<` to just past its `>`, in document order. A span
+    /// takes in any empty end tag `</>` just before the comment.
     pub(super) comments: Vec<Range<usize>>,
+    /// The byte ranges of CDATA section content in SVG or MathML, which is text, in document
+    /// order.
+    pub(super) cdata: Vec<Range<usize>>,
     /// The decoded `href` of the first `<base>` in the document, in tree order, that has one.
     pub(super) base_href: Option<String>,
 }
@@ -44,7 +48,16 @@ pub(super) struct Scan<'h> {
 /// reads on the tag.
 pub(super) struct RealTags {
     tags: Vec<RealTag>,
-    attrs: Vec<Attribute>,
+    attrs: Vec<TagAttribute>,
+}
+
+/// An attribute of a start tag, as an HTML parser reads it: its local name and its decoded value.
+///
+/// ~keep Owned, not the parser's own attribute, whose value is a non-thread-safe tendril: a
+/// ~keep crawl carries the scan from the redirect check across threads to extraction.
+pub(super) struct TagAttribute {
+    pub(super) name: LocalName,
+    pub(super) value: String,
 }
 
 /// A start tag: its span in the source, whether it is self-closing, and its attributes in
@@ -63,7 +76,7 @@ pub(super) struct StartTag<'t> {
     pub(super) self_closing: bool,
     /// The attributes in source order, values decoded, with no repeated name (an HTML parser
     /// drops every copy of an attribute name after its first on the same tag).
-    pub(super) attrs: &'t [Attribute],
+    pub(super) attrs: &'t [TagAttribute],
 }
 
 impl RealTags {
@@ -91,6 +104,8 @@ impl RealTags {
 /// over-wide tag, and it is that text which is read and returned: a caller parses
 /// [`Scan::text`] with tl, so tl reads the same bytes html5ever read.
 pub(super) fn scan(source: &str, keep: fn(&str) -> bool) -> Scan<'_> {
+    #[cfg(test)]
+    reads::record(source);
     let options = TreeBuilderOpts {
         scripting_enabled: false,
         ..TreeBuilderOpts::default()
@@ -108,6 +123,7 @@ pub(super) fn scan(source: &str, keep: fn(&str) -> bool) -> Scan<'_> {
         open: Cell::new(None),
         raw_text: RefCell::new(Vec::new()),
         comments: RefCell::new(Vec::new()),
+        cdata: RefCell::new(Vec::new()),
         tokens: Cell::new(0),
         cdata_at: Cell::new(None),
     };
@@ -149,6 +165,7 @@ pub(super) fn scan(source: &str, keep: fn(&str) -> bool) -> Scan<'_> {
         tags: sink.found.into_inner(),
         raw_text: sink.raw_text.into_inner(),
         comments: sink.comments.into_inner(),
+        cdata: sink.cdata.into_inner(),
         base_href: sink.tree.sink.base_href(),
     }
 }
@@ -408,6 +425,7 @@ struct Recorder<'h> {
     open: Cell<Option<OpenRawText>>,
     raw_text: RefCell<Vec<Range<usize>>>,
     comments: RefCell<Vec<Range<usize>>>,
+    cdata: RefCell<Vec<Range<usize>>>,
     /// How many tokens but parse errors the tokenizer has emitted.
     tokens: Cell<usize>,
     /// Where the content of a CDATA section the tokenizer opens starts.
@@ -450,7 +468,10 @@ impl Recorder<'_> {
         };
         let found = &mut *self.found.borrow_mut();
         let first = found.attrs.len();
-        found.attrs.extend(tag.attrs.iter().cloned());
+        found.attrs.extend(tag.attrs.iter().map(|attr| TagAttribute {
+            name: attr.name.local.clone(),
+            value: attr.value.to_string(),
+        }));
         found.tags.push(RealTag {
             span,
             self_closing: tag.self_closing,
@@ -569,7 +590,10 @@ impl TokenSink for Recorder<'_> {
             let text = self.text.borrow();
             let bytes = text.as_bytes();
             if piece.start > 0 && bytes[piece.start - 1] == b'<' && bytes[piece.start..].starts_with(b"![CDATA[") {
-                self.cdata_at.set(Some(piece.start + b"![CDATA[".len()));
+                let content = piece.start + b"![CDATA[".len();
+                self.cdata_at.set(Some(content));
+                let end = memmem::find(&bytes[content..], b"]]>").map_or(bytes.len(), |offset| content + offset);
+                self.cdata.borrow_mut().push(content..end);
             }
             self.piece.set(piece);
         }
@@ -760,6 +784,35 @@ impl TreeSink for Tree {
     }
 }
 
+/// How many times [`scan`] reads a page, for tests that check a page is read once.
+#[cfg(test)]
+pub(crate) mod reads {
+    use std::sync::Mutex;
+
+    /// Every source [`super::scan`] read that holds [`MARKER`].
+    static READ: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Put this in a page to have its reads counted.
+    pub(crate) const MARKER: &str = "<!-- count the reads of this page -->";
+
+    pub(super) fn record(source: &str) {
+        if source.contains(MARKER) {
+            READ.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(source.to_owned());
+        }
+    }
+
+    /// How many times a source holding [`MARKER`] and `unique` was read.
+    pub(crate) fn count(unique: &str) -> usize {
+        READ.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|source| source.contains(unique))
+            .count()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -846,7 +899,7 @@ mod tests {
                 let attrs = tag
                     .attrs
                     .iter()
-                    .map(|attr| (attr.name.local.to_string(), attr.value.to_string()))
+                    .map(|attr| (attr.name.to_string(), attr.value.clone()))
                     .collect();
                 let read = (name(html, tag), attrs, tag.self_closing);
                 read_alone(&html[tag.span.clone()]) != [(tag.span.len(), read)]
@@ -1340,6 +1393,21 @@ mod tests {
             raw_text(r#"<div a=b'c><title>t<b</title>"#),
             ["t<b"],
             "a quote inside an unquoted value opens no quoted string"
+        );
+    }
+
+    #[test]
+    fn should_find_each_cdata_section_in_foreign_content() {
+        let html = "<svg><![CDATA[a<b]]><![CDATA[]]><![CDATA[\0<c]]></svg><![CDATA[<d]]><math><![CDATA[<e";
+        let cdata: Vec<&str> = scan(html, |_| false)
+            .cdata
+            .into_iter()
+            .map(|range| &html[range])
+            .collect();
+        assert_eq!(
+            cdata,
+            ["a<b", "", "\0<c", "<e"],
+            "each section in SVG or MathML, once, to its `]]>` or the end of input; in HTML it is a bogus comment"
         );
     }
 

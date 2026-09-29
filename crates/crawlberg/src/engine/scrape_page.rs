@@ -64,7 +64,7 @@ impl CrawlEngine {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        let (final_url, response, browser_used_for_fetch) = {
+        let (final_url, response, page_scan, browser_used_for_fetch) = {
             use super::redirect::{RedirectResolution, follow_redirects};
 
             let max_redirects = self.config.max_redirects;
@@ -87,15 +87,23 @@ impl CrawlEngine {
             {
                 return Ok(self.bodyless_status_result(404, outcome.final_url));
             }
-            (outcome.final_url, outcome.final_response, outcome.browser_used)
+            (
+                outcome.final_url,
+                outcome.final_response,
+                outcome.page_scan,
+                outcome.browser_used,
+            )
         };
 
         #[cfg(target_arch = "wasm32")]
         let (final_url, response, browser_used_for_fetch) = self.wasm_fetch_for_scrape(url).await?;
+        #[cfg(target_arch = "wasm32")]
+        let page_scan = None;
 
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &response,
+            page_scan,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -162,6 +170,7 @@ impl CrawlEngine {
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
             &crawl_resp,
+            None,
             &self.config,
             self.document_filter.as_deref(),
         )
@@ -200,6 +209,7 @@ impl CrawlEngine {
         let mut result = crate::scrape::scrape_from_crawl_response(
             &final_url,
             &crawl_resp,
+            None,
             &self.config,
             self.document_filter.as_deref(),
         )

@@ -142,7 +142,7 @@ fn canonicalize_anchor_tags<'h>(html: &'h str, tags: &RealTags) -> Cow<'h, str> 
 fn write_anchor_tag(out: &mut String, tag: &StartTag<'_>) {
     out.push_str("<a");
     for attr in tag.attrs {
-        let name = &*attr.name.local;
+        let name = &*attr.name;
         if !is_plain_attr_name(name) {
             continue;
         }
@@ -258,11 +258,11 @@ mod tests {
             "expected html5ever to read two attributes, got {:?}",
             tag.attrs
                 .iter()
-                .map(|a| (&*a.name.local, &*a.value))
+                .map(|a| (&*a.name, a.value.as_str()))
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            &*tag.attrs[0].name.local, "x\"y",
+            &*tag.attrs[0].name, "x\"y",
             "the malformed name html5ever actually read"
         );
 

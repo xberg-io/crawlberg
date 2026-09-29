@@ -403,3 +403,44 @@ async fn should_ignore_a_base_href_in_a_body_that_a_frameset_replaces() {
         "the frameset removes the body and its base"
     );
 }
+
+#[tokio::test]
+async fn should_not_extract_links_inside_a_bogus_comment() {
+    // ~keep An HTML parser reads each of these as a comment that runs to the first `>`, so the
+    // ~keep `<a` inside it is comment text.
+    let mut wrong = Vec::new();
+    for opener in ["<?", "<!x", "</3", "<![CDATA["] {
+        let html = format!(r#"<html><body>{opener} <a href="/x">]]> <a href="/real">real</a></body></html>"#);
+        let (base, urls) = link_urls(&html).await;
+        if urls != [format!("{base}/real")] {
+            wrong.push((opener, urls));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "a link inside a bogus comment must be ignored, and the real link kept: {wrong:?}"
+    );
+}
+
+#[tokio::test]
+async fn should_not_extract_links_inside_an_svg_cdata_section() {
+    let html = r#"<html><body><svg><![CDATA[<a href="/x">x</a>]]></svg><a href="/real">real</a></body></html>"#;
+    let (base, urls) = link_urls(html).await;
+    assert_eq!(
+        urls,
+        vec![format!("{base}/real")],
+        "a CDATA section in SVG is text, so the link written in it must be ignored"
+    );
+}
+
+#[tokio::test]
+async fn should_not_extract_links_from_script_text_after_a_nul() {
+    // ~keep The NUL is a parse error inside script text, which must not end the text there.
+    let html = "<html><body><script>a\0<a href=\"/x\">x</a></script><a href=\"/real\">real</a></body></html>";
+    let (base, urls) = link_urls(html).await;
+    assert_eq!(
+        urls,
+        vec![format!("{base}/real")],
+        "a link in script text after a NUL must be ignored, and the real link kept"
+    );
+}

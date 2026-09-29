@@ -346,4 +346,123 @@ mod tests {
             "expected CrawlError::Dns, got {err:?}"
         );
     }
+
+    /// Serve `body` as HTML at `at` on `mock`.
+    async fn mount_page(mock: &wiremock::MockServer, at: &str, body: String) {
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(at))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(body)
+                    .append_header("content-type", "text/html"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_crawl_reads_each_page_once_with_the_html_parser() {
+        use crate::html::reads;
+        let mock = wiremock::MockServer::start().await;
+        let seed = "crawl-seed-8c1f";
+        let child = "crawl-child-8c1f";
+        mount_page(
+            &mock,
+            "/",
+            format!(
+                r#"{}<p>{seed}</p><script>x</script><a href="/child">child</a>"#,
+                reads::MARKER
+            ),
+        )
+        .await;
+        mount_page(
+            &mock,
+            "/child",
+            format!("{}<p>{child}</p><script>x</script>", reads::MARKER),
+        )
+        .await;
+        let config = crate::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .max_depth(1)
+            .build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.crawl(&mock.uri()).await.expect("the crawl succeeds");
+
+        assert_eq!(result.pages.len(), 2, "the seed and the page it links to are crawled");
+        assert_eq!(reads::count(seed), 1, "the seed page is read once");
+        assert_eq!(reads::count(child), 1, "a page found by the crawl is read once");
+    }
+
+    #[tokio::test]
+    async fn a_scrape_reads_the_page_once_with_the_html_parser() {
+        use crate::html::reads;
+        let mock = wiremock::MockServer::start().await;
+        let unique = "scrape-page-8c1f";
+        // ~keep An empty SPA mount, so the render hint looks at the page as well.
+        mount_page(
+            &mock,
+            "/",
+            format!(r#"{}<p>{unique}</p><div id="root"></div>"#, reads::MARKER),
+        )
+        .await;
+        let config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.scrape(&mock.uri()).await.expect("the scrape succeeds");
+
+        assert!(result.js_render_hint, "the render hint looks at the page");
+        assert_eq!(reads::count(unique), 1, "the scraped page is read once");
+    }
+
+    /// Serve a windows-1252 page whose link holds the byte 0x80. Read as UTF-8 that byte is
+    /// U+FFFD, read as windows-1252 it is `€`, and both take three bytes, so the two readings of
+    /// the page have the same length.
+    async fn mount_windows_1252_page(mock: &wiremock::MockServer) {
+        let mut body = br#"<p>euro</p><a href="/"#.to_vec();
+        body.push(0x80);
+        body.extend_from_slice(br#"">euro</a>"#);
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(body, "text/html; charset=windows-1252"))
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_crawl_extracts_links_from_the_page_as_its_charset_decodes_it() {
+        let mock = wiremock::MockServer::start().await;
+        mount_windows_1252_page(&mock).await;
+        let config = crate::CrawlConfig::builder()
+            .allow_private_networks(true)
+            .max_depth(0)
+            .build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.crawl(&mock.uri()).await.expect("the crawl succeeds");
+
+        let links: Vec<&str> = result.pages[0].links.iter().map(|link| link.url.as_str()).collect();
+        assert_eq!(
+            links,
+            [format!("{}/%E2%82%AC", mock.uri())],
+            "the link is read as windows-1252"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scrape_extracts_links_from_the_page_as_its_charset_decodes_it() {
+        let mock = wiremock::MockServer::start().await;
+        mount_windows_1252_page(&mock).await;
+        let config = crate::CrawlConfig::builder().allow_private_networks(true).build();
+        let engine = CrawlEngine::builder().config(config).build().expect("engine builds");
+
+        let result = engine.scrape(&mock.uri()).await.expect("the scrape succeeds");
+
+        let links: Vec<&str> = result.links.iter().map(|link| link.url.as_str()).collect();
+        assert_eq!(
+            links,
+            [format!("{}/%E2%82%AC", mock.uri())],
+            "the link is read as windows-1252"
+        );
+    }
 }
