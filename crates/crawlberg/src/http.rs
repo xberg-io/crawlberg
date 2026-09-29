@@ -302,6 +302,11 @@ pub(crate) async fn http_fetch_with(
 /// ~keep A parsed URL's serialization is already the crawl's cycle key for it
 /// ~keep (`engine/redirect.rs`'s `canonical_redirect_key` re-parses and re-serializes), so the
 /// ~keep serialization is stored and compared directly.
+/// Statuses whose `Location` header the crawl follows (`engine::redirect::REDIRECT_STATUSES`
+/// reads this same constant; it lives here because `engine::redirect` is native-only and this
+/// module is not).
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
 struct ChainRules(Option<std::collections::HashSet<String>>);
 
 impl ChainRules {
@@ -321,9 +326,9 @@ impl ChainRules {
     /// `status`, given whether a hop is left. `status` is checked against the crawl's own
     /// `REDIRECT_STATUSES` so a 300, 304 or 305 naming a `Location` stays unfollowed here too.
     fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> bool {
-        self.0.as_ref().is_none_or(|seen| {
-            crate::engine::redirect::REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str())
-        })
+        self.0
+            .as_ref()
+            .is_none_or(|seen| REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str()))
     }
 
     /// Whether `error`, raised past the first hop, ends the chain on a response instead.

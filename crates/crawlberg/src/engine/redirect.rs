@@ -632,9 +632,6 @@ fn first_unseen_target<R: RedirectSignals>(
     })
 }
 
-/// Statuses whose `Location` header this crawl follows.
-pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-
 /// `target` resolved against `base`, or `None` when it does not resolve. `source` names the
 /// redirect source for the debug log a target that fails to parse gets; the log carries the
 /// target's length only, never its text.
@@ -664,7 +661,7 @@ fn fetchable_target(base: &str, target: &str, source: &'static str) -> Option<Ur
 
 /// The `Location` target of an HTTP 3xx, resolved against `current_url`, if the crawl can fetch it.
 fn http_redirect_target<R: RedirectSignals>(resp: &R, current_url: &str) -> Option<Url> {
-    if !REDIRECT_STATUSES.contains(&resp.status()) {
+    if !crate::http::REDIRECT_STATUSES.contains(&resp.status()) {
         return None;
     }
     let location = resp.header("location")?;
