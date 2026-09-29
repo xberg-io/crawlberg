@@ -603,3 +603,24 @@ fn rebuild_engine_with_config(
         .build()
         .map_err(|e| ApiError::bad_request(format!("invalid config override: {e}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_url;
+
+    #[test]
+    fn accepts_an_upper_case_scheme() {
+        assert!(validate_url("HTTP://example.com/").is_ok());
+        assert!(validate_url("Https://example.com/").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_url() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_http_scheme() {
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
+}

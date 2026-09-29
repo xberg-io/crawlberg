@@ -42,3 +42,24 @@ pub(super) fn to_structured<T: serde::Serialize>(value: &T) -> Result<serde_json
     serde_json::to_value(value)
         .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to serialize structured content: {e}"), None))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::validate_url;
+
+    #[test]
+    fn accepts_an_upper_case_scheme() {
+        assert!(validate_url("HTTP://example.com/").is_ok());
+        assert!(validate_url("Https://example.com/").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_url() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_http_scheme() {
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
+}
