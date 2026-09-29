@@ -30,6 +30,8 @@ pub(crate) use client::build_client;
 pub(crate) use headers::extract_cookies_from_hashmap;
 pub(crate) use headers::extract_response_meta_from_hashmap;
 pub(crate) use retry::{fetch_with_retry, should_retry_error};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use status::error_status;
 pub(crate) use status::status_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{detect_waf_vendor, is_waf_blocked};
@@ -69,13 +71,13 @@ pub struct HttpResponse {
     /// Optional browser-specific extras (eval result, network events, cookies).
     #[allow(dead_code)]
     pub browser_extras: Option<BrowserExtras>,
-    /// The URL of the final response after any transparent redirect following.
+    /// The URL of the final response after any redirects.
     ///
-    /// On native targets reqwest uses `Policy::none()` so this always equals
-    /// the request URL (redirects are handled manually by `follow_redirects`).
+    /// On native targets reqwest uses `Policy::none()` and `http_fetch` follows each
+    /// redirect hop itself, so this is the URL of the last hop it requested.
     /// On wasm targets the browser's `fetch` follows redirects transparently
-    /// and `reqwest::Response::url()` returns the post-redirect URL — which is
-    /// what the wasm scrape path needs to populate `ScrapeResult::final_url`.
+    /// and `reqwest::Response::url()` returns the post-redirect URL, which the wasm
+    /// scrape path uses to populate `ScrapeResult::final_url`.
     #[allow(dead_code)]
     pub final_url: String,
     /// PNG screenshot bytes captured for this fetch, when the caller requested one
