@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, TargetId};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -161,6 +162,360 @@ pub(crate) fn apply_launch_overrides(
     Ok(builder)
 }
 
+/// How long a [`ScratchProfileDir`]'s teardown waits for the processes it killed to exit.
+const PROFILE_USERS_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// A Chrome `--user-data-dir` in the system temp directory, removed when dropped.
+///
+/// ~keep The removal first kills every Chrome process still using the directory. Chrome's
+/// ~keep helper processes (renderers, the GPU process, the network and storage services) outlive
+/// ~keep the browser process for a moment and keep writing into the directory, so a removal made
+/// ~keep while they run fails part-way or is undone, which left a profile behind in 6 of 20 drops
+/// ~keep on Linux (xberg-io/crawlberg#415). chromiumoxide 0.9.1 starts Chrome in the caller's
+/// ~keep process group and kills only the browser process, which orphans the helpers: their
+/// ~keep parent is then init or a subreaper, so no parent pid or process group leads back to the
+/// ~keep browser. They are found by the `--user-data-dir` flag that Chrome passes to each of them,
+/// ~keep which still names them after the browser process is gone, and by the executable of the
+/// ~keep Chrome that [`Self::launch`] started, which each of them runs.
+/// ~keep The drop hands that work to another thread and returns at once: the scan, the kills, the
+/// ~keep wait of up to five seconds and the delete ran for up to a second on a tokio worker, and in
+/// ~keep the pool while it held its state lock.
+#[derive(Debug)]
+pub(crate) struct ScratchProfileDir(Option<ProfileTeardown>);
+
+impl ScratchProfileDir {
+    /// Create a fresh directory. The random suffix avoids Chrome `SingletonLock` collisions.
+    pub(crate) fn create(prefix: &str) -> Result<Self, CrawlError> {
+        tempfile::Builder::new()
+            .prefix(prefix)
+            .tempdir()
+            .map(|dir| {
+                Self(Some(ProfileTeardown {
+                    dir: dir.keep(),
+                    chrome: None,
+                }))
+            })
+            .map_err(|e| CrawlError::browser_error(format!("failed to create a Chrome profile directory: {e}")))
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.teardown().dir
+    }
+
+    /// Launch Chrome on this directory and record the Chrome it started, whose processes the
+    /// teardown stops. A failed launch drops the directory, which removes it.
+    pub(crate) async fn launch(
+        mut self,
+        config: BrowserConfig,
+    ) -> Result<(Browser, Handler, Self), chromiumoxide::error::CdpError> {
+        // ~keep Boxed: the launch future is large, and each caller's future holds it inline, which
+        // ~keep pushed the generated dart binding's async dispatch past rustc's query depth limit.
+        let (mut browser, handler) = Box::pin(Browser::launch(config)).await?;
+        if let Some(pid) = browser.get_mut_child().and_then(|child| child.as_mut_inner().id()) {
+            self.record_chrome(pid);
+        }
+        Ok((browser, handler, self))
+    }
+
+    /// Record the Chrome that the launched process `pid` started as the one using this directory.
+    fn record_chrome(&mut self, pid: u32) {
+        let chrome = chrome_started_by(pid, &self.teardown().dir);
+        if chrome.is_none() {
+            tracing::warn!(
+                pid,
+                "the launched Chrome's executable is unreadable; its profile teardown stops no process"
+            );
+        }
+        self.0.as_mut().expect("the teardown is taken only by Drop").chrome = chrome;
+    }
+
+    fn teardown(&self) -> &ProfileTeardown {
+        self.0.as_ref().expect("the teardown is taken only by Drop")
+    }
+}
+
+impl Drop for ScratchProfileDir {
+    /// Hand the teardown to the runtime's blocking pool, or to a thread of its own outside a runtime.
+    fn drop(&mut self) {
+        let Some(teardown) = self.0.take() else {
+            return;
+        };
+        #[cfg(test)]
+        tests::PROFILE_HAND_OFFS_HERE.with(|count| count.set(count.get() + 1));
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => drop(handle.spawn_blocking(move || drop(teardown))),
+            Err(_) => {
+                let spawned = std::thread::Builder::new()
+                    .name("crawlberg-profile-teardown".to_owned())
+                    .spawn(move || drop(teardown));
+                if let Err(error) = spawned {
+                    tracing::warn!(%error, "no thread for the Chrome profile teardown; it ran on the dropping thread");
+                }
+            }
+        }
+    }
+}
+
+/// The work a dropped [`ScratchProfileDir`] hands off: stop the Chrome processes using the
+/// directory, then remove it.
+///
+/// ~keep Its own `Drop` does the work, so a hand-off that never runs still does it wherever the
+/// ~keep closure holding it is dropped: tokio drops a blocking task queued as the runtime shuts
+/// ~keep down without running it, and `std::thread::Builder::spawn` drops its closure when the OS
+/// ~keep refuses a thread.
+#[derive(Debug)]
+struct ProfileTeardown {
+    dir: std::path::PathBuf,
+    /// The executables of the Chrome launched on `dir`, from [`chrome_started_by`]. `None` when no launch
+    /// succeeded, so no Chrome of crawlberg's can be using the directory.
+    chrome: Option<std::path::PathBuf>,
+}
+
+impl Drop for ProfileTeardown {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        tests::PROFILE_TEARDOWNS_HERE.with(|count| count.set(count.get() + 1));
+        if let Some(chrome) = &self.chrome {
+            stop_chrome_processes_using(&self.dir, chrome);
+        }
+        if let Err(error) = std::fs::remove_dir_all(&self.dir)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(dir = %self.dir.display(), %error, "failed to remove the Chrome profile directory");
+        }
+    }
+}
+
+/// The executables of the Chrome that the launched process `pid` started on `dir`: the executable
+/// of the deepest process below `pid` whose command line names `dir` as its profile, or on macOS
+/// the outermost `.app` bundle that holds it. `None` when `pid` names no such process or that
+/// executable cannot be read.
+///
+/// ~keep The launched process is Chrome only when every launcher on the way execs. Debian's
+/// ~keep `/usr/bin/chromium` and Google's `google-chrome` scripts do; a script that runs Chrome as
+/// ~keep its child stays a shell, and every shell naming the flag would then pass for Chrome.
+/// ~keep Each process of the launch carries the flag, the launcher's shell included, and the deepest
+/// ~keep one is Chrome or a helper Chrome started, which runs Chrome's executable (on macOS a helper
+/// ~keep bundle inside Chrome's own bundle). The path comes from the process table, as each helper's
+/// ~keep does, so the two compare equal on every platform, where a canonicalized path carries a
+/// ~keep `\\?\` prefix on Windows that the process table does not.
+fn chrome_started_by(pid: u32, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut system = sysinfo::System::new();
+    let users = processes_naming(&mut system, &user_data_dir_flag(dir));
+    let mut chrome = *users.iter().find(|process| process.pid().as_u32() == pid)?;
+    // ~keep Bounded: a table read across a pid reuse could link two processes both ways.
+    for _ in 0..users.len() {
+        match users.iter().find(|process| process.parent() == Some(chrome.pid())) {
+            Some(child) => chrome = child,
+            None => break,
+        }
+    }
+    let executable = chrome.exe()?;
+    let bundle = executable
+        .ancestors()
+        .filter(|dir| dir.extension().is_some_and(|extension| extension == "app"))
+        .last();
+    Some(bundle.unwrap_or(executable).to_path_buf())
+}
+
+/// The flag a Chrome process using `dir` as its profile carries on its command line.
+///
+/// ~keep Formatted as chromiumoxide formats it for the browser process, which Chrome copies to
+/// ~keep every helper unchanged.
+pub(crate) fn user_data_dir_flag(dir: &std::path::Path) -> String {
+    format!("--user-data-dir={}", dir.display())
+}
+
+/// Refresh `system` and return the live processes whose command line holds `token` as a whole,
+/// space-delimited token.
+///
+/// ~keep Chrome on Linux rewrites the command line of each of its processes into one string with
+/// ~keep the arguments joined by spaces (its process title), so the flag is never an argument of
+/// ~keep its own there. The arguments are joined the same way and the token must be bounded by a
+/// ~keep space or an end on both sides, so a process naming a different directory that starts with
+/// ~keep this path, or naming a file inside it, never matches. A zombie is skipped: it can no longer
+/// ~keep write, and it keeps its command line until its parent reaps it, which for the browser
+/// ~keep process is this process, possibly not before the teardown returns.
+pub(crate) fn processes_naming<'s>(system: &'s mut sysinfo::System, token: &str) -> Vec<&'s sysinfo::Process> {
+    use sysinfo::ProcessesToUpdate;
+
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, user_refresh());
+    system
+        .processes()
+        .values()
+        .filter(|process| names(process, token))
+        .collect()
+}
+
+/// What [`processes_naming`] and [`kill_if_chrome_using`] read of a process.
+fn user_refresh() -> sysinfo::ProcessRefreshKind {
+    use sysinfo::{ProcessRefreshKind, UpdateKind};
+
+    ProcessRefreshKind::nothing()
+        .without_tasks()
+        .with_cmd(UpdateKind::Always)
+        .with_exe(UpdateKind::Always)
+}
+
+/// Whether `process` is live and its command line holds `token` as a whole token.
+fn names(process: &sysinfo::Process, token: &str) -> bool {
+    process.status() != sysinfo::ProcessStatus::Zombie && command_line_names(process.cmd(), token)
+}
+
+/// Whether the arguments in `cmd`, joined by spaces, hold `token` bounded by a space or an end.
+fn command_line_names(cmd: &[std::ffi::OsString], token: &str) -> bool {
+    let line = cmd
+        .iter()
+        .map(|argument| argument.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let bytes = line.as_bytes();
+    line.match_indices(token).any(|(start, _)| {
+        let end = start + token.len();
+        (start == 0 || bytes[start - 1] == b' ') && (end == bytes.len() || bytes[end] == b' ')
+    })
+}
+
+/// Kill every process of `chrome`, as [`chrome_started_by`] names it, whose command line names `dir`
+/// as its profile, and wait until none is left and each one killed has ended, or until
+/// [`PROFILE_USERS_EXIT_TIMEOUT`] passes.
+///
+/// ~keep A process counts only when its executable is `chrome` or lies in it and its command line
+/// ~keep carries the flag for `dir`, a directory a [`ScratchProfileDir`] created under a random
+/// ~keep name. A shell, `strace` or `grep` that names the flag runs another executable and is left
+/// ~keep alone. A saved profile the caller named is never a `ScratchProfileDir`, so its Chrome is
+/// ~keep never killed here and it is never removed.
+fn stop_chrome_processes_using(dir: &std::path::Path, chrome: &std::path::Path) {
+    let flag = user_data_dir_flag(dir);
+    let mut system = sysinfo::System::new();
+    let mut killed = Vec::new();
+    let deadline = std::time::Instant::now() + PROFILE_USERS_EXIT_TIMEOUT;
+    let stopped = kill_until_gone(PROFILE_USERS_EXIT_TIMEOUT, || {
+        let users: Vec<_> = processes_naming(&mut system, &flag)
+            .into_iter()
+            .filter(|process| runs(process, chrome))
+            .map(sysinfo::Process::pid)
+            .collect();
+        for &pid in &users {
+            killed.extend(kill_if_chrome_using(pid, &flag, chrome));
+        }
+        !users.is_empty()
+    });
+    if !(stopped && wait_until_ended(&killed, deadline)) {
+        tracing::warn!(dir = %dir.display(), "Chrome processes still use the profile directory after a kill");
+    }
+}
+
+/// Whether `process` runs `chrome`, as [`chrome_started_by`] names it.
+fn runs(process: &sysinfo::Process, chrome: &std::path::Path) -> bool {
+    process.exe().is_some_and(|exe| exe.starts_with(chrome))
+}
+
+/// A process [`kill_if_chrome_using`] killed, for [`wait_until_ended`] to wait on.
+///
+/// ~keep On Linux it is the pidfd the kill went through. The scan stops seeing a killed process once
+/// ~keep its main thread is a zombie, but its other threads can still be finishing a file operation
+/// ~keep then, and a killed Chrome's browser process has a dozen or more. One that lands in the
+/// ~keep directory while it is being removed makes the removal fail with "directory not empty" and
+/// ~keep leaves the profile behind (xberg-io/crawlberg#415). A pidfd turns readable only once every
+/// ~keep thread of its process has exited. Elsewhere the kill goes by pid and leaves nothing to wait on.
+#[cfg(target_os = "linux")]
+type KilledProcess = rustix::fd::OwnedFd;
+#[cfg(not(target_os = "linux"))]
+type KilledProcess = std::convert::Infallible;
+
+/// Kill the process `pid` if it still runs `chrome` and its command line still holds `flag`, and
+/// return what to wait on until it has ended.
+///
+/// ~keep `pid` comes from an earlier scan, and its process can have exited and the pid gone to a new
+/// ~keep process since. A pidfd does not stop the pid number from being reused once its process is
+/// ~keep reaped; it pins the process itself, so on Linux the kill goes through the pidfd and reaches
+/// ~keep only the pinned process, failing with no such process if it has already exited, even if the
+/// ~keep re-check ran just before the reuse. Elsewhere, and on a Linux kernel older than 5.3, the kill
+/// ~keep goes by pid, so the re-check running right before it narrows the gap but does not close it.
+fn kill_if_chrome_using(pid: sysinfo::Pid, flag: &str, chrome: &std::path::Path) -> Option<KilledProcess> {
+    #[cfg(target_os = "linux")]
+    if let Some(pinned) = i32::try_from(pid.as_u32())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        match rustix::process::pidfd_open(pinned, rustix::process::PidfdFlags::empty()) {
+            Ok(pidfd) => {
+                if chrome_user(&mut sysinfo::System::new(), pid, flag, chrome).is_some() {
+                    #[cfg(test)]
+                    tests::fire_reuse_window_hook();
+                    let _ = rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::KILL);
+                    return Some(pidfd);
+                }
+                return None;
+            }
+            Err(rustix::io::Errno::SRCH) => return None,
+            Err(_) => {}
+        }
+    }
+    if let Some(process) = chrome_user(&mut sysinfo::System::new(), pid, flag, chrome) {
+        #[cfg(test)]
+        tests::fire_reuse_window_hook();
+        process.kill();
+    }
+    None
+}
+
+/// Wait until every process in `killed` has ended, or until `deadline` passes. Return whether all
+/// of them ended.
+#[cfg(target_os = "linux")]
+fn wait_until_ended(killed: &[KilledProcess], deadline: std::time::Instant) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+
+    killed.iter().all(|pidfd| {
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let Ok(timeout) = Timespec::try_from(left) else {
+                return false;
+            };
+            match poll(&mut [PollFd::new(pidfd, PollFlags::IN)], Some(&timeout)) {
+                Ok(0) => return false,
+                Ok(_) => return true,
+                Err(rustix::io::Errno::INTR) => {}
+                Err(_) => return false,
+            }
+        }
+    })
+}
+
+/// Wait until every process in `killed` has ended: none can be in it off Linux.
+#[cfg(not(target_os = "linux"))]
+fn wait_until_ended(killed: &[KilledProcess], _deadline: std::time::Instant) -> bool {
+    killed.is_empty()
+}
+
+/// The process `pid`, read afresh into `system`, if it runs `chrome` and its command line holds `flag`.
+fn chrome_user<'s>(
+    system: &'s mut sysinfo::System,
+    pid: sysinfo::Pid,
+    flag: &str,
+    chrome: &std::path::Path,
+) -> Option<&'s sysinfo::Process> {
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), true, user_refresh());
+    system
+        .process(pid)
+        .filter(|process| names(process, flag) && runs(process, chrome))
+}
+
+/// Call `kill_users` until it reports that it found no user, pausing between calls, or until
+/// `timeout` passes. Return whether it found none.
+fn kill_until_gone(timeout: Duration, mut kill_users: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while kill_users() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(PROFILE_USERS_POLL_INTERVAL);
+    }
+    true
+}
+
 /// Build the [`BrowserConfigBuilder`] for a fresh pooled launch (not the
 /// `browser_endpoint` connect branch).
 ///
@@ -268,7 +623,7 @@ pub(crate) struct ExternalTabCleanup {
 struct BrowserState {
     browser: Browser,
     handler_handle: JoinHandle<()>,
-    user_data_dir: Option<std::path::PathBuf>,
+    user_data_dir: Option<ScratchProfileDir>,
     pending_closes: PendingCloses,
 }
 
@@ -442,20 +797,6 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
     BrowserCloseOutcome::Exited
 }
 
-/// Remove a Chrome profile directory, logging rather than ignoring a failure.
-///
-/// ~keep `std::fs::remove_dir_all` here ran a recursive delete on the executor thread
-/// ~keep while the pool's state mutex was held, stalling every waiting `acquire_page`.
-async fn remove_profile_dir(dir: std::path::PathBuf) {
-    if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
-        tracing::warn!(
-            dir = %dir.display(),
-            %error,
-            "failed to remove the Chrome profile directory"
-        );
-    }
-}
-
 /// A pool that keeps a single Chrome browser alive and hands out pages (tabs),
 /// limiting concurrency via a semaphore. If Chrome crashes the pool will
 /// attempt to relaunch on the next [`acquire_page`](Self::acquire_page) call.
@@ -564,9 +905,7 @@ impl BrowserPool {
                 ..ExternalTabCleanup::default()
             };
             release_browser(bs.browser, bs.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
-            if let Some(dir) = bs.user_data_dir {
-                remove_profile_dir(dir).await;
-            }
+            drop(bs.user_data_dir);
         }
     }
 
@@ -582,9 +921,6 @@ impl BrowserPool {
             self.healthy.store(false, Ordering::Release);
             if let Some(old) = guard.take() {
                 old.handler_handle.abort();
-                if let Some(dir) = old.user_data_dir {
-                    remove_profile_dir(dir).await;
-                }
             }
             let bs = self.launch_browser().await?;
             *guard = Some(bs);
@@ -618,9 +954,7 @@ impl BrowserPool {
                 ..ExternalTabCleanup::default()
             };
             release_browser(old.browser, old.handler_handle, cleanup, HANDLER_SHUTDOWN_TIMEOUT).await;
-            if let Some(dir) = old.user_data_dir {
-                remove_profile_dir(dir).await;
-            }
+            drop(old.user_data_dir);
         }
 
         let bs = self.launch_browser().await?;
@@ -637,22 +971,18 @@ impl BrowserPool {
                 .map_err(|_| CrawlError::browser_error("timeout connecting to browser endpoint"))??;
             (browser, handler, None)
         } else {
-            use std::sync::atomic::AtomicU64;
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            let user_data_dir = std::env::temp_dir().join(format!(
-                "crawlberg-chrome-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed),
-            ));
-            let builder = build_pool_launch_builder(&user_data_dir, &self.config)?;
+            // ~keep Dropped, and so removed, on every early return below, including a launch timeout.
+            let user_data_dir = ScratchProfileDir::create("crawlberg-chrome-")?;
+            let builder = build_pool_launch_builder(user_data_dir.path(), &self.config)?;
             let browser_config = builder
                 .build()
                 .map_err(|e| CrawlError::browser_error(format!("invalid browser config: {e}")))?;
 
-            let (browser, handler) = tokio::time::timeout(self.config.launch_timeout, Browser::launch(browser_config))
-                .await
-                .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
-                .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
+            let (browser, handler, user_data_dir) =
+                tokio::time::timeout(self.config.launch_timeout, user_data_dir.launch(browser_config))
+                    .await
+                    .map_err(|_| CrawlError::browser_error("timeout launching Chrome"))?
+                    .map_err(|e| CrawlError::browser_error(format!("failed to launch Chrome: {e}")))?;
             (browser, handler, Some(user_data_dir))
         };
 

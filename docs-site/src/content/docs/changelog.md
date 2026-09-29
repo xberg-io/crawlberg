@@ -120,6 +120,19 @@ title: "Changelog"
 
 ### Fixed
 
+- **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
+  fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
+  directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose
+  Tokio runtime stopped before its teardown ran. Each such directory is now removed when its owner
+  is dropped. First crawlberg stops each process of the Chrome it launched that still uses the
+  directory as its profile, and waits up to five seconds for them to exit, because Chrome's helper
+  processes outlive the browser and keep writing into it. On Linux 5.3 and later the wait lasts
+  until the last thread of each killed process has exited, because a thread still finishing a
+  write made the removal fail with "directory not empty". This also works when a launcher script
+  runs Chrome as its child, and a shell that only names the directory is left running. This work
+  runs on a background thread, so it does not stall other tasks or hold the browser pool's lock.
+  A saved `browser_profile` is never removed; only the temporary copy of it is. (#415)
+
 - **`map()` did not follow a meta refresh.** A page that forwards with a
   `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
   followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
