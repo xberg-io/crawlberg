@@ -14,6 +14,9 @@ use deno_core::error::ModuleLoaderError;
 
 use crate::js::ops::{JsOpState, SharedState};
 use crate::net::credential::{has_userinfo, without_userinfo};
+use crate::net::error_with_causes;
+use crate::net::interceptor::matches_block_pattern;
+use crate::net::resolver::with_policy_resolver;
 use crate::net::ssrf::{DefaultSsrfValidator, SsrfValidator};
 
 pub struct BrowserModuleLoader {
@@ -100,8 +103,15 @@ impl ModuleLoader for BrowserModuleLoader {
         let url = module_specifier.to_string();
         let proxy_url = self.proxy_url.clone();
         let ssrf = self.ssrf.clone();
-        // ~keep Read before the future: the state is not `Send` and ops borrow it mutably.
-        let origin_headers = self.op_state.try_borrow().ok().and_then(|state| state.origin_headers());
+        // ~keep Read before the future: the state is not `Send` and ops borrow it mutably. An
+        // ~keep unreadable state refuses the module, so the block list cannot be skipped.
+        let Ok(state) = self.op_state.try_borrow() else {
+            return ModuleLoadResponse::Sync(Err(io_err(format!("Module {} refused: page state is busy", url))));
+        };
+        let origin_headers = state.origin_headers();
+        let block_patterns = state.intercept_block_patterns.clone();
+        let user_agent = state.user_agent.clone();
+        drop(state);
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {
             let parsed =
@@ -122,7 +132,7 @@ impl ModuleLoader for BrowserModuleLoader {
                     }
                 }
             }
-            let client = builder
+            let client = with_policy_resolver(builder, proxy_url.is_some(), &ssrf)
                 .build()
                 .map_err(|e| io_err(format!("HTTP client error: {}", e)))?;
 
@@ -135,16 +145,22 @@ impl ModuleLoader for BrowserModuleLoader {
             let mut current = parsed;
             let mut redirects_followed = 0;
             let resp = loop {
+                if matches_block_pattern(&block_patterns, current.as_str()) {
+                    return Err(io_err(format!("Module {} blocked by interception", current)));
+                }
                 let mut request = client
                     .get(current.as_str())
                     .header("Accept", "application/javascript, text/javascript, */*");
+                if let Some(user_agent) = &user_agent {
+                    request = request.header(reqwest::header::USER_AGENT, user_agent.as_str());
+                }
                 for (name, value) in origin_headers.iter().flat_map(|scoped| scoped.headers_for(&current)) {
                     request = request.header(name.as_str(), value.as_str());
                 }
                 let resp = request
                     .send()
                     .await
-                    .map_err(|e| io_err(format!("Failed to fetch module {}: {}", url, e)))?;
+                    .map_err(|e| io_err(format!("Failed to fetch module {}: {}", url, error_with_causes(&e))))?;
                 let Some(next) = resp
                     .status()
                     .is_redirection()
@@ -210,5 +226,61 @@ mod tests {
             .resolve("/m.js", "http://example.com/", deno_core::ResolutionKind::DynamicImport)
             .expect("an import without userinfo resolves");
         assert_eq!(resolved.as_str(), "http://example.com/m.js");
+    }
+
+    #[test]
+    fn a_module_is_refused_while_the_page_state_cannot_be_read() {
+        let loader = BrowserModuleLoader::new("http://example.com/");
+        let held = loader.op_state.clone();
+        let _busy = held.borrow_mut();
+        let specifier = ModuleSpecifier::parse("http://example.com/m.js").expect("parse");
+        let options = ModuleLoadOptions {
+            is_dynamic_import: false,
+            is_synchronous: false,
+            requested_module_type: deno_core::RequestedModuleType::None,
+        };
+
+        let ModuleLoadResponse::Sync(result) = loader.load(&specifier, None, options) else {
+            panic!("an unreadable page state must refuse the module before any fetch starts");
+        };
+        let Err(error) = result else {
+            panic!("the module must be refused");
+        };
+        assert!(error.to_string().contains("http://example.com/m.js"), "{error}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_module_refused_at_connect_time_names_the_policy_reason() {
+        use crate::net::resolver::tests::{RebindingPolicy, denied_server};
+
+        let (port, seen) = denied_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        let loader = BrowserModuleLoader::with_ssrf(
+            "http://example.com/",
+            None,
+            Arc::new(RebindingPolicy::default()),
+            Rc::new(RefCell::new(JsOpState::new())),
+        );
+        let specifier = ModuleSpecifier::parse(&format!("http://localhost:{port}/m.js")).expect("parse");
+        let options = ModuleLoadOptions {
+            is_dynamic_import: false,
+            is_synchronous: false,
+            requested_module_type: deno_core::RequestedModuleType::None,
+        };
+
+        let ModuleLoadResponse::Async(load) = loader.load(&specifier, None, options) else {
+            panic!("a module load fetches asynchronously");
+        };
+        let Err(error) = load.await else {
+            panic!("the connection's lookup answers a denied address");
+        };
+
+        assert!(
+            error.to_string().contains("denied by the test policy: 127.0.0.1"),
+            "the refusal must carry the policy's reason: {error}"
+        );
+        assert!(
+            seen.lock().expect("lock").is_empty(),
+            "the denied address must receive no connection"
+        );
     }
 }

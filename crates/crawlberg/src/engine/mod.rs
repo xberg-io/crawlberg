@@ -114,6 +114,41 @@ impl CrawlEngine {
         tower::util::BoxCloneService::new(service)
     }
 
+    /// Whether `fetch_response` (`engine/fetch.rs`) sends this request straight to the browser
+    /// tier, bypassing the Tower stack -- and with it, UA rotation -- entirely.
+    ///
+    /// ~keep Mirrors the exact condition `fetch_response` itself checks before routing:
+    /// `feature = "browser"` compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
+    /// one place so `choose_request_user_agent` cannot drift from what `fetch_response` actually
+    /// does (crawlberg#423).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn request_will_use_browser(&self) -> bool {
+        cfg!(feature = "browser") && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
+    }
+
+    /// Decide the agent the next request should send.
+    ///
+    /// ~keep The single place that picks an agent ahead of a request: it advances the exact
+    /// round-robin counter the UA rotation layer uses, so pinning the result onto a
+    /// `CrawlRequest` before it reaches that layer (`RedirectPolicy::admits`, for the robots
+    /// decision) and the agent the layer would otherwise have chosen are never two different
+    /// picks. Falls back to the configured default when no rotation list is set, so a
+    /// non-rotating crawl sees no change (crawlberg#423).
+    ///
+    /// ~keep A request the browser tier will fetch never reaches UA rotation at all -- the
+    /// browser always sends the configured or custom-header agent (`default_robots_user_agent`),
+    /// never a rotated pick -- so robots decisions for it must judge that same agent, not one
+    /// the browser will never send (crawlberg#423).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn choose_request_user_agent(&self) -> String {
+        if self.request_will_use_browser() {
+            return crate::helpers::default_robots_user_agent(&self.config).to_owned();
+        }
+        self.ua_rotation
+            .choose_next()
+            .unwrap_or_else(|| crate::helpers::default_robots_user_agent(&self.config).to_owned())
+    }
+
     /// Execute browser actions on a single page.
     ///
     /// The public API is always available. Runtime execution depends on the
@@ -161,40 +196,61 @@ impl CrawlEngine {
 mod tests {
     use super::*;
 
-    /// Minimal `Subscriber` that captures every field recorded on any span,
-    /// used to assert on `#[tracing::instrument]` field values without adding
-    /// a `tracing-subscriber` dev-dependency.
+    /// Minimal `Subscriber` that captures every field recorded on any span, with the span's
+    /// name, used to assert on `#[tracing::instrument]` field values without adding a
+    /// `tracing-subscriber` dev-dependency. Shared with the sequential-crawl tests.
     #[derive(Default)]
-    struct FieldCapture(std::sync::Mutex<Vec<(String, String)>>);
+    pub(super) struct FieldCapture {
+        spans: std::sync::Mutex<Vec<&'static str>>,
+        fields: std::sync::Mutex<Vec<(&'static str, String, String)>>,
+    }
 
     impl FieldCapture {
-        fn visitor(&self) -> impl tracing::field::Visit + '_ {
-            struct V<'a>(&'a FieldCapture);
+        /// The values of `field` recorded on the spans named `span`, in order.
+        pub(super) fn values(&self, span: &str, field: &str) -> Vec<String> {
+            self.fields
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(s, f, _)| *s == span && f == field)
+                .map(|(_, _, value)| value.clone())
+                .collect()
+        }
+
+        fn visitor(&self, span: &'static str) -> impl tracing::field::Visit + '_ {
+            struct V<'a>(&'a FieldCapture, &'static str);
             impl tracing::field::Visit for V<'_> {
                 fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
                     self.0
-                        .0
+                        .fields
                         .lock()
                         .unwrap()
-                        .push((field.name().to_string(), format!("{value:?}")));
+                        .push((self.1, field.name().to_string(), format!("{value:?}")));
                 }
             }
-            V(self)
+            V(self, span)
         }
     }
 
-    struct CapturingSubscriber(std::sync::Arc<FieldCapture>);
+    pub(super) struct CapturingSubscriber(pub(super) std::sync::Arc<FieldCapture>);
 
     impl tracing::Subscriber for CapturingSubscriber {
         fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
             true
         }
         fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            span.record(&mut self.0.visitor());
-            tracing::span::Id::from_u64(1)
+            let name = span.metadata().name();
+            let id = {
+                let mut spans = self.0.spans.lock().unwrap();
+                spans.push(name);
+                spans.len() as u64
+            };
+            span.record(&mut self.0.visitor(name));
+            tracing::span::Id::from_u64(id)
         }
-        fn record(&self, _span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
-            values.record(&mut self.0.visitor());
+        fn record(&self, span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+            let name = self.0.spans.lock().unwrap()[span.into_u64() as usize - 1];
+            values.record(&mut self.0.visitor(name));
         }
         fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
         fn event(&self, _event: &tracing::Event<'_>) {}
@@ -220,11 +276,10 @@ mod tests {
         let _ = engine.scrape("http://user:hunter2@127.0.0.1:1/").await;
         drop(_guard);
 
-        let fields = captured.0.lock().unwrap();
-        let (_, value) = fields
-            .iter()
-            .find(|(name, _)| name == "url.full")
-            .unwrap_or_else(|| panic!("expected a url.full span field to be recorded, got {fields:?}"));
+        let values = captured.values("crawl.engine.scrape", "url.full");
+        let [value] = values.as_slice() else {
+            panic!("expected one crawl.engine.scrape span with a url.full field, got {values:?}");
+        };
         assert!(
             !value.contains("hunter2"),
             "redacted url.full must not leak the password, got {value}"
