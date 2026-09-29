@@ -255,7 +255,7 @@ impl CrawlEngine {
         entry: &FrontierEntry,
         state: &mut SequentialState,
     ) -> Option<ScrapeResult> {
-        match self.scrape(&entry.url).await {
+        match self.scrape_in_scope(&entry.url).await {
             Ok(scrape) => Some(scrape),
             Err(e) => {
                 state.pages_failed += 1;
