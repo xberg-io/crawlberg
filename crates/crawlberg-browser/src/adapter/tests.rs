@@ -515,6 +515,7 @@ fn header_bearing_debug_renderings() -> Vec<(&'static str, String, bool)> {
         eval_result: None,
         network_events: vec![native_event.clone()],
         cookies: Vec::new(),
+        redirects: 0,
     };
     let response = crate::net::client::Response {
         url: url.clone(),

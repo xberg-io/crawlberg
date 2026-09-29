@@ -175,7 +175,8 @@ impl std::fmt::Debug for CrawlResponse {
     }
 }
 
-/// The URL a self-redirecting fetcher landed on, and the HTTP redirects it followed.
+/// The URL a self-redirecting fetcher landed on, and the redirects it followed: HTTP redirects,
+/// and the navigations the page started, one each.
 ///
 /// ~keep Only the browser tier builds one, so without the `browser` feature nothing does.
 #[derive(Debug, Clone)]

@@ -353,6 +353,19 @@ impl HttpClient {
         url: &Url,
         initial_body: Option<Vec<u8>>,
     ) -> Result<Response, NetError> {
+        self.fetch_following(initial_method, url, initial_body, None).await
+    }
+
+    /// Fetch `url`, following at most `max_redirects` redirects. The redirect response at the
+    /// limit is returned as the response, as the crawl's HTTP fetch returns it. `None` follows
+    /// up to the client's own cap and fails past it with [`NetError::TooManyRedirects`].
+    pub async fn fetch_following(
+        &self,
+        initial_method: Method,
+        url: &Url,
+        initial_body: Option<Vec<u8>>,
+        max_redirects: Option<usize>,
+    ) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.validate_url(url).await?;
 
@@ -366,7 +379,8 @@ impl HttpClient {
         let mut current_url = url.clone();
         let mut redirects = Vec::new();
 
-        for _redirect_count in 0..MAX_REDIRECTS {
+        let requests = max_redirects.map_or(MAX_REDIRECTS, |limit| limit.saturating_add(1));
+        for _request in 0..requests {
             let request_info = self.request_info(&current_url, &method).await;
 
             if let Some(response) = self.apply_interceptor(&request_info).await? {
@@ -385,6 +399,7 @@ impl HttpClient {
             let response_headers = collect_response_headers(&resp);
 
             if status.is_redirection()
+                && max_redirects.is_none_or(|limit| redirects.len() < limit)
                 && let Some(location) = resp.headers().get(reqwest::header::LOCATION)
             {
                 let next_url = resolve_redirect(&current_url, location)?;

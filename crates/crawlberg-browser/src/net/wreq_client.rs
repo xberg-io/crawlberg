@@ -87,13 +87,20 @@ impl StealthHttpClient {
     }
 
     pub async fn fetch(&self, url: &Url) -> Result<Response, NetError> {
+        self.fetch_following(url, None).await
+    }
+
+    /// Fetch `url`, following at most `max_redirects` redirects, as
+    /// [`crate::net::HttpClient::fetch_following`] does.
+    pub async fn fetch_following(&self, url: &Url, max_redirects: Option<usize>) -> Result<Response, NetError> {
         refuse_userinfo(url)?;
         self.ssrf.validate(url).await.map_err(NetError::SsrfDenied)?;
 
         let mut current_url = url.clone();
         let mut redirects = Vec::new();
 
-        for _ in 0..20 {
+        let requests = max_redirects.map_or(20, |limit| limit.saturating_add(1));
+        for _ in 0..requests {
             let mut req = self.client.get(current_url.as_str());
 
             let cookie_header = self.cookie_jar.get_cookie_header(&current_url);
@@ -133,6 +140,7 @@ impl StealthHttpClient {
                 .collect();
 
             if status.is_redirection()
+                && max_redirects.is_none_or(|limit| redirects.len() < limit)
                 && let Some(location) = resp.headers().get("location")
             {
                 let location_str = location
@@ -303,6 +311,34 @@ mod tests {
             }
         });
         (addr, requests)
+    }
+
+    #[tokio::test]
+    async fn a_limited_fetch_ends_on_the_redirect_at_the_limit() {
+        let (end, end_requests) =
+            recording_server("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()).await;
+        let redirect = format!(
+            "HTTP/1.1 301 Moved Permanently\r\nLocation: http://{end}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let (start, _) = recording_server(redirect).await;
+        let client = StealthHttpClient::with_ssrf(Arc::new(CookieJar::new()), None, Arc::new(AllowAll));
+        let url = format!("http://{start}/").parse::<Url>().expect("valid URL");
+
+        let stopped = client
+            .fetch_following(&url, Some(0))
+            .await
+            .expect("the fetch must succeed");
+        assert_eq!((stopped.status, stopped.url.clone()), (301, url.clone()));
+        assert!(
+            end_requests.lock().expect("lock").is_empty(),
+            "the limit stops the next hop"
+        );
+
+        let followed = client
+            .fetch_following(&url, Some(1))
+            .await
+            .expect("the fetch must succeed");
+        assert_eq!((followed.status, followed.redirected_from.len()), (200, 1));
     }
 
     #[tokio::test]

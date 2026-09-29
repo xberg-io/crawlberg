@@ -151,12 +151,14 @@ impl Page {
             .map(String::from)
     }
 
-    async fn do_fetch(&self, url: &Url) -> Result<Response, NetError> {
+    async fn do_fetch(&self, url: &Url, max_redirects: Option<usize>) -> Result<Response, NetError> {
         #[cfg(feature = "stealth")]
         if let Some(ref stealth) = self.stealth_client {
-            return stealth.fetch(url).await;
+            return stealth.fetch_following(url, max_redirects).await;
         }
-        self.http_client.fetch(url).await
+        self.http_client
+            .fetch_following(reqwest::Method::GET, url, None, max_redirects)
+            .await
     }
     fn init_js(&mut self) {
         // ~keep Recreate the JS realm every navigation so prior-page handlers cannot run in the next document.
@@ -220,41 +222,82 @@ impl Page {
         method: &str,
         body: &str,
     ) -> Result<(), PageError> {
+        self.navigate_chain(url_str, wait_until, method, body, None)
+            .await
+            .map(drop)
+    }
+
+    /// Navigate to `url_str` and follow at most `max_redirects` redirects on the way: HTTP
+    /// redirects, and the navigations the page's script starts, one each. Returns how many it
+    /// followed. A chain of HTTP redirects past the limit ends on the redirect response at the
+    /// limit; a script navigation past it is not taken, and the page keeps its document.
+    pub async fn navigate_counting(
+        &mut self,
+        url_str: &str,
+        wait_until: crate::lifecycle::WaitUntil,
+        max_redirects: usize,
+    ) -> Result<usize, PageError> {
+        self.navigate_chain(url_str, wait_until, "GET", "", Some(max_redirects))
+            .await
+    }
+
+    /// Navigate, then follow the navigations the page's script starts. With `max_redirects`
+    /// set, it bounds every redirect of the chain and the count is returned; without it, HTTP
+    /// redirects follow the client's cap and a chain of script navigations fails past its own.
+    async fn navigate_chain(
+        &mut self,
+        url_str: &str,
+        wait_until: crate::lifecycle::WaitUntil,
+        method: &str,
+        body: &str,
+        max_redirects: Option<usize>,
+    ) -> Result<usize, PageError> {
         let mut current_url = url_str.to_string();
         let mut current_method = method.to_string();
         let mut current_body = body.to_string();
         const REDIRECT_LIMIT: usize = 10;
-        for chain in 0..REDIRECT_LIMIT {
-            self.navigate_single(&current_url, wait_until, &current_method, &current_body)
+        let mut followed = 0usize;
+        let mut script_navigations = 0usize;
+        loop {
+            let left = max_redirects.map(|limit| limit.saturating_sub(followed));
+            followed += self
+                .navigate_single(&current_url, wait_until, &current_method, &current_body, left)
                 .await?;
-            if let Some((next_url, next_method, next_body)) = self.take_pending_navigation() {
-                if cross_scheme_to_file(&current_url, &next_url) {
-                    // ~keep SOP gate: HTTP(S) pages must not navigate to `file:` and then read the loaded document.
-                    tracing::warn!(
-                        "blocking JS-initiated cross-scheme navigation to file: {} -> {}",
-                        current_url,
-                        next_url,
-                    );
-                    break;
-                }
-                tracing::info!(
-                    "JS-triggered navigation chain: {} {} -> {}",
-                    current_method,
+            let Some((next_url, next_method, next_body)) = self.take_pending_navigation() else {
+                break;
+            };
+            if cross_scheme_to_file(&current_url, &next_url) {
+                // ~keep SOP gate: HTTP(S) pages must not navigate to `file:` and then read the loaded document.
+                tracing::warn!(
+                    "blocking JS-initiated cross-scheme navigation to file: {} -> {}",
                     current_url,
-                    next_url
+                    next_url,
                 );
-                current_url = next_url;
-                current_method = next_method;
-                current_body = next_body;
-                if chain + 1 == REDIRECT_LIMIT {
-                    // ~keep Exceeding the JS navigation cap is an error so redirect storms are not reported as loads.
-                    return Err(PageError::TooManyRedirects(REDIRECT_LIMIT));
-                }
-                continue;
+                break;
             }
-            break;
+            if max_redirects.is_some_and(|limit| followed >= limit) {
+                tracing::debug!(
+                    "not following a script navigation past the redirect limit: {current_url} -> {next_url}"
+                );
+                break;
+            }
+            script_navigations += 1;
+            if max_redirects.is_none() && script_navigations == REDIRECT_LIMIT {
+                // ~keep Exceeding the JS navigation cap is an error so redirect storms are not reported as loads.
+                return Err(PageError::TooManyRedirects(REDIRECT_LIMIT));
+            }
+            followed += 1;
+            tracing::info!(
+                "JS-triggered navigation chain: {} {} -> {}",
+                current_method,
+                current_url,
+                next_url
+            );
+            current_url = next_url;
+            current_method = next_method;
+            current_body = next_body;
         }
-        Ok(())
+        Ok(followed)
     }
     pub fn navigate_blank(&mut self) {
         self.js = None;

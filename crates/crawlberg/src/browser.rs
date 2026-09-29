@@ -30,11 +30,11 @@ mod navigation;
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// A page a browser backend fetched, and the HTTP redirects it followed to reach it.
+/// A page a browser backend fetched, and the redirects it followed to reach it.
 pub(crate) struct BrowserPage {
     pub(crate) response: HttpResponse,
-    /// HTTP redirects the browser followed. The native backend does not report its chain,
-    /// so for it a landing on another URL counts as one.
+    /// Redirects the browser followed within `max_redirects`: HTTP redirects, and the
+    /// navigations the page started (a meta refresh or a script), one each.
     pub(crate) redirects: usize,
     /// The URLs the SSRF policy refused for requests the page sent, credential-redacted.
     pub(crate) refused: Vec<String>,
@@ -47,7 +47,7 @@ pub(crate) struct BrowserPage {
 /// instance and tears it down afterwards.
 ///
 /// Returns the rendered page, in the `HttpResponse` shape the scrape pipeline reads, and
-/// the HTTP redirects the browser followed to reach it. The page's status is handled the way
+/// the redirects the browser followed to reach it. The page's status is handled the way
 /// HTTP mode handles it: a 404 or 500 page is the error the HTTP fetch returns.
 pub(crate) async fn browser_fetch(
     url: &str,
@@ -71,13 +71,13 @@ pub(crate) async fn browser_fetch(
                 );
             }
             #[cfg(feature = "browser-native")]
-            let (response, refused) = native_fetch(url, config, prior_cookies, native_executor).await?;
+            let (response, refused, redirects) = native_fetch(url, config, prior_cookies, native_executor).await?;
             #[cfg(not(feature = "browser-native"))]
-            let (response, refused) = native_fetch(url, config, prior_cookies).await?;
+            let (response, refused, redirects) = native_fetch(url, config, prior_cookies).await?;
             BrowserPage {
-                redirects: usize::from(response.final_url != url),
                 response,
                 refused,
+                redirects,
             }
         }
     };
@@ -439,7 +439,7 @@ async fn native_fetch(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: Option<&crawlberg_browser::adapter::NativeBrowserExecutor>,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let native_executor = native_executor.ok_or_else(|| {
         CrawlError::browser_error("native browser executor is not available for BrowserBackend::Native")
     })?;
@@ -451,7 +451,7 @@ async fn native_fetch(
     _url: &str,
     _config: &CrawlConfig,
     _prior_cookies: Option<&[CookieInfo]>,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     Err(CrawlError::invalid_config(
         "browser.backend = native requires the browser-native feature",
     ))

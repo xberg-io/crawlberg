@@ -16,12 +16,14 @@ use crate::types::{BrowserWait, CookieInfo, CrawlConfig, ResponseMeta};
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static NATIVE_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Render `url` with the native backend. Returns the page, the URLs the SSRF policy refused for
+/// requests the page sent, and the redirects the backend followed within `max_redirects`.
 pub(crate) async fn native_browser_fetch(
     url: &str,
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     let session_id = NATIVE_SESSION_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     let session_id_str = session_id.to_string();
 
@@ -51,7 +53,7 @@ async fn native_browser_fetch_inner(
     config: &CrawlConfig,
     prior_cookies: Option<&[CookieInfo]>,
     native_executor: &NativeBrowserExecutor,
-) -> Result<(HttpResponse, Vec<String>), CrawlError> {
+) -> Result<(HttpResponse, Vec<String>, usize), CrawlError> {
     if config.browser.endpoint.is_some() {
         return Err(CrawlError::invalid_config(
             "browser.endpoint is only supported by the chromiumoxide backend",
@@ -131,7 +133,7 @@ async fn native_browser_fetch_inner(
         // ~keep when `capture_screenshot` is set with this backend.
         screenshot: None,
     };
-    Ok((response, refused))
+    Ok((response, refused, rendered.redirects))
 }
 
 /// Content type assumed when the render reports none.
@@ -206,6 +208,7 @@ fn build_native_config(
         ssrf: Some(ssrf),
         allow_file_access: false,
         origin_headers: crate::net::credentials::origin_headers(config),
+        max_redirects: Some(config.max_redirects),
     })
 }
 

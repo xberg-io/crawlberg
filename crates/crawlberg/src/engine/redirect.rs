@@ -517,11 +517,11 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
 }
 
 /// The URL a self-redirecting fetcher landed on, when it is an unvisited web URL other than
-/// the one requested, with the cycle key it will occupy and the HTTP redirects taken to it.
+/// the one requested, with the cycle key it will occupy and the redirects taken to it.
 ///
-/// ~keep A navigation the page starts itself (script or meta refresh) is not an HTTP
-/// ~keep redirect of the requested page, so neither it nor any redirect it follows adds hops,
-/// ~keep but its landing still passes the policy checks before its content is used.
+/// ~keep The fetcher counts a navigation the page starts itself (a script or a meta refresh)
+/// ~keep as one redirect, as this chain counts a meta refresh, and its landing still passes the
+/// ~keep policy checks before its content is used.
 fn landed_redirect(resp: &crate::tower::CrawlResponse, chain: &RedirectChain) -> Option<(String, String, usize)> {
     let landed = resp.landed.as_ref()?;
     if !Url::parse(&landed.url).is_ok_and(|parsed| is_fetchable_scheme(&parsed)) {

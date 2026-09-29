@@ -137,8 +137,7 @@ async fn native_follows_redirect() {
     );
 }
 
-/// The native backend reports no redirect chain, so a landing on another URL counts as one
-/// redirect: the count a one-hop chain gives in HTTP mode.
+/// The native backend counts the one redirect of a one-hop chain, as HTTP mode does.
 #[tokio::test]
 async fn native_counts_a_landing_on_another_url_as_one_redirect() {
     let mock = MockServer::start().await;
@@ -610,4 +609,134 @@ async fn native_keeps_the_page_and_lists_the_refused_requests() {
         received.is_empty(),
         "the denied address must receive nothing: {received:?}"
     );
+}
+
+/// `/` answers 301 to `/r1`, `/r1` to `/r2`, and so on for `hops` redirects; the last hop
+/// lands on a 200 page.
+async fn native_redirect_chain(hops: usize) -> MockServer {
+    let mock = MockServer::start().await;
+    for hop in 0..hops {
+        let from = if hop == 0 { "/".to_owned() } else { format!("/r{hop}") };
+        Mock::given(method("GET"))
+            .and(path(from))
+            .respond_with(ResponseTemplate::new(301).append_header("location", format!("/r{}", hop + 1)))
+            .mount(&mock)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/r{hops}")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&mock)
+        .await;
+    mock
+}
+
+async fn native_requested_paths(mock: &MockServer) -> Vec<String> {
+    mock.received_requests()
+        .await
+        .expect("request recording is on")
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect()
+}
+
+/// A crawl of `site` at `max_redirects` with `mode`, as (redirect count, final path, status).
+async fn native_chain_outcome(
+    site: &MockServer,
+    mode: crawlberg::BrowserMode,
+    max_redirects: usize,
+) -> (usize, String, u16) {
+    let config = CrawlConfig {
+        max_depth: Some(0),
+        max_redirects,
+        respect_robots_txt: false,
+        ..native_config(|c| BrowserConfig { mode, ..c })
+    };
+    let result = crawlberg::crawl(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the crawl must succeed");
+    let status = result.pages.first().map_or(0, |page| page.status_code);
+    (
+        result.redirect_count,
+        result.final_url.trim_start_matches(&site.uri()).to_owned(),
+        status,
+    )
+}
+
+/// The native backend stops a chain longer than `max_redirects` where HTTP mode stops it, in
+/// crawl and in scrape (#115).
+#[tokio::test]
+async fn native_stops_a_chain_longer_than_max_redirects_where_http_mode_does() {
+    let http = native_chain_outcome(&native_redirect_chain(5).await, crawlberg::BrowserMode::Never, 2).await;
+    assert_eq!(
+        http,
+        (2, "/r2".to_owned(), 301),
+        "HTTP mode stops on the 3xx at the limit"
+    );
+
+    let site = native_redirect_chain(5).await;
+    assert_eq!(
+        native_chain_outcome(&site, crawlberg::BrowserMode::Always, 2).await,
+        http,
+        "the native backend must report the chain the way HTTP mode does"
+    );
+    let requested = native_requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| ["/r3", "/r4", "/r5"].contains(&p.as_str())),
+        "the native backend must not request past the limit, requested: {requested:?}"
+    );
+
+    let site = native_redirect_chain(5).await;
+    let config = CrawlConfig {
+        max_redirects: 2,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+    let scraped = scrape(&engine_with(config), &format!("{}/", site.uri()))
+        .await
+        .expect("the scrape must succeed");
+    assert_eq!(
+        (scraped.status_code, scraped.final_url.trim_start_matches(&site.uri())),
+        (301, "/r2"),
+        "the scrape must stop on the 3xx at the limit"
+    );
+    let requested = native_requested_paths(&site).await;
+    assert!(
+        !requested.iter().any(|p| p == "/r3"),
+        "the scrape must not request past the limit, requested: {requested:?}"
+    );
+}
+
+/// A navigation the page's script starts counts as one redirect in the native backend, as it
+/// does in Chrome: past the limit the page stays where it is (#115).
+#[tokio::test]
+async fn native_counts_a_script_navigation_against_max_redirects() {
+    for (max_redirects, expected) in [(0, (0, "/".to_owned(), 200)), (1, (1, "/after".to_owned(), 200))] {
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "<html><body><p>start</p><script>location.replace('/after')</script></body></html>",
+                "text/html",
+            ))
+            .mount(&site)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/after"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>after</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        assert_eq!(
+            native_chain_outcome(&site, crawlberg::BrowserMode::Always, max_redirects).await,
+            expected,
+            "max_redirects={max_redirects}"
+        );
+        if max_redirects == 0 {
+            let requested = native_requested_paths(&site).await;
+            assert!(
+                !requested.iter().any(|p| p == "/after"),
+                "the native backend must not follow the script past the limit, requested: {requested:?}"
+            );
+        }
+    }
 }

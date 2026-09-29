@@ -3,7 +3,7 @@
 //! open: a browser follows redirects and client-side navigations internally, so
 //! without per-request interception a redirect to a private/metadata address
 //! would reach the network unchecked. The same interception counts the redirects
-//! the main frame follows, so `max_redirects` can bound them.
+//! and the navigations the main frame follows, so `max_redirects` can bound them.
 //!
 //! ~keep A top-level module rather than nested under `browser`, so every chromiumoxide
 //! ~keep caller can reach it: the scrape/crawl fetch in `browser`, `browser_pool`, and
@@ -80,8 +80,6 @@ const MAX_REFUSALS: usize = 256;
 pub(crate) struct InterceptOutcome {
     /// The first request the SSRF policy blocked, as `(url, reason)`.
     pub(crate) blocked: Option<(String, String)>,
-    /// HTTP redirects the main frame followed before its first document arrived.
-    pub(crate) redirects_followed: usize,
     /// The main-frame response the navigation ends on without a document: the redirect past
     /// the redirect limit, or a response Chrome does not commit (204, 205, 304).
     pub(crate) stopped_response: Option<StoppedResponse>,
@@ -94,9 +92,16 @@ pub(crate) struct InterceptOutcome {
     pub(crate) documents: HashMap<String, DocumentResponse>,
     /// The loader id of the document the main frame committed last, from `Page.frameNavigated`.
     committed_loader: Option<String>,
-    /// Whether the main frame has received a document that is not a redirect. Redirects
-    /// after it belong to a navigation the page started itself.
+    /// Whether the main frame has received a document that is not a redirect. A redirect past
+    /// the limit after it belongs to a navigation the page started, which is dropped instead.
     first_document_arrived: bool,
+    /// Redirects the main frame followed: each HTTP redirect, and each navigation after the
+    /// first (a meta refresh or a script navigation), counted against the redirect limit.
+    redirects_followed: usize,
+    /// Whether the main frame has sent the request of its first navigation.
+    navigation_started: bool,
+    /// Set once the requested navigation is over: later navigations are not counted.
+    navigation_ended: bool,
 }
 
 /// A main-frame response the navigation ends on without a document, reported as is.
@@ -478,18 +483,28 @@ impl FirewallHandle {
 }
 
 impl Watch {
-    /// Return how the navigation went so far, and keep watching: the first blocked request,
-    /// the redirects followed and the response the navigation stopped on. Redirects are not
-    /// counted again: once the main frame has its first document, later navigations are free
-    /// of the redirect limit.
+    /// Return how the navigation went so far, and keep watching: the first blocked request and
+    /// the response the navigation stopped on.
     pub(crate) fn take_outcome(&self) -> InterceptOutcome {
         let mut state = lock(&self.page.outcome);
         InterceptOutcome {
             blocked: state.blocked.take(),
-            redirects_followed: std::mem::take(&mut state.redirects_followed),
             stopped_response: state.stopped_response.take(),
             ..InterceptOutcome::default()
         }
+    }
+
+    /// The redirects the main frame has followed since the watch began: HTTP redirects, and
+    /// the navigations after the first.
+    #[cfg(feature = "browser")]
+    pub(crate) fn redirects_followed(&self) -> usize {
+        lock(&self.page.outcome).redirects_followed
+    }
+
+    /// End the requested navigation: the navigations the page makes from now on are the
+    /// caller's own, so the redirect limit no longer counts them.
+    pub(crate) fn end_navigation(&self) {
+        lock(&self.page.outcome).navigation_ended = true;
     }
 
     /// The status and headers of the main-frame document that `loader_id` committed, or `None`
@@ -899,7 +914,8 @@ async fn attribute(browser: &Browser, shared: &Shared, frame: &FrameId) -> Optio
 /// Answer one paused request. It is judged by the policy of the watched page it belongs to,
 /// and refused when its page's watch is ending. A request of another client's page on an
 /// external browser is continued untouched; any other request is refused. A document response
-/// of a watched page's main frame is judged by [`main_frame_verdict`].
+/// of a watched page's main frame is judged by [`main_frame_verdict`], and a main-frame document
+/// request the policy allows by [`navigation_verdict`].
 async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, paused_at: Instant) {
     // ~keep `_in_flight` lives to the end of this function, so the page counts the request until
     // ~keep its answer has been sent: a watch ending on a zero count has nothing still paused.
@@ -938,6 +954,12 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
             .execute(FailRequestParams::new(request_id, ErrorReason::BlockedByClient))
             .await
             .map(drop),
+        // ~keep Chrome commits no error page for an aborted navigation, so the page keeps the
+        // ~keep document it has.
+        Verdict::Abort => browser
+            .execute(FailRequestParams::new(request_id, ErrorReason::Aborted))
+            .await
+            .map(drop),
     };
 }
 
@@ -947,6 +969,8 @@ enum Verdict {
     Continue(Option<Vec<HeaderEntry>>),
     /// Fail it with `BlockedByClient`.
     Refuse,
+    /// Drop a navigation past the redirect limit, so the page keeps its document.
+    Abort,
 }
 
 /// A paused request of a watched page, counted in the page's `in_flight` while it lives.
@@ -970,11 +994,7 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
         return Verdict::Refuse;
     }
     if is_response_stage(event) {
-        return if main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome) {
-            Verdict::Continue(None)
-        } else {
-            Verdict::Refuse
-        };
+        return main_frame_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome);
     }
     #[cfg(test)]
     tokio::time::sleep(shared.delays.verdict).await;
@@ -982,6 +1002,9 @@ async fn judge(shared: &Shared, page: &WatchedPage, event: &EventRequestPaused, 
     let _ = shared;
     let (url, reason) = match ssrf_verdict(&event.request.url, &page.config.ssrf).await {
         Ok(parsed) => {
+            if !navigation_verdict(event, &page.main_frame, page.redirect_limit, &page.outcome) {
+                return Verdict::Abort;
+            }
             return Verdict::Continue(headers_with_seed_host_headers(
                 &page.config,
                 &parsed,
@@ -1105,15 +1128,16 @@ fn is_response_stage(event: &EventRequestPaused) -> bool {
     event.response_status_code.is_some() || event.response_error_reason.is_some()
 }
 
-/// Whether a paused document response may proceed, recording the status and headers of each
+/// How a paused document response is answered, recording the status and headers of each
 /// main-frame document response. Only the response of the committed document is kept beside the
-/// new one. A main-frame redirect of the requested navigation is counted while it is within
-/// `limit`; the one past it is recorded and must be failed. A main-frame response Chrome does not
-/// commit is also recorded and failed.
+/// new one. A main-frame redirect is counted while it is within `limit`. Past the limit, a
+/// redirect of the requested navigation is recorded and failed, as the HTTP fetch stops on it; a
+/// redirect of a navigation the page started is dropped. A main-frame response of the requested
+/// navigation that Chrome does not commit is also recorded and failed.
 ///
 /// ~keep The requested navigation ends at the first main-frame response that is not a
 /// ~keep redirect. A page's script cannot run before that response arrives, so every
-/// ~keep redirect after it belongs to a navigation the page started, and it is not counted.
+/// ~keep redirect after it belongs to a navigation the page started.
 /// ~keep Chrome commits no document for a 204, 205 or 304, so no load event fires and
 /// ~keep chromiumoxide's `goto` waits for the browser timeout. Failing the response makes
 /// ~keep Chrome commit its error page, which ends `goto` at once.
@@ -1122,9 +1146,9 @@ fn main_frame_verdict(
     main_frame: &FrameId,
     limit: usize,
     state: &Mutex<InterceptOutcome>,
-) -> bool {
+) -> Verdict {
     if *main_frame != event.frame_id {
-        return true;
+        return Verdict::Continue(None);
     }
     let mut state = lock(state);
     let headers = event.response_headers.as_deref().unwrap_or_default();
@@ -1149,25 +1173,65 @@ fn main_frame_verdict(
             },
         );
     }
-    if state.first_document_arrived {
-        return true;
-    }
-
-    let Some(status) = status.filter(|code| is_redirect || NO_DOCUMENT_STATUSES.contains(code)) else {
-        state.first_document_arrived = true;
-        return true;
+    let stop = match status {
+        Some(code) if is_redirect => {
+            if spend_redirect(&mut state, limit) {
+                return Verdict::Continue(None);
+            }
+            if state.first_document_arrived {
+                return Verdict::Abort;
+            }
+            code
+        }
+        Some(code) if !state.first_document_arrived && NO_DOCUMENT_STATUSES.contains(&code) => code,
+        _ => {
+            state.first_document_arrived = true;
+            return Verdict::Continue(None);
+        }
     };
-
-    if is_redirect && state.redirects_followed < limit {
-        state.redirects_followed += 1;
-        return true;
-    }
     state.stopped_response = Some(StoppedResponse {
         url: event.request.url.clone(),
-        status,
+        status: stop,
         headers: header_map(headers),
     });
-    false
+    Verdict::Refuse
+}
+
+/// Whether a request the policy allows may go out. The first main-frame document request is the
+/// requested navigation. Every later one that is not a redirect hop is a navigation the page
+/// started (a meta refresh, a script, a form), and it is counted as one redirect: past `limit` it
+/// must be dropped, so the page keeps its document. A redirect hop was counted at its response.
+fn navigation_verdict(
+    event: &EventRequestPaused,
+    main_frame: &FrameId,
+    limit: usize,
+    state: &Mutex<InterceptOutcome>,
+) -> bool {
+    if *main_frame != event.frame_id
+        || event.resource_type != ResourceType::Document
+        || event.redirected_request_id.is_some()
+    {
+        return true;
+    }
+    let mut state = lock(state);
+    if !state.navigation_started {
+        state.navigation_started = true;
+        return true;
+    }
+    spend_redirect(&mut state, limit)
+}
+
+/// Count one redirect against `limit`, or return false when the limit is spent. Once the
+/// requested navigation has ended nothing is counted.
+fn spend_redirect(state: &mut InterceptOutcome, limit: usize) -> bool {
+    if state.navigation_ended {
+        return true;
+    }
+    if state.redirects_followed >= limit {
+        return false;
+    }
+    state.redirects_followed += 1;
+    true
 }
 
 /// CDP response headers keyed by lowercase name, as the HTTP fetch path keys them.
@@ -1189,7 +1253,10 @@ mod tests {
     //! and scheme rejections that require no DNS resolution or network.
     use std::sync::Mutex;
 
-    use super::{EventRequestPaused, FrameId, InterceptOutcome, main_frame_verdict, require_main_frame, ssrf_verdict};
+    use super::{
+        EventRequestPaused, FrameId, InterceptOutcome, Verdict, main_frame_verdict, navigation_verdict,
+        require_main_frame, ssrf_verdict,
+    };
     use crate::net::ssrf::SsrfPolicy;
 
     fn deny_policy() -> SsrfPolicy {
@@ -1282,17 +1349,106 @@ mod tests {
         .expect("a paused response event")
     }
 
+    /// A paused main-frame document request for `url`, a redirect hop when `redirected` is set.
+    fn main_frame_request(url: &str, redirected: bool) -> EventRequestPaused {
+        let mut event = serde_json::json!({
+            "requestId": format!("interception-{url}"),
+            "request": {
+                "url": url,
+                "method": "GET",
+                "headers": {},
+                "initialPriority": "VeryHigh",
+                "referrerPolicy": "no-referrer",
+            },
+            "frameId": "MAIN",
+            "resourceType": "Document",
+        });
+        if redirected {
+            event["redirectedRequestId"] = serde_json::json!("interception-earlier");
+        }
+        serde_json::from_value(event).expect("a paused request event")
+    }
+
+    #[test]
+    fn a_navigation_after_the_first_counts_one_redirect_and_a_redirect_hop_none() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        let verdict = |url: &str, redirected: bool| {
+            navigation_verdict(&main_frame_request(url, redirected), &main_frame, 1, &state)
+        };
+        assert!(
+            verdict("http://example.com/", false),
+            "the requested navigation is free"
+        );
+        assert!(
+            verdict("http://example.com/hop", true),
+            "a redirect hop counts at its response"
+        );
+        assert!(
+            verdict("http://example.com/refresh", false),
+            "the first page navigation is within 1"
+        );
+        assert!(
+            !verdict("http://example.com/again", false),
+            "the second is past the limit"
+        );
+        state.lock().expect("state lock").navigation_ended = true;
+        assert!(
+            verdict("http://example.com/click", false),
+            "an ended navigation counts nothing"
+        );
+        assert_eq!(state.into_inner().expect("state lock").redirects_followed, 1);
+    }
+
+    #[test]
+    fn a_redirect_past_the_limit_stops_the_requested_navigation_and_drops_a_later_one() {
+        let main_frame = FrameId::new("MAIN");
+        let state = Mutex::new(InterceptOutcome::default());
+        let redirect = |network_id: &str| {
+            let mut event = main_frame_response(network_id, 302);
+            event.response_headers = Some(vec![super::HeaderEntry::new("Location", "/next")]);
+            event
+        };
+        assert!(matches!(
+            main_frame_verdict(&redirect("A"), &main_frame, 1, &state),
+            Verdict::Continue(None)
+        ));
+        assert!(matches!(
+            main_frame_verdict(&redirect("B"), &main_frame, 1, &state),
+            Verdict::Refuse
+        ));
+        assert_eq!(
+            state
+                .lock()
+                .expect("state lock")
+                .stopped_response
+                .as_ref()
+                .map(|stop| stop.status),
+            Some(302),
+            "the requested navigation stops on the redirect at the limit"
+        );
+        assert!(matches!(
+            main_frame_verdict(&main_frame_response("C", 200), &main_frame, 1, &state),
+            Verdict::Continue(None)
+        ));
+        assert!(
+            matches!(
+                main_frame_verdict(&redirect("D"), &main_frame, 1, &state),
+                Verdict::Abort
+            ),
+            "a redirect past the limit after the first document is dropped"
+        );
+    }
+
     #[test]
     fn keeps_only_the_committed_document_and_the_newest_response() {
         let main_frame = FrameId::new("MAIN");
         let state = Mutex::new(InterceptOutcome::default());
         for (network_id, status, committed) in [("A", 200, None), ("B", 204, Some("A")), ("C", 204, Some("A"))] {
             state.lock().expect("state lock").committed_loader = committed.map(str::to_owned);
-            assert!(main_frame_verdict(
-                &main_frame_response(network_id, status),
-                &main_frame,
-                0,
-                &state
+            assert!(matches!(
+                main_frame_verdict(&main_frame_response(network_id, status), &main_frame, 0, &state),
+                Verdict::Continue(None)
             ));
         }
         let state = state.into_inner().expect("state lock");
@@ -1854,9 +2010,10 @@ mod race_tests {
                 .await
                 .expect("the listener must start");
         let page = browser.new_page("about:blank").await.expect("page");
+        // The two script navigations below count against the redirect limit.
         let watch = firewall
             .handle()
-            .watch(&page, &config(), 0)
+            .watch(&page, &config(), 2)
             .await
             .expect("the watch must start");
         let site = no_content_site().await;
