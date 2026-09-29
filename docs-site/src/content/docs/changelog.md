@@ -78,10 +78,11 @@ title: "Changelog"
 - **A robots.txt that says "blocked" in a comment is read as rules.** Behind Cloudflare, a
   `server: cloudflare` header and the word "blocked" anywhere in the body matched a block-page
   fingerprint, so a real robots.txt with a comment such as "AI crawlers are blocked below" denied
-  the whole site. A robots.txt body with at least one Allow or Disallow rule under a User-agent line
-  and no markup outside comments is now read as the site's rules. Any other body that fingerprints
-  as a block page still denies the whole site at any size up to 100 KB, including a text block page
-  that echoes a `User-Agent` header or carries a lone `Sitemap` line. (#507)
+  the whole site. The robots.txt fetch now leaves whole-line comments (lines that start with `#`)
+  out of the fingerprint, so a file whose only match is in such a comment is read as the site's
+  rules. Any other body that fingerprints as a block page still denies the whole site at any size
+  up to 100 KB. So does a robots.txt with the word in a rule (`Disallow: /blocked-users`) or in a
+  trailing comment, and any body that contains `<`, which the check reads whole. (#507)
 
 - **`crawl_waf_blocks_total` counts refused responses, once each.** The counter moved on every
   WAF fingerprint match. The fetch path fingerprints one response more than once, so a single block

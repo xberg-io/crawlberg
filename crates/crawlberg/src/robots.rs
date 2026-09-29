@@ -47,8 +47,6 @@ struct RobotsParseState {
     current_rules: RulesBlock,
     in_rules: bool,
     sitemaps: Vec<String>,
-    /// How many Allow or Disallow lines came after a User-agent line, inside a group.
-    grouped_rules: usize,
 }
 
 impl RobotsParseState {
@@ -74,14 +72,12 @@ impl RobotsParseState {
             }
             "allow" => {
                 self.in_rules = true;
-                self.grouped_rules += usize::from(!self.current_agents.is_empty());
                 if !value.is_empty() {
                     self.current_rules.allow.push(value.to_owned());
                 }
             }
             "disallow" => {
                 self.in_rules = true;
-                self.grouped_rules += usize::from(!self.current_agents.is_empty());
                 if !value.is_empty() {
                     self.current_rules.disallow.push(value.to_owned());
                 }
@@ -102,13 +98,6 @@ impl RobotsParseState {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// Fold one content line into the state; a line without a `:` is not a directive.
-    fn apply_line(&mut self, line: &str) {
-        if let Some((key, value)) = line.split_once(':') {
-            self.apply_directive(&key.trim().to_lowercase(), value.trim());
         }
     }
 
@@ -165,40 +154,26 @@ fn select_rule_blocks<'a>(
     (specific_block, wildcard_block)
 }
 
-/// Each line of `body` without its comment, trimmed, skipping lines left empty.
-fn content_lines(body: &str) -> impl Iterator<Item = &str> {
-    body.lines()
-        .map(|line| line.split('#').next().unwrap_or("").trim())
-        .filter(|line| !line.is_empty())
-}
-
-/// Fold every directive line of `body` into a fresh parse state.
-fn scan(body: &str) -> RobotsParseState {
-    let mut state = RobotsParseState::default();
-    for line in content_lines(body) {
-        state.apply_line(line);
-    }
-    state
-}
-
-/// Whether `body` is a robots.txt file: at least one Allow or Disallow rule under a User-agent
-/// line (an RFC 9309 group with a rule), and no markup outside comments.
+/// `body` as the robots.txt block-page check reads it: without its whole-line comments, or
+/// unchanged when it holds a `<`.
 ///
-/// ~keep A lone User-agent, Sitemap or `allow:` line does not count: a WAF text page that echoes
-/// the request's `User-Agent` header, or a challenge script with an `allow: false` key, would
-/// otherwise read as rules that allow the whole site. An HTML interstitial opens with a tag, so a
-/// `<` outside a comment marks the body as a page even when it shows robots.txt lines. A real
-/// file can say anything in a comment, such as "AI crawlers are blocked below", so comments are
-/// not read (crawlberg#507).
-pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
-    let mut state = RobotsParseState::default();
-    for line in content_lines(body) {
-        if line.contains('<') {
-            return false;
-        }
-        state.apply_line(line);
+/// ~keep A robots.txt comment is written for a human reader and can say anything, such as "AI
+/// crawlers are blocked below" (crawlberg#507). Only a line whose first non-space character is
+/// `#` is left out. A trailing comment stays, because in an HTML page a `#` in a style rule or a
+/// link can come before the block phrase on the same line. A body with any `<` is read whole:
+/// robots.txt has no use for `<`, and in an HTML page a style rule can also start a line with
+/// `#`. This only picks the lines the fingerprint sees; [`parse_robots_txt`] reads comments its
+/// own way.
+pub(crate) fn fingerprint_text(body: &str) -> std::borrow::Cow<'_, str> {
+    if body.contains('<') {
+        return std::borrow::Cow::Borrowed(body);
     }
-    state.grouped_rules > 0
+    let mut text = String::with_capacity(body.len());
+    for line in body.lines().filter(|line| !line.trim_start().starts_with('#')) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    std::borrow::Cow::Owned(text)
 }
 
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
@@ -207,7 +182,20 @@ pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
 pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
     let ua_lower = user_agent.to_lowercase();
 
-    let (blocks, sitemaps) = scan(body).finish();
+    let mut state = RobotsParseState::default();
+    for raw_line in body.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        state.apply_directive(&key.trim().to_lowercase(), value.trim());
+    }
+
+    let (blocks, sitemaps) = state.finish();
     let (specific_block, wildcard_block) = select_rule_blocks(&blocks, &ua_lower);
 
     let using_wildcard = specific_block.is_none() && wildcard_block.is_some();
@@ -542,24 +530,28 @@ mod tests {
     }
 
     #[test]
-    fn a_body_reads_as_robots_txt_only_with_an_allow_or_disallow_rule_under_a_user_agent_line() {
+    fn fingerprint_text_drops_only_whole_line_comments_and_reads_markup_whole() {
         for (body, expected) in [
-            ("User-agent: *\nDisallow: /private\n", true),
-            ("User-agent: *\nAllow: /\n", true),
-            ("User-agent: *\nDisallow:\n", true),
-            ("# blocked\nUser-agent: GPTBot\nDisallow: /\n", true),
-            ("User-Agent: bot\nIP: 203.0.113.9\n", false),
-            ("User-agent:\n", false),
-            ("Sitemap: https://example.com/sitemap.xml\n", false),
-            ("User-agent: *\nCrawl-delay: 5\n", false),
-            ("allow: false,\nUser-agent: *\n", false),
-            ("Disallow: /private\n", false),
-            ("<pre>\nUser-agent: *\nDisallow: /private\n</pre>\n", false),
+            (
+                "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n",
+                "User-agent: GPTBot\nDisallow: /\n",
+            ),
+            ("  # blocked\r\nDisallow: /private\r\n", "Disallow: /private\n"),
+            ("Disallow: /private # blocked\n", "Disallow: /private # blocked\n"),
+            (
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+                "Sorry, you have been blocked\nUser-agent: *\nAllow: /\n",
+            ),
+            (
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+                "<style>\n#blocked-msg { color: red }\n</style>\n",
+            ),
+            ("", ""),
         ] {
             assert_eq!(
-                reads_as_robots_txt(body),
+                fingerprint_text(body),
                 expected,
-                "{body:?} must read as robots.txt only when it has a rule inside a group"
+                "{body:?}: only a whole-line comment in a body with no `<` must go"
             );
         }
     }
