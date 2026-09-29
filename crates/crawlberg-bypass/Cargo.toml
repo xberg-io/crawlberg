@@ -31,6 +31,7 @@ reqwest = { workspace = true, features = ["default-tls", "http2", "charset", "sy
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true }
 wiremock = "0.6"
 
 [lints]
