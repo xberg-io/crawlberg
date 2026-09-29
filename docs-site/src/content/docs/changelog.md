@@ -101,6 +101,15 @@ title: "Changelog"
 
 ### Fixed
 
+- **`map()` did not follow a meta refresh.** A page that forwards with a
+  `<meta http-equiv="refresh">` tag or a `Refresh` header gave no URLs, because the direct fetch
+  followed only HTTP redirects. It now follows both the way the crawl does: the same tags win,
+  only the same HTTP statuses (301, 302, 303, 307, 308) count as a redirect hop, each hop counts
+  toward `max_redirects`, each hop passes the SSRF policy, and the seed's credentials go only to
+  the seed host. The links come from the page it lands on. A chain that reaches the redirect
+  limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
+  the crawl does, instead of failing the whole `map()`. (#502)
+
 - **A custom retry policy got no status for a 403 or a WAF block.** A plain 403 and a response
   refused as a WAF block ended the attempt with an error that did not keep the response status, so
   `AttemptOutcome.status` stayed empty for them. Both errors now keep the status, so the policy

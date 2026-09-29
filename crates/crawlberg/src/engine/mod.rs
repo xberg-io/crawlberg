@@ -18,7 +18,7 @@ mod link_scope;
 #[cfg(not(target_arch = "wasm32"))]
 mod page_result;
 #[cfg(not(target_arch = "wasm32"))]
-mod redirect;
+pub(crate) mod redirect;
 #[cfg(not(target_arch = "wasm32"))]
 mod robots_cache;
 mod scrape_page;
