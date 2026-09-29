@@ -8,9 +8,9 @@ use url::Url;
 use crate::error::CrawlError;
 use crate::html::{MaskedHtml, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
-use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
+use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
-    SitemapDocument, SitemapWalkContext, decompress_gzip, fetch_sitemap_tree, is_sitemap_index, parse_sitemap_xml,
+    SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
     process_sitemap_response,
 };
 use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
@@ -33,14 +33,10 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
     let parsed_url = seed.url().clone();
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
-    let context = SitemapWalkContext {
-        config,
-        client: &client,
-        filter: &filter,
-    };
+    let context = SitemapWalkContext::new(config, &client, &filter);
 
     if config.respect_robots_txt {
-        let urls = sitemap_urls_from_robots(url, &parsed_url, config, &client, &context).await;
+        let urls = sitemap_urls_from_robots(url, config, &client, &context).await;
         if !urls.is_empty() {
             return Ok(filter_map_result(urls, &filter, config.map_limit));
         }
@@ -62,7 +58,6 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
 /// which the caller treats as "no hints" and falls through to `/sitemap.xml`.
 async fn sitemap_urls_from_robots(
     url: &str,
-    parsed_url: &Url,
     config: &CrawlConfig,
     client: &reqwest::Client,
     context: &SitemapWalkContext<'_>,
@@ -75,8 +70,8 @@ async fn sitemap_urls_from_robots(
     // `DisallowAll` therefore mean "no sitemap hints", falling through to /sitemap.xml.
     // ~keep The `"*"` user-agent is preserved; see `helpers::default_robots_user_agent`.
     let ua = config.user_agent.as_deref().unwrap_or("*");
-    let crate::helpers::RobotsOutcome::Rules(rules) =
-        crate::helpers::fetch_robots_outcome(url, config, client, ua).await
+    let (crate::helpers::RobotsOutcome::Rules(rules), Some(robots_url)) =
+        crate::helpers::fetch_robots_document(url, config, client, ua).await
     else {
         return Vec::new();
     };
@@ -91,14 +86,32 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let Some(sitemap_url) = resolve_redirect(url, sitemap_ref) else {
+        let Some(resolved) = resolve_sitemap_directive(&robots_url, sitemap_ref) else {
             continue;
         };
-        let resolved = rewrite_url_host(&sitemap_url, parsed_url);
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
     }
     all_urls
+}
+
+/// The URL to fetch for one robots.txt `Sitemap:` directive, resolved against `robots_url`, the
+/// address that served robots.txt after redirects. `None` when `sitemap_ref` cannot be resolved
+/// against it at all, which the caller skips rather than fetching as raw text.
+///
+/// ~keep A directive on another host is fetched from that host: the sitemaps.org protocol lets
+/// ~keep robots.txt name a sitemap on another host. The SSRF policy gates the fetch, and seed
+/// ~keep credentials go only to the seed host.
+fn resolve_sitemap_directive(robots_url: &str, sitemap_ref: &str) -> Option<String> {
+    let Some(resolved) = resolve_redirect(robots_url, sitemap_ref) else {
+        tracing::debug!(
+            url = %crate::net::redact_url_credentials(robots_url),
+            target_len = sitemap_ref.len(),
+            "robots.txt Sitemap: directive failed to parse; skipping it"
+        );
+        return None;
+    };
+    Some(resolved.into())
 }
 
 /// Collect URLs from the conventional `/sitemap.xml`, if the origin serves one.
@@ -118,6 +131,7 @@ async fn sitemap_urls_from_well_known(
     process_sitemap_response(
         &SitemapDocument {
             url: &sitemap_url,
+            final_url: &sitemap_resp.final_url,
             body: &sitemap_resp.body,
             body_bytes: &sitemap_resp.body_bytes,
             content_type: &sitemap_resp.content_type,
@@ -144,7 +158,7 @@ async fn urls_from_direct_response(
         || url.to_lowercase().ends_with(".gz")
         || (resp.body_bytes.len() >= 2 && resp.body_bytes[0] == GZIP_MAGIC[0] && resp.body_bytes[1] == GZIP_MAGIC[1]);
     if is_gzip && let Ok(decompressed) = decompress_gzip(&resp.body_bytes) {
-        let urls = parse_sitemap_xml(&decompressed);
+        let urls = collect_urlset_entries(&resp.final_url, &decompressed, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -154,7 +168,7 @@ async fn urls_from_direct_response(
         if is_sitemap_index(&resp.body) {
             return fetch_sitemap_tree(url, context, config.map_limit).await;
         }
-        let urls = parse_sitemap_xml(&resp.body);
+        let urls = collect_urlset_entries(&resp.final_url, &resp.body, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
         }
@@ -200,6 +214,10 @@ fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<Sitemap
 /// Compiled URL filter for map results: `exclude_paths` regexes plus an optional
 /// case-insensitive `map_search` substring.
 ///
+/// The term and each address are compared in their [`crate::normalize::search_key`] form, which
+/// joins canonically equivalent spellings and folds case without a locale. The Turkish dotted
+/// and dotless `i` therefore never match their Turkish case partners.
+///
 /// Built once per [`map`] call so the same predicate can be applied incrementally
 /// while sitemaps are fetched — this bounds peak memory instead of materializing
 /// the entire sitemap tree before filtering.
@@ -215,7 +233,7 @@ impl MapFilter {
     /// Returns an error if any `exclude_paths` pattern is not a valid regex.
     pub(crate) fn from_config(config: &CrawlConfig) -> Result<Self, CrawlError> {
         let exclude_paths = crate::helpers::compile_regexes(&config.exclude_paths)?;
-        let search = config.map_search.as_ref().map(|s| s.to_lowercase());
+        let search = config.map_search.as_deref().map(crate::normalize::search_key);
         Ok(Self {
             exclude_paths,
             search,
@@ -227,6 +245,10 @@ impl MapFilter {
     ///
     /// A URL that fails to parse is not subject to `exclude_paths` (there is no
     /// path to match against) but is still subject to `map_search`.
+    ///
+    /// `map_search` matches either the address as `map()` returns it (percent-encoded,
+    /// punycode host) or its decoded, human-readable form, so a caller's non-ASCII term
+    /// still finds an address whose path is percent-encoded or whose host is punycode.
     pub(crate) fn matches(&self, url: &str) -> bool {
         if !self.exclude_paths.is_empty()
             && let Ok(parsed) = Url::parse(url)
@@ -245,6 +267,7 @@ impl MapFilter {
         }
         if let Some(ref search) = self.search
             && !url.to_lowercase().contains(search)
+            && !crate::normalize::search_key(&crate::normalize::decoded_for_search(url)).contains(search)
         {
             return false;
         }
@@ -264,14 +287,15 @@ pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, filter: &MapFilter, l
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tracing_capture::{assert_logged_without_secret, capture_events};
+    use crate::types::CrawlConfig;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// Map an already-clean test URL, as the engine does after admission.
     async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
         super::map(&crate::engine::SeedUrl::for_test(url), config).await
     }
-    use crate::types::CrawlConfig;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// A `CrawlConfig` that allows fetching the wiremock server on `127.0.0.1`
     /// without tripping SSRF private-network protections.
@@ -280,6 +304,35 @@ mod tests {
             respect_robots_txt: false,
             ..CrawlConfig::builder().allow_private_networks(true).build()
         }
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_sitemap_directive_is_refused_not_followed_raw() {
+        let resolved = resolve_sitemap_directive("https://example.com/", "https://ex ample.com/bad.xml");
+
+        assert!(
+            resolved.is_none(),
+            "a robots.txt Sitemap: directive that fails to parse must not be followed as raw \
+             text, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn an_unparseable_sitemap_directive_with_credentials_is_never_logged() {
+        let (resolved, fields) = capture_events(|| {
+            resolve_sitemap_directive(
+                "https://example.com/robots.txt",
+                "https://user:hunter2@ex ample.com/bad.xml",
+            )
+        });
+
+        assert!(
+            resolved.is_none(),
+            "an unparseable Sitemap: directive must not be followed"
+        );
+        assert_logged_without_secret(&fields, "hunter2", "example.com/robots.txt");
     }
 
     fn urlset(locs: &[String]) -> String {
@@ -515,6 +568,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_search_matches_a_non_ascii_term_against_a_percent_encoded_path() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://example.com/café".to_owned(),
+            "https://example.com/other".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            map_search: Some("café".to_owned()),
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.com/caf%C3%A9".to_owned()],
+            "map_search=\"café\" must match the entry map() stores percent-encoded, got {:?}",
+            result.urls
+        );
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_non_ascii_term_against_a_punycode_host() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let locs = vec![
+            "https://bücher.example/x".to_owned(),
+            "https://example.com/other".to_owned(),
+        ];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+
+        let config = CrawlConfig {
+            map_search: Some("bücher".to_owned()),
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec!["https://xn--bcher-kva.example/x".to_owned()],
+            "map_search=\"bücher\" must match the entry map() stores as punycode, got {:?}",
+            result.urls
+        );
+    }
+
+    /// The addresses `map()` returns when a sitemap lists `loc` and an unrelated page, and
+    /// `map_search` is `term`.
+    async fn map_search_results(term: &str, loc: &str) -> Vec<String> {
+        let mock = MockServer::start().await;
+        let locs = vec![loc.to_owned(), "https://example.com/other".to_owned()];
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+        let config = CrawlConfig {
+            map_search: Some(term.to_owned()),
+            ..local_test_config()
+        };
+        map_urls(&mock.uri(), &config).await
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_decomposed_term_against_a_punycode_host() {
+        let urls = map_search_results("bu\u{308}cher", "https://bücher.example/x").await;
+
+        assert_eq!(urls, vec!["https://xn--bcher-kva.example/x".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_composed_term_against_a_decomposed_path() {
+        let urls = map_search_results("café", "https://example.com/cafe\u{301}").await;
+
+        assert_eq!(urls, vec!["https://example.com/cafe%CC%81".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_matches_a_decomposed_term_against_a_composed_path() {
+        let urls = map_search_results("cafe\u{301}", "https://example.com/caf\u{e9}").await;
+
+        assert_eq!(urls, vec!["https://example.com/caf%C3%A9".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_search_folds_sharp_s_to_ss() {
+        let urls = map_search_results("STRASSE", "https://example.com/Straße").await;
+
+        assert_eq!(urls, vec!["https://example.com/Stra%C3%9Fe".to_owned()]);
+    }
+
+    #[tokio::test]
     async fn map_applies_exclude_paths_to_discovered_urls() {
         let mock = MockServer::start().await;
         let base = mock.uri();
@@ -648,5 +792,1046 @@ mod tests {
             error.to_string().contains("invalid URL"),
             "expected an invalid-URL error, got: {error}"
         );
+    }
+
+    /// Serve `locs` as the well-known `/sitemap.xml` and return the addresses `map()` reports.
+    async fn map_well_known_urlset(locs: &[&str], config: &CrawlConfig) -> (String, Vec<String>) {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs: Vec<String> = locs.iter().map(|loc| (*loc).to_owned()).collect();
+        mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)).await;
+        let result = map(&base, config).await.expect("map should succeed");
+        (base, result.urls.into_iter().map(|u| u.url).collect())
+    }
+
+    #[tokio::test]
+    async fn map_lower_cases_the_scheme_and_host_of_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["HTTPS://EXAMPLE.COM/Page"], &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/Page".to_owned()],
+            "a urlset <loc> must be returned in the parser's normalized form, with the path's case kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_drops_the_default_port_of_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["https://example.com:443/a"], &local_test_config()).await;
+
+        assert_eq!(urls, vec!["https://example.com/a".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn map_strips_stray_whitespace_inside_a_urlset_loc() {
+        let (_, urls) = map_well_known_urlset(&["https://example.com/a\n\tb"], &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/ab".to_owned()],
+            "an embedded newline or tab must be removed by the URL parser, not returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_urlset_loc_against_the_sitemap_url() {
+        let (base, urls) = map_well_known_urlset(&["/relative/page"], &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/relative/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_drops_a_urlset_loc_that_names_the_sitemap_itself() {
+        let locs = ["?q=1", "#frag", "sitemap.xml", "/sitemap.xml#top", "page"];
+
+        let (base, urls) = map_well_known_urlset(&locs, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/page")],
+            "a <loc> that is only a query is dropped for being query-only; one that is only a \
+             fragment, or that names the sitemap's own address, is dropped for naming the sitemap itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_drops_a_query_only_loc_even_when_it_resolves_to_a_different_page_than_the_sitemap() {
+        // ~keep A urlset served at `/` resolves `?page=2` to `/?page=2`, a page distinct from the
+        // ~keep sitemap's own address; the query-only rule drops it anyway, not a same-address match.
+        let seed = MockServer::start().await;
+        let base = seed.uri();
+        mount_body(
+            &seed,
+            "/",
+            "application/xml",
+            urlset(&["?page=2".to_owned(), "/about".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/about")]);
+    }
+
+    #[tokio::test]
+    async fn map_applies_exclude_paths_to_a_relative_urlset_loc() {
+        let config = CrawlConfig {
+            exclude_paths: vec!["^/admin".to_owned()],
+            ..local_test_config()
+        };
+        let (base, urls) = map_well_known_urlset(&["/admin/secret", "/blog/one"], &config).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/blog/one")],
+            "a relative <loc> resolves to an address, so exclude_paths must apply to it"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_two_spellings_of_one_urlset_page_once() {
+        let (_, urls) = map_well_known_urlset(
+            &[
+                "https://example.com/a",
+                "HTTPS://example.com:443/a",
+                "https://example.com/b",
+            ],
+            &local_test_config(),
+        )
+        .await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn map_limit_is_not_consumed_by_a_duplicate_urlset_loc() {
+        let config = CrawlConfig {
+            map_limit: Some(2),
+            ..local_test_config()
+        };
+        let (_, urls) = map_well_known_urlset(
+            &[
+                "https://example.com/a",
+                "https://EXAMPLE.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+            ],
+            &config,
+        )
+        .await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
+            "a duplicate must be dropped before it counts toward map_limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_a_page_listed_by_two_child_sitemaps_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/sitemap.xml",
+            "application/xml",
+            format!(
+                r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>{base}/one.xml</loc></sitemap><sitemap><loc>{base}/two.xml</loc></sitemap></sitemapindex>"#
+            ),
+        )
+        .await;
+        let one = vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        let two = vec![
+            "https://example.com:443/a".to_owned(),
+            "https://example.com/c".to_owned(),
+        ];
+        mount_body(&mock, "/one.xml", "application/xml", urlset(&one)).await;
+        mount_body(&mock, "/two.xml", "application/xml", urlset(&two)).await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec![
+                "https://example.com/a".to_owned(),
+                "https://example.com/b".to_owned(),
+                "https://example.com/c".to_owned()
+            ],
+            "a page listed by two child sitemaps of one index must be returned once"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_returns_a_page_listed_by_two_robots_sitemap_directives_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {base}/one.xml\nSitemap: {base}/two.xml\n"),
+        )
+        .await;
+        let one = vec!["https://example.com/a".to_owned()];
+        let two = vec!["HTTPS://example.com/a".to_owned(), "https://example.com/b".to_owned()];
+        mount_body(&mock, "/one.xml", "application/xml", urlset(&one)).await;
+        mount_body(&mock, "/two.xml", "application/xml", urlset(&two)).await;
+
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), "https://example.com/b".to_owned()],
+            "a page listed by two robots.txt Sitemap: directives must be returned once"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_normalizes_and_dedupes_a_urlset_fetched_directly() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec![
+            "https://example.com/a".to_owned(),
+            "HTTPS://example.com:443/a".to_owned(),
+            "/relative".to_owned(),
+        ];
+        mount_body(&mock, "/feed.xml", "application/xml", urlset(&locs)).await;
+
+        let result = map(&format!("{base}/feed.xml"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), format!("{base}/relative")]
+        );
+    }
+
+    #[tokio::test]
+    async fn map_normalizes_and_dedupes_a_gzip_urlset_fetched_directly() {
+        use std::io::Write as _;
+
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let locs = vec![
+            "https://example.com/a".to_owned(),
+            "HTTPS://example.com:443/a".to_owned(),
+            "/relative".to_owned(),
+        ];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(urlset(&locs).as_bytes()).expect("gzip write");
+        let gzipped = encoder.finish().expect("gzip finish");
+        mount_bytes(&mock, "/sitemap.xml.gz", "application/octet-stream", gzipped).await;
+
+        let result = map(&format!("{base}/sitemap.xml.gz"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/a".to_owned(), format!("{base}/relative")]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn map_drops_an_unparseable_urlset_loc_and_never_logs_its_credentials() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime must build");
+        let mock = runtime.block_on(MockServer::start());
+        let base = mock.uri();
+        let bad_loc = "https://user:hunter2@ex ample.com/bad";
+        let locs = vec![bad_loc.to_owned(), "https://example.com/kept".to_owned()];
+        runtime.block_on(mount_body(&mock, "/sitemap.xml", "application/xml", urlset(&locs)));
+
+        let (result, fields) = capture_events(|| runtime.block_on(map(&base, &local_test_config())));
+
+        assert_eq!(
+            result
+                .expect("map should succeed")
+                .urls
+                .into_iter()
+                .map(|u| u.url)
+                .collect::<Vec<_>>(),
+            vec!["https://example.com/kept".to_owned()],
+            "a <loc> that does not parse must be dropped, not returned as text"
+        );
+        assert_logged_without_secret(&fields, "hunter2", "urlset entry");
+        assert!(
+            fields
+                .iter()
+                .any(|(name, value)| name == "target_len" && *value == bad_loc.len().to_string()),
+            "the dropped <loc> must be logged by length, got {fields:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(dropped_target_log)]
+    fn a_credentialed_sitemap_url_is_redacted_when_logging_an_unparseable_urlset_loc() {
+        // ~keep The engine admits no seed with userinfo, so `map()` never hands the walk a
+        // ~keep credentialed document URL; this calls the urlset reader directly to pin
+        // ~keep `log_unparseable_loc`'s `source_url_parses` branch, which redacts the address.
+        let config = local_test_config();
+        let client = reqwest::Client::new();
+        let filter = MapFilter::from_config(&config).expect("filter");
+        let context = SitemapWalkContext::new(&config, &client, &filter);
+        let bad_loc = "https://ex ample.com/bad";
+        let locs = vec![bad_loc.to_owned(), "https://example.com/kept".to_owned()];
+        let body = urlset(&locs);
+
+        let (urls, fields) = capture_events(|| {
+            collect_urlset_entries("https://user:hunter2@example.com/sitemap.xml", &body, &context, None)
+        });
+
+        assert_eq!(
+            urls.into_iter().map(|u| u.url).collect::<Vec<_>>(),
+            vec!["https://example.com/kept".to_owned()],
+            "a <loc> that does not parse must still be dropped when the sitemap URL carries credentials"
+        );
+        assert_logged_without_secret(&fields, "hunter2", "example.com/sitemap.xml");
+    }
+
+    async fn mount_redirect(mock: &MockServer, route: &str, location: &str) {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(301).append_header("location", location))
+            .mount(mock)
+            .await;
+    }
+
+    fn sitemap_index(child_locs: &[&str]) -> String {
+        let mut body =
+            String::from(r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#);
+        for loc in child_locs {
+            body.push_str(&format!("<sitemap><loc>{loc}</loc></sitemap>"));
+        }
+        body.push_str("</sitemapindex>");
+        body
+    }
+
+    /// The addresses `map()` returns for `url`.
+    async fn map_urls(url: &str, config: &CrawlConfig) -> Vec<String> {
+        let result = map(url, config).await.expect("map should succeed");
+        result.urls.into_iter().map(|u| u.url).collect()
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_urlset_loc_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/sitemap.xml").await;
+        mount_body(
+            &mock,
+            "/nested/sitemap.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec![format!("{base}/nested/page")],
+            "a relative <loc> must resolve against the URL that served the sitemap, not the one requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_index_child_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/index.xml").await;
+        mount_body(
+            &mock,
+            "/nested/index.xml",
+            "application/xml",
+            sitemap_index(&["child.xml"]),
+        )
+        .await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+        mount_body(&mock, "/", "text/html", "<html><body></body></html>".to_owned()).await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-child".to_owned()],
+            "a relative index child must resolve against the URL that served the index"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_fetches_an_absolute_index_child_from_its_own_host_after_the_index_redirected() {
+        let requested = MockServer::start().await;
+        let serving = MockServer::start().await;
+        let requested_base = requested.uri();
+        // ~keep A second host name for the same loopback address, so the redirect crosses hosts.
+        let serving_base = serving.uri().replace("127.0.0.1", "localhost");
+        mount_redirect(&requested, "/sitemap.xml", &format!("{serving_base}/index.xml")).await;
+        mount_body(
+            &serving,
+            "/index.xml",
+            "application/xml",
+            sitemap_index(&[&format!("{requested_base}/child.xml")]),
+        )
+        .await;
+        mount_body(
+            &serving,
+            "/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-serving-host".to_owned()]),
+        )
+        .await;
+        mount_body(
+            &requested,
+            "/child.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-requested-host".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&requested_base, &local_test_config()).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-requested-host".to_owned()],
+            "an absolute index child must be fetched from its own host, not the host that served the index"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(sitemap_redaction_log)]
+    fn map_fetches_index_children_on_three_other_hosts_from_their_own_hosts() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime must build");
+        let index_server = runtime.block_on(MockServer::start());
+        let children: Vec<MockServer> = (0..3).map(|_| runtime.block_on(MockServer::start())).collect();
+        // ~keep The index host is `localhost`, each child a distinct `127.0.0.1` port, so every
+        // ~keep child is on another host than the index.
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        let child_locs: Vec<String> = children.iter().map(|c| format!("{}/sitemap.xml", c.uri())).collect();
+        let child_refs: Vec<&str> = child_locs.iter().map(String::as_str).collect();
+        runtime.block_on(mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&child_refs),
+        ));
+        runtime.block_on(mount_body(&index_server, "/", "text/html", "<html></html>".to_owned()));
+        let mut expected = Vec::new();
+        for (i, child) in children.iter().enumerate() {
+            let page = format!("https://example.com/from-child-{i}");
+            runtime.block_on(mount_body(
+                child,
+                "/sitemap.xml",
+                "application/xml",
+                urlset(std::slice::from_ref(&page)),
+            ));
+            expected.push(page);
+        }
+
+        let (result, fields) = capture_events(|| runtime.block_on(map(&index_base, &local_test_config())));
+
+        let urls: Vec<String> = result
+            .expect("map should succeed")
+            .urls
+            .into_iter()
+            .map(|u| u.url)
+            .collect();
+        assert_eq!(
+            urls, expected,
+            "each cross-host index child must be fetched from its own host"
+        );
+        for (i, child) in children.iter().enumerate() {
+            let hits = runtime
+                .block_on(child.received_requests())
+                .expect("wiremock records requests")
+                .len();
+            assert_eq!(hits, 1, "child server {i} must get exactly one GET, got {hits}");
+        }
+        let cycles: Vec<&(String, String)> = fields.iter().filter(|(_, v)| v.contains("cycle detected")).collect();
+        assert!(cycles.is_empty(), "no child may be skipped as a cycle, got {cycles:?}");
+    }
+
+    #[tokio::test]
+    async fn map_refuses_a_cross_host_index_child_the_ssrf_policy_denies_and_fetches_its_allowed_sibling() {
+        let index_server = MockServer::start().await;
+        let denied = MockServer::start().await;
+        let allowed = MockServer::start().await;
+        // ~keep Only the host name `localhost` is allowlisted, so the literal `127.0.0.1` child is
+        // ~keep refused before any connection while the `localhost` sibling is fetched.
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        let allowed_base = allowed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[
+                &format!("{}/sitemap.xml", denied.uri()),
+                &format!("{allowed_base}/sitemap.xml"),
+            ]),
+        )
+        .await;
+        for (server, page) in [(&denied, "from-denied"), (&allowed, "from-allowed")] {
+            mount_body(
+                server,
+                "/sitemap.xml",
+                "application/xml",
+                urlset(&[format!("https://example.com/{page}")]),
+            )
+            .await;
+        }
+        let config = CrawlConfig {
+            respect_robots_txt: false,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
+                .build()
+        };
+
+        let urls = map_urls(&index_base, &config).await;
+
+        // ~keep GUARD: green before the cross-host change too, where the denied child was moved
+        // ~keep onto the index host; it pins that the SSRF policy still gates each child fetch.
+        assert_eq!(urls, vec!["https://example.com/from-allowed".to_owned()]);
+        let denied_hits = denied
+            .received_requests()
+            .await
+            .expect("wiremock records requests")
+            .len();
+        assert_eq!(denied_hits, 0, "a child the SSRF policy denies must never be requested");
+    }
+
+    #[tokio::test]
+    async fn map_refuses_a_robots_sitemap_line_on_a_denied_host_and_fetches_its_allowed_sibling() {
+        let seed = MockServer::start().await;
+        let denied = MockServer::start().await;
+        let allowed = MockServer::start().await;
+        // ~keep Only the host name `localhost` is allowlisted, so the robots.txt Sitemap: line on
+        // ~keep the literal `127.0.0.1` denied host is refused before any connection while the
+        // ~keep `localhost` sibling line is fetched.
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        let allowed_base = allowed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &seed,
+            "/robots.txt",
+            "text/plain",
+            format!(
+                "User-agent: *\nSitemap: {}/s.xml\nSitemap: {allowed_base}/s.xml\n",
+                denied.uri()
+            ),
+        )
+        .await;
+        mount_body(
+            &denied,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-denied".to_owned()]),
+        )
+        .await;
+        mount_body(
+            &allowed,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-allowed".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
+                .build()
+        };
+
+        let urls = map_urls(&seed_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-allowed".to_owned()]);
+        let denied_hits = denied
+            .received_requests()
+            .await
+            .expect("wiremock records requests")
+            .len();
+        assert_eq!(
+            denied_hits, 0,
+            "a robots.txt Sitemap: line on a host the SSRF policy denies must never be requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_refuses_a_robots_sitemap_redirect_to_a_denied_host() {
+        let seed = MockServer::start().await;
+        let hop = MockServer::start().await;
+        let denied = MockServer::start().await;
+        // ~keep The hop is on the allowlisted host `localhost`; the redirect it sends points at
+        // ~keep the literal `127.0.0.1` host, which the SSRF policy denies.
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        let hop_base = hop.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &seed,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {hop_base}/s.xml\n"),
+        )
+        .await;
+        mount_redirect(&hop, "/s.xml", &format!("{}/s.xml", denied.uri())).await;
+        mount_body(
+            &denied,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-denied".to_owned()]),
+        )
+        .await;
+        mount_body(&seed, "/", "text/html", "<html></html>".to_owned()).await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::HostMatcher::exact("localhost"))
+                .build()
+        };
+
+        let urls = map_urls(&seed_base, &config).await;
+
+        assert!(
+            !urls.contains(&"https://example.com/from-denied".to_owned()),
+            "got {urls:?}"
+        );
+        let hop_hits = hop.received_requests().await.expect("wiremock records requests").len();
+        assert_eq!(hop_hits, 1, "the allowlisted redirect hop must still be requested");
+        let denied_hits = denied
+            .received_requests()
+            .await
+            .expect("wiremock records requests")
+            .len();
+        assert_eq!(
+            denied_hits, 0,
+            "a robots.txt Sitemap: redirect to a host the SSRF policy denies must never be followed"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_sends_seed_credentials_to_the_index_host_but_not_to_a_cross_host_child() {
+        let index_server = MockServer::start().await;
+        let child = MockServer::start().await;
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[&format!("{}/sitemap.xml", child.uri())]),
+        )
+        .await;
+        mount_body(
+            &child,
+            "/sitemap.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+        let seed = Url::parse(&index_base).expect("mock URL must parse");
+        let config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&index_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
+        let authorized = |requests: Vec<wiremock::Request>| {
+            requests
+                .iter()
+                .filter(|request| request.headers.contains_key("authorization"))
+                .count()
+        };
+        let index_requests = index_server
+            .received_requests()
+            .await
+            .expect("wiremock records requests");
+        assert_eq!(
+            authorized(index_requests),
+            1,
+            "the index host must get the seed credentials"
+        );
+        // ~keep GUARD: the seed-host scope keeps credentials off every other host; it passed before
+        // ~keep the cross-host change too, where no request left the seed host.
+        let child_requests = child.received_requests().await.expect("wiremock records requests");
+        assert_eq!(child_requests.len(), 1, "the child must be fetched once");
+        assert_eq!(
+            authorized(child_requests),
+            0,
+            "a cross-host child must not get the seed credentials"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_sends_seed_credentials_to_the_seed_host_but_not_to_a_cross_host_robots_sitemap() {
+        let seed = MockServer::start().await;
+        let other = MockServer::start().await;
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &seed,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {}/s.xml\n", other.uri()),
+        )
+        .await;
+        mount_body(
+            &other,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-other".to_owned()]),
+        )
+        .await;
+        let seed_url = Url::parse(&seed_base).expect("mock URL must parse");
+        let mut config = CrawlConfig {
+            respect_robots_txt: true,
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed_url,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            ..local_test_config()
+        };
+        config
+            .custom_headers
+            .insert("x-test-secret".to_owned(), "s3".to_owned());
+
+        let urls = map_urls(&seed_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-other".to_owned()]);
+        let header_hits = |requests: &[wiremock::Request], name: &str| {
+            requests.iter().filter(|r| r.headers.contains_key(name)).count()
+        };
+        let seed_requests = seed.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            header_hits(&seed_requests, "authorization"),
+            1,
+            "robots.txt must get the seed credential"
+        );
+        assert_eq!(
+            header_hits(&seed_requests, "x-test-secret"),
+            1,
+            "robots.txt must get the custom header"
+        );
+        let other_requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            header_hits(&other_requests, "authorization"),
+            0,
+            "a credential must not leak to a robots.txt Sitemap: line on another host"
+        );
+        assert_eq!(
+            header_hits(&other_requests, "x-test-secret"),
+            0,
+            "a custom header must not leak to a robots.txt Sitemap: line on another host"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_sends_a_custom_header_to_the_index_host_but_not_to_a_cross_host_child() {
+        let index_server = MockServer::start().await;
+        let child = MockServer::start().await;
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[&format!("{}/sitemap.xml", child.uri())]),
+        )
+        .await;
+        mount_body(
+            &child,
+            "/sitemap.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-child".to_owned()]),
+        )
+        .await;
+        let index_url = Url::parse(&index_base).expect("mock URL must parse");
+        let mut config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(&index_url, None),
+            ..local_test_config()
+        };
+        config
+            .custom_headers
+            .insert("x-test-secret".to_owned(), "s3".to_owned());
+
+        let urls = map_urls(&index_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-child".to_owned()]);
+        let header_hits = |requests: &[wiremock::Request], name: &str| {
+            requests.iter().filter(|r| r.headers.contains_key(name)).count()
+        };
+        let index_requests = index_server
+            .received_requests()
+            .await
+            .expect("wiremock records requests");
+        assert_eq!(
+            header_hits(&index_requests, "x-test-secret"),
+            1,
+            "the index host must get the custom header"
+        );
+        let child_requests = child.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            header_hits(&child_requests, "x-test-secret"),
+            0,
+            "a custom header must not leak to a cross-host index child"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_drops_seed_credentials_when_a_same_host_child_redirects_to_another_host() {
+        let index_server = MockServer::start().await;
+        let other = MockServer::start().await;
+        let index_base = index_server.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &index_server,
+            "/sitemap.xml",
+            "application/xml",
+            sitemap_index(&[&format!("{index_base}/child.xml")]),
+        )
+        .await;
+        mount_redirect(&index_server, "/child.xml", &format!("{}/s.xml", other.uri())).await;
+        mount_body(
+            &other,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-other".to_owned()]),
+        )
+        .await;
+        let seed_url = Url::parse(&index_base).expect("mock URL must parse");
+        let config = CrawlConfig {
+            credential_scope: crate::net::CredentialScope::for_seed(
+                &seed_url,
+                Some(("user".to_owned(), "hunter2".to_owned())),
+            ),
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&index_base, &config).await;
+
+        assert_eq!(urls, vec!["https://example.com/from-other".to_owned()]);
+        let authorized = |requests: &[wiremock::Request]| {
+            requests
+                .iter()
+                .filter(|r| r.headers.contains_key("authorization"))
+                .count()
+        };
+        let index_requests = index_server
+            .received_requests()
+            .await
+            .expect("wiremock records requests");
+        assert_eq!(
+            authorized(&index_requests),
+            2,
+            "the index and the same-host redirect hop must both get the seed credential"
+        );
+        let other_requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(
+            authorized(&other_requests),
+            0,
+            "a credential must not follow a redirect off the seed host"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_redirected_robots_sitemap_against_the_url_after_the_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(
+            &mock,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {base}/custom.xml\n"),
+        )
+        .await;
+        mount_redirect(&mock, "/custom.xml", "/nested/custom.xml").await;
+        mount_body(
+            &mock,
+            "/nested/custom.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&base, &config).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_relative_robots_sitemap_against_the_robots_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/robots.txt", "/moved/robots.txt").await;
+        mount_body(
+            &mock,
+            "/moved/robots.txt",
+            "text/plain",
+            "User-agent: *\nSitemap: s.xml\n".to_owned(),
+        )
+        .await;
+        for (route, page) in [("/moved/s.xml", "from-moved"), ("/s.xml", "from-seed-path")] {
+            mount_body(
+                &mock,
+                route,
+                "application/xml",
+                urlset(&[format!("https://example.com/{page}")]),
+            )
+            .await;
+        }
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&base, &config).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-moved".to_owned()],
+            "a relative Sitemap: line must resolve against the robots.txt address after its redirect"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_fetches_a_robots_sitemap_on_another_host_from_that_host() {
+        let seed = MockServer::start().await;
+        let other = MockServer::start().await;
+        // ~keep The seed host is `localhost` and the sitemap is on `127.0.0.1`, another host.
+        let seed_base = seed.uri().replace("127.0.0.1", "localhost");
+        mount_body(
+            &seed,
+            "/robots.txt",
+            "text/plain",
+            format!("User-agent: *\nSitemap: {}/s.xml#top\n", other.uri()),
+        )
+        .await;
+        mount_body(&seed, "/", "text/html", "<html></html>".to_owned()).await;
+        mount_body(
+            &other,
+            "/s.xml",
+            "application/xml",
+            urlset(&["https://example.com/from-other-host".to_owned()]),
+        )
+        .await;
+        let config = CrawlConfig {
+            respect_robots_txt: true,
+            ..local_test_config()
+        };
+
+        let urls = map_urls(&seed_base, &config).await;
+
+        assert_eq!(
+            urls,
+            vec!["https://example.com/from-other-host".to_owned()],
+            "a robots.txt Sitemap: line on another host must be fetched from that host"
+        );
+        let requests = other.received_requests().await.expect("wiremock records requests");
+        assert_eq!(requests.len(), 1, "the sitemap must be fetched once");
+    }
+
+    #[tokio::test]
+    async fn map_fetches_a_redirected_index_that_lists_itself_once() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/sitemap.xml", "/nested/index.xml").await;
+        mount_body(
+            &mock,
+            "/nested/index.xml",
+            "application/xml",
+            sitemap_index(&["index.xml", "child.xml"]),
+        )
+        .await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+        let requests = mock.received_requests().await.expect("wiremock records requests");
+        let index_gets = requests.iter().filter(|r| r.url.path() == "/nested/index.xml").count();
+        assert_eq!(index_gets, 1, "the index that served the redirect must be fetched once");
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_redirected_index_child_against_the_url_after_the_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_body(&mock, "/sitemap.xml", "application/xml", sitemap_index(&["/child.xml"])).await;
+        mount_redirect(&mock, "/child.xml", "/nested/child.xml").await;
+        mount_body(
+            &mock,
+            "/nested/child.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&base, &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_urlset_against_the_url_after_a_redirect() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        mount_redirect(&mock, "/feed", "/nested/feed.xml").await;
+        mount_body(
+            &mock,
+            "/nested/feed.xml",
+            "application/xml",
+            urlset(&["page".to_owned()]),
+        )
+        .await;
+
+        let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
+    }
+
+    #[tokio::test]
+    async fn map_resolves_a_directly_fetched_gzip_urlset_against_the_url_after_a_redirect() {
+        use std::io::Write as _;
+
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(urlset(&["page".to_owned()]).as_bytes())
+            .expect("gzip write");
+        let gzipped = encoder.finish().expect("gzip finish");
+        mount_redirect(&mock, "/feed", "/nested/feed.xml.gz").await;
+        mount_bytes(&mock, "/nested/feed.xml.gz", "application/octet-stream", gzipped).await;
+
+        let urls = map_urls(&format!("{base}/feed"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/nested/page")]);
     }
 }
