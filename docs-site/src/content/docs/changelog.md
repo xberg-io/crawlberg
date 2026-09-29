@@ -109,6 +109,11 @@ title: "Changelog"
 
 ### Fixed
 
+- **A robots.txt that opens with a UTF-8 byte-order mark lost its first group.** The mark stayed
+  attached to the first `User-agent` line, that directive did not match, and the whole group,
+  rules included, was dropped, so every path was allowed. A leading byte-order mark is now
+  skipped once, as RFC 9309 asks. (#516)
+
 - **Browser fetches left their Chrome profile directories in the temp directory.** A one-shot
   fetch, an interact run or a pool that ended without its own cleanup left a `crawlberg-*`
   directory of several megabytes behind: a pool dropped without `shutdown()`, or a fetch whose

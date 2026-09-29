@@ -470,6 +470,25 @@ mod tests {
         }
     }
 
+    /// A robots.txt that opens with a UTF-8 byte-order mark still has its first group read
+    /// (crawlberg#516), served behind Cloudflare so the fix does not disturb the #514 block-page
+    /// classifier.
+    #[tokio::test]
+    async fn a_robots_txt_with_a_leading_byte_order_mark_is_read_as_rules() {
+        let body = "\u{feff}User-agent: *\r\nDisallow: /private\r\n# blocked\r\n";
+        let outcome = robots_outcome_as("text/plain", body.to_owned(), &[("server", "cloudflare")]).await;
+        assert!(
+            matches!(outcome, RobotsOutcome::Rules(_)),
+            "a robots.txt with a leading BOM must be read as rules, got {}",
+            describe(&outcome)
+        );
+        assert!(outcome.allows("/public"), "the rules must allow /public");
+        assert!(
+            !outcome.allows("/private"),
+            "the leading BOM must not hide the Disallow rule, so /private must stay refused"
+        );
+    }
+
     /// A Cloudflare block page served as /robots.txt still denies the origin: an HTML page, even
     /// one that shows robots.txt lines, and a text page with no robots.txt directive.
     #[tokio::test]
