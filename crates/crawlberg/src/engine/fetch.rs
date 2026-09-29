@@ -522,7 +522,7 @@ impl CrawlEngine {
         let outcome = AttemptOutcome {
             attempt: state.attempt,
             url: std::sync::Arc::from(url),
-            status: None,
+            status: crate::http::error_status(&err),
             error: Some(err.clone()),
             waf_signal,
             body_size: 0,

@@ -255,27 +255,45 @@ pub(crate) async fn fetch_robots_outcome(
     client: &reqwest::Client,
     user_agent: &str,
 ) -> RobotsOutcome {
+    fetch_robots_document(url, config, client, user_agent).await.0
+}
+
+/// [`fetch_robots_outcome`], plus the address that served robots.txt after redirects when the
+/// file was read. A relative `Sitemap:` line resolves against that address.
+pub(crate) async fn fetch_robots_document(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+    user_agent: &str,
+) -> (RobotsOutcome, Option<String>) {
     let Ok(parsed) = Url::parse(url) else {
-        return RobotsOutcome::DisallowAll {
+        let outcome = RobotsOutcome::DisallowAll {
             reason: format!("invalid URL: {}", crate::net::redact_url_credentials(url)),
             denial: RobotsDenial::Sustained,
         };
+        return (outcome, None);
     };
     // ~keep `robots_url` uses `authority()`, which keeps a non-default port. Building this
     // from `host_str()` instead sent every port-bearing seed's robots request to the default
     // port, where it failed and silently degraded to "no rules".
     let robots_url = crate::normalize::robots_url(&parsed);
     match http_fetch(&robots_url, config, &std::collections::HashMap::new(), client).await {
-        Ok(resp) if resp.status >= 500 => RobotsOutcome::DisallowAll {
-            reason: format!("robots.txt returned HTTP {}", resp.status),
-            denial: RobotsDenial::Sustained,
-        },
-        Ok(resp) if resp.status >= 400 => RobotsOutcome::AllowAll,
+        Ok(resp) if resp.status >= 500 => {
+            let outcome = RobotsOutcome::DisallowAll {
+                reason: format!("robots.txt returned HTTP {}", resp.status),
+                denial: RobotsDenial::Sustained,
+            };
+            (outcome, None)
+        }
+        Ok(resp) if resp.status >= 400 => (RobotsOutcome::AllowAll, None),
         Ok(resp) => match crate::http::robots_block_page_error(&resp) {
-            Some(error) => outcome_for_fetch_error(&error),
-            None => RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+            Some(error) => (outcome_for_fetch_error(&error), None),
+            None => (
+                RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+                Some(resp.final_url),
+            ),
         },
-        Err(error) => outcome_for_fetch_error(&error),
+        Err(error) => (outcome_for_fetch_error(&error), None),
     }
 }
 
