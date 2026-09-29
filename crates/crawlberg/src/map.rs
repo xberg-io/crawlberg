@@ -11,7 +11,7 @@ use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, htt
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
     SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_gzip,
-    is_sitemap_index, process_sitemap_response,
+    is_sitemap_index, process_sitemap_response, reads_as_sitemap,
 };
 use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 
@@ -137,7 +137,7 @@ async fn sitemap_urls_from_well_known(
     let Ok(sitemap_resp) = http_fetch_sitemap(&sitemap_url, config, client).await else {
         return Vec::new();
     };
-    if !(sitemap_resp.body.contains("<urlset") || sitemap_resp.body.contains("<sitemapindex")) {
+    if !reads_as_sitemap(&sitemap_resp.body_bytes, &sitemap_resp.body) {
         return Vec::new();
     }
     process_sitemap_response(
@@ -146,7 +146,6 @@ async fn sitemap_urls_from_well_known(
             final_url: &sitemap_resp.final_url,
             body: &sitemap_resp.body,
             body_bytes: &sitemap_resp.body_bytes,
-            content_type: &sitemap_resp.content_type,
         },
         context,
         config.map_limit,
@@ -551,6 +550,34 @@ mod tests {
             result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
             page_urls("https://example.com", 2),
             "a gzipped sitemap must be sniffed by magic bytes and inflated"
+        );
+    }
+
+    /// crawlberg#534: the well-known `/sitemap.xml` fallback gates on the raw body containing
+    /// `<urlset`/`<sitemapindex` before inflation, so a gzip body there was rejected as "not a
+    /// sitemap" and never reached the parser at all, the same defect class as the walk.
+    #[tokio::test]
+    async fn map_finds_a_gzip_well_known_sitemap_served_with_the_wrong_content_type() {
+        use std::io::Write as _;
+
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        let plain = urlset(&page_urls("https://example.com", 2));
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(plain.as_bytes()).expect("gzip write");
+        let gzipped = encoder.finish().expect("gzip finish");
+
+        mount_bytes(&mock, "/sitemap.xml", "application/octet-stream", gzipped).await;
+
+        let result = map(&format!("{base}/nothing"), &local_test_config())
+            .await
+            .expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            page_urls("https://example.com", 2),
+            "a gzip /sitemap.xml with a content type that does not say gzip must still be read"
         );
     }
 
