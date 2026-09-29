@@ -444,9 +444,9 @@ title: "Changelog"
   duplicate does not count toward `map_limit`. A relative `<loc>` is now subject to
   `exclude_paths`, like every other entry. `map_search` now matches the normalized address, so a
   search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
-  longer matches. A `<loc>` that is only a query or a fragment, such as `?q=1` or `#top`, or that
-  is the sitemap's own address, named the sitemap document and was reported as a page; it is now
-  dropped. (#323, #340)
+  longer matches. A `<loc>` that is only a query, such as `?q=1`, is dropped instead of reported
+  as a page, and so is a `<loc>` that resolves to the sitemap's own address once a fragment such
+  as `#top` is ignored. (#323, #340)
 
 - **A sitemap-index child differing only by a URL fragment was fetched twice.** The
   fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but

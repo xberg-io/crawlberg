@@ -431,6 +431,9 @@ mod tests {
     /// every clean target survives unchanged: parsing still rewrites an IDN host to punycode,
     /// drops a default port, lower-cases the host, adds `/` to a bare origin, removes dot
     /// segments, percent-encodes a space, and canonicalizes `127.1` to `127.0.0.1`.
+    ///
+    /// ~keep GUARD: no hand arm reddens this; a target with nothing left to normalize passes
+    /// ~keep through any resolver that round-trips clean input, so it cannot pin one mechanism.
     #[test]
     fn absolute_target_already_in_normalized_form_round_trips_unchanged() {
         let clean = "https://example.com/page?a=1&b=2";
