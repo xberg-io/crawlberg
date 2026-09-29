@@ -88,6 +88,11 @@ impl Drop for PendingWafBlock {
     }
 }
 
+/// Whether `status` is one a `soft_http_errors` page can report: a 4xx or a 5xx.
+pub(super) fn is_soft_error_status(status: u16) -> bool {
+    (400..600).contains(&status)
+}
+
 /// The status a `soft_http_errors` page reports for `err`, or `None` when `err` is not reported softly.
 ///
 /// ~keep A WAF block reports the status of the response it refused, which the fetch path keeps as
@@ -98,7 +103,7 @@ fn soft_error_status(err: &CrawlError) -> Option<u16> {
         CrawlError::Forbidden { .. } => Some(403),
         CrawlError::WafBlocked { .. } => Some(
             crate::http::error_status(err)
-                .filter(|status| (400..600).contains(status))
+                .filter(|status| is_soft_error_status(*status))
                 .unwrap_or(403),
         ),
         _ => None,

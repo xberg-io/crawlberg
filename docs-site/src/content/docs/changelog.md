@@ -131,7 +131,9 @@ title: "Changelog"
 - **`soft_http_errors` reported every WAF block as a 403.** A 429 or 503 block page came back
   with status 403, so a caller could not tell a rate limit from a forbidden response. A WAF block
   now reports the status of the response it refused. A block page served with a 2xx status still
-  reports 403, because a 2xx soft error reads as success. (#518)
+  reports 403, because a 2xx soft error reads as success. Every soft error page has the same
+  shape: an empty 4xx or 5xx page comes back without markdown or response metadata, as a 403 or
+  404 page already did. (#518)
 
 - **A robots.txt that opens with a UTF-8 byte-order mark lost its first group.** The mark stayed
   attached to the first `User-agent` line, that directive did not match, and the whole group,

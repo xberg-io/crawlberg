@@ -87,7 +87,10 @@ impl CrawlEngine {
             };
 
             let status = outcome.final_response.status;
-            if matches!(status, 404 | 403) && outcome.final_response.body.is_empty() && self.config.soft_http_errors {
+            if self.config.soft_http_errors
+                && super::fetch::is_soft_error_status(status)
+                && outcome.final_response.body.is_empty()
+            {
                 return Ok(self.bodyless_status_result(status, outcome.final_url));
             }
             if outcome.final_response.status == 404

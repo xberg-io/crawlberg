@@ -8,8 +8,11 @@
 //! 5. Direct 403 returns `Ok(ScrapeResult { status_code: 403 })` when enabled.
 //! 6. A WAF block reports the status of the refused response: 429, 503 or 403, and 403 for a
 //!    2xx refused as a block page.
+//! 7. Every soft error page has the same shape, whatever its status: no body, no markdown and no
+//!    response metadata.
 
-use crawlberg::{BrowserMode, CrawlConfig, CrawlError, crawl, create_engine, scrape};
+use crawlberg::{BrowserMode, CrawlConfig, CrawlError, CrawlEvent, ScrapeResult, crawl_stream, create_engine, scrape};
+use futures::StreamExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -28,6 +31,17 @@ fn allow_private_config() -> CrawlConfig {
 fn engine_with_config(mut config: CrawlConfig) -> crawlberg::CrawlEngineHandle {
     config.browser.mode = BrowserMode::Never;
     create_engine(Some(config)).expect("engine build must not fail")
+}
+
+/// Asserts `page` has the shape of a soft error page: no body, no markdown, no response metadata.
+fn assert_soft_page_shape(page: &ScrapeResult) {
+    let status = page.status_code;
+    assert!(page.html.is_empty(), "{status}: a soft error page has no body");
+    assert!(page.markdown.is_none(), "{status}: a soft error page has no markdown");
+    assert!(
+        page.response_meta.is_none(),
+        "{status}: a soft error page has no response metadata"
+    );
 }
 
 /// With the default config (`soft_http_errors = false`), a bare 404 response
@@ -75,7 +89,7 @@ async fn direct_404_returns_result_when_soft_errors_enabled() {
     assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
     let page = result.unwrap();
     assert_eq!(page.status_code, 404, "status_code must be 404");
-    assert!(page.html.is_empty(), "body must be empty for synthesised 404");
+    assert_soft_page_shape(&page);
 }
 
 /// A 302→404 chain must always surface as `Ok(ScrapeResult { status_code: 404 })`
@@ -159,10 +173,11 @@ async fn direct_403_returns_result_when_soft_errors_enabled() {
     assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
     let page = result.unwrap();
     assert_eq!(page.status_code, 403, "status_code must be 403");
-    assert!(page.html.is_empty(), "body must be empty for synthesised 403");
+    assert_soft_page_shape(&page);
 }
 
-/// Scrapes `route` served as `response` with `soft_http_errors` on and returns the page's status.
+/// Scrapes `route` served as `response` with `soft_http_errors` on, checks the page has the soft
+/// error page shape, and returns the page's status.
 async fn soft_status_of(route: &str, response: ResponseTemplate) -> u16 {
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
@@ -178,10 +193,7 @@ async fn soft_status_of(route: &str, response: ResponseTemplate) -> u16 {
     let page = scrape(&handle, &format!("{}{route}", mock.uri()))
         .await
         .unwrap_or_else(|err| panic!("{route}: expected a soft error page, got Err: {err:?}"));
-    assert!(
-        page.html.is_empty(),
-        "{route}: body must be empty for a soft error page"
-    );
+    assert_soft_page_shape(&page);
     page.status_code
 }
 
@@ -224,6 +236,13 @@ async fn waf_block_on_2xx_reports_403_when_soft_errors_enabled() {
     assert_eq!(status, 403, "a 2xx refused as a WAF block must report 403");
 }
 
+/// An empty 4xx response the fetch does not refuse comes back with the same shape as a refused one.
+#[tokio::test]
+async fn empty_error_response_has_the_soft_page_shape_when_soft_errors_enabled() {
+    let status = soft_status_of("/teapot", ResponseTemplate::new(418)).await;
+    assert_eq!(status, 418, "an empty 418 must report 418");
+}
+
 /// A 403 WAF block reports 403.
 #[tokio::test]
 async fn waf_block_on_403_reports_403_when_soft_errors_enabled() {
@@ -251,7 +270,7 @@ async fn waf_block_on_403_reports_403_when_soft_errors_enabled() {
 }
 
 /// A crawl reports a 429 WAF block on a linked page with its 429 status. A 503 WAF block is a
-/// server error, which a crawl counts as a failed page rather than returning it as a page.
+/// server error, which a crawl reports as an error event rather than as a page.
 #[tokio::test]
 async fn crawl_reports_a_waf_block_with_its_status_when_soft_errors_enabled() {
     let mock = MockServer::start().await;
@@ -289,22 +308,41 @@ async fn crawl_reports_a_waf_block_with_its_status_when_soft_errors_enabled() {
         soft_http_errors: true,
         ..allow_private_config()
     });
-    let result = crawl(&handle, &format!("{}/", mock.uri()))
+    let mut pages = Vec::new();
+    let mut errors = Vec::new();
+    let mut pages_crawled = None;
+    let mut stream = crawl_stream(&handle, &format!("{}/", mock.uri()))
         .await
-        .expect("crawl must not raise");
-    let statuses: Vec<(String, u16)> = result
-        .pages
+        .expect("crawl must start");
+    while let Some(event) = stream.next().await {
+        match event.expect("a crawl event must not be a transport error") {
+            CrawlEvent::Page { result } => pages.push((result.url.clone(), result.status_code)),
+            CrawlEvent::Error { url, error } => errors.push((url, error)),
+            CrawlEvent::Complete { pages_crawled: count } => pages_crawled = Some(count),
+        }
+    }
+
+    let blocked = pages
         .iter()
-        .map(|page| (page.url.clone(), page.status_code))
-        .collect();
-    let blocked = result
-        .pages
-        .iter()
-        .find(|page| page.url.ends_with("/blocked-429"))
-        .unwrap_or_else(|| panic!("the 429 block must be a page, got {statuses:?}"));
-    assert_eq!(blocked.status_code, 429, "a 429 WAF block must report 429");
+        .find(|(url, _)| url.ends_with("/blocked-429"))
+        .unwrap_or_else(|| panic!("the 429 block must be a page, got {pages:?}"));
+    assert_eq!(blocked.1, 429, "a 429 WAF block must report 429");
     assert!(
-        !result.pages.iter().any(|page| page.url.ends_with("/blocked-503")),
-        "a 503 WAF block must be a failed page, got {statuses:?}"
+        !pages.iter().any(|(url, _)| url.ends_with("/blocked-503")),
+        "a 503 WAF block must not be a page, got {pages:?}"
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|(url, _)| url.ends_with("/blocked-503"))
+            .map(|(_, error)| error.as_str())
+            .collect::<Vec<_>>(),
+        vec!["server_error: HTTP 503"],
+        "a 503 WAF block must be one error event, got {errors:?}"
+    );
+    assert_eq!(
+        pages_crawled,
+        Some(2),
+        "the crawl counts the seed and the 429 block, not the 503 block, got pages {pages:?}"
     );
 }
