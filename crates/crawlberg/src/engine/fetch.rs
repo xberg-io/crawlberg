@@ -95,13 +95,13 @@ fn is_soft_error_status(status: u16) -> bool {
 
 /// The status a `soft_http_errors` page reports for `err`, or `None` when `err` is not reported softly.
 ///
-/// ~keep A WAF block reports the status of the response it refused, which the fetch path keeps as
-/// the error's source. A block page served with a 2xx reports 403: a 2xx soft error reads as success.
+/// ~keep A WAF or soft block reports the status of the response it refused, which the fetch path
+/// keeps as the error's source. A block page served with a 2xx reports 403: a 2xx soft error reads
+/// as success. A plain 403 carries 403, and a forbidden error with no response status reports 403.
 fn soft_error_status(err: &CrawlError) -> Option<u16> {
     match err {
         CrawlError::NotFound { .. } => Some(404),
-        CrawlError::Forbidden { .. } => Some(403),
-        CrawlError::WafBlocked { .. } => Some(
+        CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. } => Some(
             crate::http::error_status(err)
                 .filter(|status| is_soft_error_status(*status))
                 .unwrap_or(403),
@@ -625,14 +625,16 @@ mod tests {
             (429, Some(429)),
             (503, Some(503)),
         ] {
-            for reason in [&blocked, &EscalationReason::AntibotEscalate] {
+            for reason in [
+                &blocked,
+                &EscalationReason::SoftBlock,
+                &EscalationReason::AntibotEscalate,
+            ] {
                 let refusal = CrawlEngine::escalation_reason_to_error(reason, url, status);
                 assert_eq!(crate::http::error_status(&refusal), Some(status), "{refusal:?}");
                 assert_eq!(soft_error_status(&refusal), soft, "{refusal:?}");
             }
         }
-        let soft_block = CrawlEngine::escalation_reason_to_error(&EscalationReason::SoftBlock, url, 200);
-        assert_eq!(soft_error_status(&soft_block), Some(403));
         for reason in [EscalationReason::RenderNeeded, EscalationReason::OriginUnreliable] {
             let refusal = CrawlEngine::escalation_reason_to_error(&reason, url, 200);
             assert_eq!(soft_error_status(&refusal), None, "{refusal:?}");

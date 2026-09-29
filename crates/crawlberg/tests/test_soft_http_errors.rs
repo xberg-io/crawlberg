@@ -572,19 +572,26 @@ async fn antibot_escalation_without_a_tier_is_a_soft_page_when_soft_errors_enabl
 }
 
 /// A tier left to escalate to wins over a soft error page. The refusal at the last tier then
-/// reports the refused response's status: its own 4xx or 5xx, and 403 for a 2xx.
+/// reports the refused response's status: its own 4xx or 5xx, and 403 for a 2xx. This holds for
+/// a custom policy's WAF or soft block (`None` is the antibot strategy's refusal).
 #[tokio::test]
 async fn refusal_escalates_first_and_the_last_refusal_keeps_its_status() {
     let mock = serve_plain_page().await;
     let url = format!("{}/page", mock.uri());
+    let refusers = [
+        Some(EscalationReason::WafBlocked { vendor: "acme".into() }),
+        Some(EscalationReason::SoftBlock),
+        None,
+    ];
 
     for (bypass_status, soft_status) in [(200_u16, 403_u16), (418, 418), (429, 429), (503, 503)] {
-        for antibot in [false, true] {
+        for refuser in &refusers {
+            let antibot = refuser.is_none();
             let bypass = CountingBypass::new(bypass_status);
             let dispatch = DispatchProfile {
-                retry_policy: (!antibot).then(|| {
+                retry_policy: refuser.clone().map(|reason| {
                     Arc::new(RefuseSuccess {
-                        reason: EscalationReason::WafBlocked { vendor: "acme".into() },
+                        reason,
                         suffix: "/page",
                     }) as _
                 }),
@@ -594,16 +601,16 @@ async fn refusal_escalates_first_and_the_last_refusal_keeps_its_status() {
                 ..DispatchProfile::default()
             };
             let page = scrape_with(&url, dispatch, true).await.unwrap_or_else(|err| {
-                panic!("bypass {bypass_status} antibot={antibot}: expected a soft error page, got Err: {err:?}")
+                panic!("bypass {bypass_status} refuser={refuser:?}: expected a soft error page, got Err: {err:?}")
             });
             assert_eq!(
                 bypass.calls.load(Ordering::SeqCst),
                 1,
-                "bypass {bypass_status} antibot={antibot}: the refusal must escalate to the bypass tier first"
+                "bypass {bypass_status} refuser={refuser:?}: the refusal must escalate to the bypass tier first"
             );
             assert_eq!(
                 page.status_code, soft_status,
-                "bypass {bypass_status} antibot={antibot}: the soft page must report the refused status"
+                "bypass {bypass_status} refuser={refuser:?}: the soft page must report the refused status"
             );
             assert_soft_page_shape(&page);
         }
