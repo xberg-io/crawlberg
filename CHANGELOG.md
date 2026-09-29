@@ -137,15 +137,18 @@ All notable changes to crawlberg are documented here.
   out. A browser crawlberg launches with a throwaway profile, for one `interact` session or one
   scrape, now keeps interception on until it is killed, so its requests stay paused until the
   process is gone. crawlberg then ends every process of that Chrome, waits until none of them and
-  none of their threads is left, or until `browser.shutdown_timeout` passes, and then removes the
-  profile. A scrape with a saved `browser_profile` and a scrape through a `BrowserPool` end as
-  before. This applies to the Chromiumoxide backend. (#468)
-- **An `interact` session or a scrape on a `browser.endpoint` browser could send requests to a
-  refused address as it ended, on a busy host.** crawlberg cannot kill a browser it does not own,
-  so the check turned interception off while the session's page or a popup was still open and
-  sending. The check now closes every page and popup of the session that is still open, and keeps
-  interception on until Chrome reports each one destroyed. The browser and its other tabs stay
-  open. This applies to the Chromiumoxide backend. (#484)
+  none of their threads is left, for at most what is left of `browser.shutdown_timeout`, and then
+  removes the profile. Ending the processes and removing the profile are not bounded by that
+  timeout, so on a busy host an `interact` call can return later than `browser.shutdown_timeout`
+  after its last action. A scrape returns its result before the kill. A scrape with a saved
+  `browser_profile` and a scrape through a `BrowserPool` end as before. This applies to the
+  Chromiumoxide backend. (#468)
+- **The SSRF check on a `browser.endpoint` browser turned interception off while the page of an
+  `interact` session or a scrape, or a popup of it, was still open, on a busy host.** crawlberg
+  cannot kill a browser it does not own, and the check stopped waiting for the close after a time
+  limit. The check now closes every page and popup of the session that is still open, and waits
+  until Chrome reports each one destroyed before it turns interception off. The browser and its
+  other tabs stay open. This applies to the Chromiumoxide backend. (#484)
 - **A browser-mode page did not say which of its requests the SSRF policy refused.** A refused
   image, script, frame or `fetch()` keeps the page, and the result now lists each refused address
   in `ssrf_refused_urls`, without its credentials. An `interact` result lists the refusals of

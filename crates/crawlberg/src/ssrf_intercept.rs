@@ -1897,6 +1897,10 @@ mod race_tests {
     /// ~keep still open and sending, as when Chrome under load is slow to destroy a page or popup
     /// ~keep (xberg-io/crawlberg#484).
     #[tokio::test(flavor = "multi_thread")]
+    #[allow(
+        clippy::print_stderr,
+        reason = "test-only measurement line, so a run under load reads as a count of leaked requests"
+    )]
     async fn an_external_browser_keeps_refusing_a_session_page_until_chrome_destroys_it() {
         let test_name = "an_external_browser_keeps_refusing_a_session_page_until_chrome_destroys_it";
         let Some(browser) = launch(test_name).await else {
@@ -1935,9 +1939,26 @@ mod race_tests {
         }
         watch.close().await;
         let open_at_stop = open_targets(&browser).await.contains(&session_target);
+        let stopping = Instant::now();
         firewall.stop().await;
+        let stop_ms = stopping.elapsed().as_millis();
+        let hits_at_stop = denied_hits.load(Ordering::SeqCst);
         let open_after_stop = open_targets(&browser).await.contains(&session_target);
         let reached = served(&denied_hits).await;
+        // ~keep Printed so a run under load is a measurement of the leak (xberg-io/crawlberg#484,
+        // ~keep #506): how many requests reached the denied address by the time the stop returned,
+        // ~keep and how many by the end of the watch after it, which ends at the first request
+        // ~keep seen or after five seconds.
+        eprintln!(
+            "SESSION_END_PROBE open_at_stop={open_at_stop} stop_ms={stop_ms} hits_at_stop={hits_at_stop} \
+             open_after_stop={open_after_stop} final_hits={} load={}",
+            denied_hits.load(Ordering::SeqCst),
+            std::fs::read_to_string("/proc/loadavg")
+                .unwrap_or_default()
+                .split(' ')
+                .next()
+                .unwrap_or("")
+        );
 
         let (reachable, other_hits) = denied_listener().await;
         let _ = other

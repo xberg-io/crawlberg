@@ -294,8 +294,8 @@ async fn stop_handler_after_close(handle: JoinHandle<()>, close_outcome: Browser
 
 /// Tear down `browser` and the task that runs its CDP handler.
 ///
-/// A Chrome that crawlberg launched is closed and reaped within `shutdown_timeout` (see
-/// `close_browser_within`); closing it removes every tab it has. A Chrome reached through
+/// A Chrome that crawlberg launched gets `shutdown_timeout` to close and exit, and is then
+/// force-killed (see `close_browser_within`); closing it removes every tab it has. A Chrome reached through
 /// `Browser::connect` (a configured `browser.endpoint`) belongs to the caller: crawlberg closes
 /// only the tabs named by `cleanup`, then disconnects by stopping the handler task that owns the
 /// CDP websocket. It never sends that Chrome `Browser.close`.
@@ -392,8 +392,8 @@ async fn close_browser_within(browser: &mut Browser, shutdown_timeout: Duration)
 }
 
 /// Kill `browser`, a Chrome crawlberg launched with the throwaway profile `profile`, and every
-/// process it started, then remove the profile once none of them is left. A kill that fails
-/// falls back to [`release_browser`]'s close.
+/// process it started, then remove the profile once none of them is left, or once what is left
+/// of `shutdown_timeout` has passed. A kill that fails falls back to [`release_browser`]'s close.
 ///
 /// ~keep `Browser::kill` kills and reaps only the main process. Its renderers and helpers exit
 /// ~keep on their own a moment later and keep writing into the profile until then, so a removal
@@ -453,7 +453,10 @@ pub(crate) async fn kill_browser(
 /// ~keep member once every member has taken its stop: a stopped process cannot fork, so none
 /// ~keep is missed. The walks are capped for a platform without `Signal::Stop` (Windows),
 /// ~keep where a process that keeps forking would never settle.
-/// ~keep The wait is bounded by what is left of `shutdown_timeout` after the kill.
+/// ~keep The wait is bounded by what is left of `shutdown_timeout` after the kill. The
+/// ~keep collection, the kill and the reap of the main process before it, and the removal of the
+/// ~keep profile after it, are not, so a kill can take longer than `shutdown_timeout` in all
+/// ~keep (measured up to 38 s on a 5 s timeout at loads of 700 to 1180).
 #[derive(Default)]
 struct ChromeFamily {
     members: Vec<Pid>,

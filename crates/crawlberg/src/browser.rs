@@ -295,11 +295,13 @@ async fn release_pooled_page(
 /// Launch (or connect to) a browser for this single fetch and tear it down again.
 ///
 /// `BrowserConfig::overall_timeout` bounds launch, page creation, navigation,
-/// rendering, and screenshot capture as a single deadline. Shutdown (closing
-/// the browser and waiting for its process to exit) runs afterward in the
-/// background, bounded by its own `BrowserConfig::shutdown_timeout`: a
-/// completed page result is returned to the caller without waiting for a
-/// Chrome process that refuses to exit.
+/// rendering, and screenshot capture as a single deadline. Shutdown runs
+/// afterward in the background: a completed page result is returned to the
+/// caller without waiting for a Chrome process that refuses to exit. A browser
+/// closed normally gets `BrowserConfig::shutdown_timeout` to exit before it is
+/// killed. A browser launched with a throwaway profile is killed at once, and
+/// the wait for its processes to go gets what is left of that timeout. Ending
+/// those processes and removing the profile are not bounded by it.
 ///
 /// Teardown is owned by [`OneShotSession`]'s `Drop`, so a caller that drops this future while
 /// the fetch runs gets the same teardown as a fetch that ran to completion.
@@ -342,9 +344,13 @@ async fn one_shot_fetch(
     // ~keep `session` is dropped as this function returns, after the result below is computed,
     // ~keep and its `Drop` spawns the teardown rather than awaiting it: a Chrome process stuck
     // ~keep behind a blocking OS dialog (the originally reported case: a macOS keychain prompt)
-    // ~keep must not hold up delivery of a result that was already computed. `kill_browser` and
-    // ~keep `release_browser` both bound their work by `shutdown_timeout` (a launched Chrome is
-    // ~keep force-killed on expiry), so that background task always finishes.
+    // ~keep must not hold up delivery of a result that was already computed. `release_browser`
+    // ~keep gives Chrome `shutdown_timeout` to close and then force-kills a launched one.
+    // ~keep `kill_browser` gives its wait for the Chrome family what is left of that timeout;
+    // ~keep collecting and killing the family, reaping the main process and removing the profile
+    // ~keep end on their own but are not bounded by it (a reap of 6.6 s and a removal of 11.9 s
+    // ~keep at loads of 720 to 1064). So that background task always finishes, later than
+    // ~keep `shutdown_timeout` on a busy host.
     fetch_outcome.unwrap_or_else(|_| Err(overall_deadline_error(overall_timeout)))
 }
 
