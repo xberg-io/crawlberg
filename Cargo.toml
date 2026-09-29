@@ -55,6 +55,7 @@ camino = "1.2"
 chromiumoxide = { version = "0.9", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+cookie_store = { version = "0.22", default-features = false }
 crawlberg-browser = { path = "crates/crawlberg-browser", version = "1.8.0" }
 crawlberg-bypass = { path = "crates/crawlberg-bypass", version = "1.8.0" }
 criterion = { version = "0.8", features = ["html_reports"] }

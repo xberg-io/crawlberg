@@ -1254,6 +1254,7 @@ version = "1.8.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "cookie_store",
  "cssparser",
  "deno_core",
  "deno_error",

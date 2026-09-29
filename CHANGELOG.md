@@ -177,6 +177,18 @@ All notable changes to crawlberg are documented here.
   The chain now carries the jar from one hop to the next, with the Secure and HttpOnly flags of
   each cookie.
 
+- **The native browser stored cookies that a page had no right to set.** A page could set a
+  cookie for another host with a `Domain` attribute, for example a page on `127.0.0.1` for
+  `localhost`, and the native browser then sent that cookie to the other host, after a 302 or a
+  meta refresh. It also stored a Secure cookie that a page set over plain http. The native
+  browser now ignores a cookie whose `Domain` does not match the host that set it, and a Secure
+  cookie set over http, as a browser does.
+  A cookie set without a `Domain` attribute now goes back to the host that set it only, not to
+  that host's subdomains.
+
+- **A native scrape through a meta refresh listed only the last page's refused addresses.**
+  `ssrf_refused_urls` now lists the addresses the SSRF policy refused on every page of the chain.
+
 - **`interact` set no redirect limit, and a 204 or 304 seed timed out there.** The pages
   `interact` opens now follow at most `max_redirects` redirects, and a 204, 205 or 304 answer
   returns at once. When the navigation ends on a response without a document, `interact` reports

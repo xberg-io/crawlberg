@@ -785,8 +785,8 @@ async fn native_scrape_follows_a_meta_refresh_where_http_mode_does() {
 }
 
 /// A native scrape through a meta refresh keeps the cookies the refresh page set: the request to
-/// the refresh target carries them, the result lists them, and a Secure or HttpOnly cookie keeps
-/// its flag on the next hop.
+/// the refresh target carries them, the result lists them, and an HttpOnly cookie keeps its flag
+/// on the next hop. A Secure cookie that the page set over plain http is not stored.
 #[tokio::test]
 async fn native_scrape_through_a_meta_refresh_keeps_the_refresh_page_cookies() {
     let site = MockServer::start().await;
@@ -853,8 +853,8 @@ async fn native_scrape_through_a_meta_refresh_keeps_the_refresh_page_cookies() {
     names.sort_unstable();
     assert_eq!(
         names,
-        ["first", "hidden", "sec", "second"],
-        "the result must list every cookie of the scrape"
+        ["first", "hidden", "second"],
+        "the result must list every cookie of the scrape, and no Secure cookie set over http"
     );
     let script_cookies = browser
         .eval_result
@@ -869,6 +869,195 @@ async fn native_scrape_through_a_meta_refresh_keeps_the_refresh_page_cookies() {
     assert!(
         !script_cookies.contains("hidden="),
         "an HttpOnly cookie must stay hidden from script on the next hop, saw {script_cookies:?}"
+    );
+}
+
+/// The names of the cookies that the request for `at` sent to `site`.
+async fn cookies_sent_to(site: &MockServer, at: &str) -> Vec<String> {
+    let request = site
+        .received_requests()
+        .await
+        .expect("request recording is on")
+        .into_iter()
+        .find(|r| r.url.path() == at)
+        .unwrap_or_else(|| panic!("the scrape must request {at}"));
+    request
+        .headers
+        .get_all("cookie")
+        .iter()
+        .flat_map(|v| v.to_str().unwrap_or_default().split("; ").map(str::to_owned))
+        .collect()
+}
+
+/// A page on `127.0.0.1` sets a cookie for `Domain=localhost` and sends the scrape to
+/// `localhost/n` with the response that `first` builds for that target. The request to
+/// `localhost` must not carry the cookie, because the host that set it is not in that domain
+/// (RFC 6265 section 5.3).
+async fn assert_a_foreign_domain_cookie_does_not_reach_the_next_host(first: impl FnOnce(&str) -> ResponseTemplate) {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            first(&target)
+                .append_header("set-cookie", "own=1; Path=/")
+                .append_header("set-cookie", "inj=1; Path=/; Domain=localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://127.0.0.1:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert!(
+        !sent.iter().any(|c| c.starts_with("inj=")),
+        "a cookie that 127.0.0.1 set for Domain=localhost must not reach localhost, sent {sent:?}"
+    );
+    let browser = scraped.browser.expect("a native render reports browser extras");
+    let names: Vec<&str> = browser.cookies.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["own"], "the jar must not store the foreign-domain cookie");
+}
+
+#[tokio::test]
+async fn native_scrape_refuses_a_domain_cookie_for_another_host_through_a_302() {
+    assert_a_foreign_domain_cookie_does_not_reach_the_next_host(|target| {
+        ResponseTemplate::new(302).append_header("location", target)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_scrape_refuses_a_domain_cookie_for_another_host_through_a_meta_refresh() {
+    assert_a_foreign_domain_cookie_does_not_reach_the_next_host(|target| {
+        ResponseTemplate::new(200).set_body_raw(
+            format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+            "text/html",
+        )
+    })
+    .await;
+}
+
+/// A cookie that `a.localhost` sets without a `Domain` attribute is host-only: the carried jar
+/// sends it back to `a.localhost` only, not to `b.a.localhost` after a meta refresh. The cookie
+/// set with `Domain=a.localhost` goes to both (RFC 6265 section 5.3 step 6).
+#[tokio::test]
+async fn native_scrape_sends_a_host_only_cookie_to_its_own_host_only_across_a_meta_refresh() {
+    let site = MockServer::start().await;
+    let port = site.address().port();
+    let target = format!("http://b.a.localhost:{port}/n");
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    format!(r#"<html><head><meta http-equiv="refresh" content="0; url={target}"></head></html>"#),
+                    "text/html",
+                )
+                .append_header("set-cookie", "host=1; Path=/")
+                .append_header("set-cookie", "domain=1; Path=/; Domain=a.localhost"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>landed</body></html>", "text/html"))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..native_config(|c| c)
+    };
+
+    let scraped = scrape(&engine_with(config), &format!("http://a.localhost:{port}/"))
+        .await
+        .expect("the scrape must succeed");
+
+    assert_eq!(scraped.final_url, target);
+    let sent = cookies_sent_to(&site, "/n").await;
+    assert_eq!(
+        sent,
+        ["domain=1"],
+        "only the Domain=a.localhost cookie may reach b.a.localhost"
+    );
+}
+
+/// A native scrape through a meta refresh lists the addresses the SSRF policy refused on every
+/// hop: the refresh page's script and the landing page's `fetch()`.
+#[tokio::test]
+async fn native_scrape_through_a_meta_refresh_lists_the_refused_requests_of_every_hop() {
+    let site = MockServer::start().await;
+    let denied = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("// denied"))
+        .mount(&denied)
+        .await;
+    let script = format!("http://127.0.0.1:{}/denied.js", denied.address().port());
+    let fetched = format!("http://127.0.0.1:{}/secret", denied.address().port());
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!(
+                r#"<html><head><meta http-equiv="refresh" content="0; url=/n"><script src={script:?}></script></head><body>refresh</body></html>"#
+            ),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/n"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<html><body><p>landed</p><script>fetch({fetched:?}).catch(() => {{}});</script></body></html>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let config = CrawlConfig {
+        browser: BrowserConfig {
+            backend: BrowserBackend::Native,
+            mode: crawlberg::BrowserMode::Always,
+            timeout: Duration::from_secs(15),
+            extra_wait: Some(Duration::from_millis(500)),
+            ..BrowserConfig::default()
+        },
+        max_redirects: 1,
+        respect_robots_txt: false,
+        ..CrawlConfig::builder()
+            .ssrf_allowlist_host(HostMatcher::exact("localhost"))
+            .build()
+    };
+    let seed = format!("http://localhost:{}/", site.address().port());
+
+    let result = scrape(&engine_with(config), &seed)
+        .await
+        .expect("the scrape must succeed");
+
+    assert!(
+        result.html.contains("landed"),
+        "the scrape must land on /n: {}",
+        result.html
+    );
+    let mut listed = result.ssrf_refused_urls.clone();
+    listed.sort();
+    let mut expected = vec![script, fetched];
+    expected.sort();
+    assert_eq!(
+        listed, expected,
+        "the result must list the refused addresses of both hops"
     );
 }
 

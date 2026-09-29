@@ -31,6 +31,8 @@ pub struct NativeCookie {
     pub path: Option<String>,
     pub secure: bool,
     pub http_only: bool,
+    /// Sent to `domain` only, not to its subdomains: the page set it without a `Domain` attribute.
+    pub host_only: bool,
 }
 
 impl std::fmt::Debug for NativeCookie {
@@ -44,6 +46,7 @@ impl std::fmt::Debug for NativeCookie {
             path,
             secure,
             http_only,
+            host_only,
         } = self;
         f.debug_struct("NativeCookie")
             .field("name", name)
@@ -52,6 +55,7 @@ impl std::fmt::Debug for NativeCookie {
             .field("path", path)
             .field("secure", secure)
             .field("http_only", http_only)
+            .field("host_only", host_only)
             .finish()
     }
 }
@@ -487,14 +491,7 @@ async fn create_context(config: &NativeBrowserConfig) -> Arc<BrowserContext> {
         .await;
 
     for cookie in &config.prior_cookies {
-        context.cookie_jar.set_parsed_cookie(
-            &cookie.name,
-            &cookie.value,
-            cookie.domain.as_deref(),
-            cookie.path.as_deref(),
-            cookie.secure,
-            cookie.http_only,
-        );
+        context.cookie_jar.set_parsed_cookie(cookie);
     }
 
     context
@@ -531,14 +528,17 @@ async fn render_with_context(
         .cookie_jar
         .snapshot()
         .into_iter()
-        .map(|(name, value, domain, path, secure, http_only)| NativeCookie {
-            name,
-            value,
-            domain: Some(domain),
-            path: Some(path),
-            secure,
-            http_only,
-        })
+        .map(
+            |(name, value, domain, path, secure, http_only, host_only)| NativeCookie {
+                name,
+                value,
+                domain: Some(domain),
+                path: Some(path),
+                secure,
+                http_only,
+                host_only,
+            },
+        )
         .collect();
 
     let html = rendered_html(&page)

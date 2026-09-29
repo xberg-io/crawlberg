@@ -395,6 +395,9 @@ pub(crate) async fn follow_redirects(
     // ~keep as a single browser session would: the refresh target gets the refresh page's cookies.
     #[cfg(feature = "browser-native")]
     let mut native_jar: Vec<crawlberg_browser::adapter::NativeCookie> = Vec::new();
+    // ~keep A hop the chain leaves still sent its page's requests, so the result lists what the
+    // ~keep SSRF check refused on every hop, not only on the page the chain lands on.
+    let mut refused_on_earlier_hops: Vec<String> = Vec::new();
     loop {
         if let Some(policy) = policy.as_deref_mut()
             && let Some(refusal) = policy.admits(&chain.current_url, chain.redirect_count > 0).await?
@@ -431,7 +434,7 @@ pub(crate) async fn follow_redirects(
             #[cfg(feature = "browser-native")]
             Hop::NativeRender => hop_engine.native_render(&chain.current_url, &mut native_jar).await,
         };
-        let (resp, hop_browser_used) = match fetched {
+        let (mut resp, hop_browser_used) = match fetched {
             Ok(pair) => pair,
             // ~keep Redirect-chain 404s become synthetic responses so callers can inspect final_url/status_code.
             // ~keep First-hop 404 still propagates unless soft_http_errors is enabled.
@@ -466,6 +469,7 @@ pub(crate) async fn follow_redirects(
 
         let mut page_scan = None;
         let Some((target, target_key)) = next_redirect_target(&resp, &chain, max_redirects, &mut page_scan) else {
+            prepend_refused(&mut resp, refused_on_earlier_hops);
             return Ok(RedirectResolution::Fetched(Box::new(chain.into_outcome(
                 resp,
                 page_scan,
@@ -473,9 +477,20 @@ pub(crate) async fn follow_redirects(
             ))));
         };
 
+        if let Some(landing) = resp.landed.as_mut() {
+            refused_on_earlier_hops.append(&mut landing.refused);
+        }
         chain
             .advance_to(target, target_key, 1, resp.headers, &engine.config.ssrf)
             .await?;
+    }
+}
+
+/// Put the refusals of the hops before `resp` ahead of its own.
+fn prepend_refused(resp: &mut crate::tower::CrawlResponse, mut earlier: Vec<String>) {
+    if let Some(landing) = resp.landed.as_mut() {
+        earlier.append(&mut landing.refused);
+        landing.refused = earlier;
     }
 }
 

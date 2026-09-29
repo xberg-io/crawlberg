@@ -1372,7 +1372,8 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
             "127.0.0.1".to_string(),
             "/setcookie".to_string(),
             false,
-            false
+            false,
+            true
         )],
         "the fetch op must store Set-Cookie in the jar the page shares"
     );

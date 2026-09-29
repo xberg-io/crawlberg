@@ -199,6 +199,7 @@ fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
             path: c.path.clone(),
             secure: false,
             http_only: false,
+            host_only: false,
         })
         .collect()
 }
@@ -497,5 +498,67 @@ mod tests {
         assert_eq!(meta.etag.as_deref(), Some("\"abc\""));
         assert_eq!(meta.last_modified, None);
         assert_eq!(meta.cache_control, None);
+    }
+
+    /// Render `http://<host>:<port>/` with one prior cookie for `domain`; return the Cookie
+    /// headers the page request carried.
+    async fn cookies_sent_with_a_prior_cookie(host: &str, domain: &str) -> Vec<String> {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let site = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("<html><body>page</body></html>", "text/html"))
+            .mount(&site)
+            .await;
+        let executor =
+            NativeBrowserExecutor::new(crawlberg_browser::adapter::NativeBrowserExecutorConfig::with_workers(1))
+                .expect("a single-worker executor must start");
+        let config = CrawlConfig {
+            browser: BrowserConfig {
+                backend: crate::types::BrowserBackend::Native,
+                mode: crate::types::BrowserMode::Always,
+                timeout: Duration::from_secs(10),
+                ..BrowserConfig::default()
+            },
+            ..CrawlConfig::builder().allow_private_networks(true).build()
+        };
+        let prior = [CookieInfo {
+            name: "session".to_owned(),
+            value: "abc".to_owned(),
+            domain: Some(domain.to_owned()),
+            path: Some("/".to_owned()),
+        }];
+
+        let url = format!("http://{host}:{}/", site.address().port());
+        native_browser_fetch(&url, &config, Some(&prior), &executor)
+            .await
+            .expect("the render must succeed");
+
+        let requests = site.received_requests().await.expect("request recording is on");
+        requests
+            .iter()
+            .flat_map(|r| r.headers.get_all("cookie").iter())
+            .filter_map(|v| v.to_str().ok().map(str::to_owned))
+            .collect()
+    }
+
+    /// The caller's prior cookies start the render's jar: the page request carries them.
+    #[tokio::test]
+    async fn a_native_fetch_sends_the_prior_cookies_it_is_given() {
+        let sent = cookies_sent_with_a_prior_cookie("127.0.0.1", "127.0.0.1").await;
+        assert_eq!(sent, ["session=abc"], "the page request must carry the prior cookie");
+    }
+
+    /// A prior cookie names its domain, so it also goes to that domain's subdomains.
+    #[tokio::test]
+    async fn a_native_fetch_sends_a_prior_cookie_to_a_subdomain_of_its_domain() {
+        let sent = cookies_sent_with_a_prior_cookie("a.localhost", "localhost").await;
+        assert_eq!(
+            sent,
+            ["session=abc"],
+            "a.localhost must get the prior cookie for localhost"
+        );
     }
 }
