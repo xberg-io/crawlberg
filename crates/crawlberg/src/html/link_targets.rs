@@ -7,7 +7,8 @@ use tl::VDom;
 use url::Url;
 
 use super::links::effective_base_url;
-use super::{clean_url, decode_attr_value};
+use super::selectors::SEL_BASE_HREF;
+use super::{clean_url, decode_attr_value, get_attr};
 
 /// How an attribute holds its address.
 #[derive(Clone, Copy)]
@@ -55,7 +56,8 @@ const TARGETS: &[(&str, &[(&str, Shape)])] = &[
 ];
 
 /// Return `html` with every relative address in [`TARGETS`] resolved against the document's
-/// base URL (see [`effective_base_url`]), using WHATWG URL parsing.
+/// base URL (see [`effective_base_url`]) from its first `<base href>` in source order, using
+/// WHATWG URL parsing.
 ///
 /// Each `<base href>` is rewritten to that resolved base, so the converter's front matter shows
 /// the address the links resolve against.
@@ -67,7 +69,13 @@ pub(crate) fn resolve_link_targets<'h>(html: &'h str, document_url: &Url) -> Cow
     let Ok(dom) = super::parse_html(html) else {
         return Cow::Borrowed(html);
     };
-    let base = effective_base_url(&dom, document_url);
+    let base_href = dom
+        .query_selector(SEL_BASE_HREF)
+        .and_then(|mut iter| iter.next())
+        .and_then(|handle| handle.get(dom.parser()))
+        .and_then(|node| node.as_tag())
+        .map(|tag| get_attr(tag, "href").unwrap_or_default());
+    let base = effective_base_url(base_href.as_deref(), document_url);
     let mut edits = collect_edits(&dom, html, &base);
     if edits.is_empty() {
         return Cow::Borrowed(html);
