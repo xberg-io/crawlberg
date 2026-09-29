@@ -447,6 +447,85 @@ All notable changes to crawlberg are documented here.
   visible. A request header map prints no value at all, whatever the header's name, as
   `custom_headers` in `CrawlConfig` already does. (#141)
 
+- **An absolute redirect target was followed exactly as sent, without going through the URL
+  parser.** A relative redirect target was resolved through `Url::join`, which parses it and
+  reports the parser's normalized form, stripped of an embedded tab or newline and trimmed of
+  leading/trailing spaces. An absolute `http://`/`https://` target skipped that parse entirely
+  and came back byte-for-byte as received, so a `Location`, `Refresh`, or `<meta refresh>` value
+  crafted with stray whitespace was followed and reported exactly as sent. Both forms now go
+  through the same parser, and a target that fails to parse, absolute or relative, is refused
+  rather than followed: the redirect source it came from contributes nothing, and the chain
+  falls through to the next source or stops. A target is now followed in the URL parser's
+  normalized form: an IDN host becomes punycode, a default port is dropped, the host is
+  lower-cased, a bare origin gains a trailing `/`, dot segments are removed, a space becomes
+  `%20`, and `127.1` becomes `127.0.0.1`.
+  (#207)
+
+- **A sitemap-index child `<loc>` was fetched and deduplicated on its raw text instead of its
+  parsed form.** A same-host absolute child address, and any child address when the sitemap
+  index's own URL failed to parse, skipped the URL parser entirely, so two spellings of the
+  same address (a default port, an upper-case scheme, a stray tab) were fetched as two separate
+  documents. Every child address is now parsed and normalized before it is fetched and before
+  it is used as the duplicate key, matching the resolver already used for redirect targets, and
+  a child address that fails to parse is skipped instead of fetched as raw text. (#226)
+
+- **`map()` returned sitemap `<loc>` entries as raw text and kept duplicates.** Two spellings of
+  one page, such as `https://example.com/a` and `HTTPS://example.com:443/a`, came back as two
+  entries, a relative `<loc>` came back as a bare path, and a `<loc>` that is not an address came
+  back as text. Each `<loc>` is now resolved against the sitemap's own URL with the same parser as
+  sitemap-index children and returned in its normalized form. A `<loc>` that does not parse is
+  dropped. An address is returned once per `map()` call, even when several sitemaps list it, and a
+  duplicate does not count toward `map_limit`. A relative `<loc>` is now subject to
+  `exclude_paths`, like every other entry. `map_search` now matches the normalized address, so a
+  search for a raw spelling, such as a default port or non-ASCII text in the path or host, no
+  longer matches. A `<loc>` that is only a query, such as `?q=1`, is dropped instead of reported
+  as a page, and so is a `<loc>` that resolves to the sitemap's own address once a fragment such
+  as `#top` is ignored. (#323, #340)
+
+- **A sitemap-index child differing only by a URL fragment was fetched twice.** The
+  fragment never reaches the server, so `/a.xml` and `/a.xml#x` name the same document, but
+  the host rewrite kept the fragment on a same-host child address before it was fetched
+  and used as the duplicate key. A relative child address such as `a.xml#x` kept its fragment
+  too. The fragment is now dropped from every child address, so both addresses fetch and dedupe
+  as one document. (#324, #363)
+
+- **`map()` resolved a relative sitemap `<loc>` against the address it requested, not the one that
+  answered.** When `/sitemap.xml` redirected to `/nested/sitemap.xml`, `<loc>page</loc>` became
+  `/page` instead of `/nested/page`. Urlset entries and sitemap-index children now resolve against
+  the sitemap's URL after redirects. A redirected index that lists its own address, the one it
+  answered from, is no longer fetched a second time. (#339, #374)
+
+- **A sitemap index's children on other hosts were fetched from the index's own host.** An index
+  at `https://example.com/sitemap.xml` that listed `https://blog.example.com/sitemap.xml` and
+  `https://shop.example.com/sitemap.xml` had each child moved onto `example.com` with its path
+  kept, so both became `https://example.com/sitemap.xml`, the index itself, and were skipped as a
+  cycle. Their pages were missing from the result. Each child is now fetched from its own host,
+  as the sitemaps.org protocol allows. The SSRF policy checks every child fetch, and the seed's
+  credentials and custom headers still go only to the seed host. (#398)
+
+- **A robots.txt `Sitemap:` line on another host was fetched from the seed's host.** A robots.txt
+  on `example.com` that named `https://cdn.example.net/sitemap.xml` made `map()` fetch
+  `https://example.com/sitemap.xml` instead, which is another document or none. The sitemaps.org
+  protocol lets robots.txt name a sitemap on another host, so the line is now fetched from the
+  host it names. The SSRF policy checks the fetch, and the seed's credentials and custom headers
+  go only to the seed host. A relative `Sitemap:` line now resolves against the address that
+  served robots.txt after its redirects, not the address being mapped. (#268, #349)
+
+- **A non-ASCII `map_search` term never matched an address `map()` normalized.** `map()`
+  returns each address in the URL parser's normalized form, which percent-encodes a non-ASCII
+  path and encodes a non-ASCII host as punycode, so a search for `café` never found
+  `https://example.com/caf%C3%A9` and a search for `bücher` never found the matching
+  `xn--bcher-kva.example` host. `map_search` now also matches the decoded, human-readable form
+  of the address, alongside the address text itself. The term and the address are compared after
+  Unicode normalization and default case folding, so `café` typed with a combining accent finds
+  `café`, and `STRASSE` finds `/Straße`. Case folding does not use a locale, so the Turkish dotted
+  and dotless `i` do not match their Turkish case partners. (#338)
+
+- **The `search` field of `POST /v1/map` never matched a non-ASCII term.** The REST handler kept
+  its own lower-case substring check against the returned address, so `café` never found
+  `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
+  a term the same way as the CLI and the MCP `map` tool. (#362)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
