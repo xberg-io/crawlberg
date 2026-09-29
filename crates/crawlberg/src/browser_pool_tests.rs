@@ -448,3 +448,39 @@ async fn the_pool_connects_every_endpoint_spelling_the_checks_accept() {
     })
     .await;
 }
+
+/// The pool's connect-error message must never carry a `browser.endpoint` password or path
+/// token, though the failing origin must still be readable for debugging.
+///
+/// ~keep The launch path and the interact backend have the same test (`browser/launch.rs`,
+/// ~keep `interact/chromiumoxide.rs`): xberg-io/crawlberg#473 was this test missing for one
+/// ~keep connect site after another added it for a different one, so each site keeps its own,
+/// ~keep including the pool. A closed local port refuses the connection immediately, so this
+/// ~keep needs no real Chrome and stays fast; `ws://` skips chromiumoxide's `json/version` HTTP
+/// ~keep probe and goes straight to the WebSocket handshake.
+#[tokio::test]
+async fn pool_connect_error_prints_only_the_endpoint_origin() {
+    let pool = BrowserPool::new(BrowserPoolConfig {
+        browser_endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+        launch_timeout: Duration::from_secs(5),
+        ..BrowserPoolConfig::default()
+    });
+
+    let err = pool
+        .warm()
+        .await
+        .expect_err("a refused local port must fail the connect");
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("hunter2"),
+        "password must not survive into the error, got: {msg}"
+    );
+    assert!(
+        !msg.contains("b1946ac9-guid"),
+        "the CDP path token must not survive into the error, got: {msg}"
+    );
+    assert!(
+        msg.contains("127.0.0.1"),
+        "host must still appear in the error, got: {msg}"
+    );
+}
