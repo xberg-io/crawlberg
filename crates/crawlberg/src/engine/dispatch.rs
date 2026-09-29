@@ -117,6 +117,7 @@ impl CrawlEngine {
                         // ~keep A custom bypass provider is a user plugin outside the rotation
                         // layer; it does not report which agent it sent, if any.
                         sent_user_agent: None,
+                        soft_error: false,
                     },
                     false,
                 ))
@@ -200,6 +201,7 @@ impl CrawlEngine {
                 // ~keep The browser tier never reads `config.user_agents`; it always sends the
                 // single configured agent, so callers fall back to the configured default.
                 sent_user_agent: None,
+                soft_error: false,
             },
             extras,
         )
@@ -207,7 +209,7 @@ impl CrawlEngine {
 
     /// Synthesise a minimal response with the given HTTP status (empty body).
     ///
-    /// Used by `soft_http_errors` to surface 4xx responses as `ScrapeResult`
+    /// Used by `soft_http_errors` to surface error responses as `ScrapeResult`
     /// records rather than `CrawlError`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn synthesise_status(status: u16) -> crate::tower::CrawlResponse {
@@ -219,6 +221,7 @@ impl CrawlEngine {
             headers: std::collections::HashMap::new(),
             landed_url: None,
             sent_user_agent: None,
+            soft_error: true,
         }
     }
 

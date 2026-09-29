@@ -535,6 +535,7 @@ fn synthetic_not_found() -> crate::tower::CrawlResponse {
         headers: HashMap::new(),
         landed_url: None,
         sent_user_agent: None,
+        soft_error: false,
     }
 }
 
@@ -755,6 +756,7 @@ mod tests {
             headers: map,
             landed_url: None,
             sent_user_agent: None,
+            soft_error: false,
         }
     }
 
