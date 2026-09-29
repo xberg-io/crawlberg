@@ -173,7 +173,15 @@ async fn discovered_page_redirect_to_host_anchored_excluded_target_is_never_requ
         .respond_with(ResponseTemplate::new(302).append_header("location", "/private/x"))
         .mount(&mock)
         .await;
-    mount_site(&mock).await;
+    Mock::given(method("GET"))
+        .and(path("/private/x"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("<html><body>private</body></html>".to_owned())
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
     let config = excluding(r"^https?://127\.0\.0\.1:\d+/private/")
         .max_depth(2)
         .path_patterns_match_url(true)
