@@ -344,12 +344,13 @@ pub(crate) async fn process_sitemap_response(
 /// else is the body as received. A gzip payload that fails to inflate falls back
 /// to the raw body rather than aborting the walk.
 fn sitemap_xml_body<'a>(document: &SitemapDocument<'a>) -> std::borrow::Cow<'a, str> {
-    xml_text(document.content_type, document.body_bytes, document.body)
+    let gzip = document.content_type.contains("gzip") || document.content_type.contains("x-gzip");
+    inflated(gzip, document.body_bytes, document.body)
 }
 
-/// [`sitemap_xml_body`] for a response's parts.
-fn xml_text<'a>(content_type: &str, body_bytes: &[u8], body: &'a str) -> std::borrow::Cow<'a, str> {
-    if content_type.contains("gzip") || content_type.contains("x-gzip") {
+/// The inflated payload when `gzip` holds and the payload inflates, else `body` as received.
+fn inflated<'a>(gzip: bool, body_bytes: &[u8], body: &'a str) -> std::borrow::Cow<'a, str> {
+    if gzip {
         match decompress_gzip(body_bytes) {
             Ok(decompressed) => std::borrow::Cow::Owned(decompressed),
             Err(_) => std::borrow::Cow::Borrowed(body),
@@ -359,16 +360,27 @@ fn xml_text<'a>(content_type: &str, body_bytes: &[u8], body: &'a str) -> std::bo
     }
 }
 
-/// Whether a fetched body is a sitemap document: the XML the walk parses, inflated as the walk
-/// inflates it, reads to the end as one `urlset` or `sitemapindex` root with nothing outside it,
+/// Gzip member header magic (RFC 1952 §2.3.1).
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Whether `map` inflates a fetched body before it reads it: the body starts with the gzip magic.
+///
+/// ~keep A gzip content type or a `.gz` URL adds nothing: a body without the magic does not
+/// ~keep inflate, and one with it inflates whatever its content type and URL say.
+pub(crate) fn is_gzip(body_bytes: &[u8]) -> bool {
+    body_bytes.starts_with(&GZIP_MAGIC)
+}
+
+/// Whether a fetched body is a sitemap document: the XML `map` parses, inflated when [`is_gzip`]
+/// says so, reads to the end as one `urlset` or `sitemapindex` root with nothing outside it,
 /// holds text only inside an entry's fields, and yields at least one entry to the parsers.
 ///
 /// ~keep This is what the fetch asks before a WAF fingerprint may refuse a sitemap: a `<loc>` can
 /// say anything, such as "/blog/why-we-blocked-the-old-api" (crawlberg#515). A block page fails
 /// here on its root element (HTML, a CDN's XML error, JSON or text), on text outside an entry's
 /// fields, on markup the XML reader cannot close, or on carrying no `<loc>` entry.
-pub(crate) fn reads_as_sitemap(content_type: &str, body_bytes: &[u8], body: &str) -> bool {
-    let xml = xml_text(content_type, body_bytes, body);
+pub(crate) fn reads_as_sitemap(body_bytes: &[u8], body: &str) -> bool {
+    let xml = inflated(is_gzip(body_bytes), body_bytes, body);
     has_sitemap_shape(&xml) && (!parse_sitemap_xml(&xml).is_empty() || !parse_sitemap_index(&xml).is_empty())
 }
 
@@ -815,29 +827,39 @@ mod tests {
             ("an empty body", String::new(), false),
         ] {
             assert_eq!(
-                reads_as_sitemap("application/xml", body.as_bytes(), &body),
+                reads_as_sitemap(body.as_bytes(), &body),
                 expected,
                 "{label}: reads as a sitemap must be {expected}"
             );
         }
     }
 
-    /// A gzip sitemap reads as a sitemap once inflated, as the walk inflates it: by content type.
+    /// A body that starts with the gzip magic is inflated before it is read, as `map` inflates it,
+    /// whatever its content type.
     #[test]
-    fn reads_as_sitemap_inflates_a_gzip_body_by_content_type() {
+    fn reads_as_sitemap_inflates_a_gzip_body_as_map_does() {
         use std::io::Write;
-        let urlset = "<urlset><url><loc>https://example.com/why-we-blocked-it</loc></url></urlset>";
-        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder.write_all(urlset.as_bytes()).expect("gzip must encode");
-        let gzip = encoder.finish().expect("gzip must finish");
-        let lossy = String::from_utf8_lossy(&gzip);
+        let gzip = |text: &str| {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(text.as_bytes()).expect("gzip must encode");
+            encoder.finish().expect("gzip must finish")
+        };
+        let urlset = gzip("<urlset><url><loc>https://example.com/why-we-blocked-it</loc></url></urlset>");
+        let block_page = gzip("<html><body><h1>Sorry, you have been blocked</h1></body></html>");
+        for (label, bytes, expected) in [
+            ("a gzip urlset", &urlset, true),
+            ("a gzip block page", &block_page, false),
+        ] {
+            let lossy = String::from_utf8_lossy(bytes);
+            assert_eq!(
+                reads_as_sitemap(bytes, &lossy),
+                expected,
+                "{label}: reads as a sitemap must be {expected}"
+            );
+        }
         assert!(
-            reads_as_sitemap("application/x-gzip", &gzip, &lossy),
-            "a gzip urlset must read as a sitemap"
-        );
-        assert!(
-            !reads_as_sitemap("application/octet-stream", &gzip, &lossy),
-            "gzip bytes under another content type are not XML"
+            decompress_gzip(b"<urlset><url><loc>/a</loc></url></urlset>").is_err(),
+            "a body without the gzip magic must not inflate, whatever its content type or URL"
         );
     }
 

@@ -509,7 +509,7 @@ async fn fetch_one_hop(
     // whole-line comments, and a sitemap gets one that reads a sitemap as a sitemap whatever it lists.
     let refusal = match context.fetched {
         Fetched::Page => waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map),
-        Fetched::Sitemap => waf::sitemap_2xx_error(head.status, &head.content_type, &body_bytes, &body, &headers_map),
+        Fetched::Sitemap => waf::sitemap_2xx_error(head.status, &body_bytes, &body, &headers_map),
         Fetched::RobotsTxt => waf::robots_2xx_error(head.status, &body_bytes, &body, &headers_map),
     };
     if let Some(error) = refusal {

@@ -196,13 +196,12 @@ pub(super) fn robots_2xx_error(
 /// refuse it.
 pub(super) fn sitemap_2xx_error(
     status: u16,
-    content_type: &str,
     body_bytes: &[u8],
     body: &str,
     headers_map: &HashMap<String, Vec<String>>,
 ) -> Option<CrawlError> {
     if in_2xx_decision(status, body_bytes.len(), Some(WAF_2XX_MAX_BODY_LEN))
-        && crate::sitemap::reads_as_sitemap(content_type, body_bytes, body)
+        && crate::sitemap::reads_as_sitemap(body_bytes, body)
     {
         return None;
     }
@@ -672,6 +671,35 @@ mod tests {
                 .zip(&verdicts)
             {
                 if *verdict != Ok(vec![BLOCKED_LOC.to_owned()]) {
+                    disagreements.push(format!("{label}: {path_name} must read the sitemap, got {verdict:?}"));
+                }
+            }
+        }
+        assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+    }
+
+    /// A gzip sitemap at the URL mapped is read behind Cloudflare whatever its content type says, as
+    /// `map` inflates it: served as octet-stream at a `.gz` URL, or as XML at a URL without `.gz`.
+    #[tokio::test]
+    async fn map_reads_a_gzip_sitemap_whatever_its_content_type_behind_cloudflare() {
+        let gzip = || stored_gzip(SITEMAP_WITH_A_BLOCKED_URL);
+        let cases = [
+            (
+                "octet-stream at a .gz URL",
+                "/sitemap.xml.gz",
+                cloudflare("application/octet-stream", gzip()),
+            ),
+            (
+                "XML at a URL without .gz",
+                "/feed/posts",
+                cloudflare("application/xml", gzip()),
+            ),
+        ];
+        let mut disagreements = Vec::new();
+        for (label, served, template) in cases {
+            let [_, engine, hooked] = sitemap_paths(vec![(served, template)], served, served).await;
+            for (path_name, verdict) in [("engine map", engine), ("engine map with hooks", hooked)] {
+                if verdict != Ok(vec![BLOCKED_LOC.to_owned()]) {
                     disagreements.push(format!("{label}: {path_name} must read the sitemap, got {verdict:?}"));
                 }
             }

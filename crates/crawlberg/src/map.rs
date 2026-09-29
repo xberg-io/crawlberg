@@ -10,8 +10,8 @@ use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_ht
 use crate::http::{Fetched, RefreshRedirects, build_client, fetch_with_retry, http_fetch_sitemap};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
-    SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_sitemap_index,
-    process_sitemap_response,
+    SitemapDocument, SitemapWalkContext, collect_urlset_entries, decompress_gzip, fetch_sitemap_tree, is_gzip,
+    is_sitemap_index, process_sitemap_response,
 };
 use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 
@@ -60,7 +60,7 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
         Fetched::Sitemap,
     )
     .await?;
-    let urls = urls_from_direct_response(url, &parsed_url, &page.response, page.page_scan, config, &context).await;
+    let urls = urls_from_direct_response(&parsed_url, &page.response, page.page_scan, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
 
@@ -158,7 +158,6 @@ async fn sitemap_urls_from_well_known(
 /// or index sitemap, or an HTML page whose links stand in for a sitemap. `page_scan` is the
 /// refresh check's read of `resp`'s body, when it made one.
 async fn urls_from_direct_response(
-    url: &str,
     parsed_url: &Url,
     resp: &crate::http::HttpResponse,
     page_scan: Option<PageScan>,
@@ -167,11 +166,9 @@ async fn urls_from_direct_response(
 ) -> Vec<SitemapUrl> {
     let is_xml = resp.content_type.contains("xml") || resp.body.trim_start().starts_with("<?xml");
 
-    let is_gzip = resp.content_type.contains("gzip")
-        || resp.content_type.contains("x-gzip")
-        || url.to_lowercase().ends_with(".gz")
-        || (resp.body_bytes.len() >= 2 && resp.body_bytes[0] == GZIP_MAGIC[0] && resp.body_bytes[1] == GZIP_MAGIC[1]);
-    if is_gzip && let Ok(decompressed) = decompress_gzip(&resp.body_bytes) {
+    if is_gzip(&resp.body_bytes)
+        && let Ok(decompressed) = decompress_gzip(&resp.body_bytes)
+    {
         let urls = collect_urlset_entries(&resp.final_url, &decompressed, context, config.map_limit);
         if !urls.is_empty() {
             return urls;
@@ -204,10 +201,6 @@ async fn urls_from_direct_response(
 
     Vec::new()
 }
-
-/// Gzip member header magic (RFC 1952 §2.3.1), used to sniff a `.gz` sitemap whose
-/// content type does not declare the encoding.
-const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
 /// normalized URL. Anchor-only links are not URLs of their own and are skipped.
@@ -2416,7 +2409,7 @@ mod tests {
                 screenshot: None,
             };
 
-            let urls: Vec<String> = urls_from_direct_response(requested, &parsed_url, &resp, None, &config, &context)
+            let urls: Vec<String> = urls_from_direct_response(&parsed_url, &resp, None, &config, &context)
                 .await
                 .into_iter()
                 .map(|u| u.url)
