@@ -15,6 +15,7 @@ stealth = ["wreq", "wreq-util"]
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
+crawlberg-robots = { workspace = true }
 cssparser = { workspace = true }
 deno_core = { workspace = true }
 deno_error = { workspace = true }

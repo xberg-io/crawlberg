@@ -67,6 +67,7 @@ blake3 = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
+crawlberg-robots = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
