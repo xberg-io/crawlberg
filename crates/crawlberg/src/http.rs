@@ -32,7 +32,6 @@ pub(crate) use retry::{fetch_with_retry, should_retry_error};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use status::error_status;
 pub(crate) use status::status_error;
-pub(crate) use waf::robots_block_page_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use waf::{engine_waf_signal, record_waf_block, waf_2xx_error};
 
@@ -94,6 +93,16 @@ struct FetchContext<'a> {
     config: &'a CrawlConfig,
     extra_headers: &'a HashMap<String, String>,
     client: &'a reqwest::Client,
+    fetched: Fetched,
+}
+
+/// What a fetch reads its response as, which picks the 2xx WAF decision the response gets.
+#[derive(Clone, Copy)]
+enum Fetched {
+    /// A page, sitemap or asset: [`waf::waf_2xx_error`].
+    Page,
+    /// The site's robots.txt: [`waf::robots_2xx_error`].
+    RobotsTxt,
 }
 
 /// What one hop produced: a redirect target still to follow, or a finished response.
@@ -244,6 +253,36 @@ pub(crate) async fn http_fetch_with(
     client: &reqwest::Client,
     refresh: RefreshRedirects,
 ) -> Result<FetchedPage, CrawlError> {
+    fetch_as(url, config, extra_headers, client, refresh, Fetched::Page).await
+}
+
+/// [`http_fetch`] for a robots.txt: a 2xx body is refused when it fingerprints as a block page
+/// without its whole-line comments, at any size up to the classifier's body limit.
+pub(crate) async fn http_fetch_robots_txt(
+    url: &str,
+    config: &CrawlConfig,
+    client: &reqwest::Client,
+) -> Result<HttpResponse, CrawlError> {
+    fetch_as(
+        url,
+        config,
+        &HashMap::new(),
+        client,
+        RefreshRedirects::Ignore,
+        Fetched::RobotsTxt,
+    )
+    .await
+    .map(|page| page.response)
+}
+
+async fn fetch_as(
+    url: &str,
+    config: &CrawlConfig,
+    extra_headers: &HashMap<String, String>,
+    client: &reqwest::Client,
+    refresh: RefreshRedirects,
+    fetched: Fetched,
+) -> Result<FetchedPage, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
@@ -255,6 +294,7 @@ pub(crate) async fn http_fetch_with(
         config,
         extra_headers,
         client,
+        fetched,
     };
     let mut rules = ChainRules::new(refresh, &initial_url);
     let mut current_url = initial_url;
@@ -444,8 +484,13 @@ async fn fetch_one_hop(
     // The body is read before the check rather than after a header match because a header-only
     // fingerprint is not on its own grounds to refuse a 2xx (crawlberg#231). The check decides
     // which statuses it applies to, the same decision the Tower fetch makes, so it runs on every
-    // response this hop returns.
-    if let Some(error) = waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map) {
+    // response this hop returns. A robots.txt gets its own decision, which does not read its
+    // whole-line comments.
+    let refusal = match context.fetched {
+        Fetched::Page => waf::waf_2xx_error(head.status, &body_bytes, &body, &headers_map),
+        Fetched::RobotsTxt => waf::robots_2xx_error(head.status, &body_bytes, &body, &headers_map),
+    };
+    if let Some(error) = refusal {
         return Err(error);
     }
     Ok(HopOutcome::Complete(head.into_response(body, body_bytes, headers_map)))
