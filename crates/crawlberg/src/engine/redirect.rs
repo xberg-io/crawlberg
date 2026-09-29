@@ -633,7 +633,7 @@ fn first_unseen_target<R: RedirectSignals>(
 }
 
 /// Statuses whose `Location` header this crawl follows.
-const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// `target` resolved against `base`, or `None` when it does not resolve. `source` names the
 /// redirect source for the debug log a target that fails to parse gets; the log carries the

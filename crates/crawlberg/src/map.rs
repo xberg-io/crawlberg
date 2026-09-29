@@ -1578,6 +1578,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn map_does_not_follow_a_location_on_a_non_redirect_3xx_as_the_crawl_does() {
+        // ~keep 300, 304 and 305 name a Location, but the crawl's REDIRECT_STATUSES only
+        // ~keep follows 301, 302, 303, 307 and 308; map must stop on these the same way.
+        for status in [300u16, 304, 305] {
+            let mock = MockServer::start().await;
+            let base = mock.uri();
+            Mock::given(method("GET"))
+                .and(path("/s"))
+                .respond_with(ResponseTemplate::new(status).append_header("location", "/t"))
+                .mount(&mock)
+                .await;
+            mount_body(&mock, "/t", "text/html", page_linking_to("/from-t")).await;
+            let config = local_test_config();
+
+            let result = map(&format!("{base}/s"), &config).await;
+
+            assert!(
+                matches!(&result, Ok(mapped) if mapped.urls.is_empty()),
+                "status {status}: map must stop on the response without following its Location, got {result:?}"
+            );
+            assert_eq!(
+                request_count(&mock, "/t").await,
+                0,
+                "status {status}: a non-redirect 3xx's Location is not requested"
+            );
+            assert_eq!(
+                crawl_stop(&base, &format!("{base}/s"), &config).await,
+                ("/s".to_owned(), status),
+                "status {status}: the crawl stops on the seed's own response"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn map_stops_on_a_redirect_target_that_is_not_found_as_the_crawl_does() {
         let mock = MockServer::start().await;
         let base = mock.uri();

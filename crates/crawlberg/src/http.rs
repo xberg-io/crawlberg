@@ -246,7 +246,7 @@ pub(crate) async fn http_fetch_with(
 
     loop {
         let hop_left = redirects_followed < config.max_redirects;
-        let follows_location = |target: &url::Url| rules.follows_location(target, hop_left);
+        let follows_location = |status: u16, target: &url::Url| rules.follows_location(status, target, hop_left);
         let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
             Ok(outcome) => outcome,
             Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
@@ -317,11 +317,13 @@ impl ChainRules {
         }
     }
 
-    /// Whether the fetch goes on to the `Location` target `target`, given whether a hop is left.
-    fn follows_location(&self, target: &url::Url, hop_left: bool) -> bool {
-        self.0
-            .as_ref()
-            .is_none_or(|seen| hop_left && !seen.contains(target.as_str()))
+    /// Whether the fetch goes on to the `Location` target `target` of a hop that answered with
+    /// `status`, given whether a hop is left. `status` is checked against the crawl's own
+    /// `REDIRECT_STATUSES` so a 300, 304 or 305 naming a `Location` stays unfollowed here too.
+    fn follows_location(&self, status: u16, target: &url::Url, hop_left: bool) -> bool {
+        self.0.as_ref().is_none_or(|seen| {
+            crate::engine::redirect::REDIRECT_STATUSES.contains(&status) && hop_left && !seen.contains(target.as_str())
+        })
     }
 
     /// Whether `error`, raised past the first hop, ends the chain on a response instead.
@@ -352,14 +354,14 @@ impl ChainRules {
 async fn fetch_one_hop(
     context: &FetchContext<'_>,
     current_url: &url::Url,
-    follows_location: impl Fn(&url::Url) -> bool,
+    follows_location: impl Fn(u16, &url::Url) -> bool,
 ) -> Result<HopOutcome, CrawlError> {
     let resp = send_hop_request(context, current_url).await?;
     let head = ResponseHead::from_response(&resp);
 
     if (300..400).contains(&head.status) {
         match redirect_target(current_url, &head.headers) {
-            Some(RedirectTarget::Follow(next_url)) if follows_location(&next_url) => {
+            Some(RedirectTarget::Follow(next_url)) if follows_location(head.status, &next_url) => {
                 return Ok(HopOutcome::Redirect(next_url));
             }
             Some(_) => {
