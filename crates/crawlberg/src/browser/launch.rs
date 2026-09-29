@@ -294,6 +294,42 @@ mod user_data_dir_tests {
         let _ = std::fs::remove_dir_all(&resolved.path);
     }
 
+    /// The error of a profile copy that fails names the file it could not copy.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_profile_copy_names_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let name = unique_profile_name("copy-error");
+        let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+        profile.create().expect("profile directory must be creatable");
+        let _guard = ProfileGuard(profile.clone());
+        let unreadable = profile.user_data_dir.join("unreadable-marker");
+        std::fs::write(&unreadable, b"x").expect("marker file must be writable");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))
+            .expect("permissions must be settable");
+        if std::fs::read(&unreadable).is_ok() {
+            // ~keep Root reads a mode 000 file, so the copy cannot fail here.
+            return;
+        }
+
+        let config = CrawlConfig {
+            browser_profile: Some(name),
+            save_browser_profile: false,
+            ..CrawlConfig::default()
+        };
+        let error = resolve_user_data_dir(&config)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        let _ = std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600));
+
+        assert!(
+            error.contains("unreadable-marker") && error.contains("failed to copy profile file"),
+            "the copy error must name the file: {error:?}"
+        );
+    }
+
     #[test]
     fn copy_dir_recursive_copies_nested_files_and_skips_symlinks() {
         let root = std::env::temp_dir().join(unique_profile_name("copy"));

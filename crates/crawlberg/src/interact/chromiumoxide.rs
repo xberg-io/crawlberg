@@ -12,7 +12,7 @@ use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{
-    ACTION_GRACE, BrowserFirewall, BrowserOrigin, CookieSharing, INPUT_ACTION_GRACE, StoppedResponse, Watch,
+    ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, PageContext, StoppedResponse, Watch,
 };
 use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
@@ -28,7 +28,7 @@ pub(super) async fn run(
     let result = match BrowserFirewall::start(
         Arc::clone(&browser),
         BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
-        CookieSharing::of_endpoint(config.browser.endpoint.as_deref()),
+        PageContext::of_endpoint(config.browser.endpoint.as_deref()),
     )
     .await
     {

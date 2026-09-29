@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 use chromiumoxide::Browser;
@@ -123,8 +123,8 @@ pub(crate) struct DocumentResponse {
 
 /// The SSRF check of one chromiumoxide [`Browser`]: a single listener on the browser session
 /// that answers every paused request of every target in that browser. Interception is on from
-/// the start of the check to its stop. Pages are opened with [`FirewallHandle::new_page`], each
-/// in a browser context of its own, and put under the check with [`FirewallHandle::watch`].
+/// the start of the check to its stop. Pages are opened with [`FirewallHandle::new_page`], in
+/// the context [`PageContext`] names, and put under the check with [`FirewallHandle::watch`].
 /// Each request is judged by the policy of the watched page it belongs to: the page itself, a
 /// frame in it, or a popup it opened, directly or through another popup.
 ///
@@ -146,11 +146,15 @@ pub(crate) struct DocumentResponse {
 /// ~keep the ones the listener has not received yet, so interception is never turned off while
 /// ~keep a page of the check can still send: measured on #189, a `Fetch.disable` 100 ms after
 /// ~keep the last refusal let 2 to 31 requests of a torn-down page reach a denied address in 4
-/// ~keep of 120 loaded runs (xberg-io/crawlberg#506). Instead each page lives in its own browser
-/// ~keep context, and ending its watch disposes that context: the page, its popups and their
-/// ~keep pending requests die with the context's network stack, whatever has reached the
-/// ~keep listener (measured: a `Fetch.disable` with pauses outstanding continued 9 to 71 of them
-/// ~keep in 3 of 3 runs; a page disposed with its context before the stop leaked in 0 of 15).
+/// ~keep of 120 loaded runs (xberg-io/crawlberg#506). Instead each page of a browser that outlives
+/// ~keep the check lives in its own browser context, and ending its watch disposes that context:
+/// ~keep the page, its popups and their pending requests die with the context's network stack,
+/// ~keep whatever has reached the listener (measured: a `Fetch.disable` with pauses outstanding
+/// ~keep continued 9 to 71 of them in 3 of 3 runs; a page disposed with its context before the
+/// ~keep stop leaked in 0 of 15). A `browser_profile` needs the browser's own context, whose
+/// ~keep storage is the profile's; its browser is launched for the one session and closed after
+/// ~keep the check, so there interception is never turned off at all (measured: pauses left
+/// ~keep outstanding under interception until the browser closed reached nothing, 3 of 3).
 pub(crate) struct BrowserFirewall {
     handle: FirewallHandle,
     listener: tokio::task::JoinHandle<()>,
@@ -177,53 +181,50 @@ impl BrowserOrigin {
     }
 }
 
-/// What the browser context of a page the check opens shares with the browser's own cookies.
+/// The browser context the check opens its pages in.
 ///
-/// ~keep A created context is an incognito-like jar: it starts empty and its cookies die with it.
-/// ~keep A `browser_profile` promises a session its saved cookies, and a `browser.endpoint` Chrome
-/// ~keep has its owner's, so those are copied into the context, and back when the profile is
-/// ~keep saved. The page still lives in a context of its own: only the context's disposal takes
-/// ~keep its pending requests with it (xberg-io/crawlberg#506).
+/// ~keep A created context is an incognito-like jar: it starts empty and its storage dies with
+/// ~keep it, and only its disposal takes a page's pending requests along (xberg-io/crawlberg#506).
+/// ~keep A `browser.endpoint` Chrome has its owner's cookies, so those are copied in. A
+/// ~keep `browser_profile` promises a session the profile's cookies and localStorage, and a copy
+/// ~keep of the cookies is not that: it lost the localStorage and brought back a cookie the page
+/// ~keep had deleted (4 of 4 runs each, reports/rev506.md). A profile session runs on a Chrome
+/// ~keep launched for it alone, so its page uses the browser's own context and the check leaves
+/// ~keep interception on until that Chrome is closed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum CookieSharing {
-    /// The context starts empty and its cookies die with it.
+pub(crate) enum PageContext {
+    /// A context of its own that starts empty; the page's storage dies with it.
     Isolated,
-    /// The browser's cookies are copied into the context when the page is opened.
+    /// A context of its own that starts with the browser's cookies; the page's own die with it.
     Copied,
-    /// Copied, and the context's cookies are copied back to the browser before it is disposed.
-    CopiedAndSaved,
+    /// The browser's own context: the page reads and writes the browser's storage. Interception
+    /// stays on when the check stops; the browser is closed after it.
+    Shared,
 }
 
-impl CookieSharing {
-    /// The sharing a one-shot session with `config` needs: an external browser's own cookies,
-    /// a named profile's saved cookies, written back when the profile is saved, or none.
+impl PageContext {
+    /// The context a one-shot session with `config` opens its page in: an external browser's
+    /// cookies reach the page, a named profile's storage is the page's, a launched browser
+    /// without a profile gives it nothing.
     pub(crate) fn of(config: &CrawlConfig) -> Self {
         if config.browser.endpoint.is_some() {
-            return Self::Copied;
-        }
-        match (config.browser_profile.is_some(), config.save_browser_profile) {
-            (false, _) => Self::Isolated,
-            (true, false) => Self::Copied,
-            (true, true) => Self::CopiedAndSaved,
+            Self::Copied
+        } else if config.browser_profile.is_some() {
+            Self::Shared
+        } else {
+            Self::Isolated
         }
     }
 
-    /// The sharing a browser reached through `endpoint`, if one is configured, needs: an external
-    /// browser's cookies are its owner's and reach the session; a launched browser has none.
+    /// The context a browser reached through `endpoint`, if one is configured, opens its pages
+    /// in: an external browser's cookies are its owner's and reach the page; a launched browser
+    /// has none.
     pub(crate) fn of_endpoint(endpoint: Option<&str>) -> Self {
         if endpoint.is_some() {
             Self::Copied
         } else {
             Self::Isolated
         }
-    }
-
-    fn copies(self) -> bool {
-        self != Self::Isolated
-    }
-
-    fn saves(self) -> bool {
-        self == Self::CopiedAndSaved
     }
 }
 
@@ -234,7 +235,7 @@ pub(crate) struct FirewallHandle {
     /// The browser, held weakly so the owner's `Arc::into_inner` still finds it alone once the
     /// check has stopped.
     browser: Weak<Browser>,
-    cookies: CookieSharing,
+    context: PageContext,
 }
 
 /// A page under the check. [`Watch::close`] or [`Watch::park`] ends it; dropping it closes
@@ -255,8 +256,6 @@ struct Refusal {
 struct WatchedPage {
     /// The page's own target.
     root: TargetId,
-    /// The browser context the check opened the page in, set when the watch starts.
-    context: OnceLock<BrowserContextId>,
     main_frame: FrameId,
     /// The crawl's config: the SSRF policy every request is judged by, and the headers a
     /// request to the seed's host gets.
@@ -288,10 +287,10 @@ struct Registry {
     /// In-process frames, filled in as requests name them: the watched page that owns the
     /// frame, or `None` for a frame of another target.
     frames: HashMap<FrameId, Option<Arc<WatchedPage>>>,
-    /// The page's own target of every browser context the check opened a page in. A context is
-    /// disposed when the page's watch ends with the page, when Chrome destroys the page, or when
-    /// the check stops; its popups go with it.
-    contexts: HashMap<BrowserContextId, TargetId>,
+    /// Every page the check opened, by its own target, with the browser context it lives in when
+    /// it has one of its own. The page goes when its watch ends with it, when Chrome destroys it,
+    /// or when the check stops; a context of its own, and its popups, go with it.
+    opened: HashMap<TargetId, Option<BrowserContextId>>,
 }
 
 /// Who a paused request belongs to.
@@ -322,21 +321,6 @@ impl Registry {
         })
     }
 
-    /// The context the check opened the page `root` in, if it opened that page.
-    fn context_of(&self, root: &TargetId) -> Option<BrowserContextId> {
-        self.contexts
-            .iter()
-            .find(|(_, page)| *page == root)
-            .map(|(context, _)| context.clone())
-    }
-
-    /// Take out the context of the destroyed page `root`, if the check opened that page.
-    fn take_context_of(&mut self, root: &TargetId) -> Option<BrowserContextId> {
-        let context = self.context_of(root)?;
-        self.contexts.remove(&context);
-        Some(context)
-    }
-
     fn owns_live_target(&self, page: &Arc<WatchedPage>, keep_root: bool) -> bool {
         self.targets
             .iter()
@@ -349,7 +333,7 @@ struct Shared {
     /// Notified whenever a target is destroyed.
     destroyed: Notify,
     origin: BrowserOrigin,
-    cookies: CookieSharing,
+    context: PageContext,
     #[cfg(test)]
     delays: TestDelays,
 }
@@ -364,11 +348,14 @@ struct TestDelays {
     deliver: Duration,
     /// Before the listener takes in a paused request, as a busy host holds it.
     receive: Duration,
+    /// Before a page opened while the check stops is dropped, as a flooded Chrome takes.
+    drop_late: Duration,
 }
 
 enum Command {
-    /// A page was opened in a browser context of the check: its context and its own target.
-    Opened(BrowserContextId, TargetId),
+    /// The check opened a page: its own target, and its browser context when it has one of its
+    /// own.
+    Opened(TargetId, Option<BrowserContextId>),
     /// Watch the page, recording the documents its main frame commits from its navigation events.
     Watch(
         Arc<WatchedPage>,
@@ -382,9 +369,9 @@ enum Command {
         close_page: bool,
         done: Option<oneshot::Sender<()>>,
     },
-    /// Dispose every context of the check that is left, turn interception off once that and
-    /// every answer and every watch end already started have finished, then stop the listener.
-    /// `done` is told when interception is off.
+    /// Drop every page of the check that is left, turn interception off (unless the pages
+    /// share the browser's context) once that and every answer and every watch end already
+    /// started have finished, then stop the listener. `done` is told when the listener stops.
     Stop(Option<oneshot::Sender<()>>),
 }
 
@@ -392,22 +379,22 @@ enum Command {
 enum Done {
     Answered,
     Closed,
-    Disposed,
+    Dropped,
     Ended(Arc<WatchedPage>, bool, Option<oneshot::Sender<()>>),
 }
 
 impl BrowserFirewall {
-    /// Turn interception on for `browser` and start the listener on its session. Pages the
-    /// check opens share the browser's cookies as `cookies` says.
+    /// Turn interception on for `browser` and start the listener on its session. The check
+    /// opens its pages in the context `context` names.
     pub(crate) async fn start(
         browser: Arc<Browser>,
         origin: BrowserOrigin,
-        cookies: CookieSharing,
+        context: PageContext,
     ) -> Result<Self, CrawlError> {
         Self::start_with(
             browser,
             origin,
-            cookies,
+            context,
             #[cfg(test)]
             TestDelays::default(),
         )
@@ -417,7 +404,7 @@ impl BrowserFirewall {
     async fn start_with(
         browser: Arc<Browser>,
         origin: BrowserOrigin,
-        cookies: CookieSharing,
+        context: PageContext,
         #[cfg(test)] delays: TestDelays,
     ) -> Result<Self, CrawlError> {
         let listen_error = |e| CrawlError::browser_error(format!("failed to register intercept listener: {e}"));
@@ -451,7 +438,7 @@ impl BrowserFirewall {
             }),
             destroyed: Notify::new(),
             origin,
-            cookies,
+            context,
             #[cfg(test)]
             delays,
         };
@@ -459,7 +446,7 @@ impl BrowserFirewall {
         let handle = FirewallHandle {
             commands,
             browser: Arc::downgrade(&browser),
-            cookies,
+            context,
         };
         let listener = tokio::spawn(serve(
             browser,
@@ -482,7 +469,7 @@ impl BrowserFirewall {
         self.handle.clone()
     }
 
-    /// Dispose every context of the check that is left, so no page of it can still send, turn
+    /// Drop every page of the check that is left, so no page of it can still send, turn
     /// interception off once that and every answer the check had started when asked to stop are
     /// done, stop the listener, and release its reference to the browser, so the owner can close
     /// it. Call it once no page of the browser needs the check any more.
@@ -492,7 +479,10 @@ impl BrowserFirewall {
     /// ~keep on a `browser.endpoint` Chrome, that is the user's own tabs, permanently.
     /// ~keep Nor is the disable sent from here: a disable that lands between a refusal's verdict
     /// ~keep and its delivery lets the refused request through. The listener sends it once the
-    /// ~keep answers it has started are delivered.
+    /// ~keep answers it has started are delivered. On a `PageContext::Shared` check it is not
+    /// ~keep sent at all: the pages used the browser's own context, so no disposal could take
+    /// ~keep their pending requests, and the disable would continue every pause the listener has
+    /// ~keep not received; the browser, launched for this one session, is closed instead.
     pub(crate) async fn stop(mut self) {
         let (done, stopped) = oneshot::channel();
         if self.handle.commands.send(Command::Stop(Some(done))).is_ok() {
@@ -522,27 +512,38 @@ async fn disable_fetch(browser: &Browser) {
     }
 }
 
-/// Dispose the browser context `context`, and with it every page in it and every request of
-/// theirs Chrome still holds. With `save`, its cookies are copied to the browser's own first.
-async fn dispose_context(browser: &Browser, context: BrowserContextId, save: bool) {
-    if save && let Err(error) = copy_cookies(browser, Some(context.clone()), None).await {
-        tracing::warn!(error, "failed to copy a page's cookies back to the browser profile");
+/// Drop the page `root` the check opened: dispose its browser context `context` when it has one
+/// of its own, and with it every page in it and every request of theirs Chrome still holds;
+/// otherwise close the page's target.
+///
+/// ~keep Closing a target under browser-wide interception lets none of its pending requests
+/// ~keep out (measured: 854 to 6674 pauses outstanding at the close, 0 reached, 3 of 3 runs);
+/// ~keep what takes them out is turning interception off, which a shared-context check never does.
+async fn drop_page(browser: &Browser, root: TargetId, context: Option<BrowserContextId>) {
+    match context {
+        Some(context) => dispose_context(browser, context).await,
+        None => {
+            if let Err(error) = browser.execute(CloseTargetParams::new(root)).await {
+                tracing::debug!(%error, "failed to close a page of the check");
+            }
+        }
     }
+}
+
+/// Dispose the browser context `context`, and with it every page in it and every request of
+/// theirs Chrome still holds.
+async fn dispose_context(browser: &Browser, context: BrowserContextId) {
     if let Err(error) = browser.dispose_browser_context(context).await {
         tracing::debug!(%error, "failed to dispose a page's browser context");
     }
 }
 
-/// Copy every cookie of the browser context `from` into `to`, `None` being the browser's own
-/// context. Returns how many cookies were copied.
-async fn copy_cookies(
-    browser: &Browser,
-    from: Option<BrowserContextId>,
-    to: Option<BrowserContextId>,
-) -> Result<usize, String> {
+/// Copy every cookie of the browser's own context into the browser context `context`. Returns
+/// how many cookies were copied.
+async fn copy_cookies(browser: &Browser, context: BrowserContextId) -> Result<usize, String> {
     let cookies = browser
         .execute(StorageGetCookiesParams {
-            browser_context_id: from,
+            browser_context_id: None,
         })
         .await
         .map_err(|e| e.to_string())?
@@ -555,7 +556,7 @@ async fn copy_cookies(
     browser
         .execute(StorageSetCookiesParams {
             cookies: cookies.into_iter().map(cookie_param).collect(),
-            browser_context_id: to,
+            browser_context_id: Some(context),
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -583,49 +584,56 @@ fn cookie_param(cookie: Cookie) -> CookieParam {
 }
 
 impl FirewallHandle {
-    /// Open a blank page in a browser context of its own, for [`Self::watch`]. The context
-    /// starts with the browser's cookies when the check shares them. It goes, with the page's
-    /// popups, when the page's watch ends with the page, when Chrome destroys the page, or when
-    /// the check stops.
+    /// Open a blank page for [`Self::watch`], in a browser context of its own or in the
+    /// browser's, as the check's [`PageContext`] says. A context of its own starts with the
+    /// browser's cookies when the check copies them. The page goes, with its popups, when its
+    /// watch ends with it, when Chrome destroys it, or when the check stops.
     ///
-    /// ~keep The context is disposed with the debugging session too, so a check that ends
+    /// ~keep A created context is disposed with the debugging session too, so a check that ends
     /// ~keep without stopping (a crashed process) leaves no context in a `browser.endpoint` Chrome.
     pub(crate) async fn new_page(&self) -> Result<chromiumoxide::Page, CrawlError> {
         let stopped = || CrawlError::browser_error("request interception stopped");
         let browser = self.browser.upgrade().ok_or_else(stopped)?;
-        let context = browser
-            .create_browser_context(CreateBrowserContextParams {
-                dispose_on_detach: Some(true),
-                ..CreateBrowserContextParams::default()
-            })
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
-        if self.cookies.copies()
-            && let Err(error) = copy_cookies(&browser, None, Some(context.clone())).await
+        let failed = |e: &dyn std::fmt::Display| CrawlError::browser_error(format!("failed to create page: {e}"));
+        let context = match self.context {
+            PageContext::Shared => None,
+            PageContext::Isolated | PageContext::Copied => Some(
+                browser
+                    .create_browser_context(CreateBrowserContextParams {
+                        dispose_on_detach: Some(true),
+                        ..CreateBrowserContextParams::default()
+                    })
+                    .await
+                    .map_err(|e| failed(&e))?,
+            ),
+        };
+        if self.context == PageContext::Copied
+            && let Some(context) = &context
+            && let Err(error) = copy_cookies(&browser, context.clone()).await
         {
-            dispose_context(&browser, context, false).await;
+            dispose_context(&browser, context.clone()).await;
             return Err(CrawlError::browser_error(format!(
                 "failed to copy the browser's cookies into the page: {error}"
             )));
         }
-        let params = CreateTargetParams::builder()
-            .url("about:blank")
-            .browser_context_id(context.clone())
-            .build()
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        let mut params = CreateTargetParams::new("about:blank");
+        params.browser_context_id = context.clone();
         let page = match browser.new_page(params).await {
             Ok(page) => page,
             Err(error) => {
-                dispose_context(&browser, context, false).await;
-                return Err(CrawlError::browser_error(format!("failed to create page: {error}")));
+                if let Some(context) = context {
+                    dispose_context(&browser, context).await;
+                }
+                return Err(failed(&error));
             }
         };
+        let root = page.target_id().clone();
         if self
             .commands
-            .send(Command::Opened(context.clone(), page.target_id().clone()))
+            .send(Command::Opened(root.clone(), context.clone()))
             .is_err()
         {
-            dispose_context(&browser, context, false).await;
+            drop_page(&browser, root, context).await;
             return Err(stopped());
         }
         Ok(page)
@@ -647,7 +655,6 @@ impl FirewallHandle {
             .map_err(|e| CrawlError::browser_error(format!("failed to register navigation listener: {e}")))?;
         let watched = Arc::new(WatchedPage {
             root: page.target_id().clone(),
-            context: OnceLock::new(),
             main_frame,
             config: config.clone(),
             redirect_limit,
@@ -742,16 +749,16 @@ impl Watch {
         first
     }
 
-    /// Dispose the page's browser context, and with it the page, every popup it opened and
-    /// every request of theirs Chrome still holds, and end the watch once Chrome has destroyed
-    /// them. From now on the page's requests are refused.
+    /// Close the page and every popup it opened: a page in a context of its own goes with the
+    /// context, and every request of theirs Chrome still holds goes with it. End the watch once
+    /// Chrome has destroyed them. From now on the page's requests are refused.
     pub(crate) async fn close(self) {
         self.end(true).await;
     }
 
     /// Close the popups the page opened and end the watch, keeping the page open for reuse. The
-    /// page's requests are refused until it is watched again; its context goes when Chrome
-    /// destroys the page, or with the check.
+    /// page's requests are refused until it is watched again; the page, and a context of its
+    /// own, go when Chrome destroys the page, or with the check.
     #[cfg(any(feature = "browser", test))]
     pub(crate) async fn park(self) {
         self.end(false).await;
@@ -800,11 +807,11 @@ struct Events {
     destroyed: chromiumoxide::listeners::EventStream<EventTargetDestroyed>,
 }
 
-/// The listener. It runs the watch commands in order, tracks the targets and the contexts
-/// each watched page owns, and answers the paused requests concurrently, so a slow DNS lookup
-/// for one page does not hold up the others. Interception is turned off only on a stop, once
-/// every context of the check is disposed and every answer and every watch end already
-/// started has finished.
+/// The listener. It runs the watch commands in order, tracks the targets each watched page owns
+/// and the pages the check opened, and answers the paused requests concurrently, so a slow DNS
+/// lookup for one page does not hold up the others. Interception is turned off only on a stop,
+/// once every page of the check is dropped and every answer and every watch end already
+/// started has finished, and never when the pages share the browser's own context.
 async fn serve(
     browser: Arc<Browser>,
     shared: Shared,
@@ -825,7 +832,14 @@ async fn serve(
         if draining.is_empty()
             && let Some(stopped) = stopping.take()
         {
-            disable_fetch(browser).await;
+            // ~keep Pages in the browser's own context had no context to dispose, so a disable
+            // ~keep here would continue every pause the listener has not received (measured 9
+            // ~keep to 71 of them in 3 of 3 runs). Interception stays on; the owner closes the
+            // ~keep browser, which was launched for this one session, and the pauses die with it
+            // ~keep (measured 0 reached in 3 of 3 runs).
+            if shared.context != PageContext::Shared {
+                disable_fetch(browser).await;
+            }
             for done in stopped {
                 let _ = done.send(());
             }
@@ -833,32 +847,33 @@ async fn serve(
         }
         tokio::select! {
             command = commands.recv(), if commands_open => match command {
-                // ~keep A page opened while the check stops is disposed at once: its watch is
-                // ~keep refused below, and a context left behind would outlive the check. The
-                // ~keep disposal joins the drain, since the loop ends, and turns interception
-                // ~keep off, as soon as the drain is empty, whatever is still running.
-                Some(Command::Opened(context, _)) if stopping.is_some() => {
+                // ~keep A page opened while the check stops is dropped at once: its watch is
+                // ~keep refused below, and a page left behind would outlive the check. The drop
+                // ~keep joins the drain, since the loop ends, and turns interception off, as
+                // ~keep soon as the drain is empty, whatever is still running.
+                Some(Command::Opened(root, context)) if stopping.is_some() => {
                     draining.push(Box::pin(async move {
-                        dispose_context(browser, context, false).await;
-                        Done::Disposed
+                        #[cfg(test)]
+                        tokio::time::sleep(shared.delays.drop_late).await;
+                        drop_page(browser, root, context).await;
+                        Done::Dropped
                     }));
                 }
-                Some(Command::Opened(context, root)) => {
-                    lock(&shared.registry).contexts.insert(context, root);
+                Some(Command::Opened(root, context)) => {
+                    lock(&shared.registry).opened.insert(root, context);
                 }
                 Some(Command::Watch(_, _, ack)) if stopping.is_some() => {
                     let _ = ack.send(Err("request interception stopped".to_owned()));
                 }
                 Some(Command::Watch(page, navigated, ack)) => {
                     let mut registry = lock(&shared.registry);
-                    let Some(context) = registry.context_of(&page.root) else {
+                    if !registry.opened.contains_key(&page.root) {
                         drop(registry);
                         let _ = ack.send(Err(
                             "the SSRF check can only watch a page it opened; open the page with the check".to_owned(),
                         ));
                         continue;
-                    };
-                    let _ = page.context.set(context);
+                    }
                     registry.pages.push(Arc::clone(&page));
                     registry.targets.push((page.root.clone(), Arc::clone(&page)));
                     drop(registry);
@@ -871,11 +886,11 @@ async fn serve(
                 Some(Command::Stop(done)) => {
                     let stopped = stopping.get_or_insert_with(|| {
                         draining.extend(std::mem::take(&mut running));
-                        let left = std::mem::take(&mut lock(&shared.registry).contexts);
-                        for context in left.into_keys() {
+                        let left = std::mem::take(&mut lock(&shared.registry).opened);
+                        for (root, context) in left {
                             draining.push(Box::pin(async move {
-                                dispose_context(browser, context, shared.cookies.saves()).await;
-                                Done::Disposed
+                                drop_page(browser, root, context).await;
+                                Done::Dropped
                             }));
                         }
                         Vec::new()
@@ -921,7 +936,7 @@ async fn serve(
                     let mut registry = lock(&shared.registry);
                     registry.targets.retain(|(id, _)| *id != event.target_id);
                     registry.others.remove(&event.target_id);
-                    let context = registry.take_context_of(&event.target_id);
+                    let context = registry.opened.remove(&event.target_id).flatten();
                     drop(registry);
                     shared.destroyed.notify_waiters();
                     // ~keep A parked page the session pool evicts, or a pooled page dropped before
@@ -929,8 +944,8 @@ async fn serve(
                     // ~keep goes here, and its popups with it.
                     if let Some(context) = context {
                         running.push(Box::pin(async move {
-                            dispose_context(browser, context, shared.cookies.saves()).await;
-                            Done::Disposed
+                            dispose_context(browser, context).await;
+                            Done::Dropped
                         }));
                     }
                 }
@@ -944,7 +959,7 @@ async fn serve(
 /// Take in what a finished task of the listener reports.
 fn settle(shared: &Shared, done: Done) {
     match done {
-        Done::Answered | Done::Closed | Done::Disposed => {}
+        Done::Answered | Done::Closed | Done::Dropped => {}
         Done::Ended(page, keep_root, done) => {
             release(shared, &page, keep_root);
             if let Some(done) = done {
@@ -1017,10 +1032,11 @@ fn release(shared: &Shared, page: &Arc<WatchedPage>, keep_root: bool) {
     }
 }
 
-/// End the watch of `page`. With `close_page` set, dispose the page's browser context, which
-/// takes the page, its popups and their pending requests; otherwise close the popups it opened,
-/// children first, and keep the page. Wait until Chrome has destroyed them and every request the
-/// page sent is answered, then report back. The page's requests are refused throughout.
+/// End the watch of `page`. With `close_page` set, dispose the page's browser context when it
+/// has one of its own, which takes the page, its popups and their pending requests, or close the
+/// page and its popups; otherwise close the popups it opened, children first, and keep the page.
+/// Wait until Chrome has destroyed them and every request the page sent is answered, then report
+/// back. The page's requests are refused throughout.
 async fn end_watch(
     browser: &Browser,
     shared: &Shared,
@@ -1030,10 +1046,14 @@ async fn end_watch(
 ) -> Done {
     page.ending.store(true, Ordering::Release);
     let keep_root = !close_page;
-    if close_page && let Some(context) = page.context.get() {
-        // ~keep Taken out of the registry first, so the destroy events do not dispose it again.
-        lock(&shared.registry).contexts.remove(context);
-        dispose_context(browser, context.clone(), shared.cookies.saves()).await;
+    // ~keep Taken out of the registry first, so the destroy events do not dispose it again.
+    let context = close_page
+        .then(|| lock(&shared.registry).opened.remove(&page.root))
+        .flatten()
+        .flatten();
+    let disposed = context.is_some();
+    if let Some(context) = context {
+        dispose_context(browser, context).await;
     }
     let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
         loop {
@@ -1049,7 +1069,7 @@ async fn end_watch(
             }
             // ~keep A popup opened meanwhile is closed as it appears. A disposed context's
             // ~keep targets are already going; closing them again is refused and harmless.
-            if keep_root {
+            if !disposed {
                 for target in &open {
                     let _ = browser.execute(CloseTargetParams::new(target.clone())).await;
                 }
@@ -1608,7 +1628,7 @@ mod race_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_stream::StreamExt;
 
-    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, CookieSharing, TestDelays};
+    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, PageContext, TestDelays};
 
     #[allow(
         clippy::print_stderr,
@@ -1703,10 +1723,16 @@ mod race_tests {
     }
 
     /// Set the cookie `name=value` for `http://localhost/` in the context `context`, `None` being
-    /// the browser's own.
+    /// the browser's own. The cookie lives an hour: Chrome drops a session cookie of its own
+    /// context when the last window closes, as it does for any browser session.
     async fn set_cookie(browser: &Browser, context: Option<BrowserContextId>, name: &str, value: &str) {
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs_f64() + 3600.0)
+            .unwrap_or(0.0);
         let cookie = CookieParam {
             url: Some("http://localhost/".to_owned()),
+            expires: Some(super::TimeSinceEpoch::new(expires)),
             ..CookieParam::new(name, value)
         };
         browser
@@ -1826,7 +1852,7 @@ mod race_tests {
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
-            CookieSharing::Isolated,
+            PageContext::Isolated,
             TestDelays::default(),
         )
         .await
@@ -1877,14 +1903,19 @@ mod race_tests {
         browser: &Arc<Browser>,
         delays: TestDelays,
     ) -> (BrowserFirewall, chromiumoxide::Page, super::Watch) {
-        let firewall = BrowserFirewall::start_with(
-            Arc::clone(browser),
-            BrowserOrigin::Launched,
-            CookieSharing::Isolated,
-            delays,
-        )
-        .await
-        .expect("the listener must start");
+        watched_page_in(browser, PageContext::Isolated, delays).await
+    }
+
+    /// Start a check with `delays` that opens its pages in `context`, open a page with it, watch
+    /// it, and give it a real origin.
+    async fn watched_page_in(
+        browser: &Arc<Browser>,
+        context: PageContext,
+        delays: TestDelays,
+    ) -> (BrowserFirewall, chromiumoxide::Page, super::Watch) {
+        let firewall = BrowserFirewall::start_with(Arc::clone(browser), BrowserOrigin::Launched, context, delays)
+            .await
+            .expect("the listener must start");
         let page = firewall.handle().new_page().await.expect("the check must open a page");
         let watch = firewall
             .handle()
@@ -2091,7 +2122,7 @@ mod race_tests {
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
-            CookieSharing::Isolated,
+            PageContext::Isolated,
             TestDelays::default(),
         )
         .await
@@ -2138,49 +2169,67 @@ mod race_tests {
         assert_eq!(kept[1].1, 204, "{test_name}: the newest response must be kept");
     }
 
-    /// A page opened while the check is stopping is refused a watch, and is gone with the check,
-    /// not left unchecked once interception turns off.
+    /// A page opened while the check is stopping is refused a watch, and is gone, with a context
+    /// of its own, when the stop returns, even when dropping it outlasts the rest of the drain:
+    /// not left unchecked once interception turns off, in either context the check opens in.
+    ///
+    /// ~keep The injected drop delay makes the late page's drop the last thing the drain waits
+    /// ~keep for. Without it the drop took milliseconds and the refusal's delivery 500 ms, so a
+    /// ~keep drop the stop did not wait for still finished before the stop did (0 of 5 red).
     #[tokio::test(flavor = "multi_thread")]
     async fn a_page_watched_while_the_check_stops_is_refused() {
         let test_name = "a_page_watched_while_the_check_stops_is_refused";
         let Some(browser) = launch(test_name).await else {
             return;
         };
-        let delays = TestDelays {
-            deliver: Duration::from_millis(500),
-            ..TestDelays::default()
-        };
-        let (firewall, page, watch) = watched_page(&browser, delays).await;
-        let (denied, _hits) = denied_listener().await;
-        let _ = page
-            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
-            .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let handle = firewall.handle();
-        let stopping = tokio::spawn(firewall.stop());
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let late = handle.new_page().await;
-        let watched = match &late {
-            Ok(late) => handle.watch(late, &config(), 0).await.map(drop),
-            Err(error) => Err(crate::error::CrawlError::browser_error(error.to_string())),
-        };
-        let _ = stopping.await;
-        let late_target = late.as_ref().ok().map(|late| late.target_id().clone());
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let late_open = match &late_target {
-            Some(target) => target_is_open(&browser, target).await,
-            None => false,
-        };
-        drop((watch, page, late));
+        for context in [PageContext::Isolated, PageContext::Shared] {
+            let delays = TestDelays {
+                deliver: Duration::from_millis(400),
+                drop_late: Duration::from_millis(1500),
+                ..TestDelays::default()
+            };
+            let before = context_count(&browser).await;
+            let (firewall, page, watch) = watched_page_in(&browser, context, delays).await;
+            let (denied, _hits) = denied_listener().await;
+            let _ = page
+                .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+                .await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let handle = firewall.handle();
+            let stopping = tokio::spawn(firewall.stop());
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let late = handle.new_page().await;
+            let opened_while_stopping = !stopping.is_finished();
+            let watched = match &late {
+                Ok(late) => handle.watch(late, &config(), 0).await.map(drop),
+                Err(error) => Err(crate::error::CrawlError::browser_error(error.to_string())),
+            };
+            let _ = stopping.await;
+            let late_target = late.as_ref().ok().map(|late| late.target_id().clone());
+            let late_open = match &late_target {
+                Some(target) => target_is_open(&browser, target).await,
+                None => false,
+            };
+            let after = context_count(&browser).await;
+            drop((watch, page, late));
+            assert!(
+                late_target.is_some() && opened_while_stopping,
+                "{test_name} ({context:?}): the late page must open while the check stops, or the test shows nothing"
+            );
+            assert!(
+                watched.is_err(),
+                "{test_name} ({context:?}): a watch that starts while the check stops must fail"
+            );
+            assert!(
+                !late_open,
+                "{test_name} ({context:?}): a page opened while the check stops must be gone when the stop returns"
+            );
+            assert_eq!(
+                after, before,
+                "{test_name} ({context:?}): a context of the late page's own must be disposed when the stop returns"
+            );
+        }
         close(browser).await;
-        assert!(
-            watched.is_err(),
-            "{test_name}: a watch that starts while the check stops must fail"
-        );
-        assert!(
-            !late_open,
-            "{test_name}: a page opened while the check stops must be gone with the check"
-        );
     }
 
     /// A page whose main frame cannot be read is not watched: the redirect limit could not be
@@ -2194,7 +2243,7 @@ mod race_tests {
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
-            CookieSharing::Isolated,
+            PageContext::Isolated,
             TestDelays::default(),
         )
         .await
@@ -2285,7 +2334,7 @@ mod race_tests {
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
-            CookieSharing::Isolated,
+            PageContext::Isolated,
             TestDelays::default(),
         )
         .await
@@ -2347,7 +2396,7 @@ mod race_tests {
         let firewall = BrowserFirewall::start_with(
             Arc::clone(&browser),
             BrowserOrigin::Launched,
-            CookieSharing::Isolated,
+            PageContext::Isolated,
             TestDelays::default(),
         )
         .await
@@ -2369,52 +2418,142 @@ mod race_tests {
         );
     }
 
-    /// With the browser's cookies shared and saved, a page the check opens starts with the
-    /// browser's cookies, and the cookies its context holds when its watch ends with the page are
-    /// copied back to the browser, as a saved `browser_profile` needs.
+    /// A page of a shared-context check lives in the browser's own context, as a
+    /// `browser_profile` needs: no context is created, the page reads the browser's cookies, and
+    /// the cookies and localStorage it writes are in the browser for the next page.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_saved_profiles_cookies_go_into_the_page_and_back() {
-        let test_name = "a_saved_profiles_cookies_go_into_the_page_and_back";
+    async fn a_shared_context_page_reads_and_writes_the_browsers_own_storage() {
+        let test_name = "a_shared_context_page_reads_and_writes_the_browsers_own_storage";
         let Some(browser) = launch(test_name).await else {
             return;
         };
         set_cookie(&browser, None, "saved", "1").await;
-        let firewall = BrowserFirewall::start_with(
-            Arc::clone(&browser),
-            BrowserOrigin::Launched,
-            CookieSharing::CopiedAndSaved,
-            TestDelays::default(),
-        )
-        .await
-        .expect("the listener must start");
-        let before = contexts(&browser).await;
-        let page = firewall.handle().new_page().await.expect("the check must open a page");
-        let context = contexts(&browser)
+        let before = context_count(&browser).await;
+        let (firewall, page, watch) = watched_page_in(&browser, PageContext::Shared, TestDelays::default()).await;
+        let with_page = context_count(&browser).await;
+        // ~keep localStorage is per origin, port included, so the next page must load this URL.
+        let site = page.url().await.ok().flatten().expect("the page must have a URL");
+        let read: String = page
+            .evaluate("localStorage.setItem('k', 'v'); document.cookie = 'session=2; max-age=3600'; document.cookie")
             .await
-            .into_iter()
-            .find(|context| !before.contains(context))
-            .expect("the page must live in a context of its own");
-        let in_page = cookie_names(&browser, Some(context.clone())).await;
-        set_cookie(&browser, Some(context), "session", "2").await;
-        let watch = firewall
+            .ok()
+            .and_then(|value| value.into_value::<String>().ok())
+            .unwrap_or_default();
+        watch.close().await;
+        let closed = !target_is_open(&browser, page.target_id()).await;
+        let in_browser = cookie_names(&browser, None).await;
+        let next = firewall.handle().new_page().await.expect("the check must open a page");
+        let next_watch = firewall
             .handle()
-            .watch(&page, &config(), 0)
+            .watch(&next, &config(), 0)
             .await
             .expect("the watch must start");
-        watch.close().await;
-        let in_browser = cookie_names(&browser, None).await;
+        next.goto(site).await.expect("the test page must load");
+        let stored: String = next
+            .evaluate("localStorage.getItem('k') || 'none'")
+            .await
+            .ok()
+            .and_then(|value| value.into_value::<String>().ok())
+            .unwrap_or_default();
+        next_watch.close().await;
         firewall.stop().await;
-        drop(page);
+        drop((page, next));
         close(browser).await;
         assert_eq!(
-            in_page,
-            vec!["saved".to_owned()],
-            "{test_name}: the page must start with the browser's cookies"
+            with_page, before,
+            "{test_name}: the page must live in the browser's own context, not one of its own"
         );
+        assert!(
+            read.contains("saved=1"),
+            "{test_name}: the page must read the browser's cookies, read {read:?}"
+        );
+        assert!(closed, "{test_name}: closing the watch must close the page");
         assert_eq!(
             in_browser,
             vec!["saved".to_owned(), "session".to_owned()],
-            "{test_name}: the cookies the page's context held must be copied back when its watch ends"
+            "{test_name}: the cookie the page set must be in the browser when its watch ends"
+        );
+        assert_eq!(
+            stored, "v",
+            "{test_name}: the localStorage the page wrote must reach the next page"
+        );
+    }
+
+    /// Stopping a shared-context check leaves interception on: a request Chrome paused that the
+    /// listener has not taken in when the stop comes reaches nothing, and a tab outside the check
+    /// still has its requests paused after the stop. The browser still closes.
+    ///
+    /// ~keep The receive delay holds the pause in the listener, as a busy host does. A disable
+    /// ~keep at the stop would continue that pause (measured 9 to 71 continued in 3 of 3 runs);
+    /// ~keep the pages had no context of their own to take it with them, so the check must not
+    /// ~keep disable. The tab outside the check is the probe of that: its request is paused, seen
+    /// ~keep by this test's own listener, only while interception is on.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stopping_a_shared_context_check_leaves_interception_on() {
+        let test_name = "stopping_a_shared_context_check_leaves_interception_on";
+        let Some(browser) = launch(test_name).await else {
+            return;
+        };
+        let delays = TestDelays {
+            receive: Duration::from_millis(500),
+            ..TestDelays::default()
+        };
+        let (firewall, page, watch) = watched_page_in(&browser, PageContext::Shared, delays).await;
+        let target = page.target_id().clone();
+        let other = browser.new_page("about:blank").await.expect("page");
+        let mut paused = browser
+            .event_listener::<super::EventRequestPaused>()
+            .await
+            .expect("the test must see the paused requests");
+        let (denied, denied_hits) = denied_listener().await;
+        let _ = page
+            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let pending = watch.page.in_flight.load(Ordering::Acquire);
+        watch.park().await;
+        tokio::time::timeout(Duration::from_secs(10), firewall.stop())
+            .await
+            .expect("stopping the check must finish");
+        let reached = served(&denied_hits).await;
+        let still_open = target_is_open(&browser, &target).await;
+        let (probe, probe_hits) = denied_listener().await;
+        let _ = other
+            .evaluate(format!("fetch({probe:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        let probe_paused = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = paused.next().await {
+                if event.request.url == probe {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        let probe_reached = served(&probe_hits).await;
+        drop((page, other));
+        let closed = tokio::time::timeout(Duration::from_secs(20), close(browser)).await;
+        assert_eq!(
+            pending, 0,
+            "{test_name}: the listener must not have taken the request in before the park, or the test shows nothing"
+        );
+        assert!(
+            !reached,
+            "{test_name}: the parked page's pending request must not reach the denied address once the check stops"
+        );
+        assert!(!still_open, "{test_name}: the parked page must be gone with the check");
+        assert!(
+            probe_paused,
+            "{test_name}: a request from a tab outside the check must still be paused after the stop"
+        );
+        assert!(
+            !probe_reached,
+            "{test_name}: a request paused after the stop must reach nothing"
+        );
+        assert!(
+            closed.is_ok(),
+            "{test_name}: the browser must close with interception left on"
         );
     }
 
@@ -2428,7 +2567,7 @@ mod race_tests {
         };
         set_cookie(&browser, None, "owner", "1").await;
         let mut seen = Vec::new();
-        for sharing in [CookieSharing::Copied, CookieSharing::Isolated] {
+        for sharing in [PageContext::Copied, PageContext::Isolated] {
             let firewall = BrowserFirewall::start_with(
                 Arc::clone(&browser),
                 BrowserOrigin::Launched,
@@ -2460,12 +2599,8 @@ mod race_tests {
         assert_eq!(
             seen,
             vec![
-                (
-                    CookieSharing::Copied,
-                    vec!["owner".to_owned()],
-                    vec!["owner".to_owned()]
-                ),
-                (CookieSharing::Isolated, vec![], vec!["owner".to_owned()]),
+                (PageContext::Copied, vec!["owner".to_owned()], vec!["owner".to_owned()]),
+                (PageContext::Isolated, vec![], vec!["owner".to_owned()]),
             ],
             "{test_name}: (sharing, cookies in the page, cookies in the browser after the watch)"
         );

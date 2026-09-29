@@ -19,7 +19,7 @@ use tokio_stream::StreamExt;
 
 use crate::chrome_args::chrome_arg_key;
 use crate::error::CrawlError;
-use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, CookieSharing};
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext};
 
 /// Timeout for opening a new page (tab) in Chrome.
 const PAGE_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -607,7 +607,7 @@ impl BrowserPool {
         let firewall = match BrowserFirewall::start(
             Arc::clone(&browser),
             BrowserOrigin::of_endpoint(self.config.browser_endpoint.as_deref()),
-            CookieSharing::of_endpoint(self.config.browser_endpoint.as_deref()),
+            PageContext::of_endpoint(self.config.browser_endpoint.as_deref()),
         )
         .await
         {

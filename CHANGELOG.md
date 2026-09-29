@@ -120,14 +120,16 @@ All notable changes to crawlberg are documented here.
   request is judged by the policy of the page it belongs to: the page, its frames, and the
   popups it opened. On a browser crawlberg launched, a request that belongs to no checked page
   is refused; on a browser reached through `browser.endpoint`, another client's tabs are left
-  alone. A launched browser no longer opens a tab of its own. Every page crawlberg opens lives in
-  a browser context of its own, so it shares no cookies or storage with the browser's other pages;
-  a session with a `browser_profile`, or on a `browser.endpoint` Chrome, starts its page with the
-  browser's cookies, and a saved profile gets the page's cookies back when the fetch ends. When a
-  fetch or a session ends, that context is disposed: the page, its popups and every request
-  of theirs Chrome still holds go with it, so nothing they sent reaches the network after, however
-  busy the host is. The check is turned off only when it stops, once every page it opened is
-  gone; a request Chrome pauses after that is not checked. In `interact`, a main-frame navigation refused
+  alone. A launched browser no longer opens a tab of its own. On a pooled browser, on a
+  `browser.endpoint` Chrome, and on a one-shot browser without a profile, every page crawlberg
+  opens lives in a browser context of its own, so it shares no cookies or storage with the
+  browser's other pages; on a `browser.endpoint` Chrome the page starts with the browser's cookies.
+  When a fetch or a session ends, that context is disposed: the page, its popups and every request
+  of theirs Chrome still holds go with it, so nothing they sent reaches the network after. The
+  check is turned off only when it stops, once every page it opened is gone; a request Chrome
+  pauses after that is not checked. A session with a `browser_profile` runs on a Chrome launched
+  for it alone, so its page uses the profile's own storage, cookies and localStorage included, and
+  the check stays on until that Chrome is closed. In `interact`, a main-frame navigation refused
   before the actions fails the session with the SSRF policy error, as it fails a scrape. This
   applies to the Chromiumoxide backend. (#153, #165, #168, #281, #506)
 - **An `interact` action whose request the SSRF check refused was reported as successful.** The

@@ -200,8 +200,9 @@ async fn unsaved_profile_changes_are_not_written_back() {
     );
 }
 
-/// A raw HTTP server that sets the cookie `seen=<n>` on its n-th `GET /` and records the
-/// `Cookie` header each of them carried.
+/// A raw HTTP server that records the `Cookie` header each `GET /` carried. By default its n-th
+/// `GET /` sets the cookie `seen=<n>` on the marker page; given `pages`, the n-th answers with the
+/// n-th `(header line, body)`, the last one for every request after.
 struct CookieServer {
     base_url: String,
     cookies_seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -209,21 +210,28 @@ struct CookieServer {
 
 impl CookieServer {
     async fn start() -> Self {
+        Self::serving(Vec::new()).await
+    }
+
+    async fn serving(pages: Vec<(String, String)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("test server should bind");
         let addr = listener.local_addr().expect("test server should have local addr");
         let cookies_seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = std::sync::Arc::clone(&cookies_seen);
+        let pages = std::sync::Arc::new(pages);
         tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     return;
                 };
                 let seen = std::sync::Arc::clone(&seen);
+                let pages = std::sync::Arc::clone(&pages);
                 tokio::spawn(async move {
                     let mut buffer = [0_u8; 4096];
                     let n = stream.read(&mut buffer).await.unwrap_or(0);
                     let head = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    let mut set_cookie = String::new();
+                    let mut header = String::new();
+                    let mut body = "<html><body>profile-wiring-marker</body></html>".to_owned();
                     if head.starts_with("GET / ") {
                         let cookie = head
                             .lines()
@@ -232,11 +240,16 @@ impl CookieServer {
                             .unwrap_or_default();
                         let mut seen = seen.lock().expect("lock");
                         seen.push(cookie);
-                        set_cookie = format!("set-cookie: seen={}; Path=/; Max-Age=3600\r\n", seen.len());
+                        match pages.get((seen.len() - 1).min(pages.len().saturating_sub(1))) {
+                            Some((page_header, page_body)) => {
+                                header = page_header.clone();
+                                body = page_body.clone();
+                            }
+                            None => header = format!("set-cookie: seen={}; Path=/; Max-Age=3600\r\n", seen.len()),
+                        }
                     }
-                    let body = "<html><body>profile-wiring-marker</body></html>";
                     let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n{set_cookie}content-length: {}\r\nconnection: close\r\n\r\n{}",
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n{header}content-length: {}\r\nconnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     );
@@ -277,9 +290,9 @@ fn newest_mtime(dir: &std::path::Path) -> Option<std::time::SystemTime> {
     newest
 }
 
-/// Scrape `url` with the profile, then wait until its Chrome has left the profile: its
-/// `SingletonLock` is gone and nothing under the profile changed for half a second. `None`
-/// without Chrome.
+/// Scrape `url` with the profile and return the page, then wait until its Chrome has left the
+/// profile: its `SingletonLock` is gone and nothing under the profile changed for half a second.
+/// `None` without Chrome.
 ///
 /// ~keep The one-shot session returns before its Chrome has exited. A second session on the same
 /// ~keep profile before that races the exit: with `save_browser_profile: false` the copy of the
@@ -292,15 +305,11 @@ async fn scrape_with_profile(
     profile: &BrowserProfile,
     save_browser_profile: bool,
     url: &str,
-) -> Option<()> {
+) -> Option<String> {
     let engine =
         create_engine(Some(config_with_profile(&profile.name, save_browser_profile))).expect("engine must build");
     match scrape(&engine, url).await {
         Ok(result) => {
-            assert!(
-                result.html.contains("profile-wiring-marker"),
-                "{test_name}: the page must be read"
-            );
             let lock = profile.user_data_dir.join("SingletonLock");
             let quiet = Duration::from_millis(500);
             let mut left = false;
@@ -317,7 +326,7 @@ async fn scrape_with_profile(
                 left,
                 "{test_name}: the session's Chrome must leave the profile within ten seconds"
             );
-            Some(())
+            Some(result.html)
         }
         Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
             announce_chrome_skip(test_name, &message);
@@ -389,5 +398,70 @@ async fn an_unsaved_profile_offers_its_cookies_and_keeps_none() {
         seen[2].contains("seen=1") && !seen[2].contains("seen=2"),
         "{test_name}: the profile must keep the saved scrape's cookie and none of the unsaved one's, got {:?}",
         seen[2]
+    );
+}
+
+/// The localStorage a page writes under a saved profile reaches the next scrape with that
+/// profile: the page runs in the profile's own storage, not in a context that starts empty.
+#[tokio::test]
+async fn a_saved_profile_keeps_the_local_storage_a_page_wrote() {
+    let test_name = "a_saved_profile_keeps_the_local_storage_a_page_wrote";
+    let name = unique_profile_name("storage-saved");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let page = "<html><body><p id=o>x</p><script>const v = localStorage.getItem('k') || 'none'; \
+                document.getElementById('o').textContent = 'prior=' + v; localStorage.setItem('k', 'v1');</script></body></html>";
+    let server = CookieServer::serving(vec![(String::new(), page.to_owned())]).await;
+    let url = format!("{}/", server.base_url);
+    let Some(first) = scrape_with_profile(test_name, &profile, true, &url).await else {
+        return;
+    };
+    let Some(second) = scrape_with_profile(test_name, &profile, true, &url).await else {
+        return;
+    };
+    assert!(
+        first.contains("prior=none"),
+        "{test_name}: the first scrape of a new profile must find no localStorage: {first}"
+    );
+    assert!(
+        second.contains("prior=v1"),
+        "{test_name}: the second scrape must find the localStorage the first wrote: {second}"
+    );
+}
+
+/// A cookie a page deletes under a saved profile is gone from the profile: the third scrape
+/// sends nothing after the second one expired the cookie the first one set.
+#[tokio::test]
+async fn a_saved_profile_forgets_the_cookie_a_page_deleted() {
+    let test_name = "a_saved_profile_forgets_the_cookie_a_page_deleted";
+    let name = unique_profile_name("cookie-deleted");
+    let profile = BrowserProfile::new(&name).expect("profile name must be valid");
+    let _guard = ProfileGuard(profile.clone());
+    let body = "<html><body>profile-wiring-marker</body></html>".to_owned();
+    let server = CookieServer::serving(vec![
+        ("set-cookie: a=1; Path=/; Max-Age=3600\r\n".to_owned(), body.clone()),
+        ("set-cookie: a=gone; Path=/; Max-Age=0\r\n".to_owned(), body.clone()),
+        (String::new(), body),
+    ])
+    .await;
+    let url = format!("{}/", server.base_url);
+    for _ in 0..3 {
+        if scrape_with_profile(test_name, &profile, true, &url).await.is_none() {
+            return;
+        }
+    }
+    let seen = server.cookies_seen();
+    assert_eq!(
+        seen.len(),
+        3,
+        "{test_name}: all three scrapes must reach the server: {seen:?}"
+    );
+    assert!(
+        seen[1].contains("a=1"),
+        "{test_name}: the second scrape must carry the cookie the first set: {seen:?}"
+    );
+    assert!(
+        !seen[2].contains("a="),
+        "{test_name}: the cookie the second scrape deleted must be gone from the saved profile: {seen:?}"
     );
 }

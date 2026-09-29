@@ -19,7 +19,7 @@ use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
-use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, CookieSharing, Watch};
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext, Watch};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
@@ -376,7 +376,7 @@ impl OneShotSession {
         let firewall = BrowserFirewall::start(
             Arc::clone(browser),
             BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
-            CookieSharing::of(config),
+            PageContext::of(config),
         )
         .await?;
         let firewall = self.firewall.insert(firewall);
