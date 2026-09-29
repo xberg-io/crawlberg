@@ -128,6 +128,11 @@ title: "Changelog"
 
 ### Fixed
 
+- **A robots.txt that opens with a UTF-8 byte-order mark lost its first group.** The mark stayed
+  attached to the first `User-agent` line, that directive did not match, and the whole group,
+  rules included, was dropped, so every path was allowed. A leading byte-order mark is now
+  skipped once, as RFC 9309 asks. (#516)
+
 - **The sitemap walk and the well-known `/sitemap.xml` fallback gave no URLs for a gzip sitemap
   served with the wrong content type.** A robots.txt `Sitemap:` directive, a sitemap-index child,
   and the `/sitemap.xml` fallback each decided whether to inflate a body by its content type, so a

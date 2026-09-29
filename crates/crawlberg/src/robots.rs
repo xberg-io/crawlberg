@@ -179,7 +179,14 @@ pub(crate) fn fingerprint_text(body: &str) -> std::borrow::Cow<'_, str> {
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
 ///
 /// Returns the most specific matching rules block, falling back to the wildcard (`*`) block.
+///
+/// ~keep RFC 9309 §2.2 lets a robots.txt start with a UTF-8 byte-order mark and says a crawler
+/// must skip it. Left in place, the mark stays attached to the first line, so a leading
+/// `User-agent` directive fails the `"user-agent"` match, its whole group is dropped (crawlberg
+/// #516), and every rule under it is silently ignored. Only the single leading mark is skipped;
+/// a BOM elsewhere in the body is not a directive and is left for the normal parse to ignore.
 pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
+    let body = body.strip_prefix('\u{feff}').unwrap_or(body);
     let ua_lower = user_agent.to_lowercase();
 
     let mut state = RobotsParseState::default();
@@ -512,6 +519,43 @@ mod tests {
             ],
             "both Sitemap directives must be collected in file order, got {:?}",
             rules.sitemaps
+        );
+    }
+
+    #[test]
+    fn a_leading_byte_order_mark_is_skipped_so_the_first_group_still_applies() {
+        // ~keep Regression for crawlberg#516: the mark stayed attached to the first
+        // `User-agent` line, that directive did not match, and the whole group (with its
+        // Disallow) was dropped, leaving every path allowed.
+        let body = "\u{feff}User-agent: *\r\nDisallow: /private\r\n# blocked\r\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert_eq!(
+            rules.disallow,
+            vec!["/private".to_string()],
+            "the leading BOM must be skipped so the first User-agent group is kept, got \
+             disallow: {:?}",
+            rules.disallow
+        );
+        assert!(
+            !is_path_allowed("/private", &rules),
+            "/private must stay disallowed once the BOM no longer hides the first group"
+        );
+    }
+
+    #[test]
+    fn a_byte_order_mark_that_is_not_leading_is_left_for_the_normal_parse() {
+        // ~keep Only the mark at the very start is a byte-order mark; one later in the body
+        // is just an unexpected character on whatever line it lands on, not a directive to
+        // special-case, and must not vanish the way a leading one intentionally does.
+        let body = "User-agent: *\n\u{feff}Disallow: /private\n";
+        let rules = parse_robots_txt(body, "crawlberg");
+
+        assert!(
+            rules.disallow.is_empty(),
+            "a non-leading BOM must not be skipped, so this Disallow line does not match, \
+             got disallow: {:?}",
+            rules.disallow
         );
     }
 
