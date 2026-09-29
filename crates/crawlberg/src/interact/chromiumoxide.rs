@@ -3,16 +3,16 @@ use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
+use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::ssrf_intercept::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, INPUT_ACTION_GRACE, StoppedResponse, Watch};
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -38,11 +38,18 @@ pub(super) async fn run(
     };
 
     // ~keep The stopped firewall held the only other reference, so this is the browser itself.
-    if let Some(mut browser) = Arc::into_inner(browser) {
-        let _ = browser.close().await;
-        let _ = browser.wait().await;
+    match Arc::into_inner(browser) {
+        Some(browser) => {
+            release_browser(
+                browser,
+                handler_handle,
+                ExternalTabCleanup::default(),
+                config.browser.shutdown_timeout,
+            )
+            .await;
+        }
+        None => handler_handle.abort(),
     }
-    let _ = tokio::time::timeout(Duration::from_secs(5), handler_handle).await;
     if let Some(dir) = data_dir {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -138,7 +145,7 @@ async fn run_with_browser(
     // ~keep a worker or a popup to an address the policy refuses (xberg-io/crawlberg#153).
     // ~keep Closing the watch closes the popups, children first, then the page, and stops
     // ~keep watching only once Chrome has destroyed them, so the check answers until then.
-    match firewall.handle().watch(&page, &config.ssrf, config.max_redirects).await {
+    match firewall.handle().watch(&page, config, config.max_redirects).await {
         Ok(watch) => {
             let result = async {
                 prepare_page(&page, config).await?;
@@ -194,6 +201,7 @@ async fn run_session(
         final_url,
         screenshot,
         screenshot_base64,
+        ssrf_refused_urls: watch.refused_urls().await,
     })
 }
 
@@ -223,6 +231,7 @@ fn no_document_result(stop: &StoppedResponse, actions: &[PageAction]) -> Interac
         final_url: stop.url.clone(),
         screenshot: None,
         screenshot_base64: None,
+        ssrf_refused_urls: Vec::new(),
     }
 }
 
@@ -237,35 +246,13 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
             .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
-    let mut extra_headers = serde_json::Map::new();
-    for (key, value) in &config.custom_headers {
-        extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
-    }
-
     Ok(())
 }
 
 /// Navigate to `url` and wait for the page. Returns the response the navigation stopped on
 /// when it has no document: the redirect past `max_redirects`, or a 204, 205 or 304.
+/// Fails with the SSRF policy error when a main-frame navigation was refused, during the load
+/// or the extra wait.
 // ~keep The pre-flight check in `interact::run` only covers the seed URL, and a browser follows
 // ~keep redirects/client-side navigations internally, so `watch` checks every request the
 // ~keep navigation makes, the same way the scrape/crawl path does (xberg-io/crawlberg#74).
@@ -299,6 +286,13 @@ async fn navigate_and_wait(
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
     }
+    // ~keep A main-frame navigation the policy refused before the actions leaves Chrome's error
+    // ~keep page in place of the page, so the session fails as a scrape does. One an action
+    // ~keep starts fails that action instead.
+    watch.settle().await;
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
 
     Ok(None)
 }
@@ -320,11 +314,11 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `ssrf_intercept` records a URL
+        // ~keep with userinfo without it, and `ssrf_violation` redacts again as the last guard.
+        // ~keep xberg-io/crawlberg#180.
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
 }
@@ -608,6 +602,39 @@ mod tests {
         assert!(
             debug.contains("key: \"proxy-server=http://127.0.0.1:9\""),
             "proxy-server flag missing or mis-normalized: {debug}"
+        );
+    }
+
+    /// A refused redirect target that carries `user:pass@` userinfo must be reported with its
+    /// credentials redacted.
+    ///
+    /// ~keep The seed URL is deliberately not the vector: the pre-navigation check refuses a
+    /// ~keep credential-bearing seed through an already-redacting path, so a test built on one
+    /// ~keep would pass with or without this fix. What leaks is the *intercepted* URL - Chrome
+    /// ~keep follows the redirect itself and `Fetch.requestPaused` reports the target verbatim,
+    /// ~keep which `ssrf_intercept` records unchanged. xberg-io/crawlberg#180.
+    #[test]
+    fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
+        let blocked = Some((
+            "https://user:secret@10.0.0.1/".to_owned(),
+            "denied by SSRF policy: private_network".to_owned(),
+        ));
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+
+        let error = resolve_navigation_outcome(navigation, blocked, Duration::from_secs(7))
+            .expect_err("a blocked request must surface as an error");
+
+        let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
+            panic!("expected an SSRF policy violation, got: {error:?}");
+        };
+        assert_eq!(
+            url.as_str(),
+            "https://***:***@10.0.0.1/",
+            "the refused URL must be stored credential-redacted"
+        );
+        assert!(
+            !error.to_string().contains("secret"),
+            "the rendered error must not carry the refused URL's password, got: {error}"
         );
     }
 }

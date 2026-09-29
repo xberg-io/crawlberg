@@ -314,6 +314,9 @@ async fn interact_fails_a_click_whose_navigation_was_refused() {
     );
 }
 
+/// A script whose `fetch()` is refused fails: the refusal counts for the script action, or for
+/// the wait after it when the check received the pause after the action's grace, as on a busy
+/// host. Either way, exactly one action fails, and the address receives nothing.
 #[tokio::test]
 async fn interact_fails_a_script_whose_fetch_was_refused() {
     let test_name = "interact_fails_a_script_whose_fetch_was_refused";
@@ -326,14 +329,27 @@ async fn interact_fails_a_script_whose_fetch_was_refused() {
     let Some(result) = run(test_name, &seed, vec![execute_js(&script)]).await else {
         return;
     };
-    assert_action_refused(test_name, &result, 0);
+    let failed: Vec<usize> = result
+        .action_results
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| !action.success)
+        .map(|(index, _)| index)
+        .collect();
+    assert!(
+        failed == [0] || failed == [1],
+        "{test_name}: the script action or the wait after it must fail, and only one of them, got {:?}",
+        result.action_results
+    );
+    assert_action_refused(test_name, &result, failed[0]);
+    assert_refused(test_name, &denied, &result).await;
 }
 
 /// A request refused during the extra wait, after the navigation settled and before the first
-/// action, fails no action.
+/// action, fails no action, and the result lists its address.
 #[tokio::test]
-async fn interact_fails_no_action_for_a_request_refused_before_the_actions() {
-    let test_name = "interact_fails_no_action_for_a_request_refused_before_the_actions";
+async fn interact_lists_a_request_refused_before_the_actions_and_fails_no_action() {
+    let test_name = "interact_lists_a_request_refused_before_the_actions_and_fails_no_action";
     let denied = denied_server().await;
     let body = format!(
         "<p>start</p><script>setTimeout(() => fetch({:?}, {{ mode: 'no-cors' }}).catch(() => {{}}), 700);</script>",
@@ -355,6 +371,11 @@ async fn interact_fails_no_action_for_a_request_refused_before_the_actions() {
         result.action_results.iter().all(|action| action.success),
         "{test_name}: {:?}",
         result.action_results
+    );
+    assert_eq!(
+        result.ssrf_refused_urls,
+        [denied_url(&denied)],
+        "{test_name}: the result must list the refused address"
     );
     assert_refused(test_name, &denied, &result).await;
 }
@@ -433,4 +454,39 @@ async fn interact_actions_that_send_nothing_add_little_time() {
         none[1],
         ten[1]
     );
+}
+
+/// A main-frame navigation refused during the extra wait, before any action, leaves Chrome's
+/// error page in place of the page, so the session fails with the SSRF policy error.
+#[tokio::test]
+async fn interact_fails_when_the_page_navigates_to_a_denied_address_before_the_actions() {
+    let test_name = "interact_fails_when_the_page_navigates_to_a_denied_address_before_the_actions";
+    let denied = denied_server().await;
+    let body = format!(
+        "<p>start</p><script>setTimeout(() => {{ location.href = {:?}; }}, 500);</script>",
+        denied_url(&denied)
+    );
+    let (_site, seed) = seed_site(&body).await;
+    let mut config = config();
+    config.browser.extra_wait = Some(Duration::from_millis(1500));
+    let engine = create_engine(Some(config)).expect("engine must build");
+    let outcome = interact(&engine, &seed, vec![execute_js("return 1")]).await;
+    let received = denied.received_requests().await.expect("request recording is on");
+    match outcome {
+        Err(CrawlError::BrowserError { message, .. }) if is_missing_chrome_message(&message) => {
+            announce_chrome_skip(test_name, &message);
+        }
+        Err(CrawlError::SsrfPolicyViolation { url, .. }) => {
+            assert_eq!(
+                url,
+                denied_url(&denied),
+                "{test_name}: the error must name the refused address"
+            );
+            assert!(
+                received.is_empty(),
+                "{test_name}: the denied address must receive nothing"
+            );
+        }
+        other => panic!("{test_name}: the session must fail with the SSRF policy error, got {other:?}"),
+    }
 }

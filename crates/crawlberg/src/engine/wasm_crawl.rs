@@ -61,6 +61,9 @@ impl CrawlEngine {
             // ~keep redirect behaviour has no executing test.
             final_url: scrape.final_url,
             redirect_count: 0,
+            noindex_detected: scrape.noindex_detected,
+            nofollow_detected: scrape.nofollow_detected,
+            ssrf_refused_urls: scrape.ssrf_refused_urls,
         }
     }
 
@@ -71,15 +74,14 @@ impl CrawlEngine {
     /// `allow_subdomains`, `include_paths`, `exclude_paths`, and the configured
     /// `CrawlStrategy`. No concurrency primitives are used — each page is awaited
     /// sequentially, which is correct for the wasm single-threaded executor.
-    pub(super) async fn crawl_sequential(&self, url: &str) -> Result<CrawlResult, CrawlError> {
+    pub(super) async fn crawl_sequential(&self, seed: &super::SeedUrl) -> Result<CrawlResult, CrawlError> {
         // ~keep Stripped once, here, before the seed is planned, robots-checked, or
         // ~keep dedup-keyed, mirroring the native crawl loop -- every later use of the seed
         // ~keep (fetch, `final_url`, `normalized_url`) derives from this string, so one strip
         // ~keep keeps them all consistent.
-        let stripped_seed = crate::helpers::strip_seed_tracking_params(&self.config, url);
+        let stripped_seed = crate::helpers::strip_seed_tracking_params(&self.config, seed.as_str());
         let url = stripped_seed.as_str();
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
+        tracing::Span::current().record(URL_FULL, tracing::field::display(url));
         self.config.validate()?;
 
         let plan = SequentialPlan::new(url, &self.config)?;
@@ -274,7 +276,8 @@ impl CrawlEngine {
         }
     }
 
-    /// Whether this page's links are followed at all.
+    /// Whether this page's links are followed at all. A `nofollow` page's links are not,
+    /// when the crawl respects robots.
     fn should_discover_sequentially(
         &self,
         entry: &FrontierEntry,
@@ -283,7 +286,10 @@ impl CrawlEngine {
     ) -> bool {
         let in_doc_context = entry.doc_depth > 0;
         let page_is_skipped = scrape.was_skipped || scrape.is_pdf;
-        entry.depth < plan.max_depth && !page_is_skipped && (!in_doc_context || self.config.follow_document_urls)
+        entry.depth < plan.max_depth
+            && !page_is_skipped
+            && (!in_doc_context || self.config.follow_document_urls)
+            && !(self.config.respect_robots_txt && scrape.nofollow_detected)
     }
 
     /// Enqueue the eligible links of one page, up to the per-page cap.
@@ -428,29 +434,43 @@ impl CrawlEngine {
     /// Crawl a website starting from `url`.
     ///
     /// See [`CrawlEngine::crawl_sequential`] for the loop this delegates to.
-    #[tracing::instrument(name = "crawl.engine.crawl", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn crawl(&self, url: &str) -> Result<CrawlResult, CrawlError> {
-        self.crawl_sequential(url).await
+        let (engine, seed) = self.admit(url)?;
+        engine.crawl_seed(&seed).await
+    }
+
+    /// Crawl an admitted seed URL. See [`CrawlEngine::crawl`].
+    #[tracing::instrument(name = "crawl.engine.crawl", skip_all, fields(url.full = tracing::field::Empty))]
+    async fn crawl_seed(&self, seed: &super::SeedUrl) -> Result<CrawlResult, CrawlError> {
+        self.crawl_sequential(seed).await
     }
 
     /// Scrape multiple URLs sequentially (no concurrency on wasm).
+    ///
+    /// Each result is paired with its admitted URL.
     #[tracing::instrument(name = "crawl.engine.batch_scrape", skip(self, urls), fields(url_count = urls.len()))]
     pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
         let mut results = Vec::with_capacity(urls.len());
         for url in urls {
-            let result = self.scrape(url).await;
-            results.push((url.to_string(), result));
+            results.push(match self.admit(url) {
+                Ok((engine, seed)) => (seed.as_str().to_owned(), engine.scrape_seed(&seed).await),
+                Err(e) => (super::admission::admission_key(url, None), Err(e)),
+            });
         }
         results
     }
 
     /// Crawl multiple seed URLs sequentially (no concurrency on wasm).
+    ///
+    /// Each result is paired with its admitted URL.
     #[tracing::instrument(name = "crawl.engine.batch", skip(self, urls), fields(crawl.seed_count = urls.len()))]
     pub async fn batch_crawl(&self, urls: &[&str]) -> Vec<(String, Result<CrawlResult, CrawlError>)> {
         let mut results = Vec::with_capacity(urls.len());
         for url in urls {
-            let result = self.crawl(url).await;
-            results.push((url.to_string(), result));
+            results.push(match self.admit(url) {
+                Ok((engine, seed)) => (seed.as_str().to_owned(), engine.crawl_seed(&seed).await),
+                Err(e) => (super::admission::admission_key(url, None), Err(e)),
+            });
         }
         results
     }

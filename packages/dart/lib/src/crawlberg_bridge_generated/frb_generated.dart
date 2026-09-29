@@ -3067,8 +3067,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CrawlPageResult dco_decode_crawl_page_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 23)
-      throw Exception('unexpected arr length: expect 23 but see ${arr.length}');
+    if (arr.length != 26)
+      throw Exception('unexpected arr length: expect 26 but see ${arr.length}');
     return CrawlPageResult(
       url: dco_decode_String(arr[0]),
       normalizedUrl: dco_decode_String(arr[1]),
@@ -3095,6 +3095,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       browserUsed: dco_decode_bool(arr[20]),
       finalUrl: dco_decode_String(arr[21]),
       redirectCount: dco_decode_i_64(arr[22]),
+      noindexDetected: dco_decode_bool(arr[23]),
+      nofollowDetected: dco_decode_bool(arr[24]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[25]),
     );
   }
 
@@ -3302,13 +3305,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InteractionResult dco_decode_interaction_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return InteractionResult(
       actionResults: dco_decode_list_action_result(arr[0]),
       finalHtml: dco_decode_String(arr[1]),
       finalUrl: dco_decode_String(arr[2]),
       screenshotBase64: dco_decode_opt_String(arr[3]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[4]),
     );
   }
 
@@ -3775,8 +3779,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ScrapeResult dco_decode_scrape_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 29)
-      throw Exception('unexpected arr length: expect 29 but see ${arr.length}');
+    if (arr.length != 30)
+      throw Exception('unexpected arr length: expect 30 but see ${arr.length}');
     return ScrapeResult(
       statusCode: dco_decode_i_64(arr[0]),
       finalUrl: dco_decode_String(arr[1]),
@@ -3809,6 +3813,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         arr[27],
       ),
       browser: dco_decode_opt_box_autoadd_browser_extras(arr[28]),
+      ssrfRefusedUrls: dco_decode_list_String(arr[29]),
     );
   }
 
@@ -4622,6 +4627,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_browserUsed = sse_decode_bool(deserializer);
     var var_finalUrl = sse_decode_String(deserializer);
     var var_redirectCount = sse_decode_i_64(deserializer);
+    var var_noindexDetected = sse_decode_bool(deserializer);
+    var var_nofollowDetected = sse_decode_bool(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return CrawlPageResult(
       url: var_url,
       normalizedUrl: var_normalizedUrl,
@@ -4646,6 +4654,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       browserUsed: var_browserUsed,
       finalUrl: var_finalUrl,
       redirectCount: var_redirectCount,
+      noindexDetected: var_noindexDetected,
+      nofollowDetected: var_nofollowDetected,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -4880,11 +4891,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_finalHtml = sse_decode_String(deserializer);
     var var_finalUrl = sse_decode_String(deserializer);
     var var_screenshotBase64 = sse_decode_opt_String(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return InteractionResult(
       actionResults: var_actionResults,
       finalHtml: var_finalHtml,
       finalUrl: var_finalUrl,
       screenshotBase64: var_screenshotBase64,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -5722,6 +5735,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_browser = sse_decode_opt_box_autoadd_browser_extras(deserializer);
+    var var_ssrfRefusedUrls = sse_decode_list_String(deserializer);
     return ScrapeResult(
       statusCode: var_statusCode,
       finalUrl: var_finalUrl,
@@ -5752,6 +5766,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       screenshotBase64: var_screenshotBase64,
       downloadedDocument: var_downloadedDocument,
       browser: var_browser,
+      ssrfRefusedUrls: var_ssrfRefusedUrls,
     );
   }
 
@@ -6481,6 +6496,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.browserUsed, serializer);
     sse_encode_String(self.finalUrl, serializer);
     sse_encode_i_64(self.redirectCount, serializer);
+    sse_encode_bool(self.noindexDetected, serializer);
+    sse_encode_bool(self.nofollowDetected, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected
@@ -6664,6 +6682,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.finalHtml, serializer);
     sse_encode_String(self.finalUrl, serializer);
     sse_encode_opt_String(self.screenshotBase64, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected
@@ -7397,6 +7416,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       serializer,
     );
     sse_encode_opt_box_autoadd_browser_extras(self.browser, serializer);
+    sse_encode_list_String(self.ssrfRefusedUrls, serializer);
   }
 
   @protected

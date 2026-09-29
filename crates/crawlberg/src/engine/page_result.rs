@@ -1,10 +1,9 @@
 //! Turning a completed fetch into a [`CrawlPageResult`] and the events that accompany it.
 
-use tokio::task::JoinSet;
 use url::Url;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FALLBACK_URL, FetchOutcome, FetchResult, LoopContext, ParentPage};
+use super::crawl_state::{CrawlState, FALLBACK_URL, FetchResult, LoopContext, ParentPage};
 use super::redirect::url_host;
 use crate::error::CrawlError;
 use crate::http::extract_cookies_from_hashmap;
@@ -24,7 +23,6 @@ impl CrawlEngine {
         mut fetch: FetchResult,
         state: &mut CrawlState,
         context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     ) -> Result<bool, CrawlError> {
         let page_url = fetch.entry.url.clone();
         let depth = fetch.entry.depth;
@@ -84,6 +82,9 @@ impl CrawlEngine {
             browser_used: fetch.browser_used,
             final_url,
             redirect_count: fetch.redirect_count,
+            noindex_detected: fetch.robots.noindex,
+            nofollow_detected: fetch.robots.nofollow,
+            ssrf_refused_urls: fetch.ssrf_refused_urls,
         };
 
         let page = match self.content_filter.filter(page).await? {
@@ -94,7 +95,7 @@ impl CrawlEngine {
             }
         };
 
-        Ok(self.deliver_page(page, state, context, join_set).await)
+        Ok(self.deliver_page(page, state, context).await)
     }
 
     /// Fold this response's `Set-Cookie` headers into the crawl-wide cookie jar.
@@ -108,7 +109,8 @@ impl CrawlEngine {
             .extend(extract_cookies_from_hashmap(&fetch_host, &fetch.headers));
     }
 
-    /// Enqueue the page's outbound links, unless its depth or its document context says not to.
+    /// Enqueue the page's outbound links, unless its depth, its document context or its own
+    /// `nofollow` (when the crawl respects robots) says not to.
     async fn discover_links_if_allowed(
         &self,
         fetch: &FetchResult,
@@ -120,7 +122,8 @@ impl CrawlEngine {
         let in_document_context = fetch.entry.doc_depth > 0;
         let should_discover = (!page_was_skipped || in_document_context)
             && (self.config.follow_document_urls || !in_document_context)
-            && fetch.entry.depth < context.max_depth;
+            && fetch.entry.depth < context.max_depth
+            && !(self.config.respect_robots_txt && fetch.robots.nofollow);
         if !should_discover {
             return Ok(());
         }
@@ -144,13 +147,16 @@ impl CrawlEngine {
         body: &str,
         page_was_skipped: bool,
     ) -> (Option<DownloadedDocument>, Option<MarkdownResult>) {
-        let downloaded_document = crate::document::build_downloaded_document(
+        let downloaded_document = crate::document::build_downloaded_document_with_filter(
             page_url,
             page_parsed,
-            &fetch.content_type,
-            &fetch.body_bytes,
-            page_was_skipped,
+            crate::document::DocumentInput {
+                content_type: &fetch.content_type,
+                body_bytes: &fetch.body_bytes,
+                is_document: page_was_skipped,
+            },
             &self.config,
+            self.document_filter.as_deref(),
         )
         .await;
 
@@ -158,7 +164,7 @@ impl CrawlEngine {
             None
         } else {
             let content_config = crate::scrape::merged_content_config(&self.config);
-            crate::markdown::convert_to_markdown(body, &content_config).await
+            crate::markdown::convert_to_markdown(body, page_parsed, &content_config).await
         };
 
         (downloaded_document, markdown)
@@ -191,13 +197,7 @@ impl CrawlEngine {
 
     /// Record a finished page everywhere it is owed, and report whether that page was the
     /// one that ends the crawl -- `max_pages` reached, or a streaming receiver gone away.
-    async fn deliver_page(
-        &self,
-        page: CrawlPageResult,
-        state: &mut CrawlState,
-        context: &LoopContext<'_>,
-        join_set: &mut JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
-    ) -> bool {
+    async fn deliver_page(&self, page: CrawlPageResult, state: &mut CrawlState, context: &LoopContext<'_>) -> bool {
         self.strategy.on_page_processed(&page);
         let _ = self.store.store_crawl_page(&page.url, &page).await;
 
@@ -219,7 +219,6 @@ impl CrawlEngine {
             }
             state.pages_count += 1;
             if state.pages_count >= context.max_pages {
-                join_set.abort_all();
                 return true;
             }
         } else {
@@ -233,7 +232,6 @@ impl CrawlEngine {
             }
             state.pages.push(page);
             if state.pages.len() >= context.max_pages {
-                join_set.abort_all();
                 return true;
             }
         }

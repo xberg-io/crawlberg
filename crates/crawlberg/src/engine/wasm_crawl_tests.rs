@@ -10,6 +10,12 @@ use crate::types::CrawlConfig;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Admit `url` and run the sequential crawl on it, as `CrawlEngine::crawl` does on wasm32.
+async fn crawl_admitted(engine: &CrawlEngine, url: &str) -> Result<CrawlResult, CrawlError> {
+    let (engine, seed) = engine.admit(url)?;
+    engine.crawl_sequential(&seed).await
+}
+
 async fn mount_html(mock: &MockServer, at: &str, body: &str) {
     Mock::given(method("GET"))
         .and(path(at))
@@ -82,6 +88,39 @@ fn permissive(config: CrawlConfig) -> CrawlConfig {
     }
 }
 
+/// Route every request through the fixture server, used as a plain HTTP proxy, so these tests
+/// never ask the system resolver for a `*.localhost` name.
+///
+/// ~keep macOS resolves `localhost` but not its subdomains, and the SSRF pre-check resolves every
+/// host it does not allowlist, even with `deny_private` off. The proxy carries each request to the
+/// fixture server by address, and the `localhost` suffix allowlist entry lets the pre-check permit
+/// those names without a lookup. The fixture server matches on the path alone, so every host name
+/// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
+/// scope gate ever let it through.
+/// ~keep Setting `proxy` also suppresses the `PolicyResolver` DNS pinning that `build_client`
+/// ~keep otherwise installs (`http/client.rs`, gated on `proxy_provider.is_none() &&
+/// ~keep proxy.is_none()`), because hyper then resolves the proxy host rather than the target.
+/// ~keep So these tests no longer exercise the SSRF DNS-pinning path they used to; the
+/// ~keep allowlisted `validate_url` pre-check above is the only SSRF enforcement left in them.
+/// ~keep Coverage for the pinning itself lives in `build_client`'s own tests
+/// ~keep (`build_client_enforces_the_ssrf_policy_during_dns_resolution` and
+/// ~keep `build_client_skips_the_policy_resolver_when_a_proxy_is_configured`).
+fn through_fixture(mock: &MockServer, config: CrawlConfig) -> CrawlConfig {
+    CrawlConfig {
+        ssrf: crate::net::SsrfPolicy {
+            deny_private: false,
+            allowlist: vec![crate::net::HostMatcher::suffix("localhost")],
+            ..crate::net::SsrfPolicy::default()
+        },
+        proxy: Some(crate::types::ProxyConfig {
+            url: mock.uri(),
+            username: None,
+            password: None,
+        }),
+        ..config
+    }
+}
+
 fn visited(result: &CrawlResult, base: &str) -> Vec<String> {
     result
         .pages
@@ -105,7 +144,7 @@ async fn sequential_crawl_visits_breadth_first() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -126,7 +165,7 @@ async fn sequential_crawl_stops_following_links_at_max_depth() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -152,7 +191,7 @@ async fn sequential_crawl_caps_links_enqueued_per_page() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -174,7 +213,7 @@ async fn sequential_crawl_drops_excluded_paths() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -199,7 +238,7 @@ async fn sequential_crawl_ignores_query_in_exclude_paths_by_default() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -224,7 +263,7 @@ async fn sequential_crawl_excludes_by_query_when_match_query_is_enabled() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -252,7 +291,7 @@ async fn sequential_crawl_collapses_distinct_queries_by_default() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -282,7 +321,7 @@ async fn sequential_crawl_fetches_both_queries_when_dedup_include_query_is_enabl
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -313,7 +352,7 @@ async fn sequential_crawl_strips_tracking_params_from_fetched_and_reported_url()
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     let urls: Vec<&str> = result.pages.iter().map(|p| p.url.as_str()).collect();
     assert!(
@@ -331,10 +370,8 @@ async fn sequential_crawl_strips_tracking_params_from_fetched_and_reported_url()
 ///
 /// ~keep Uses `*.localhost`, not a fabricated hostname: this positive case needs a real,
 /// reachable second host to prove the link is actually followed rather than merely not
-/// rejected. RFC 6761 §6.3 requires every conformant resolver to resolve `*.localhost` to
-/// the loopback address without any network traffic, unlike a public-DNS trick such as
-/// nip.io. The negative cases below use a fabricated `*.example.invalid` host instead,
-/// since a rejected link never reaches DNS resolution (see their own doc comments).
+/// rejected. `through_fixture` routes it to the fixture server, so no resolver is involved,
+/// unlike a public-DNS trick such as nip.io.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true() {
@@ -348,14 +385,17 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
     .await;
     mount_html(&mock, "/a", "<html><body>a</body></html>").await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        allow_subdomains: true,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: true,
+            ..CrawlConfig::default()
+        },
+    ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -367,9 +407,11 @@ async fn sequential_crawl_follows_subdomain_link_when_allow_subdomains_is_true()
 
 /// The same subdomain link must NOT be followed when `allow_subdomains` is false.
 ///
-/// ~keep Uses a real, reachable `*.localhost` host with `.expect(0)` on the child path, not a
-/// fabricated `.invalid` one: an unresolvable host makes "no page fetched" ambiguous between
-/// "scope rejected it" and "DNS failed", so it cannot tell a working gate from a gutted one.
+/// ~keep Uses a reachable host with `.expect(0)` on the child path, not a fabricated `.invalid`
+/// one: an unreachable host makes "no page fetched" ambiguous between "scope rejected it" and
+/// "the fetch failed anyway", so it cannot tell a working gate from a gutted one. The name ends
+/// in `localhost` to match `through_fixture`'s suffix allowlist, not because the OS resolves it
+/// -- the proxy is what makes it reachable.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false() {
@@ -383,14 +425,17 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
     .await;
     mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
     let base = format!("http://foo.localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        allow_subdomains: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            allow_subdomains: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -404,10 +449,11 @@ async fn sequential_crawl_rejects_subdomain_link_when_allow_subdomains_is_false(
 
 /// An unrelated host is never enqueued by a default-configured crawl.
 ///
-/// ~keep This pins the additive contract of the crawlberg#60 fix. Uses a real, reachable
-/// `*.localhost` sibling host with `.expect(0)` on the child path, not an unresolvable
-/// `.invalid` one: "no page fetched" is ambiguous between "scope rejected it" and "DNS
-/// failed" for an unresolvable host. `stay_on_domain` is not an input -- see
+/// ~keep This pins the additive contract of the crawlberg#60 fix. Uses a reachable sibling host
+/// with `.expect(0)` on the child path, not an unresolvable `.invalid` one: "no page fetched" is
+/// ambiguous between "scope rejected it" and "the fetch failed anyway" for a host that cannot be
+/// reached. The name ends in `localhost` to match `through_fixture`'s suffix allowlist, not
+/// because the OS resolves it. `stay_on_domain` is not an input -- see
 /// `link_scope::host_in_scope` and crawlberg#72.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
@@ -422,13 +468,16 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
     .await;
     mount_html_expecting(&mock, "/a", "<html><body>a</body></html>", 0).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         result.pages.len(),
@@ -443,9 +492,10 @@ async fn sequential_crawl_rejects_an_unrelated_host_by_default() {
 /// subdomains are the only hosts a crawl follows. ~keep `stay_on_domain` is NOT what
 /// enforces this and never has -- see `link_scope::host_in_scope` and crawlberg#72.
 ///
-/// ~keep Uses a real, reachable `*.localhost` sibling host with `.expect(0)`, not a real
-/// external domain: fetching an actual off-box host if the gate were broken would make this
-/// test flaky and network-dependent instead of failing deterministically.
+/// ~keep Uses a reachable sibling host with `.expect(0)`, not a real external domain: fetching
+/// an actual off-box host if the gate were broken would make this test flaky and
+/// network-dependent instead of failing deterministically. `through_fixture`'s proxy is what
+/// makes the sibling reachable, and its suffix allowlist is why the name ends in `localhost`.
 #[tokio::test]
 #[serial_test::serial(engine_tracing_callsites)]
 async fn sequential_crawl_stays_on_the_seed_host() {
@@ -462,13 +512,16 @@ async fn sequential_crawl_stays_on_the_seed_host() {
     mount_html(&mock, "/a", "<html><body>a</body></html>").await;
     mount_html_expecting(&mock, "/x", "<html><body>x</body></html>", 0).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(
         visited(&result, &base),
@@ -489,8 +542,7 @@ async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
         .mount(&seed_down)
         .await;
     let engine = engine_with(permissive(CrawlConfig::default()));
-    let result = engine
-        .crawl_sequential(&seed_down.uri())
+    let result = crawl_admitted(&engine, &seed_down.uri())
         .await
         .expect("a failing seed is still a completed crawl");
     assert!(result.pages.is_empty(), "a failing seed produces no pages");
@@ -511,7 +563,7 @@ async fn sequential_crawl_reports_a_seed_failure_but_not_a_child_failure() {
         max_depth: Some(1),
         ..CrawlConfig::default()
     }));
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
     assert_eq!(
         visited(&result, &base),
         vec!["/".to_owned()],
@@ -540,7 +592,7 @@ async fn sequential_crawl_counts_a_seed_redirect() {
         ..CrawlConfig::default()
     }));
 
-    let result = engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     assert_eq!(result.redirect_count, 1, "the seed hop must be counted once");
     assert_eq!(
@@ -579,13 +631,16 @@ async fn sequential_crawl_follows_a_cross_host_document_link_by_default() {
     .await;
     mount_pdf(&mock, "/report.pdf", 1).await;
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        max_pages: Some(50),
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            ..CrawlConfig::default()
+        },
+    ));
 
-    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     // ~keep The `.expect(1)` on /report.pdf is the real assertion; it is verified on drop.
     drop(mock);
@@ -605,14 +660,129 @@ async fn sequential_crawl_rejects_a_cross_host_document_link_when_stay_on_domain
     .await;
     mount_pdf(&mock, "/report.pdf", 0).await;
     let base = format!("http://localhost:{port}");
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            max_pages: Some(50),
+            stay_on_domain: true,
+            ..CrawlConfig::default()
+        },
+    ));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    drop(mock);
+}
+
+/// With robots respected, a `nofollow` page's links are never requested, a `rel="nofollow"`
+/// link is still followed, and a noindex page is still crawled and marked.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_honours_nofollow_when_respecting_robots() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><body><a href="/meta">meta</a><a href="/nf" rel="nofollow">nf</a></body></html>"#,
+    )
+    .await;
+    mount_html(
+        &mock,
+        "/meta",
+        r#"<html><head><meta name="robots" content="noindex, nofollow"></head>
+<body><a href="/child">child</a></body></html>"#,
+    )
+    .await;
+    mount_html_expecting(&mock, "/nf", "<html><body>nf</body></html>", 1).await;
+    mount_html_expecting(&mock, "/child", "<html><body>child</body></html>", 0).await;
+    let base = mock.uri();
     let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
+        max_depth: Some(2),
         max_pages: Some(50),
-        stay_on_domain: true,
+        respect_robots_txt: true,
         ..CrawlConfig::default()
     }));
 
-    engine.crawl_sequential(&base).await.expect("crawl must succeed");
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert_eq!(
+        visited(&result, &base),
+        vec!["/".to_owned(), "/meta".to_owned(), "/nf".to_owned()]
+    );
+    assert!(result.pages[1].noindex_detected && result.pages[1].nofollow_detected);
+    drop(mock);
+}
+
+/// The sequential loop reads each page through `CrawlEngine::scrape`, the same entry point
+/// `scrape()` uses, so a meta tag named for crawlberg's own product token (not only the generic
+/// `robots` name) must bind a page here too.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_honours_a_meta_tag_named_for_our_own_user_agent() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock)
+        .await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta name="crawlberg" content="noindex"></head><body>x</body></html>"#,
+    )
+    .await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        respect_robots_txt: true,
+        ..CrawlConfig::default()
+    }));
+
+    let result = crawl_admitted(&engine, &base).await.expect("crawl must succeed");
+
+    assert!(
+        result.pages[0].noindex_detected,
+        "a meta tag naming our own product token must be honoured by the sequential crawl loop"
+    );
+    drop(mock);
+}
+
+/// With robots not respected, the same links are all followed.
+///
+/// ~keep A guard, not evidence the fix works: `CrawlConfig::default()` leaves
+/// ~keep `respect_robots_txt` false, so the suppression conjunct is `!(false && _)` and this
+/// ~keep passes with the production change reverted. It exists to catch a mis-implementation that
+/// ~keep applied nofollow unconditionally on the sequential loop, which would silently narrow
+/// ~keep every default-configured crawl. Its assertions are the two `.expect(1)` mounts, verified
+/// ~keep on `drop(mock)`. Keep it; do not read it as coverage of the fix.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn sequential_crawl_follows_nofollow_links_when_not_respecting_robots() {
+    let mock = MockServer::start().await;
+    mount_html(
+        &mock,
+        "/",
+        r#"<html><head><meta name="robots" content="nofollow"></head>
+<body><a href="/child">child</a><a href="/nf" rel="nofollow">nf</a></body></html>"#,
+    )
+    .await;
+    mount_html_expecting(&mock, "/child", "<html><body>child</body></html>", 1).await;
+    mount_html_expecting(&mock, "/nf", "<html><body>nf</body></html>", 1).await;
+    let base = mock.uri();
+    let engine = engine_with(permissive(CrawlConfig {
+        max_depth: Some(1),
+        max_pages: Some(50),
+        ..CrawlConfig::default()
+    }));
+
+    crawl_admitted(&engine, &base).await.expect("crawl must succeed");
 
     drop(mock);
 }

@@ -223,9 +223,9 @@ fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest
         // an operator most needs to know about — so it is logged at ERROR. Failing
         // closed is not reachable from inside this closure.
         //
-        // ~keep The offending URL is deliberately NOT logged: `redact_url_credentials`
-        // returns its input unchanged when the input does not parse, which is exactly
-        // the case here — so naming it would print any embedded `user:pass@` verbatim.
+        // ~keep The offending URL is deliberately NOT logged: it does not parse, so
+        // `redact_url_credentials` would hide it whole whenever it holds an `@`, and the
+        // target host already names the request that went direct.
         let Ok(mut parsed) = reqwest::Url::parse(&cfg.url) else {
             tracing::error!(
                 target_host = %host,
@@ -419,7 +419,7 @@ mod tests {
     /// a corpse and fails mid-request -- as `error sending request` if it dies during send,
     /// or `error decoding response body` (classified `DataLoss`) if it dies during
     /// `resp.chunk()`. Neither is retryable, since `retry_count` defaults to 0 and
-    /// `should_retry_status` only matches status-derived variants. Measured in a standalone
+    /// `should_retry_error` only matches status-derived variants. Measured in a standalone
     /// harness at ~8.5% of requests across 28 short-lived runtimes; 0% once the cache key
     /// carries runtime identity. Every consumer's `#[tokio::test]` suite is this shape.
     ///

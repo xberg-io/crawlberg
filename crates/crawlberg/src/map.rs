@@ -3,11 +3,10 @@
 use std::collections::HashSet;
 
 use regex::Regex;
-use tl::ParserOptions;
 use url::Url;
 
 use crate::error::CrawlError;
-use crate::html::{extract_links, is_html_content};
+use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{build_client, fetch_with_retry, http_fetch};
 use crate::normalize::{normalize_url, resolve_redirect, rewrite_url_host, strip_fragment};
 use crate::sitemap::{
@@ -29,8 +28,9 @@ use crate::types::{CrawlConfig, LinkType, MapResult, SitemapUrl};
 /// threaded into the sitemap fetch loop so a large sitemap-index tree is not
 /// fully materialized before truncation. Peak memory is bounded to roughly the
 /// limit plus a single child sitemap.
-pub async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
-    let parsed_url = Url::parse(url).map_err(|e| CrawlError::other(format!("invalid URL: {e}")))?;
+pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
+    let url = seed.as_str();
+    let parsed_url = seed.url().clone();
     let client = build_client(config)?;
     let filter = MapFilter::from_config(config)?;
     let context = SitemapWalkContext {
@@ -91,7 +91,9 @@ async fn sitemap_urls_from_robots(
         {
             break;
         }
-        let sitemap_url = resolve_redirect(url, sitemap_ref);
+        let Some(sitemap_url) = resolve_redirect(url, sitemap_ref) else {
+            continue;
+        };
         let resolved = rewrite_url_host(&sitemap_url, parsed_url);
         let remaining = config.map_limit.map(|limit| limit.saturating_sub(all_urls.len()));
         all_urls.extend(fetch_sitemap_tree(&resolved, context, remaining).await);
@@ -158,10 +160,11 @@ async fn urls_from_direct_response(
         }
     }
 
-    if is_html_content(&resp.content_type, &resp.body)
-        && let Ok(doc) = tl::parse(&resp.body, ParserOptions::default())
-    {
-        return links_as_sitemap_urls(&doc, parsed_url);
+    if is_html_content(&resp.content_type, &resp.body) {
+        let parsed_html = mask_raw_text_markup(&resp.body);
+        if let Ok(doc) = crate::html::parse_html(&parsed_html) {
+            return links_as_sitemap_urls(&doc, &parsed_html, parsed_url);
+        }
     }
 
     Vec::new()
@@ -173,8 +176,8 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
 /// normalized URL. Anchor-only links are not URLs of their own and are skipped.
-fn links_as_sitemap_urls(doc: &tl::VDom<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(doc, parsed_url);
+fn links_as_sitemap_urls(doc: &tl::VDom<'_>, html: &str, parsed_url: &Url) -> Vec<SitemapUrl> {
+    let links = extract_links(html, &effective_base_url(doc, parsed_url));
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
@@ -264,6 +267,11 @@ pub(crate) fn filter_map_result(mut urls: Vec<SitemapUrl>, filter: &MapFilter, l
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Map an already-clean test URL, as the engine does after admission.
+    async fn map(url: &str, config: &CrawlConfig) -> Result<MapResult, CrawlError> {
+        super::map(&crate::engine::SeedUrl::for_test(url), config).await
+    }
     use crate::types::CrawlConfig;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -399,6 +407,58 @@ mod tests {
             ],
             "internal links must be recorded without their fragment, external ones verbatim, \
              and fragment-only anchors skipped entirely"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_ignores_links_that_only_appear_inside_raw_text_on_an_html_page() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><head><title>Sitemapless <a href=\"/from-title\">t</a></title></head><body>\
+             <script>document.write('<a href=\"/from-script\">s</a>');</script>\
+             <textarea><a href=\"/from-textarea\">x</a></textarea>\
+             <a href=\"/real\">real</a>\
+             </body></html>"
+                .to_owned(),
+        )
+        .await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/real")],
+            "a mapped HTML page must contribute only the links a browser sees, not addresses \
+             written inside title, script or textarea text"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_resolves_html_links_against_the_page_base_href() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><head><base href=\"/other/\"></head>\
+             <body><a href=\"page\">page</a></body></html>"
+                .to_owned(),
+        )
+        .await;
+
+        let result = map(&base, &local_test_config()).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/other/page")],
+            "a relative link must resolve against the page's <base href>, not the document URL"
         );
     }
 
@@ -578,7 +638,12 @@ mod tests {
 
     #[tokio::test]
     async fn map_rejects_an_unparseable_url() {
-        let error = map("not a url", &local_test_config())
+        let engine = crate::CrawlEngine::builder()
+            .config(local_test_config())
+            .build()
+            .expect("engine must build");
+        let error = engine
+            .map("not a url")
             .await
             .expect_err("an unparseable URL must be rejected");
 

@@ -28,7 +28,9 @@ use crate::traits::*;
 use crate::types::*;
 
 use super::CrawlEngine;
-use super::crawl_state::{CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page};
+use super::crawl_state::{
+    CrawlState, FetchOutcome, FetchResult, LoopContext, blocking_extract_page, receiver_closed, receiver_gone,
+};
 use super::redirect::{PolicyRefusal, RedirectOutcome, RedirectPolicy, RedirectResolution, follow_redirects, url_host};
 
 /// Map [`BrowserMode`] to a stable string label for telemetry.
@@ -96,10 +98,10 @@ impl CrawlEngine {
     /// so that callers can consume results incrementally via [`crawl_stream`](Self::crawl_stream).
     pub(crate) async fn crawl_with_sender(
         &self,
-        url: &str,
+        seed: &super::SeedUrl,
         tx: Option<tokio::sync::mpsc::Sender<CrawlEvent>>,
     ) -> Result<CrawlResult, CrawlError> {
-        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, url);
+        let seed_url = crate::helpers::strip_seed_tracking_params(&self.config, seed.as_str());
         let client = build_client(&self.config)?;
         let bounds = CrawlBounds::resolve(&self.config, &seed_url)?;
 
@@ -112,18 +114,22 @@ impl CrawlEngine {
 
         // ~keep `Arc` rather than `Vec`: every spawned frontier fetch builds its own
         // ~keep task-local `RedirectPolicy` (see `fetch_and_extract`) and needs a cheap,
-        // ~keep `'static` clone of this list to do it.
+        // ~keep `'static` clone of these lists to do it.
         let exclude_regexes: Arc<[Regex]> = compile_regexes(&self.config.exclude_paths)?.into();
-        let include_regexes: Vec<Regex> = compile_regexes(&self.config.include_paths)?;
+        let include_regexes: Arc<[Regex]> = compile_regexes(&self.config.include_paths)?.into();
 
         // ~keep robots.txt is read before anything goes on the wire, and the policy travels
         // into the redirect resolution below rather than bracketing it. A redirect can leave
         // the seed's robots.txt scope (scheme, host and port), and reading the new origin's
         // file after the chain has already been fetched asks the question one request late.
-        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), &include_regexes);
-        let seed = self
-            .resolve_initial_redirects(&seed_url, bounds.max_redirects, &mut state, &mut policy)
-            .await;
+        let mut policy = RedirectPolicy::new(self, &client, exclude_regexes.as_ref(), include_regexes.as_ref());
+        // ~keep A stream dropped while the seed is still resolving abandons it here, so its
+        // ~keep retries and redirect hops stop with it; the loop below watches the same drop.
+        let seed = tokio::select! {
+            biased;
+            () = receiver_closed(&tx) => return Ok(self.finish_without_crawling(state, seed_url, &tx).await),
+            seed = self.resolve_initial_redirects(&seed_url, bounds.max_redirects, &mut state, &mut policy) => seed,
+        };
         state.urls_filtered += policy.urls_filtered;
 
         let seed = match seed {
@@ -157,7 +163,7 @@ impl CrawlEngine {
 
         let context = LoopContext {
             exclude_regexes: Arc::clone(&exclude_regexes),
-            include_regexes: &include_regexes,
+            include_regexes: Arc::clone(&include_regexes),
             robots: &robots,
             base_host: &bounds.base_host,
             base_host_suffix: &bounds.base_host_suffix,
@@ -396,6 +402,10 @@ impl CrawlEngine {
         entry: FrontierEntry,
         state: &mut CrawlState,
     ) -> Result<(), CrawlError> {
+        debug_assert!(
+            !crate::net::userinfo::str_has_userinfo(&entry.url),
+            "a URL reaching the frontier never carries userinfo"
+        );
         let url = entry.url.clone();
         self.frontier
             .push(entry)
@@ -493,7 +503,7 @@ impl CrawlEngine {
         let mut drive = LoopDrive::new(window, in_flight, max_concurrent);
         let mut cancelled = false;
 
-        while !cancelled {
+        while !cancelled && !receiver_gone(context.tx) {
             self.spawn_pending_fetches(&mut drive, state, preloaded, context)
                 .await?;
 
@@ -511,7 +521,16 @@ impl CrawlEngine {
                 break;
             }
 
-            let Some(result) = drive.join_set.join_next().await else {
+            // ~keep A dropped receiver ends the loop here rather than at the next page send: a
+            // ~keep failed fetch's error event ignores its failed send, so a run of failures kept
+            // ~keep the crawl starting requests nobody would read. Leaving the loop drops `drive`,
+            // ~keep whose `JoinSet` aborts the fetches still in flight, retries included.
+            let joined = tokio::select! {
+                biased;
+                () = receiver_closed(context.tx) => break,
+                joined = drive.join_set.join_next() => joined,
+            };
+            let Some(result) = joined else {
                 break;
             };
 
@@ -621,10 +640,7 @@ impl CrawlEngine {
         context: &LoopContext<'_>,
     ) {
         let exclude_regexes = Arc::clone(&context.exclude_regexes);
-        // ~keep `LoopContext::include_regexes` is a borrowed slice, so a fresh `Arc` is built
-        // ~keep here rather than cloned, unlike `exclude_regexes`: the spawned task still
-        // ~keep needs an owned, `'static` list for its own task-local `RedirectPolicy`.
-        let include_regexes: Arc<[Regex]> = context.include_regexes.into();
+        let include_regexes = Arc::clone(&context.include_regexes);
         drive.join_set.spawn(fetch_and_extract(
             engine,
             entry,
@@ -673,8 +689,7 @@ impl CrawlEngine {
         match result {
             Ok(Ok(FetchOutcome::Fetched(fetch))) => {
                 retire_in_flight(drive.in_flight, &fetch.entry.url);
-                self.process_fetch_result(*fetch, state, context, &mut drive.join_set)
-                    .await
+                self.process_fetch_result(*fetch, state, context).await
             }
             Ok(Ok(FetchOutcome::Skipped(entry))) => {
                 retire_in_flight(drive.in_flight, &entry.url);
@@ -718,7 +733,7 @@ impl CrawlEngine {
     /// Check whether a URL should be fetched based on path filters and robots.txt.
     fn should_fetch_url(&self, entry: &FrontierEntry, context: &LoopContext<'_>, urls_filtered: &mut usize) -> bool {
         let exclude_regexes: &[Regex] = &context.exclude_regexes;
-        let include_regexes = context.include_regexes;
+        let include_regexes: &[Regex] = &context.include_regexes;
         let robots = context.robots;
         let page_parsed = match Url::parse(&entry.url) {
             Ok(u) => u,
@@ -774,6 +789,7 @@ struct LoopDrive<'a> {
     window: &'a mut Vec<FrontierEntry>,
     /// Entries whose fetch task is running, kept so an early exit can return them.
     in_flight: &'a mut Vec<FrontierEntry>,
+    /// The running fetches. Dropping it, as every exit from the loop does, aborts them.
     join_set: JoinSet<Result<FetchOutcome, (FrontierEntry, CrawlError)>>,
     semaphore: Arc<Semaphore>,
     max_concurrent: usize,
@@ -881,20 +897,36 @@ async fn fetch_and_extract(
         }
     };
 
+    let ssrf_refused_urls = resp.landed.map(|landed| landed.refused).unwrap_or_default();
     let status_code = resp.status;
     let content_type = resp.content_type;
     let headers = resp.headers;
     let body = resp.body;
     let body_bytes = resp.body_bytes;
+    // ~keep The agent this page's request actually sent (rotation-aware); falls back to the
+    // ~keep configured default when unset, exactly matching the previous behaviour when no
+    // ~keep rotation is in play (crawlberg#423).
+    let sent_user_agent = resp.sent_user_agent;
 
     // ~keep The base URL for extraction is where the content actually came from. Using the
     // ~keep original `entry.url` here would resolve every relative link/asset on a redirected
     // ~keep page against the wrong origin.
     let url_for_extract = final_url.clone();
     let content_type_clone = content_type.clone();
+    let robots_user_agent =
+        sent_user_agent.unwrap_or_else(|| crate::helpers::default_robots_user_agent(&engine.config).to_owned());
+    let header_robots =
+        crate::scrape::RobotsDirectives::from_header_values(headers.get("x-robots-tag"), &robots_user_agent);
 
     let page_ext = tokio::task::spawn_blocking(move || {
-        blocking_extract_page(&url_for_extract, &content_type_clone, body, body_bytes)
+        blocking_extract_page(
+            &url_for_extract,
+            &content_type_clone,
+            header_robots,
+            &robots_user_agent,
+            body,
+            body_bytes,
+        )
     })
     .await
     .map_err(|e| (entry.clone(), CrawlError::other(format!("extraction task failed: {e}"))))?;
@@ -907,11 +939,13 @@ async fn fetch_and_extract(
         body_bytes: page_ext.body_bytes,
         headers,
         extraction: page_ext.extraction,
+        robots: page_ext.robots,
         is_binary: page_ext.is_binary,
         is_pdf: page_ext.is_pdf,
         detected_charset: page_ext.detected_charset,
         final_url,
         redirect_count,
         browser_used,
+        ssrf_refused_urls,
     })))
 }

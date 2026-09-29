@@ -41,6 +41,7 @@ pub struct CrawlEngineBuilder {
     event_emitter: Option<Arc<dyn EventEmitter>>,
     strategy: Option<Arc<dyn CrawlStrategy>>,
     content_filter: Option<Arc<dyn ContentFilter>>,
+    document_filter: Option<Arc<crate::document::DocumentFilter>>,
     cache: Option<Arc<dyn CrawlCache>>,
     #[cfg(not(target_arch = "wasm32"))]
     event_sink: Option<Arc<dyn EventSink>>,
@@ -63,6 +64,7 @@ impl CrawlEngineBuilder {
             event_emitter: None,
             strategy: None,
             content_filter: None,
+            document_filter: None,
             cache: None,
             #[cfg(not(target_arch = "wasm32"))]
             event_sink: None,
@@ -120,6 +122,28 @@ impl CrawlEngineBuilder {
     #[allow(dead_code)]
     pub fn content_filter(mut self, content_filter: impl ContentFilter + 'static) -> Self {
         self.content_filter = Some(Arc::new(content_filter));
+        self
+    }
+
+    /// Set a byte-aware predicate for document materialization.
+    ///
+    /// The predicate receives the normalized declared MIME type, at most
+    /// `document_max_size` bytes of the already bounded response body, and the decision
+    /// `document_mime_types`/the built-in classification would have reached. Returning that
+    /// third argument reproduces the default; `by_declared_mime || bytes.starts_with(b"%PDF")`
+    /// widens it. It applies to `crawl()`, `scrape()` and the wasm crawl loop alike. With no
+    /// predicate, the existing MIME decision is unchanged.
+    ///
+    /// The predicate runs for **every** fetched response, not only the ones the built-in
+    /// decision would have accepted — an ordinary HTML page included. A predicate that returns
+    /// `true` for HTML therefore materializes every page as a `DownloadedDocument`, duplicating
+    /// its whole body into the result and, on native targets, writing it to
+    /// `document_output_dir`. Keep the predicate as narrow as the documents it is meant to admit.
+    pub fn document_filter(
+        mut self,
+        document_filter: impl Fn(&str, &[u8], bool) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.document_filter = Some(Arc::new(document_filter));
         self
     }
 
@@ -250,6 +274,7 @@ impl CrawlEngineBuilder {
             content_filter: self
                 .content_filter
                 .unwrap_or_else(|| default_content_filter(bm25_filter)),
+            document_filter: self.document_filter,
             cache: self.cache.unwrap_or_else(|| Arc::new(defaults::NoopCache)),
             #[cfg(not(target_arch = "wasm32"))]
             event_sink,
@@ -515,17 +540,32 @@ mod rate_limiter_plumbing_tests {
             .build()
             .expect("engine must build");
 
-        let waited = wait_for_second_acquire(&engine, "example.com").await;
+        // ~keep One draw cannot carry this assertion. tokio's paused clock advances to a
+        // sleep's deadline at whole-millisecond granularity, so a 0.5 ratio over 100ms has
+        // exactly 100 reachable outcomes in [51ms, 150ms] and lands on an unperturbed 100ms
+        // in 1 of 100 draws -- measured, not estimated. A single `assert_ne!` against 100ms
+        // was therefore ~1% flaky, under a comment claiming it could only collide at
+        // double-precision float equality; that reasoning was about the f64 factor and
+        // missed the timer's rounding. Several domains fix it: each is an independent draw,
+        // so requiring at least one to differ collides by chance at 0.01^4 = 1e-8, and the
+        // range check still applies to every draw.
+        let domains = ["a.example.com", "b.example.com", "c.example.com", "d.example.com"];
+        let mut waits = Vec::with_capacity(domains.len());
+        for domain in domains {
+            let waited = wait_for_second_acquire(&engine, domain).await;
+            assert!(
+                waited >= Duration::from_millis(50) && waited <= Duration::from_millis(150),
+                "a 0.5 jitter_ratio over a 100ms delay must stay within [50ms, 150ms], \
+                 got {waited:?} for {domain}"
+            );
+            waits.push(waited);
+        }
 
         assert!(
-            waited >= Duration::from_millis(50) && waited <= Duration::from_millis(150),
-            "a 0.5 jitter_ratio over a 100ms delay must stay within [50ms, 150ms], got {waited:?}"
-        );
-        assert_ne!(
-            waited,
-            Duration::from_millis(100),
-            "a nonzero jitter_ratio must perturb the delay away from the unjittered 100ms baseline \
-             (this can only coincide by chance at the level of double-precision float equality)"
+            waits.iter().any(|waited| *waited != Duration::from_millis(100)),
+            "a nonzero jitter_ratio must perturb the delay away from the unjittered 100ms \
+             baseline, but all {} domains waited exactly 100ms: {waits:?}",
+            waits.len()
         );
     }
 

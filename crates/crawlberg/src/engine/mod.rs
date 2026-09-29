@@ -1,5 +1,6 @@
 //! CrawlEngine composes trait implementations into a crawl pipeline.
 
+mod admission;
 #[cfg(not(target_arch = "wasm32"))]
 mod batch;
 mod builder;
@@ -26,12 +27,12 @@ mod selection;
 #[cfg(any(target_arch = "wasm32", test))]
 mod wasm_crawl;
 
+pub(crate) use admission::SeedUrl;
 pub(crate) use selection::take_selected;
 
 use std::sync::Arc;
 
 use crate::error::CrawlError;
-use crate::telemetry::attributes::URL_FULL;
 
 /// Default cap on links enqueued from one page, when `max_links_per_page` is unset.
 ///
@@ -59,6 +60,7 @@ pub struct CrawlEngine {
     pub(crate) event_emitter: Arc<dyn EventEmitter>,
     pub(crate) strategy: Arc<dyn CrawlStrategy>,
     pub(crate) content_filter: Arc<dyn ContentFilter>,
+    pub(crate) document_filter: Option<Arc<crate::document::DocumentFilter>>,
     pub(crate) cache: Arc<dyn CrawlCache>,
     /// Optional event sink for streaming crawl events to external consumers
     /// (e.g., NATS, dashboards, analytics).
@@ -98,7 +100,10 @@ impl CrawlEngine {
 
         let service = ServiceBuilder::new()
             .layer(crate::tower::PerDomainRateLimitLayer::new(self.rate_limiter.clone()))
-            .layer(crate::tower::CrawlCacheLayer::new(self.cache.clone()))
+            .layer(
+                crate::tower::CrawlCacheLayer::new(self.cache.clone())
+                    .bypassing_credentials(Arc::new(self.config.clone())),
+            )
             .layer(self.ua_rotation.clone())
             .service(crate::tower::HttpFetchService::new(client.clone(), self.config.clone()));
 
@@ -109,35 +114,81 @@ impl CrawlEngine {
         tower::util::BoxCloneService::new(service)
     }
 
+    /// Whether `fetch_response` (`engine/fetch.rs`) sends this request straight to the browser
+    /// tier, bypassing the Tower stack -- and with it, UA rotation -- entirely.
+    ///
+    /// ~keep Mirrors the exact condition `fetch_response` itself checks before routing:
+    /// `feature = "browser"` compiled in and `BrowserMode::Always`/`Stealth` configured. Kept in
+    /// one place so `choose_request_user_agent` cannot drift from what `fetch_response` actually
+    /// does (crawlberg#423).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn request_will_use_browser(&self) -> bool {
+        cfg!(feature = "browser") && matches!(self.config.browser.mode, BrowserMode::Always | BrowserMode::Stealth)
+    }
+
+    /// Decide the agent the next request should send.
+    ///
+    /// ~keep The single place that picks an agent ahead of a request: it advances the exact
+    /// round-robin counter the UA rotation layer uses, so pinning the result onto a
+    /// `CrawlRequest` before it reaches that layer (`RedirectPolicy::admits`, for the robots
+    /// decision) and the agent the layer would otherwise have chosen are never two different
+    /// picks. Falls back to the configured default when no rotation list is set, so a
+    /// non-rotating crawl sees no change (crawlberg#423).
+    ///
+    /// ~keep A request the browser tier will fetch never reaches UA rotation at all -- the
+    /// browser always sends the configured or custom-header agent (`default_robots_user_agent`),
+    /// never a rotated pick -- so robots decisions for it must judge that same agent, not one
+    /// the browser will never send (crawlberg#423).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn choose_request_user_agent(&self) -> String {
+        if self.request_will_use_browser() {
+            return crate::helpers::default_robots_user_agent(&self.config).to_owned();
+        }
+        self.ua_rotation
+            .choose_next()
+            .unwrap_or_else(|| crate::helpers::default_robots_user_agent(&self.config).to_owned())
+    }
+
     /// Execute browser actions on a single page.
     ///
     /// The public API is always available. Runtime execution depends on the
     /// configured browser backend and the browser backend features compiled
     /// into the crate.
-    // ~keep `actions` may carry user-typed form text (TypeText), so it is skipped
-    // ~keep rather than recorded; only its length is cheap and safe to trace.
-    #[tracing::instrument(
-        name = "crawl.engine.interact",
-        skip(self, actions),
-        fields(url.full = tracing::field::Empty, action_count = actions.len())
-    )]
     pub async fn interact(
         &self,
         url: &str,
         actions: &[crate::interact::PageAction],
     ) -> Result<InteractionResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
-        crate::interact::run(self, url, actions).await
+        let (engine, seed) = self.admit(url)?;
+        engine.interact_seed(&seed, actions).await
+    }
+
+    /// Run browser actions on an admitted seed URL. See [`CrawlEngine::interact`].
+    // ~keep `actions` may carry user-typed form text (TypeText), so only its length is traced.
+    #[tracing::instrument(
+        name = "crawl.engine.interact",
+        skip_all,
+        fields(url.full = %seed, action_count = actions.len())
+    )]
+    async fn interact_seed(
+        &self,
+        seed: &SeedUrl,
+        actions: &[crate::interact::PageAction],
+    ) -> Result<InteractionResult, CrawlError> {
+        crate::interact::run(self, seed, actions).await
     }
 
     /// Discover all pages on a website by following links and sitemaps.
-    #[tracing::instrument(name = "crawl.engine.map", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn map(&self, url: &str) -> Result<MapResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
+        let (engine, seed) = self.admit(url)?;
+        engine.map_seed(&seed).await
+    }
+
+    /// Map an admitted seed URL. See [`CrawlEngine::map`].
+    #[tracing::instrument(name = "crawl.engine.map", skip_all, fields(url.full = %seed))]
+    async fn map_seed(&self, seed: &SeedUrl) -> Result<MapResult, CrawlError> {
         self.config.validate()?;
-        crate::map::map(url, &self.config).await
+        crate::map::map(seed, &self.config).await
     }
 }
 
@@ -187,8 +238,7 @@ mod tests {
     }
 
     /// Regression test: `CrawlEngine::scrape`'s `crawl.engine.scrape` span must record
-    /// the `url.full` field with credentials redacted (see `crate::net::redact_url_credentials`),
-    /// regardless of whether the fetch itself succeeds.
+    /// the admitted `url.full`, without the caller's userinfo, whether or not the fetch succeeds.
     // ~keep Serial with the sequential-crawl tests in `engine::wasm_crawl`: this assertion
     // ~keep reads a thread-local capturing subscriber, and `tracing` rebuilds its global
     // ~keep callsite-interest cache whenever a dispatcher is installed. Heavy concurrent span

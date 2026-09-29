@@ -2,11 +2,12 @@
 //! HTML (plus an optional screenshot). This is the per-page work shared by both
 //! the pooled and one-shot chromiumoxide fetch paths in the parent module.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetCookieParams, SetExtraHttpHeadersParams};
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
+use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, GetFrameTreeParams};
 use chromiumoxide::page::ScreenshotParams;
 
 use super::BrowserPage;
@@ -14,7 +15,7 @@ use super::launch::resolve_default_user_agent;
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::ssrf_intercept::{StoppedResponse, Watch};
-use crate::types::{AuthConfig, BrowserWait, CookieInfo, CrawlConfig};
+use crate::types::{BrowserWait, CookieInfo, CrawlConfig};
 
 /// Viewport a stealth session presents, chosen to match a common desktop display
 /// so the reported metrics are unremarkable.
@@ -58,16 +59,30 @@ pub(super) async fn page_fetch(
     }
 
     apply_prior_cookies(page, prior_cookies).await;
-    apply_extra_headers(page, config).await?;
 
-    render(url, config, page, watch, want_screenshot).await
+    let mut rendered = render(url, config, page, watch, want_screenshot).await?;
+    // ~keep Read once the requests the check has taken are judged, so a request sent at the end
+    // ~keep of `extra_wait` is not missed while its DNS lookup runs.
+    rendered.refused = watch.refused_urls().await;
+    // ~keep A main-frame navigation the policy refused leaves Chrome's error page in place of
+    // ~keep the page, so it fails the fetch even when the navigation `goto` waited for succeeded:
+    // ~keep the refused one can come during the load or after it, during `extra_wait`. Any other
+    // ~keep refused request keeps the page and is listed on it.
+    if let Some((blocked_url, reason)) = watch.blocked_navigation() {
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
+    }
+    Ok(rendered)
 }
 
 /// Navigate `page` to `url` under `watch` and read the rendered page.
 ///
-/// ~keep The watch stays on until the HTML is read, so the reported status is the one of the
-/// ~keep main-frame document the HTML comes from, even when the page navigates during
-/// ~keep `extra_wait` (a challenge page that moves to the real page, for example).
+/// ~keep The watch stays on until the HTML is read, so a page that navigates during
+/// ~keep `extra_wait` (a challenge page that moves to the real page, for example) reports the
+/// ~keep status and headers of the new document. They are those of the main-frame document
+/// ~keep committed when they are read. A response Chrome does not commit (a 204, a 2xx download)
+/// ~keep leaves the previous document in place, and its status with it. The read is a separate
+/// ~keep CDP call from reading the HTML: a navigation that commits between the two calls pairs
+/// ~keep them with a different document.
 async fn render(
     url: &str,
     config: &CrawlConfig,
@@ -96,6 +111,7 @@ async fn render(
         return Ok(BrowserPage {
             response: stopped_response(stop),
             redirects: intercepted.redirects_followed,
+            refused: Vec::new(),
         });
     }
     resolve_navigation_outcome(navigation, intercepted.blocked, timeout)?;
@@ -108,7 +124,11 @@ async fn render(
         .content()
         .await
         .map_err(|e| CrawlError::browser_error(format!("failed to extract HTML: {e}")))?;
-    let status = watch.document_status().unwrap_or(RENDERED_PAGE_STATUS);
+    let loader_id = committed_loader_id(page).await?;
+    let (status, headers) = watch.document(&loader_id).map_or_else(
+        || (RENDERED_PAGE_STATUS, HashMap::new()),
+        |doc| (doc.status, doc.headers),
+    );
 
     // ~keep Chrome follows redirects itself, so the page it landed on is the base its links
     // ~keep resolve against. An unreadable URL falls back to the requested one.
@@ -123,13 +143,22 @@ async fn render(
             content_type: RENDERED_PAGE_CONTENT_TYPE.to_owned(),
             body: html,
             body_bytes,
-            headers: std::collections::HashMap::new(),
+            headers,
             browser_extras: None,
             final_url,
             screenshot,
         },
         redirects: intercepted.redirects_followed,
+        refused: Vec::new(),
     })
+}
+
+/// The loader id of the document the main frame has committed.
+async fn committed_loader_id(page: &chromiumoxide::Page) -> Result<String, CrawlError> {
+    page.execute(GetFrameTreeParams::default())
+        .await
+        .map(|tree| tree.result.frame_tree.frame.loader_id.into())
+        .map_err(|e| CrawlError::browser_error(format!("failed to read the committed document: {e}")))
 }
 
 /// The response a navigation stopped on without a document, with no body, as the HTTP
@@ -195,34 +224,6 @@ async fn apply_prior_cookies(page: &chromiumoxide::Page, prior_cookies: Option<&
     }
 }
 
-/// Install the configured custom headers plus any `auth`-derived header on the page.
-async fn apply_extra_headers(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
-    let mut extra_headers = serde_json::Map::new();
-    for (k, v) in &config.custom_headers {
-        extra_headers.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-    if extra_headers.is_empty() {
-        return Ok(());
-    }
-    let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-    page.execute(params)
-        .await
-        .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))
-        .map(|_| ())
-}
-
 /// Turn the navigation result and the interceptor's verdict into one error.
 ///
 /// ~keep A request the SSRF interceptor blocked takes precedence over both the
@@ -240,11 +241,11 @@ fn resolve_navigation_outcome(
         Err(_) => CrawlError::browser_timeout(format!("browser timed out after {timeout:?}")),
     };
     if let Some((blocked_url, reason)) = blocked {
-        return Err(CrawlError::SsrfPolicyViolation {
-            url: blocked_url,
-            reason,
-            source: None,
-        });
+        // ~keep Built through `ssrf_violation`, never a struct literal. `ssrf_intercept` records
+        // ~keep a URL with userinfo without it, and `ssrf_violation` redacts again as the last
+        // ~keep guard before API error bodies, MCP error payloads and tracing fields.
+        // ~keep xberg-io/crawlberg#180.
+        return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
 }
@@ -340,6 +341,17 @@ mod tests {
         ))
     }
 
+    /// A blocked request whose URL carries `user:pass@` userinfo.
+    ///
+    /// ~keep `ssrf_intercept` records such a URL without its userinfo, so this pins the last
+    /// ~keep guard: a URL that arrives here with userinfo anyway is still redacted.
+    fn blocked_with_credentials() -> Option<(String, String)> {
+        Some((
+            "https://user:secret@10.0.0.1/".to_owned(),
+            "denied by SSRF policy: private_network".to_owned(),
+        ))
+    }
+
     #[test]
     fn a_successful_navigation_with_nothing_blocked_is_ok() {
         assert!(resolve_navigation_outcome(Ok(Ok(())), None, TEST_TIMEOUT).is_ok());
@@ -401,6 +413,26 @@ mod tests {
         assert!(
             error.to_string().contains("7s"),
             "the timeout message must name the configured timeout, got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_blocked_url_with_userinfo_is_reported_with_its_credentials_redacted() {
+        let navigation = Ok(Err(CrawlError::browser_error("navigation failed: net::ERR_FAILED")));
+        let error = resolve_navigation_outcome(navigation, blocked_with_credentials(), TEST_TIMEOUT)
+            .expect_err("a blocked request must surface as an error");
+
+        let CrawlError::SsrfPolicyViolation { url, .. } = &error else {
+            panic!("expected an SSRF policy violation, got: {error:?}");
+        };
+        assert_eq!(
+            url.as_str(),
+            "https://***:***@10.0.0.1/",
+            "the refused URL must be stored credential-redacted"
+        );
+        assert!(
+            !error.to_string().contains("secret"),
+            "the rendered error must not carry the refused URL's password, got: {error}"
         );
     }
 }

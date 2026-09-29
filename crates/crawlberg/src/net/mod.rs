@@ -6,6 +6,7 @@ pub(crate) mod browser_policy;
 // reqwest's hyper backend; wasm32 uses the browser's own fetch/cookie handling instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cookie;
+pub(crate) mod credentials;
 pub(crate) mod origin;
 pub mod redact;
 // ~keep `reqwest::dns::Resolve` only exists under reqwest's hyper backend; wasm32 has no
@@ -13,6 +14,14 @@ pub mod redact;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod resolver;
 pub mod ssrf;
+pub(crate) mod userinfo;
 
+#[doc(hidden)]
+pub use credentials::CredentialScope;
 pub use redact::redact_url_credentials;
 pub use ssrf::{HostMatcher, SsrfError, SsrfPolicy, validate_url};
+
+/// How many refusals of one browser page or session are logged one by one. The rest are
+/// counted, and one warning reports the count when the page or session ends.
+#[cfg(any(feature = "browser-chromiumoxide", feature = "browser-native"))]
+pub(crate) const LOGGED_REFUSALS: usize = 5;

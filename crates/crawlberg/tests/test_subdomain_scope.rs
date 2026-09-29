@@ -15,11 +15,10 @@
 //! ambiguous between "the scope gate rejected it" and "DNS failed" — both render identically
 //! as an absent page, so the assertion could not tell a working gate from a gutted one
 //! (proven by mutation: hardwiring `allow_subdomains: true` at both call sites left every test
-//! in this file green). RFC 6761 §6.3 requires every conformant resolver to resolve
-//! `*.localhost` to the loopback address without any network traffic, so reachability does not
-//! cost real DNS. Each rejected endpoint is mounted with `.expect(0)`, verified on drop, so the
-//! test fails if the request is ever sent — the request-count check, not `pages.len()` alone,
-//! is what proves the gate fired.
+//! in this file green). `through_fixture` routes every request to the fixture server, so
+//! reachability needs no resolver at all. Each rejected endpoint is mounted with `.expect(0)`,
+//! verified on drop, so the test fails if the request is ever sent — the request-count check,
+//! not `pages.len()` alone, is what proves the gate fired.
 
 use crawlberg::{CrawlConfig, CrawlEngine};
 use wiremock::matchers::{method, path};
@@ -59,12 +58,35 @@ fn engine_with(config: CrawlConfig) -> CrawlEngine {
         .expect("engine must build")
 }
 
-fn permissive(config: CrawlConfig) -> CrawlConfig {
+/// Route every request through the fixture server, used as a plain HTTP proxy, so these tests
+/// never ask the system resolver for a `*.localhost` name.
+///
+/// ~keep macOS resolves `localhost` but not its subdomains, and the SSRF pre-check resolves every
+/// host it does not allowlist, even with `deny_private` off. The proxy carries each request to the
+/// fixture server by address, and the `localhost` suffix allowlist entry lets the pre-check permit
+/// those names without a lookup. The fixture server matches on the path alone, so every host name
+/// reaches the same mocks, and a rejected link's `.expect(0)` mock would see the request if the
+/// scope gate ever let it through.
+/// ~keep Setting `proxy` also suppresses the `PolicyResolver` DNS pinning that `build_client`
+/// ~keep otherwise installs (`http/client.rs`, gated on `proxy_provider.is_none() &&
+/// ~keep proxy.is_none()`), because hyper then resolves the proxy host rather than the target.
+/// ~keep So these tests no longer exercise the SSRF DNS-pinning path they used to; the
+/// ~keep allowlisted `validate_url` pre-check above is the only SSRF enforcement left in them.
+/// ~keep Coverage for the pinning itself lives in `build_client`'s own tests
+/// ~keep (`build_client_enforces_the_ssrf_policy_during_dns_resolution` and
+/// ~keep `build_client_skips_the_policy_resolver_when_a_proxy_is_configured`).
+fn through_fixture(mock: &MockServer, config: CrawlConfig) -> CrawlConfig {
     CrawlConfig {
         ssrf: crawlberg::SsrfPolicy {
             deny_private: false,
+            allowlist: vec![crawlberg::HostMatcher::suffix("localhost")],
             ..crawlberg::SsrfPolicy::default()
         },
+        proxy: Some(crawlberg::ProxyConfig {
+            url: mock.uri(),
+            username: None,
+            password: None,
+        }),
         ..config
     }
 }
@@ -84,12 +106,15 @@ async fn should_follow_subdomain_link_when_allow_subdomains_is_true() {
     mount_html(&mock, "/child", "<html><body>leaf</body></html>").await;
 
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        allow_subdomains: true,
-        respect_robots_txt: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            allow_subdomains: true,
+            respect_robots_txt: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl(&base).await.expect("crawl must succeed");
 
@@ -115,12 +140,15 @@ async fn should_reject_subdomain_link_when_allow_subdomains_is_false() {
     mount_html_expecting(&mock, "/child", "<html><body>leaf</body></html>", 0).await;
 
     let base = format!("http://foo.localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        allow_subdomains: false,
-        respect_robots_txt: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            allow_subdomains: false,
+            respect_robots_txt: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl(&base).await.expect("crawl must succeed");
 
@@ -150,12 +178,15 @@ async fn should_reject_unrelated_host_even_when_allow_subdomains_is_true() {
     mount_html_expecting(&mock, "/child", "<html><body>leaf</body></html>", 0).await;
 
     let base = format!("http://foo.localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        allow_subdomains: true,
-        respect_robots_txt: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            allow_subdomains: true,
+            respect_robots_txt: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl(&base).await.expect("crawl must succeed");
 
@@ -171,9 +202,9 @@ async fn should_reject_unrelated_host_even_when_allow_subdomains_is_true() {
 /// An unrelated host is never enqueued by a default-configured crawl.
 ///
 /// ~keep Pins the additive contract of the crawlberg#60 fix: fixing `allow_subdomains` must not
-/// widen a default crawl past the seed host and its subdomains. The host is deliberately
-/// unresolvable (`.invalid`, RFC 2606) because scope rejects it before SSRF resolves anything,
-/// so this needs no DNS. See crawlberg#72 for the `stay_on_domain` question.
+/// widen a default crawl past the seed host and its subdomains. `through_fixture` routes the
+/// unrelated host to the fixture server, so its `.expect(0)` mock sees the request if scope ever
+/// lets it through. See crawlberg#72 for the `stay_on_domain` question.
 #[tokio::test]
 async fn should_reject_an_unrelated_host_by_default() {
     let mock = MockServer::start().await;
@@ -187,11 +218,14 @@ async fn should_reject_an_unrelated_host_by_default() {
     mount_html_expecting(&mock, "/child", "<html><body>leaf</body></html>", 0).await;
 
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        respect_robots_txt: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            respect_robots_txt: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     let result = engine.crawl(&base).await.expect("crawl must succeed");
 
@@ -233,11 +267,14 @@ async fn should_follow_a_cross_host_document_link_by_default() {
     mount_pdf(&mock, "/report.pdf", 1).await;
 
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        respect_robots_txt: false,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            respect_robots_txt: false,
+            ..CrawlConfig::default()
+        },
+    ));
 
     engine.crawl(&base).await.expect("crawl must succeed");
 
@@ -259,12 +296,15 @@ async fn should_reject_a_cross_host_document_link_when_stay_on_domain_is_true() 
     mount_pdf(&mock, "/report.pdf", 0).await;
 
     let base = format!("http://localhost:{port}");
-    let engine = engine_with(permissive(CrawlConfig {
-        max_depth: Some(1),
-        respect_robots_txt: false,
-        stay_on_domain: true,
-        ..CrawlConfig::default()
-    }));
+    let engine = engine_with(through_fixture(
+        &mock,
+        CrawlConfig {
+            max_depth: Some(1),
+            respect_robots_txt: false,
+            stay_on_domain: true,
+            ..CrawlConfig::default()
+        },
+    ));
 
     engine.crawl(&base).await.expect("crawl must succeed");
 

@@ -1011,7 +1011,12 @@ class CrawlConfig {
   /// Minimum BM25 score a page must reach to be kept. Defaults to `0.0`.
   final double? bm25Threshold;
 
-  /// Whether to respect robots.txt directives.
+  /// Whether to respect robots.txt directives. A crawl that respects them also honours
+  /// the page's own robots instructions: it does not follow the links of a page marked
+  /// `nofollow` by its robots meta tag or an `X-Robots-Tag` header. A link marked
+  /// `rel="nofollow"` is a hint, not a robots directive, and is still followed. A `noindex`
+  /// page is still crawled and its links followed; the page result marks it with
+  /// `noindex_detected`.
   final bool respectRobotsTxt;
 
   /// When true, HTTP-level error responses (404 NotFound, 403 Forbidden, WAF blocks)
@@ -1071,7 +1076,8 @@ class CrawlConfig {
   /// enabled.
   final List<String> trackingParams;
 
-  /// Custom HTTP headers to send with each request.
+  /// Custom HTTP headers to send with each request to the seed URL's host. A request to another host
+  /// does not carry them.
   final Map<String, String> customHeaders;
 
   /// Timeout for individual HTTP requests (in milliseconds when serialized).
@@ -1087,7 +1093,9 @@ class CrawlConfig {
   /// Number of retry attempts for failed requests. Bounded by [`MAX_RETRY_COUNT`].
   final PlatformInt64 retryCount;
 
-  /// HTTP status codes that should trigger a retry.
+  /// HTTP status codes that should trigger a retry. When empty, every rate limit, server
+  /// error, bad gateway and timeout is retried. When set, only a failure whose status is
+  /// listed is retried, so a timeout without a response is not.
   final Int64List retryCodes;
 
   /// Initial delay, in milliseconds, before the first retry. Doubled on each
@@ -1603,6 +1611,18 @@ class CrawlPageResult {
   /// Redirect hops taken to reach `final_url` from `url`.
   final PlatformInt64 redirectCount;
 
+  /// Whether the page asked not to be indexed, by its robots meta tag or `X-Robots-Tag`
+  /// header. The page is still crawled and its links still followed.
+  final bool noindexDetected;
+
+  /// Whether the page asked that its links not be followed, by its robots meta tag or
+  /// `X-Robots-Tag` header. When the crawl respects robots, its links are not followed.
+  final bool nofollowDetected;
+
+  /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+  /// their credentials, each listed once. The page is kept; only the refused requests failed.
+  final List<String> ssrfRefusedUrls;
+
   const CrawlPageResult({
     required this.url,
     required this.normalizedUrl,
@@ -1627,6 +1647,9 @@ class CrawlPageResult {
     required this.browserUsed,
     required this.finalUrl,
     required this.redirectCount,
+    required this.noindexDetected,
+    required this.nofollowDetected,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -1653,7 +1676,10 @@ class CrawlPageResult {
       downloadedDocument.hashCode ^
       browserUsed.hashCode ^
       finalUrl.hashCode ^
-      redirectCount.hashCode;
+      redirectCount.hashCode ^
+      noindexDetected.hashCode ^
+      nofollowDetected.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1682,7 +1708,10 @@ class CrawlPageResult {
           downloadedDocument == other.downloadedDocument &&
           browserUsed == other.browserUsed &&
           finalUrl == other.finalUrl &&
-          redirectCount == other.redirectCount;
+          redirectCount == other.redirectCount &&
+          noindexDetected == other.noindexDetected &&
+          nofollowDetected == other.nofollowDetected &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// The result of a multi-page crawl operation.
@@ -2191,11 +2220,16 @@ class InteractionResult {
   /// callers that never request a screenshot do not pay the encoding cost.
   final String? screenshotBase64;
 
+  /// URLs of the requests the page sent during the session that the SSRF policy refused,
+  /// including during the extra wait, without their credentials, each listed once.
+  final List<String> ssrfRefusedUrls;
+
   const InteractionResult({
     required this.actionResults,
     required this.finalHtml,
     required this.finalUrl,
     this.screenshotBase64,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -2203,7 +2237,8 @@ class InteractionResult {
       actionResults.hashCode ^
       finalHtml.hashCode ^
       finalUrl.hashCode ^
-      screenshotBase64.hashCode;
+      screenshotBase64.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2213,7 +2248,8 @@ class InteractionResult {
           actionResults == other.actionResults &&
           finalHtml == other.finalHtml &&
           finalUrl == other.finalUrl &&
-          screenshotBase64 == other.screenshotBase64;
+          screenshotBase64 == other.screenshotBase64 &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// A JSON-LD structured data entry found on a page.
@@ -2847,7 +2883,7 @@ class ScrapeResult {
   /// Whether a nofollow directive was detected.
   final bool nofollowDetected;
 
-  /// The X-Robots-Tag header value, if present.
+  /// The X-Robots-Tag header values, joined with `, ` when the response sent more than one.
   final String? xRobotsTag;
 
   /// Whether the content is a PDF.
@@ -2897,6 +2933,10 @@ class ScrapeResult {
   /// populated when `BrowserBackend::Native` was used for this request.
   final BrowserExtras? browser;
 
+  /// URLs of the requests the page sent in browser mode that the SSRF policy refused, without
+  /// their credentials, each listed once. The page is kept; only the refused requests failed.
+  final List<String> ssrfRefusedUrls;
+
   const ScrapeResult({
     required this.statusCode,
     required this.finalUrl,
@@ -2927,6 +2967,7 @@ class ScrapeResult {
     this.screenshotBase64,
     this.downloadedDocument,
     this.browser,
+    required this.ssrfRefusedUrls,
   });
 
   @override
@@ -2959,7 +3000,8 @@ class ScrapeResult {
       extractionMeta.hashCode ^
       screenshotBase64.hashCode ^
       downloadedDocument.hashCode ^
-      browser.hashCode;
+      browser.hashCode ^
+      ssrfRefusedUrls.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2994,7 +3036,8 @@ class ScrapeResult {
           extractionMeta == other.extractionMeta &&
           screenshotBase64 == other.screenshotBase64 &&
           downloadedDocument == other.downloadedDocument &&
-          browser == other.browser;
+          browser == other.browser &&
+          ssrfRefusedUrls == other.ssrfRefusedUrls;
 }
 
 /// Direction for a scroll action.
