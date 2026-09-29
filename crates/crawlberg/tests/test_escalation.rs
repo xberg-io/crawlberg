@@ -694,3 +694,143 @@ async fn a_503_without_a_waf_signal_is_retried_and_never_escalates() {
         "retry_count=3 with 503 in retry_codes must send 4 requests"
     );
 }
+
+/// A 503 whose only WAF evidence is the CDN's own `server` header is the origin failing, not
+/// an interstitial, so it is retried like any other 503 instead of escalating (crawlberg#197).
+///
+/// ~keep The request count and `provider.calls()` are the assertions that matter: checking
+/// only the error variant would also pass if the 503 escalated and the bypass tier then failed.
+#[tokio::test]
+async fn a_503_whose_only_waf_evidence_is_cdn_presence_is_retried_and_never_escalates() {
+    let mock = MockServer::start().await;
+    let fronted = [
+        ("/akamai", "AkamaiGHost"),
+        ("/incapsula", "Incapsula"),
+        ("/bigip", "BIG-IP"),
+    ];
+    for (route, server) in fronted {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .insert_header("server", server)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<html><body><h1>Service Unavailable</h1></body></html>"),
+            )
+            .mount(&mock)
+            .await;
+    }
+
+    let provider = CountingMockProvider::new("must not be used");
+    let engine = build_engine(contested_retry_config(EscalationStrategy::BypassOnly, provider.clone()));
+
+    for (route, server) in fronted {
+        let error = engine.scrape(&format!("{}{route}", mock.uri())).await.unwrap_err();
+        assert!(
+            matches!(error, CrawlError::ServerError { .. }),
+            "a 503 behind {server} must stay a ServerError, got: {error:?}"
+        );
+    }
+
+    assert_eq!(provider.calls(), 0, "a 503 behind a CDN must not escalate");
+    assert_eq!(
+        mock.received_requests().await.unwrap().len(),
+        12,
+        "retry_count=3 with 503 in retry_codes must send 4 requests for each of the 3 routes"
+    );
+}
+
+/// A retry policy written outside the crate reads the HTTP status of a failed attempt from
+/// `AttemptOutcome::status`, so it can tell a 503 from a 500 without parsing the error. A plain
+/// 403 and a response refused as a WAF block carry their status too (crawlberg#133): a block
+/// refused from a 403, 429, 503 or 2xx reports that status, not `None`.
+#[tokio::test]
+async fn custom_retry_policy_reads_the_status_of_a_failed_attempt() {
+    use std::sync::Mutex;
+
+    /// The status the policy saw, and whether the attempt ended as a WAF block.
+    type Seen = (Option<u16>, bool);
+
+    #[derive(Debug)]
+    struct StatusRecordingPolicy(Arc<Mutex<Vec<Seen>>>);
+
+    #[async_trait::async_trait]
+    impl RetryPolicy for StatusRecordingPolicy {
+        async fn decide(&self, outcome: &AttemptOutcome) -> RetryDirective {
+            let Some(error) = &outcome.error else {
+                panic!("each attempt here fails: {outcome:?}");
+            };
+            let blocked = matches!(error, CrawlError::WafBlocked { .. });
+            self.0.lock().unwrap().push((outcome.status, blocked));
+            RetryDirective::Stop
+        }
+
+        fn name(&self) -> &'static str {
+            "status_recording"
+        }
+    }
+
+    let mock = MockServer::start().await;
+    let routes = [
+        ("/unavailable", ResponseTemplate::new(503)),
+        ("/broken", ResponseTemplate::new(500)),
+        ("/forbidden", ResponseTemplate::new(403)),
+        (
+            "/blocked-403",
+            ResponseTemplate::new(403).set_body_string("<html>cf-chl- challenge</html>"),
+        ),
+        (
+            "/blocked-429",
+            ResponseTemplate::new(429)
+                .append_header("x-px-block", "1")
+                .set_body_string("<html>px-captcha</html>"),
+        ),
+        (
+            "/blocked-503",
+            ResponseTemplate::new(503)
+                .append_header("x-datadome", "blocked")
+                .set_body_string("<html>challenge</html>"),
+        ),
+        (
+            "/blocked-202",
+            ResponseTemplate::new(202)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html>cf-chl- x</html>"),
+        ),
+    ];
+    for (route, response) in &routes {
+        Mock::given(method("GET"))
+            .and(path(*route))
+            .respond_with(response.clone())
+            .mount(&mock)
+            .await;
+    }
+
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let config = CrawlConfig {
+        dispatch: Some(DispatchProfile {
+            retry_policy: Some(Arc::new(StatusRecordingPolicy(recorded.clone()))),
+            ..DispatchProfile::default()
+        }),
+        ..allow_private_config()
+    };
+    let engine = build_engine(config);
+    for (route, _) in &routes {
+        let result = engine.scrape(&format!("{}{route}", mock.uri())).await;
+        assert!(result.is_err(), "{route} must fail, got {result:?}");
+    }
+
+    assert_eq!(
+        *recorded.lock().unwrap(),
+        vec![
+            (Some(503), false),
+            (Some(500), false),
+            (Some(403), false),
+            (Some(403), true),
+            (Some(429), true),
+            (Some(503), true),
+            (Some(202), true),
+        ],
+        "each failed attempt must reach the policy once, with the status of the response that ended it"
+    );
+}
