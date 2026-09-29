@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use chromiumoxide::Handler;
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeBrowserConfig};
-use chromiumoxide::cdp::browser_protocol::network::{Headers, SetExtraHttpHeadersParams};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::page::ScreenshotParams;
 use serde_json::json;
@@ -11,7 +10,7 @@ use tokio_stream::StreamExt;
 use super::{PageAction, ScrollDirection, encode_screenshot_base64};
 use crate::browser_pool::{ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
-use crate::types::{ActionResult, AuthConfig, BrowserWait, CrawlConfig, InteractionResult};
+use crate::types::{ActionResult, BrowserWait, CrawlConfig, InteractionResult};
 
 pub(super) async fn run(
     url: &str,
@@ -106,41 +105,57 @@ async fn run_with_browser(
 
     let result = async {
         prepare_page(&page, config).await?;
-        navigate_and_wait(&page, url, config).await?;
-        if let Some(ref script) = config.browser.eval_script {
-            evaluate_json(&page, script).await.map_err(|e| {
-                CrawlError::browser_error(format!(
-                    "post-navigation eval_script failed before interaction actions: {e}"
-                ))
-            })?;
-        }
-
-        let (action_results, screenshot) = run_actions(&page, actions).await;
-
-        let final_html = page
-            .content()
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
-        let final_url = evaluate_json(&page, "location.href")
-            .await
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| url.to_owned());
-
-        let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
-
-        Ok(InteractionResult {
-            action_results,
-            final_html,
-            final_url,
-            screenshot,
-            screenshot_base64,
-        })
+        // ~keep The interception stays on until the page is closed: it adds the seed-host
+        // ~keep headers and the SSRF check to requests the actions send too.
+        let interceptor = crate::ssrf_intercept::start_ssrf_interception(&page, config).await?;
+        let outcome = interact_on_page(&page, url, actions, config, &interceptor).await;
+        interceptor.finish().await;
+        outcome
     }
     .await;
 
     let _ = page.close().await;
     result
+}
+
+/// Navigate, run the actions, and read the final page, under the caller's interception.
+async fn interact_on_page(
+    page: &chromiumoxide::Page,
+    url: &str,
+    actions: &[PageAction],
+    config: &CrawlConfig,
+    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
+) -> Result<InteractionResult, CrawlError> {
+    navigate_and_wait(page, url, config, interceptor).await?;
+    if let Some(ref script) = config.browser.eval_script {
+        evaluate_json(page, script).await.map_err(|e| {
+            CrawlError::browser_error(format!(
+                "post-navigation eval_script failed before interaction actions: {e}"
+            ))
+        })?;
+    }
+
+    let (action_results, screenshot) = run_actions(page, actions).await;
+
+    let final_html = page
+        .content()
+        .await
+        .map_err(|e| CrawlError::browser_error(format!("failed to extract final HTML: {e}")))?;
+    let final_url = evaluate_json(page, "location.href")
+        .await
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned());
+
+    let screenshot_base64 = screenshot.as_deref().map(encode_screenshot_base64);
+
+    Ok(InteractionResult {
+        action_results,
+        final_html,
+        final_url,
+        screenshot,
+        screenshot_base64,
+    })
 }
 
 async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Result<(), CrawlError> {
@@ -154,30 +169,6 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
             .map_err(|e| CrawlError::browser_error(format!("failed to set user agent: {e}")))?;
     }
 
-    let mut extra_headers = serde_json::Map::new();
-    for (key, value) in &config.custom_headers {
-        extra_headers.insert(key.clone(), serde_json::Value::String(value.clone()));
-    }
-    match config.auth {
-        Some(AuthConfig::Bearer { ref token }) => {
-            extra_headers.insert(
-                "Authorization".to_owned(),
-                serde_json::Value::String(format!("Bearer {token}")),
-            );
-        }
-        Some(AuthConfig::Header { ref name, ref value }) => {
-            extra_headers.insert(name.clone(), serde_json::Value::String(value.clone()));
-        }
-        _ => {}
-    }
-
-    if !extra_headers.is_empty() {
-        let params = SetExtraHttpHeadersParams::new(Headers::new(serde_json::Value::Object(extra_headers)));
-        page.execute(params)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to set headers: {e}")))?;
-    }
-
     Ok(())
 }
 
@@ -185,9 +176,13 @@ async fn prepare_page(page: &chromiumoxide::Page, config: &CrawlConfig) -> Resul
 // ~keep the pre-flight check in `interact::run` only covers the seed URL, and a browser follows
 // ~keep redirects/client-side navigations internally, so per-request CDP interception is still
 // ~keep needed here to close that gap for this backend the same way the scrape/crawl path does.
-async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &CrawlConfig) -> Result<(), CrawlError> {
+async fn navigate_and_wait(
+    page: &chromiumoxide::Page,
+    url: &str,
+    config: &CrawlConfig,
+    interceptor: &crate::ssrf_intercept::SsrfInterceptGuard,
+) -> Result<(), CrawlError> {
     let timeout = config.browser.timeout;
-    let interceptor = crate::ssrf_intercept::start_ssrf_interception(page, &config.ssrf).await?;
 
     let navigation = tokio::time::timeout(timeout, async {
         page.goto(url)
@@ -200,8 +195,7 @@ async fn navigate_and_wait(page: &chromiumoxide::Page, url: &str, config: &Crawl
     })
     .await;
 
-    let blocked = interceptor.finish().await;
-    resolve_navigation_outcome(navigation, blocked, timeout)?;
+    resolve_navigation_outcome(navigation, interceptor.take_blocked(), timeout)?;
 
     if let Some(extra) = config.browser.extra_wait {
         tokio::time::sleep(extra).await;
@@ -228,9 +222,9 @@ fn resolve_navigation_outcome(
     };
     if let Some((blocked_url, reason)) = blocked {
         // ~keep Built through `ssrf_violation`, never a struct literal, for the same reason as
-        // ~keep `browser::navigation::resolve_navigation_outcome`: `blocked_url` is the raw
-        // ~keep `Fetch.requestPaused` URL, so it still carries any `user:pass@` userinfo the
-        // ~keep refused request had. xberg-io/crawlberg#180.
+        // ~keep `browser::navigation::resolve_navigation_outcome`: `ssrf_intercept` records a URL
+        // ~keep with userinfo without it, and `ssrf_violation` redacts again as the last guard.
+        // ~keep xberg-io/crawlberg#180.
         return Err(CrawlError::ssrf_violation(blocked_url, reason));
     }
     Err(navigation_error)
@@ -435,9 +429,7 @@ fn action_type(action: &PageAction) -> &'static str {
 
 async fn launch_or_connect(config: &CrawlConfig) -> Result<(Browser, Handler, Option<std::path::PathBuf>), CrawlError> {
     if let Some(ref endpoint) = config.browser.endpoint {
-        let (browser, handler) = Browser::connect(endpoint)
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to connect to {endpoint}: {e}")))?;
+        let (browser, handler) = crate::browser_pool::connect_endpoint(endpoint).await?;
         Ok((browser, handler, None))
     } else {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -549,5 +541,59 @@ mod tests {
             !error.to_string().contains("secret"),
             "the rendered error must not carry the refused URL's password, got: {error}"
         );
+    }
+
+    /// `launch_or_connect`'s connect-error message must never carry a `browser.endpoint`
+    /// password or path token, though the failing origin must still be readable for debugging.
+    ///
+    /// ~keep The launch path has the same test: xberg-io/crawlberg#473 was this test missing
+    /// ~keep here after #424 added it only there, so each connect site keeps its own. A closed
+    /// ~keep local port refuses the connection immediately, so this needs no real Chrome and
+    /// ~keep stays fast; `ws://` skips chromiumoxide's `json/version` HTTP probe and goes
+    /// ~keep straight to the WebSocket handshake. The endpoint-listener test just below reaches
+    /// ~keep the same error path with a local socket that answers HTTP 418, so a closed port is
+    /// ~keep no longer the only way here; it stays because it needs no listener at all.
+    #[tokio::test]
+    async fn connect_error_prints_only_the_endpoint_origin() {
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                endpoint: Some("ws://user:hunter2@127.0.0.1:1/devtools/browser/b1946ac9-guid".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = launch_or_connect(&config)
+            .await
+            .expect_err("a refused local port must fail the connect");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("hunter2"),
+            "password must not survive into the error, got: {msg}"
+        );
+        assert!(
+            !msg.contains("b1946ac9-guid"),
+            "the CDP path token must not survive into the error, got: {msg}"
+        );
+        assert!(
+            msg.contains("127.0.0.1"),
+            "host must still appear in the error, got: {msg}"
+        );
+    }
+
+    /// Every spelling of `browser.endpoint` that the config check accepts must reach the browser.
+    #[tokio::test]
+    async fn connects_every_endpoint_spelling_the_checks_accept() {
+        crate::browser_pool::tests::assert_every_accepted_endpoint_reaches_the_browser(|endpoint| async move {
+            let config = CrawlConfig {
+                browser: crate::types::BrowserConfig {
+                    endpoint: Some(endpoint),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            launch_or_connect(&config).await
+        })
+        .await;
     }
 }

@@ -18,12 +18,24 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit};
 use crate::error::CrawlError;
 
 /// Key identifying a reusable session. Same domain + same proxy → same session.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct SessionKey {
     /// Domain (extracted from URL for matching).
     pub domain: String,
     /// Proxy URL, or None if no proxy.
     pub proxy: Option<String>,
+}
+
+impl std::fmt::Debug for SessionKey {
+    /// Redacted: the proxy URL can carry `user:pass@` credentials or a token in its path or
+    /// query, so only its origin prints, as in `ProxyConfig`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { domain, proxy } = self;
+        f.debug_struct("SessionKey")
+            .field("domain", domain)
+            .field("proxy", &proxy.as_deref().map(crate::net::redact::redact_url_to_origin))
+            .finish()
+    }
 }
 
 impl SessionKey {

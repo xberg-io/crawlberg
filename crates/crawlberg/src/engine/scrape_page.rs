@@ -1,8 +1,7 @@
 //! [`CrawlEngine::scrape`]: fetch one page and run the extraction pipeline over it.
 
-use super::CrawlEngine;
+use super::{CrawlEngine, SeedUrl};
 use crate::error::CrawlError;
-use crate::telemetry::attributes::URL_FULL;
 use crate::types::*;
 
 impl CrawlEngine {
@@ -19,10 +18,23 @@ impl CrawlEngine {
     /// - `BrowserMode::Auto` + JS detected: after extraction, if `js_render_hint` is
     ///   `true` and the browser has not been used yet, re-fetches with headless Chrome
     ///   and re-runs the extraction pipeline on the rendered HTML.
-    #[tracing::instrument(name = "crawl.engine.scrape", skip(self), fields(url.full = tracing::field::Empty))]
     pub async fn scrape(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
-        let redacted_url = crate::net::redact_url_credentials(url);
-        tracing::Span::current().record(URL_FULL, tracing::field::display(&redacted_url));
+        let (engine, seed) = self.admit(url)?;
+        engine.scrape_seed(&seed).await
+    }
+
+    /// Scrape an admitted seed URL. See [`CrawlEngine::scrape`].
+    pub(crate) async fn scrape_seed(&self, seed: &SeedUrl) -> Result<ScrapeResult, CrawlError> {
+        self.scrape_in_scope(seed.as_str()).await
+    }
+
+    /// Scrape `url` under the credential scope this engine's seed admission set.
+    ///
+    /// The sequential crawl loop scrapes each frontier entry through this, not through
+    /// [`CrawlEngine::scrape`], which would admit the entry as a new seed and scope the
+    /// credentials to the entry's host.
+    #[tracing::instrument(name = "crawl.engine.scrape", skip_all, fields(url.full = %url))]
+    pub(super) async fn scrape_in_scope(&self, url: &str) -> Result<ScrapeResult, CrawlError> {
         self.config.validate()?;
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -144,6 +156,8 @@ impl CrawlEngine {
             body_bytes: http_resp.body_bytes,
             headers: std::collections::HashMap::new(),
             landed_url: None,
+            // ~keep The native browser backend never reads `config.user_agents`.
+            sent_user_agent: None,
         };
         let mut result = crate::scrape::scrape_from_crawl_response(
             &http_resp.final_url,
@@ -255,6 +269,8 @@ impl CrawlEngine {
             body_bytes: resp.body_bytes,
             headers: resp.headers,
             landed_url: None,
+            // ~keep wasm has no UA rotation layer; every fetch sends `config.user_agent`.
+            sent_user_agent: None,
         };
         Ok((post_redirect_url, crawl_resp, false))
     }

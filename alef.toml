@@ -5,7 +5,7 @@
 # ~keep exited 0, because it re-hashes whatever was written. Templates are `include_str!`'d,
 # ~keep so the cheap check is `strings $(which alef) | grep 'object\. #!\[allow('` — a hit
 # ~keep means a pre-fix build, regardless of what the version string says.
-alef_version = "0.96.4"
+alef_version = "0.97.1"
 languages = [
   "python",
   "node",
@@ -1209,6 +1209,10 @@ languages = [
   "kotlin_android",
 ]
 exclude_categories = ["middleware"]
+# ~keep std::env::var always fails on wasm32, so CRAWLBERG_ALLOW_PRIVATE_NETWORK never reaches the
+# ~keep wasm engine and the SSRF policy keeps its compiled-in deny_private = true. The wasm e2e suite
+# ~keep talks to the mock server on 127.0.0.1, so its configs must turn the check off explicitly.
+wasm_config_overrides = { "ssrf.deny_private" = false }
 fields_optional = [
   "markdown",
   "metadata.title",
@@ -1515,13 +1519,9 @@ handle_config_type = "WasmCrawlConfig"
 # produce. Adding a nested config object to a fixture without adding it here reintroduces a
 # silently-ignored setting.
 #
-# Scope, measured rather than assumed: adding `ssrf` here fixed the 3 call sites where a fixture
-# sets `config.ssrf` (validation.test.ts). It does NOT touch the ~216
-# `engineConfig.ssrf.denyPrivate = false` lines in the per-test HARNESS PREAMBLE, which alef emits
-# from a different code path and which remain no-ops. Those are harmless today only because the
-# suite also sets CRAWLBERG_ALLOW_PRIVATE_NETWORK, which flips the same field by another route --
-# so the preamble is belt-and-braces that does not actually work. Tracked upstream as
-# xberg-io/alef#431; do not read the presence of those lines as SSRF being configured by them.
+# The per-test `engineConfig.ssrf = ...` line comes from `[crates.e2e] wasm_config_overrides`:
+# alef folds `ssrf.deny_private = false` into the test's `ssrf` value and writes it back in this
+# same form, so it takes effect.
 [crates.e2e.call.overrides.wasm.nested_types]
 auth = "WasmAuthConfig"
 browser = "WasmBrowserConfig"

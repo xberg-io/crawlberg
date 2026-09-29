@@ -1,34 +1,41 @@
 //! Feed, favicon, hreflang, and heading extraction from HTML documents.
 
+use std::borrow::Cow;
+
 use tl::VDom;
 use url::Url;
 
 use crate::types::{FaviconInfo, FeedInfo, FeedType, HeadingInfo, HreflangEntry};
 
-use super::get_attr;
-use super::resolve_url;
-use super::selectors::{SEL_FAVICON, SEL_FEED_ALTERNATE, SEL_HEADINGS, SEL_HREFLANG};
+use super::selectors::{SEL_HEADINGS, SEL_HREFLANG, SEL_LINK_REL};
+use super::{get_attr, get_url_attr, has_inline_scheme, has_rel, has_scheme, mime_essence, resolve_url};
 
-/// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document.
+/// Extract feed links (RSS, Atom, JSON Feed) from a parsed HTML document, resolved against the
+/// document's base URL. A link with a blank `href`, or one that resolves to an inline `data:` or
+/// script address, is skipped.
 pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     let parser = dom.parser();
     let mut feeds = Vec::new();
 
-    if let Some(iter) = dom.query_selector(SEL_FEED_ALTERNATE) {
+    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
         for handle in iter {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let link_type = get_attr(tag, "type").unwrap_or("");
-            let raw_href = get_attr(tag, "href").unwrap_or("");
-            let href = if raw_href.is_empty() {
-                String::new()
-            } else {
-                resolve_url(raw_href, base_url)
+            if !has_rel(tag, "alternate") {
+                continue;
+            }
+            let Some(href) = get_url_attr(tag, "href") else {
+                continue;
             };
-            let title = get_attr(tag, "title").map(String::from);
+            let href = resolve_url(&href, base_url);
+            if has_inline_scheme(&href) {
+                continue;
+            }
+            let link_type = mime_essence(tag).unwrap_or_default();
+            let title = get_attr(tag, "title").map(Cow::into_owned);
 
-            let feed_type = match link_type {
+            let feed_type = match link_type.as_str() {
                 "application/rss+xml" => Some(FeedType::Rss),
                 "application/atom+xml" => Some(FeedType::Atom),
                 "application/json" | "application/feed+json" => Some(FeedType::JsonFeed),
@@ -47,8 +54,10 @@ pub(crate) fn extract_feeds(dom: &VDom<'_>, base_url: &Url) -> Vec<FeedInfo> {
     feeds
 }
 
-/// Extract hreflang alternate links from a parsed HTML document.
-pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
+/// Extract hreflang alternate links from a parsed HTML document, resolved against the document's
+/// base URL. A link with a blank `hreflang` or `href`, or one that resolves to an inline `data:` or
+/// script address, is skipped.
+pub(crate) fn extract_hreflangs(dom: &VDom<'_>, base_url: &Url) -> Vec<HreflangEntry> {
     let parser = dom.parser();
     let mut entries = Vec::new();
     if let Some(iter) = dom.query_selector(SEL_HREFLANG) {
@@ -56,47 +65,60 @@ pub(crate) fn extract_hreflangs(dom: &VDom<'_>) -> Vec<HreflangEntry> {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let lang = get_attr(tag, "hreflang").unwrap_or("").to_owned();
-            let url = get_attr(tag, "href").unwrap_or("").to_owned();
-            if !lang.is_empty() && !url.is_empty() {
-                entries.push(HreflangEntry { lang, url });
+            if !has_rel(tag, "alternate") {
+                continue;
             }
+            let lang = get_attr(tag, "hreflang").unwrap_or_default();
+            let lang = lang.trim_ascii();
+            if lang.is_empty() {
+                continue;
+            }
+            let Some(href) = get_url_attr(tag, "href") else {
+                continue;
+            };
+            let url = resolve_url(&href, base_url);
+            if has_inline_scheme(&url) {
+                continue;
+            }
+            entries.push(HreflangEntry {
+                lang: lang.to_owned(),
+                url,
+            });
         }
     }
     entries
 }
 
-/// Icon `rel` values recognized as favicons.
-const FAVICON_RELS: &[&str] = &["icon", "shortcut icon", "apple-touch-icon"];
+/// `rel` tokens recognized as favicons. `rel="shortcut icon"` holds the `icon` token.
+const FAVICON_RELS: &[&str] = &["icon", "apple-touch-icon"];
 
-/// Extract favicon and icon links from a parsed HTML document.
+/// Extract favicon and icon links from a parsed HTML document, resolved against the document's
+/// base URL. A link with a blank `href`, or one that resolves to a script address, is skipped; an
+/// inline `data:` icon is kept.
 pub(crate) fn extract_favicons(dom: &VDom<'_>, base_url: &Url) -> Vec<FaviconInfo> {
     let parser = dom.parser();
     let mut favicons = Vec::new();
-    // ~keep `tl`'s selector matcher does not reliably OR together multiple
-    // `link[rel='x']` alternatives that share the same tag name (verified: a grouped
-    // selector like `link[rel='icon'], link[rel='shortcut icon']` matches nothing even
-    // though each alternative matches on its own). Select on attribute presence once
-    // and filter the value in Rust instead of relying on the comma-grouped selector.
-    if let Some(iter) = dom.query_selector(SEL_FAVICON) {
+    if let Some(iter) = dom.query_selector(SEL_LINK_REL) {
         for handle in iter {
             let Some(tag) = handle.get(parser).and_then(|n| n.as_tag()) else {
                 continue;
             };
-            let rel = get_attr(tag, "rel").unwrap_or("");
-            if !FAVICON_RELS.contains(&rel) {
+            if !FAVICON_RELS.iter().any(|token| has_rel(tag, token)) {
                 continue;
             }
-            let raw_href = get_attr(tag, "href").unwrap_or("");
-            if raw_href.is_empty() {
+            let rel = get_attr(tag, "rel").unwrap_or_default();
+            let Some(raw_href) = get_url_attr(tag, "href") else {
+                continue;
+            };
+            let url = resolve_url(&raw_href, base_url);
+            if has_inline_scheme(&url) && !has_scheme(&url, "data") {
                 continue;
             }
-            let url = resolve_url(raw_href, base_url);
-            let sizes = get_attr(tag, "sizes").map(String::from);
-            let mime_type = get_attr(tag, "type").map(String::from);
+            let sizes = get_attr(tag, "sizes").map(Cow::into_owned);
+            let mime_type = get_attr(tag, "type").map(Cow::into_owned);
             favicons.push(FaviconInfo {
                 url,
-                rel: rel.to_owned(),
+                rel: rel.into_owned(),
                 sizes,
                 mime_type,
             });
@@ -133,12 +155,10 @@ pub(crate) fn extract_headings(dom: &VDom<'_>) -> Vec<HeadingInfo> {
 
 #[cfg(test)]
 mod tests {
-    use tl::ParserOptions;
-
     use super::*;
 
     fn parse(html: &str) -> tl::VDom<'_> {
-        tl::parse(html, ParserOptions::default()).expect("valid HTML")
+        crate::html::parse_html(html).expect("valid HTML")
     }
 
     #[test]
@@ -163,6 +183,31 @@ mod tests {
         assert_eq!(
             favicons[0].url, "https://example.com/en/favicon.ico",
             "relative favicon href should resolve against the document URL, got {}",
+            favicons[0].url
+        );
+    }
+
+    #[test]
+    fn should_skip_a_favicon_whose_href_is_only_whitespace() {
+        let dom = parse("<link rel=\"icon\" href=\" \t\r\n \">");
+        let base = Url::parse("https://example.com/en/page.html").unwrap();
+        let favicons = extract_favicons(&dom, &base);
+        assert_eq!(
+            favicons.len(),
+            0,
+            "a whitespace-only favicon href must not be reported as the page's own favicon, got {favicons:?}"
+        );
+    }
+
+    #[test]
+    fn should_keep_a_favicon_whose_href_is_only_a_unicode_space() {
+        let dom = parse("<link rel=\"icon\" href=\"\u{a0}\">");
+        let base = Url::parse("https://example.com/en/page.html").unwrap();
+        let favicons = extract_favicons(&dom, &base);
+        assert_eq!(favicons.len(), 1, "expected one favicon, got {favicons:?}");
+        assert_eq!(
+            favicons[0].url, "https://example.com/en/%C2%A0",
+            "an NBSP-only href is part of the address and must be percent-encoded, not treated as blank, got {}",
             favicons[0].url
         );
     }

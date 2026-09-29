@@ -78,6 +78,34 @@ const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
     "multicast",
 ];
 
+/// Refused schemes a refusal names. Any other scheme is not shown: an address written without
+/// a scheme, such as `user:token@host`, parses with its user name as the scheme.
+///
+/// Kept in sync with `crawlberg::net::ssrf::NAMED_SCHEMES` apart from `http` and `https` (a
+/// configured `scheme_allowlist` can refuse either there; this validator never refuses them)
+/// by the parity test in `crawlberg::net::browser_policy`. Exported so that test can see it.
+pub const NAMED_SCHEMES: [&str; 19] = [
+    "ftp",
+    "ftps",
+    "sftp",
+    "ssh",
+    "telnet",
+    "smb",
+    "file",
+    "data",
+    "javascript",
+    "mailto",
+    "ws",
+    "wss",
+    "blob",
+    "gopher",
+    "dict",
+    "ldap",
+    "ldaps",
+    "tftp",
+    "about",
+];
+
 /// Decides whether the browser layer may fetch a URL.
 ///
 /// Errors are plain strings: naming a typed error would require pulling `crawlberg`'s
@@ -87,6 +115,29 @@ const DENY_NET_REASONS: [&str; DEFAULT_DENY_NET_CIDRS.len()] = [
 pub trait SsrfValidator: std::fmt::Debug + Send + Sync {
     /// Return `Ok(())` if `url` may be fetched.
     async fn validate(&self, url: &Url) -> Result<(), String>;
+
+    /// Resolve `host` and return the addresses a connection to it may use.
+    ///
+    /// The native clients connect only to the addresses this returns (see
+    /// [`ValidatorResolver`](crate::net::resolver::ValidatorResolver)), so a validator that checks
+    /// resolved addresses does it here, on the lookup the connection uses. A check in `validate`
+    /// alone is lost: its lookup is gone by the time the client resolves the host again, and a
+    /// rebinding DNS answer differs.
+    ///
+    /// The default is the system lookup with no check, for a validator that decides by the URL
+    /// alone.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        system_lookup(host).await
+    }
+}
+
+/// Resolve `host` with the system resolver.
+async fn system_lookup(host: &str) -> Result<Vec<IpAddr>, String> {
+    Ok(tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|e| format!("dns resolution failed: {host}: {e}"))?
+        .map(|address| address.ip())
+        .collect())
 }
 
 /// Parse the `CRAWLBERG_ALLOW_PRIVATE_NETWORK` override.
@@ -119,6 +170,14 @@ impl DefaultSsrfValidator {
     }
 }
 
+#[cfg(test)]
+impl DefaultSsrfValidator {
+    /// Build a validator with an explicit setting, independent of the environment.
+    pub(crate) fn with_deny_private(deny_private: bool) -> Self {
+        Self { deny_private }
+    }
+}
+
 impl Default for DefaultSsrfValidator {
     fn default() -> Self {
         Self::from_env()
@@ -132,18 +191,20 @@ impl SsrfValidator for DefaultSsrfValidator {
         // ~keep Scheme is checked before the private-network override: allowing private
         // addresses is not a reason to start speaking ftp:// or gopher://.
         if scheme != "http" && scheme != "https" {
-            return Err(format!(
-                "Forbidden URL scheme '{scheme}' - only http and https are allowed"
-            ));
+            let shown = if NAMED_SCHEMES.contains(&scheme) {
+                format!(" '{scheme}'")
+            } else {
+                String::new()
+            };
+            return Err(format!("Forbidden URL scheme{shown} - only http and https are allowed"));
         }
 
         if !self.deny_private {
             return Ok(());
         }
 
-        // ~keep Localhost names are blocked before DNS to close rebinding gaps between
-        // validation and request time. This validator does not resolve; the injected
-        // crawlberg one does, and closes the gap properly.
+        // ~keep Localhost names are blocked before DNS. `validate` does not resolve; the
+        // connect-time `resolve` checks every address the connection will use.
         match url.host() {
             Some(url::Host::Ipv4(ip)) => match denial_reason(ip.into()) {
                 Some(reason) => Err(format!(
@@ -163,12 +224,25 @@ impl SsrfValidator for DefaultSsrfValidator {
             _ => Ok(()),
         }
     }
+
+    /// Refuses the host when any address it resolves to is in the deny-list.
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+        let addresses = system_lookup(host).await?;
+        if self.deny_private
+            && let Some(ip) = addresses.iter().find(|ip| denial_reason(**ip).is_some())
+        {
+            return Err(format!(
+                "{host} resolves to the private/internal address {ip}, which is not allowed"
+            ));
+        }
+        Ok(addresses)
+    }
 }
 
 /// The IPv4 addresses an IPv6 address embeds, for each form that is routed to that IPv4 host.
 ///
 /// Mirrors `embedded_ipv4s` in `crawlberg::net::ssrf`'s `validate` submodule, which cites
-/// the RFC for each form and says which local-use NAT64 positions are skipped and why.
+/// the RFC for each form and says when the local-use NAT64 reading is skipped and why.
 /// Without it, `::ffff:127.0.0.1` is only tested against the IPv6 deny-nets and slips past
 /// `127.0.0.0/8`, while a dual-stack host routes it straight to loopback.
 fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
@@ -176,24 +250,23 @@ fn embedded_ipv4s(v6: Ipv6Addr) -> impl Iterator<Item = Ipv4Addr> {
     let at = |a: usize, b: usize, c: usize, d: usize| Ipv4Addr::new(octets[a], octets[b], octets[c], octets[d]);
     let segments = v6.segments();
 
-    let fixed = if v6.is_unspecified() || v6.is_loopback() {
-        None
-    } else {
-        v6.to_ipv4().or(match segments {
-            [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
-            [0x2002, ..] => Some(at(2, 3, 4, 5)),
-            _ => None,
-        })
-    };
-    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
-    let local_nat64 = matches!(segments, [0x0064, 0xff9b, 0x0001, ..]).then(|| {
-        let positions = [at(6, 7, 9, 10), at(7, 9, 10, 11), at(9, 10, 11, 12), at(12, 13, 14, 15)];
-        let skipped = |v4: &Ipv4Addr| v4.octets()[0] == 0 || v4.octets()[0] >= 224;
-        let none_left = positions.iter().all(skipped);
-        positions.into_iter().filter(move |v4| none_left || !skipped(v4))
+    // ~keep Unlike the core policy this validator has no allowlist, and `::` and `::1` are
+    // ~keep matched by their own deny rows before any embedded reading, so it needs no carve-out
+    // ~keep for them inside `::/96`.
+    let fixed = v6.to_ipv4().or(match segments {
+        [0, 0, 0, 0, 0xffff, 0, _, _] | [0x0064, 0xff9b, 0, 0, 0, 0, _, _] => Some(at(12, 13, 14, 15)),
+        [0x0064, 0xff9b, 0x0001, ..] => {
+            let v4 = at(12, 13, 14, 15);
+            let padding = octets[6..12].iter().any(|&b| b != 0) && v4.octets()[1..] == [0, 0, 0];
+            (!padding).then_some(v4)
+        }
+        [0x2002, ..] => Some(at(2, 3, 4, 5)),
+        [0x2001, 0, ..] => Some(Ipv4Addr::from(!u32::from(at(12, 13, 14, 15)))),
+        _ => None,
     });
+    let isatap = matches!(segments, [_, _, _, _, 0 | 0x0200, 0x5efe, _, _]).then(|| at(12, 13, 14, 15));
 
-    fixed.into_iter().chain(isatap).chain(local_nat64.into_iter().flatten())
+    fixed.into_iter().chain(isatap)
 }
 
 /// The reason the deny-list refuses `ip`, or `None` when it does not.
@@ -272,26 +345,20 @@ mod tests {
             "http://[::a00:5]/",
             "http://[2002:a9fe:a9fe::]/",
             "http://[64:ff9b:1::a00:5]/",
-            "http://[64:ff9b:1:a00:0:500::]/",
-            "http://[64:ff9b:1:a:0:5::]/",
-            "http://[64:ff9b:1:0:a:0:500:0]/",
+            "http://[64:ff9b:1:a00::a00:5]/",
             "http://[2001:db8::5efe:a00:5]/",
             "http://[2001:db8::200:5efe:7f00:1]/",
             "http://[fe80::5efe:808:808]/",
-            "http://[64:ff9b:1:ac10:8:800::]/",
             "http://[64:ff9b:1::]/",
-            "http://[64:ff9b:1:e000::]/",
             "http://[64:ff9b:1::e000:1]/",
+            // ~keep RFC 4380 stores a Teredo client's IPv4 address as its one's complement:
+            // 5601:5601 inverts to 169.254.169.254, the cloud metadata endpoint.
+            "http://[2001:0:4136:e378:0:ffff:5601:5601]/",
+            // The reserved range 240.0.0.0/4, which holds the broadcast address
+            // 255.255.255.255, plain and Teredo-embedded (5fe:fdfc inverts to 250.1.2.3).
             "http://240.0.0.1/",
             "http://255.255.255.255/",
-            "http://[::ffff:255.255.255.255]/",
-            "http://[64:ff9b::f000:1]/",
-            "http://[2002:ffff:ffff::]/",
-            "http://[64:ff9b:1:f000:0:100::]/",
-            "http://[64:ff9b:1:f0:0:1::]/",
-            "http://[64:ff9b:1:0:f0::]/",
-            "http://[64:ff9b:1::f000:1]/",
-            "http://[64:ff9b:1:ffff:ffff:ffff:ffff:ffff]/",
+            "http://[2001:0:4136:e378:8000:63bf:5fe:fdfc]/",
         ] {
             assert!(
                 validate(denied, true).await.is_err(),
@@ -313,12 +380,36 @@ mod tests {
             "http://[64:ff9b:1::808:808]/",
             "http://[2001:db8::5efe:808:808]/",
             "http://[2001:db8::200:5efe:808:808]/",
-            "http://[64:ff9b:1:0:8:808:e600:0]/",
-            "http://[64:ff9b:1:808:f0:100::]/",
+            "http://[64:ff9b:1:a00::808:808]/",
+            "http://[64:ff9b:1:0:8:808:a00:0]/",
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+            "http://[2001:db8::1]/",
+            // Boundary: the last address below 224.0.0.0/4, plain and 6to4-embedded, stays
+            // permitted; only 224.0.0.0/4 and above (multicast, then 240.0.0.0/4) are denied.
+            "http://223.255.255.1/",
+            "http://[2002:dfff:ff01::]/",
         ] {
             validate(permitted, true)
                 .await
                 .unwrap_or_else(|e| panic!("{permitted} must be permitted: {e}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_ends_its_message_with_the_denial_reason() {
+        // ~keep The fallback cannot return crawlberg's typed error, so the reason travels as the
+        // message suffix; crawlberg's parity test reads it back the same way.
+        for (target, reason) in [
+            ("http://127.0.0.1/", "loopback"),
+            ("http://10.0.0.5/", "private_network"),
+            ("http://[fd12::1]/", "unique_local"),
+            ("http://[2002:a9fe:a9fe::]/", "link_local"),
+        ] {
+            let message = validate(target, true).await.expect_err("a denied address");
+            assert!(
+                message.ends_with(&format!(": {reason}")),
+                "{target} must be refused as {reason}, got {message:?}"
+            );
         }
     }
 
@@ -340,6 +431,83 @@ mod tests {
             assert!(
                 validate(denied, false).await.is_err(),
                 "{denied} must be denied on scheme regardless of the private-network override"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_does_not_show_a_user_name_parsed_as_the_scheme() {
+        for (target, parsed_scheme, secret) in [
+            ("user:token@host", "user", "token"),
+            ("KEY:@h:1", "key", "key"),
+            ("localhost:3128", "localhost", "3128"),
+        ] {
+            let error = validate(target, true)
+                .await
+                .expect_err("a scheme other than http or https must be denied");
+            assert!(
+                error.contains("Forbidden URL scheme"),
+                "{target} must be refused for its scheme, got: {error}"
+            );
+            let lowered = error.to_lowercase();
+            for shown in [parsed_scheme, secret, "'"] {
+                assert!(
+                    !lowered.contains(shown),
+                    "the refusal of {target} shows {shown:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_validator_names_a_known_refused_scheme() {
+        for (target, named) in [("ftp://x", "'ftp'"), ("file:///x", "'file'")] {
+            let error = validate(target, true)
+                .await
+                .expect_err("a non-http scheme must be denied");
+            assert!(
+                error.contains(named),
+                "the refusal of {target} must name {named}, got: {error}"
+            );
+        }
+    }
+
+    /// The full [`NAMED_SCHEMES`] list, hardcoded rather than read from the const. See the
+    /// core crate's `every_listed_scheme_is_named_in_the_refusal` for why: walking the const
+    /// itself would keep passing after an entry is dropped from it, since a dropped scheme
+    /// is still refused, just no longer named.
+    const EXPECTED_NAMED_SCHEMES: [&str; 19] = [
+        "ftp",
+        "ftps",
+        "sftp",
+        "ssh",
+        "telnet",
+        "smb",
+        "file",
+        "data",
+        "javascript",
+        "mailto",
+        "ws",
+        "wss",
+        "blob",
+        "gopher",
+        "dict",
+        "ldap",
+        "ldaps",
+        "tftp",
+        "about",
+    ];
+
+    #[tokio::test]
+    async fn every_listed_scheme_is_named_in_the_browser_refusal() {
+        for scheme in EXPECTED_NAMED_SCHEMES {
+            let target = format!("{scheme}://x");
+            let error = validate(&target, true)
+                .await
+                .expect_err("a non-http scheme must be denied");
+            assert!(
+                error.contains(&format!("'{scheme}'")),
+                "{target} must name '{scheme}', got: {error}"
             );
         }
     }

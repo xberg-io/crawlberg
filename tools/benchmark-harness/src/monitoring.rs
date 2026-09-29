@@ -319,17 +319,31 @@ mod tests {
 
     #[tokio::test]
     async fn start_stop_collects_samples() {
+        // Each sample does a process-table scan whose duration is not bounded: on a
+        // busy machine the scan can take far longer than the sample interval. Wait
+        // for the sampler to actually produce samples instead of sleeping a fixed
+        // real-time window and hoping it was long enough (#430).
         let mut monitor = ResourceMonitor::new();
-        monitor.start(Duration::from_millis(50)).await;
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        monitor.stop();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        monitor.start(Duration::from_millis(20)).await;
 
-        let metrics = monitor.metrics().await;
+        let wait_for_samples = async {
+            loop {
+                if monitor.metrics().await.sample_count >= 2 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
         assert!(
-            metrics.sample_count >= 2,
-            "expected >=2 samples, got {}",
-            metrics.sample_count
+            tokio::time::timeout(Duration::from_secs(10), wait_for_samples)
+                .await
+                .is_ok(),
+            "timed out after 10s waiting for >=2 samples, got {}",
+            monitor.metrics().await.sample_count
         );
+        monitor.stop();
+
+        let sample_count = monitor.metrics().await.sample_count;
+        assert!(sample_count >= 2, "expected >=2 samples, got {sample_count}");
     }
 }
