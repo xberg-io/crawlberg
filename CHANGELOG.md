@@ -44,6 +44,12 @@ All notable changes to crawlberg are documented here.
 
 ### Fixed
 
+- **A configured user-agent rotation list had no effect on the wasm target.** Every wasm
+  request sent the same agent, and robots.txt was judged for a different agent than the one the
+  page fetch actually sent. The wasm crawl loop now picks the next rotation agent once per page,
+  judges that page's robots.txt for it, and sends that same agent on the request -- the per-page
+  behavior the native crawl loop already had. (#483)
+
 - **IPv6 forms that carry an IPv4 address bypassed the SSRF deny-list.** The deny-list matches
   within one address family, so only the IPv4-mapped and NAT64 well-known forms were unwrapped
   before it ran; `http://[::10.0.0.5]/`, `http://[::ffff:0:a00:5]/` and `http://[2002:a00:5::]/`

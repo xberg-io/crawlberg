@@ -172,8 +172,11 @@ impl CrawlEngine {
     /// through the engine's middleware chain, rate limiter, and cache.
     #[tracing::instrument(name = "crawl.engine.batch_scrape", skip(self, urls), fields(url_count = urls.len()))]
     pub async fn batch_scrape(&self, urls: &[&str]) -> Vec<(String, Result<ScrapeResult, CrawlError>)> {
-        self.run_batch(urls, |engine, seed| async move { engine.scrape_seed(&seed).await })
-            .await
+        self.run_batch(
+            urls,
+            |engine, seed| async move { engine.scrape_seed(&seed, None).await },
+        )
+        .await
     }
 
     /// Crawl multiple seed URLs, each following links to configured depth.
