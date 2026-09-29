@@ -267,8 +267,11 @@ impl CrawlEngine {
     /// (crawlberg#483): it goes out as the one `user-agent` header this fetch sends, replacing
     /// (not adding to) the configured default -- see `http::send_hop_request`. `None` sends the
     /// configured default, unchanged, exactly as a standalone `scrape()` always has.
-    #[cfg(target_arch = "wasm32")]
-    async fn wasm_fetch_for_scrape(
+    ///
+    /// ~keep Also compiled under `cfg(test)` so a native test can pin the header this builds:
+    /// ~keep wasm32 has no test runner in this repo.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(super) async fn wasm_fetch_for_scrape(
         &self,
         url: &str,
         forced_user_agent: Option<&str>,

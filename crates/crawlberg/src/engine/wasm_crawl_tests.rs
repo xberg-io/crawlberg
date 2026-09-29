@@ -1267,3 +1267,40 @@ async fn sequential_crawl_skips_robots_txt_when_not_respecting_it() {
     assert_eq!(result.pages.len(), 1, "the page must be fetched as AgentZ");
     drop(mock);
 }
+
+/// The wasm page fetch sends a pinned agent as its one `user-agent` line, in place of the
+/// configured default, and reports that agent as the one it sent.
+#[tokio::test]
+#[serial_test::serial(engine_tracing_callsites)]
+async fn wasm_page_fetch_sends_the_pinned_agent_once() {
+    let mock = MockServer::start().await;
+    mount_html(&mock, "/", "<html><body>root</body></html>").await;
+    let engine = engine_with(permissive(CrawlConfig {
+        user_agent: Some("Configured".to_owned()),
+        ..CrawlConfig::default()
+    }));
+
+    let (_, response, _) = engine
+        .wasm_fetch_for_scrape(&mock.uri(), Some("Pinned"))
+        .await
+        .expect("fetch must succeed");
+
+    let requests = mock.received_requests().await.expect("request recording must be on");
+    let sent: Vec<Vec<String>> = requests
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .get_all("user-agent")
+                .iter()
+                .map(|value| value.to_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![vec!["Pinned".to_owned()]],
+        "one request, with the pinned agent as its only user-agent line"
+    );
+    assert_eq!(response.sent_user_agent.as_deref(), Some("Pinned"));
+}
