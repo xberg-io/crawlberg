@@ -112,6 +112,65 @@ async fn should_download_and_report_every_discovered_asset_when_scraping() {
     );
 }
 
+/// A discovered asset must resolve against the page's `<base href>`, not the page's own
+/// directory: the discovery call site inside `scrape_from_crawl_response` must read
+/// `page.base_href`, the way link and image discovery already do.
+#[tokio::test]
+async fn should_resolve_a_downloaded_asset_against_the_base_href() {
+    let mock = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/dir/page"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"<html><head><base href="/assets/"></head><body><img src="photo.png"></body></html>"#,
+                )
+                .append_header("content-type", "text/html"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/assets/photo.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(vec![0x89, 0x50, 0x4e, 0x47])
+                .append_header("content-type", "image/png"),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/dir/photo.png"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock)
+        .await;
+
+    let mut config = CrawlConfig::default();
+    config.ssrf.deny_private = false;
+    config.download_assets = true;
+    let engine = build_engine(config);
+
+    let result = engine
+        .scrape(&format!("{}/dir/page", mock.uri()))
+        .await
+        .expect("scrape must succeed");
+
+    assert_eq!(
+        result.assets.len(),
+        1,
+        "expected 1 downloaded asset, got {:?}",
+        result.assets
+    );
+    assert_eq!(
+        result.assets[0].url,
+        format!("{}/assets/photo.png", mock.uri()),
+        "the asset must resolve against the base href, not the page's own directory"
+    );
+}
+
 /// `scrape()` with `download_assets` left at its default (`false`) must not fetch any
 /// asset at all, proving the flag actually gates the download call site.
 #[tokio::test]

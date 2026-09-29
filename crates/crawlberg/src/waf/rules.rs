@@ -2,15 +2,14 @@
 //!
 //! # Observability
 //!
-//! OTel counters (`opentelemetry::global`) emit unconditionally — consumers
-//! (xberg-enterprise) expect these always. Tracing spans/events are always compiled
-//! as `tracing` is now an unconditional dependency.
+//! ~keep `Rules::classify` records no metric. A match is not a block: the fetch path classifies
+//! one response several times, and it returns some matched 2xx responses as content. The block
+//! counter is incremented where a response is refused, in `crate::http::waf`.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use opentelemetry::KeyValue;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -38,6 +37,7 @@ struct TomlFingerprint {
     id: String,
     vendor: String,
     weight: f32,
+    statuses: Option<Vec<u16>>,
     signals: Vec<TomlSignal>,
 }
 
@@ -69,7 +69,21 @@ pub(crate) struct Fingerprint {
     pub(crate) id: String,
     pub(crate) vendor: String,
     pub(crate) weight: f32,
+    /// The response statuses this fingerprint is allowed to decide; empty means every status.
+    ///
+    /// ~keep This is what keeps a signal that only proves *CDN presence*, such as `server:
+    /// AkamaiGHost`, from deciding a 429 or 503, where the origin is the far more
+    /// likely author of the status, and from deciding a 2xx that is ordinary content
+    /// (crawlberg#197). A fingerprint that names a block leaves it empty and decides all of them.
+    pub(crate) statuses: Vec<u16>,
     pub(crate) signals: Vec<Signal>,
+}
+
+impl Fingerprint {
+    /// Whether this fingerprint is allowed to decide a response carrying `status`.
+    fn decides_status(&self, status: u16) -> bool {
+        self.statuses.is_empty() || self.statuses.contains(&status)
+    }
 }
 
 /// Compiled WAF rules: fingerprint list + single Aho-Corasick automaton.
@@ -114,6 +128,10 @@ pub fn load_from_path(path: &Path) -> Result<Rules, RulesError> {
 }
 
 /// Load and compile rules from a TOML string.
+///
+/// A fingerprint may carry an optional `statuses` array of response status codes. When it is
+/// present the fingerprint decides only those statuses; when it is absent the fingerprint
+/// decides every status. An empty array is rejected, since it could never fire.
 pub fn load_from_str(toml_src: &str) -> Result<Rules, RulesError> {
     let parsed: TomlRules = toml::from_str(toml_src)?;
     compile(parsed)
@@ -233,6 +251,13 @@ fn compile_fingerprint(
         });
     }
 
+    if raw_fp.statuses.as_ref().is_some_and(Vec::is_empty) {
+        return Err(RulesError::Validation {
+            fingerprint_id: raw_fp.id.clone(),
+            reason: "statuses must not be empty when present".into(),
+        });
+    }
+
     let mut signals: Vec<Signal> = Vec::with_capacity(raw_fp.signals.len());
     for raw_sig in &raw_fp.signals {
         signals.push(compile_signal(&raw_fp.id, raw_sig, fingerprint_index, body)?);
@@ -242,6 +267,7 @@ fn compile_fingerprint(
         id: raw_fp.id.clone(),
         vendor: raw_fp.vendor.clone(),
         weight: raw_fp.weight,
+        statuses: raw_fp.statuses.clone().unwrap_or_default(),
         signals,
     })
 }
@@ -287,16 +313,17 @@ impl Rules {
     /// 1. **Header-first short-circuit**: fingerprints whose signals are ALL
     ///    `response_header` are evaluated before the body is scanned. If any
     ///    header-only fingerprint matches, its signal is returned immediately
-    ///    without running the AC body scan. This makes the TOML corpus the
-    ///    single source of truth for the 2xx header-stamp early-exit path in
-    ///    `http.rs` (replacing the old `headers_only_waf_match` function).
+    ///    without running the AC body scan. The 2xx decision in `http::waf` relies
+    ///    on this order: when a header-only and a body fingerprint both match, it
+    ///    reports the header-only vendor and asks the body, without the headers that
+    ///    match on their own, to corroborate it.
     ///
     /// 2. **Full scan**: Aho-Corasick runs over the body and all fingerprints
     ///    (including mixed header+body ones) are evaluated.
     ///
     /// On a 2xx response the body fingerprint check is only applied when the
     /// body is ≤ `CHALLENGE_BODY_LIMIT` — real content pages are much larger.
-    /// Header signals are always checked regardless of status code.
+    /// Header signals are checked on any status a fingerprint's `statuses` admits.
     ///
     /// Returns `Ok(None)` for clean responses, `Ok(Some(sig))` for a match,
     /// and `Err(WafClassifyError)` for classifier-internal failures.
@@ -306,6 +333,9 @@ impl Rules {
 
         // ~keep Header-only fingerprints short-circuit before body scans; the TOML corpus stays authoritative.
         for fingerprint in &self.fingerprints {
+            if !fingerprint.decides_status(response.status) {
+                continue;
+            }
             if fingerprint
                 .signals
                 .iter()
@@ -317,15 +347,11 @@ impl Rules {
                     Signal::BodySubstring => false,
                 })
             {
-                let signal = WafSignal {
+                return Ok(Some(WafSignal {
                     vendor: fingerprint.vendor.clone(),
                     fingerprint_id: fingerprint.id.clone(),
                     weight: fingerprint.weight,
-                };
-                crate::telemetry::metrics::registry()
-                    .waf_blocks_total
-                    .add(1, &[KeyValue::new("vendor", signal.vendor.clone())]);
-                return Ok(Some(signal));
+                }));
             }
         }
 
@@ -342,15 +368,11 @@ impl Rules {
 
         for (fp_idx, fingerprint) in self.fingerprints.iter().enumerate() {
             if self.fingerprint_matches(fingerprint, fp_idx, &matched_fp_indices, response, is_2xx) {
-                let signal = WafSignal {
+                return Ok(Some(WafSignal {
                     vendor: fingerprint.vendor.clone(),
                     fingerprint_id: fingerprint.id.clone(),
                     weight: fingerprint.weight,
-                };
-                crate::telemetry::metrics::registry()
-                    .waf_blocks_total
-                    .add(1, &[KeyValue::new("vendor", signal.vendor.clone())]);
-                return Ok(Some(signal));
+                }));
             }
         }
         Ok(None)
@@ -364,6 +386,10 @@ impl Rules {
         response: &HttpResponse,
         is_2xx: bool,
     ) -> bool {
+        if !fingerprint.decides_status(response.status) {
+            return false;
+        }
+
         let body_too_large = response.body_bytes.len() > CHALLENGE_BODY_LIMIT;
         let check_body = !is_2xx || !body_too_large;
 
@@ -600,6 +626,78 @@ value_contains = "BlockedHere"
             other => panic!("expected one ResponseHeader signal, got {other:?}"),
         }
         assert!(rules.pattern_to_fp.is_empty(), "header-only rules add no body patterns");
+    }
+
+    #[test]
+    fn a_fingerprint_with_statuses_decides_only_the_statuses_it_lists() {
+        let src = r#"
+[[fingerprint]]
+id = "cdn_presence"
+vendor = "test"
+weight = 1.0
+statuses = [403]
+[[fingerprint.signals]]
+kind = "response_header"
+name = "server"
+value_contains = "testcdn"
+"#;
+        let rules = load_from_str(src).expect("valid rules");
+        let matched = |status| {
+            rules
+                .classify(&make_response(status, vec![("server", "TestCDN")], "<html>ok</html>"))
+                .expect("classify must not fail")
+                .map(|signal| signal.fingerprint_id)
+        };
+        assert_eq!(
+            matched(403).as_deref(),
+            Some("cdn_presence"),
+            "403 is the listed status"
+        );
+        for status in [200_u16, 429, 503] {
+            assert_eq!(matched(status), None, "status {status} is not listed");
+        }
+    }
+
+    #[test]
+    fn a_fingerprint_without_statuses_decides_every_status() {
+        let src = r#"
+[[fingerprint]]
+id = "any_status"
+vendor = "test"
+weight = 1.0
+[[fingerprint.signals]]
+kind = "response_header"
+name = "x-block"
+"#;
+        let rules = load_from_str(src).expect("valid rules");
+        for status in [200_u16, 403, 429, 503] {
+            let resp = make_response(status, vec![("x-block", "1")], "<html>ok</html>");
+            assert!(
+                rules.classify(&resp).expect("classify must not fail").is_some(),
+                "status {status} must classify when no statuses are listed"
+            );
+        }
+    }
+
+    #[test]
+    fn compile_rejects_an_empty_statuses_list() {
+        let src = r#"
+[[fingerprint]]
+id = "never_fires"
+vendor = "test"
+weight = 1.0
+statuses = []
+[[fingerprint.signals]]
+kind = "response_header"
+name = "x-block"
+"#;
+        assert_eq!(
+            validation_reason(src),
+            (
+                "never_fires".to_owned(),
+                "statuses must not be empty when present".to_owned()
+            )
+        );
     }
 
     #[test]

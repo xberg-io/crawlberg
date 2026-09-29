@@ -3,8 +3,9 @@
 //! Provides composable middleware layers following the Tower Service pattern,
 //! consistent with liter-llm and xberg.
 //!
-//! The Tower service stack (cache, rate_limit, service, ua_rotation layers)
-//! requires `Send` bounds and is not available on `wasm32` targets.
+//! The Tower service stack (cache, rate_limit, service layers) requires `Send` bounds and is
+//! not available on `wasm32` targets. `ua_rotation` builds everywhere: its round-robin picker
+//! is shared, and only its Tower layer is native-only.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
@@ -15,7 +16,6 @@ mod service;
 #[cfg(not(target_arch = "wasm32"))]
 mod tracing_layer;
 mod types;
-#[cfg(not(target_arch = "wasm32"))]
 mod ua_rotation;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,5 +33,4 @@ pub use types::CrawlResponse;
 // ~keep the redirect chain's tests name it, so other builds leave the import unused.
 #[cfg_attr(any(target_arch = "wasm32", not(feature = "browser")), allow(unused_imports))]
 pub use types::Landing;
-#[cfg(not(target_arch = "wasm32"))]
-pub use ua_rotation::UaRotationLayer;
+pub use ua_rotation::UaRotation;

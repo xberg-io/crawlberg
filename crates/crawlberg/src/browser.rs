@@ -19,7 +19,7 @@ use crate::browser_pool::{BrowserPool, ExternalTabCleanup, release_browser};
 use crate::error::CrawlError;
 use crate::http::HttpResponse;
 use crate::net::ssrf::validate_url;
-use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, Watch};
+use crate::ssrf_intercept::{BrowserFirewall, BrowserOrigin, PageContext, Watch};
 use crate::telemetry::attributes::{CRAWL_BROWSER_BACKEND, CRAWL_BROWSER_SESSION_ID, CRAWL_PAGES_RENDERED};
 use crate::telemetry::metrics::registry;
 use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
@@ -162,6 +162,10 @@ async fn pooled_fetch(
     let overall_timeout = config.browser.overall_timeout;
     let deadline = tokio::time::Instant::now() + overall_timeout;
 
+    crate::types::warn_ignored_launch_options(
+        &config.browser,
+        "a shared browser_pool is configured; the pool launches Chrome from its own BrowserPoolConfig",
+    );
     if config.browser_profile.is_some() {
         // ~keep Pool browsers launch once, ahead of any per-crawl CrawlConfig; a
         // ~keep profile named later cannot retroactively change that process's
@@ -378,13 +382,11 @@ impl OneShotSession {
         let firewall = BrowserFirewall::start(
             Arc::clone(browser),
             BrowserOrigin::of_endpoint(config.browser.endpoint.as_deref()),
+            PageContext::of(config),
         )
         .await?;
         let firewall = self.firewall.insert(firewall);
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| CrawlError::browser_error(format!("failed to create page: {e}")))?;
+        let page = firewall.handle().new_page().await?;
         self.open_tab = Some(page.target_id().clone());
         let watch = firewall.handle().watch(&page, config, config.max_redirects).await?;
         Ok((page, watch))
