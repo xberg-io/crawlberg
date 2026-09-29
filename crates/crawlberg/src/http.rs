@@ -1160,6 +1160,59 @@ mod tests {
         }
     }
 
+    /// A custom retry policy decides on the status of the response that failed, so a plain 403
+    /// and a fingerprinted block must both carry the status they were raised for (crawlberg#133).
+    #[tokio::test]
+    async fn http_fetch_carries_the_response_status_on_a_403_and_on_a_fingerprinted_block() {
+        let plain = fetch_status(403, ResponseTemplate::new(403).set_body_string("nope")).await;
+        assert_eq!(
+            status::error_status(&plain),
+            Some(403),
+            "a plain 403 must carry its status: {plain:?}"
+        );
+
+        let fingerprinted = fetch_status(403, ResponseTemplate::new(403).set_body_string("cf-chl- challenge")).await;
+        assert_eq!(
+            status::error_status(&fingerprinted),
+            Some(403),
+            "a fingerprinted 403 must carry its status: {fingerprinted:?}"
+        );
+
+        for status in [429_u16, 503] {
+            let blocked = fetch_status(
+                status,
+                ResponseTemplate::new(status)
+                    .append_header("x-datadome", "blocked")
+                    .set_body_string("<html>challenge</html>"),
+            )
+            .await;
+            assert!(
+                matches!(&blocked, CrawlError::WafBlocked { .. }),
+                "status {status} must fingerprint as a block: {blocked:?}"
+            );
+            assert_eq!(
+                status::error_status(&blocked),
+                Some(status),
+                "a block fingerprinted from a {status} must carry it: {blocked:?}"
+            );
+        }
+
+        let refused = fetch_status(
+            200,
+            ResponseTemplate::new(200).set_body_string("<html>cf-chl- x</html>"),
+        )
+        .await;
+        assert!(
+            matches!(&refused, CrawlError::WafBlocked { .. }),
+            "a 2xx interstitial must be refused as a block: {refused:?}"
+        );
+        assert_eq!(
+            status::error_status(&refused),
+            Some(200),
+            "a block refused from a 2xx must carry its status: {refused:?}"
+        );
+    }
+
     /// A 403 that carries no WAF fingerprint is a plain forbidden, not a WAF block.
     #[tokio::test]
     async fn http_fetch_reports_a_plain_403_as_forbidden() {
