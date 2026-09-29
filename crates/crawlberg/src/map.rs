@@ -777,6 +777,35 @@ mod tests {
         );
     }
 
+    /// The final filter applies a host-anchored exclude pattern against the full URL to links
+    /// extracted from a direct HTML fetch too, not only to sitemap entries.
+    #[tokio::test]
+    async fn map_exclude_paths_matches_the_full_url_for_html_extracted_links() {
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+
+        mount_body(
+            &mock,
+            "/",
+            "text/html",
+            "<html><body><a href=\"/private/x\">x</a><a href=\"/public/y\">y</a></body></html>".to_owned(),
+        )
+        .await;
+
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^https?://127\.0\.0\.1:\d+/private/".to_owned()],
+            path_patterns_match_url: true,
+            ..local_test_config()
+        };
+        let result = map(&base, &config).await.expect("map should succeed");
+
+        assert_eq!(
+            result.urls.iter().map(|u| u.url.clone()).collect::<Vec<_>>(),
+            vec![format!("{base}/public/y")],
+            "with path_patterns_match_url on, the HTML-extracted /private/x link must be excluded too"
+        );
+    }
+
     #[tokio::test]
     async fn map_limit_truncates_links_extracted_from_html() {
         let mock = MockServer::start().await;

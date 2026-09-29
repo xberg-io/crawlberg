@@ -1388,6 +1388,38 @@ mod tests {
         assert!(urls.iter().all(|entry| entry.url.contains("keep")));
     }
 
+    /// The walk applies a host-anchored exclude pattern against the full URL before `limit`
+    /// truncates it, so a limited map is not filled with entries the setting was meant to drop.
+    #[tokio::test]
+    async fn process_sitemap_response_applies_full_url_exclude_filter_before_limit() {
+        let config = CrawlConfig {
+            exclude_paths: vec![r"^https://example\.com/private/".to_owned()],
+            path_patterns_match_url: true,
+            ..CrawlConfig::default()
+        };
+        let filter = MapFilter::from_config(&config).unwrap();
+        let client = reqwest::Client::new();
+        let body = concat!(
+            r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#,
+            "<url><loc>https://example.com/private/one</loc></url>",
+            "<url><loc>https://example.org/private/two</loc></url>",
+            "</urlset>",
+        );
+
+        let urls = process_sitemap_response(
+            &xml_document("https://example.com/sitemap.xml", body),
+            &walk_context(&config, &client, &filter),
+            Some(1),
+        )
+        .await;
+
+        assert_eq!(
+            urls.iter().map(|entry| entry.url.clone()).collect::<Vec<_>>(),
+            vec!["https://example.org/private/two".to_owned()],
+            "the excluded example.com entry must not fill the one slot `limit` allows"
+        );
+    }
+
     /// A sitemap address whose password must never reach a log field.
     const CREDENTIALED_SITEMAP_URL: &str = "https://user:hunter2@example.com/sitemap.xml";
 

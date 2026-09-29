@@ -1092,6 +1092,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn host_anchored_exclude_pattern_matches_a_url_that_carries_only_a_password() {
+        let url = Url::parse("https://:hunter2@example.com/private/a").expect("valid URL");
+        let exclude = compile_regexes(&[r"^https://example\.com/private/".to_owned()]).expect("valid pattern");
+        let mut urls_filtered = 0usize;
+        assert!(
+            !passes_path_patterns(
+                &url,
+                &exclude,
+                &[],
+                true,
+                PathPatternTarget::FullUrl,
+                &mut urls_filtered
+            ),
+            "a password with no username in a link must not let it escape a host-anchored exclude pattern"
+        );
+    }
+
     /// Inline Unicode-mode flags that the `regex` crate accepts and `fancy_regex` refuses.
     const REGEX_ONLY_PATTERNS: [&str; 4] = [r"(?-u)\w", r"(?-u:\w)", r"(?i-u)a", r"(?-u:\b)x"];
 

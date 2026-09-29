@@ -153,6 +153,48 @@ async fn redirect_target_matching_a_host_anchored_exclude_pattern_is_never_reque
     assert!(result.pages.is_empty(), "a filtered redirect target yields no page");
 }
 
+/// A redirect target reached from a page the crawl discovered (not the seed) is judged
+/// against the full URL too: the redirect policy a spawned fetch builds for itself, not
+/// only the one built for the seed, must see the full-URL setting.
+#[tokio::test]
+async fn discovered_page_redirect_to_host_anchored_excluded_target_is_never_requested() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"<html><body><a href="/docs/moved">m</a></body></html>"#.to_owned())
+                .append_header("content-type", "text/html"),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/docs/moved"))
+        .respond_with(ResponseTemplate::new(302).append_header("location", "/private/x"))
+        .mount(&mock)
+        .await;
+    mount_site(&mock).await;
+    let config = excluding(r"^https?://127\.0\.0\.1:\d+/private/")
+        .max_depth(2)
+        .path_patterns_match_url(true)
+        .build();
+    let engine = create_engine(Some(config)).expect("engine builds");
+
+    crawlberg::crawl(&engine, &format!("{}/", mock.uri()))
+        .await
+        .expect("crawl runs");
+
+    let requested = requested_paths(&mock).await;
+    assert!(
+        requested.contains(&"/docs/moved".to_owned()),
+        "the discovered page itself must still be requested: {requested:?}"
+    );
+    assert!(
+        !requested.contains(&"/private/x".to_owned()),
+        "a discovered page's redirect hop to a host-anchored excluded target must be refused: {requested:?}"
+    );
+}
+
 /// A pattern that still fails to compile refuses the configuration and names the pattern.
 #[test]
 fn invalid_pattern_still_refuses_the_engine_and_names_the_pattern() {
