@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
 
 use crate::error::{CrawlError, classify_reqwest_error, error_chain_string};
-use crate::html::is_fetchable_scheme;
+use crate::html::{PageScan, is_fetchable_scheme};
 use crate::net::credentials::seed_host_headers;
 use crate::net::ssrf::validate_url;
 use crate::types::CrawlConfig;
@@ -208,10 +208,30 @@ pub(crate) async fn http_fetch(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
 ) -> Result<HttpResponse, CrawlError> {
-    http_fetch_with(url, config, extra_headers, client, RefreshRedirects::Ignore).await
+    http_fetch_with(url, config, extra_headers, client, RefreshRedirects::Ignore)
+        .await
+        .map(|page| page.response)
 }
 
-/// [`http_fetch`], following a refresh as well when `refresh` says so.
+/// A fetched response, with the refresh check's read of its body when that check read one.
+pub(crate) struct FetchedPage {
+    pub(crate) response: HttpResponse,
+    /// The meta refresh check's read of `response`'s body, so the caller does not read the page
+    /// again.
+    pub(crate) page_scan: Option<PageScan>,
+}
+
+impl FetchedPage {
+    fn unread(response: HttpResponse) -> Self {
+        Self {
+            response,
+            page_scan: None,
+        }
+    }
+}
+
+/// [`http_fetch`], following a refresh as well when `refresh` says so, with the refresh check's
+/// read of the last page.
 ///
 /// ~keep A refresh hop goes through the same loop as a 3xx: the same SSRF check, the same hop
 /// ~keep count bounded by `max_redirects`, and the same per-hop credential scope in
@@ -223,7 +243,7 @@ pub(crate) async fn http_fetch_with(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
     refresh: RefreshRedirects,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<FetchedPage, CrawlError> {
     let initial_url = url::Url::parse(url).map_err(|e| CrawlError::ssrf_violation(url, format!("invalid URL: {e}")))?;
 
     validate_url(&initial_url, &config.ssrf)
@@ -246,7 +266,7 @@ pub(crate) async fn http_fetch_with(
         let outcome = match fetch_one_hop(&context, &current_url, follows_location).await {
             Ok(outcome) => outcome,
             Err(error) if redirects_followed > 0 && rules.stops_on(&error) => {
-                return Ok(not_found_response(&current_url));
+                return Ok(FetchedPage::unread(not_found_response(&current_url)));
             }
             Err(error) => return Err(error),
         };
@@ -254,11 +274,12 @@ pub(crate) async fn http_fetch_with(
             HopOutcome::Redirect(next_url) => next_url,
             HopOutcome::Complete(response) => {
                 if !hop_left {
-                    return Ok(response);
+                    return Ok(FetchedPage::unread(response));
                 }
-                match rules.refresh_target(&response, &current_url) {
+                let mut page_scan = None;
+                match rules.refresh_target(&response, &current_url, &mut page_scan) {
                     Some(next_url) => next_url,
-                    None => return Ok(response),
+                    None => return Ok(FetchedPage { response, page_scan }),
                 }
             }
         };
@@ -333,17 +354,31 @@ impl ChainRules {
     }
 
     /// The unvisited URL a refresh in `response` names, read by the crawl's own redirect sources.
+    /// The meta refresh check leaves its read of the body in `page_scan`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn refresh_target(&self, response: &HttpResponse, current_url: &url::Url) -> Option<url::Url> {
+    fn refresh_target(
+        &self,
+        response: &HttpResponse,
+        current_url: &url::Url,
+        page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
         let seen = self.0.as_ref()?;
-        crate::engine::redirect::refresh_redirect_target(response, current_url.as_str(), |target| {
-            (!seen.contains(target)).then(|| target.to_owned())
-        })
+        crate::engine::redirect::refresh_redirect_target(
+            response,
+            current_url.as_str(),
+            |target| (!seen.contains(target)).then(|| target.to_owned()),
+            page_scan,
+        )
         .map(|(target, _)| target)
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn refresh_target(&self, _response: &HttpResponse, _current_url: &url::Url) -> Option<url::Url> {
+    fn refresh_target(
+        &self,
+        _response: &HttpResponse,
+        _current_url: &url::Url,
+        _page_scan: &mut Option<PageScan>,
+    ) -> Option<url::Url> {
         None
     }
 }
@@ -1369,7 +1404,11 @@ mod tests {
         let fetch = |route: &str, refresh| {
             let url = format!("{}{route}", mock.uri());
             let (config, client) = (&config, &client);
-            async move { http_fetch_with(&url, config, &HashMap::new(), client, refresh).await }
+            async move {
+                http_fetch_with(&url, config, &HashMap::new(), client, refresh)
+                    .await
+                    .map(|page| page.response)
+            }
         };
 
         let response = fetch("/here", RefreshRedirects::Follow)

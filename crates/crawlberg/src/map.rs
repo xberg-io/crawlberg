@@ -6,7 +6,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::error::CrawlError;
-use crate::html::{effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
+use crate::html::{MaskedHtml, PageScan, effective_base_url, extract_links, is_html_content, mask_raw_text_markup};
 use crate::http::{RefreshRedirects, build_client, fetch_with_retry, http_fetch};
 use crate::normalize::{normalize_url, resolve_redirect, strip_fragment};
 use crate::sitemap::{
@@ -49,7 +49,7 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
 
     // ~keep The direct fetch follows a refresh as the crawl does, so a page that forwards through
     // ~keep one is mapped from the page it lands on (#502).
-    let resp = fetch_with_retry(
+    let page = fetch_with_retry(
         url,
         config,
         &std::collections::HashMap::new(),
@@ -57,7 +57,7 @@ pub async fn map(seed: &crate::engine::SeedUrl, config: &CrawlConfig) -> Result<
         RefreshRedirects::Follow,
     )
     .await?;
-    let urls = urls_from_direct_response(url, &parsed_url, &resp, config, &context).await;
+    let urls = urls_from_direct_response(url, &parsed_url, &page.response, page.page_scan, config, &context).await;
     Ok(filter_map_result(urls, &filter, config.map_limit))
 }
 
@@ -152,11 +152,13 @@ async fn sitemap_urls_from_well_known(
 }
 
 /// Interpret a direct fetch of the mapped URL itself: a gzipped sitemap, a plain
-/// or index sitemap, or an HTML page whose links stand in for a sitemap.
+/// or index sitemap, or an HTML page whose links stand in for a sitemap. `page_scan` is the
+/// refresh check's read of `resp`'s body, when it made one.
 async fn urls_from_direct_response(
     url: &str,
     parsed_url: &Url,
     resp: &crate::http::HttpResponse,
+    page_scan: Option<PageScan>,
     config: &CrawlConfig,
     context: &SitemapWalkContext<'_>,
 ) -> Vec<SitemapUrl> {
@@ -186,14 +188,15 @@ async fn urls_from_direct_response(
     }
 
     if is_html_content(&resp.content_type, &resp.body) {
-        let parsed_html = mask_raw_text_markup(&resp.body);
-        if let Ok(doc) = crate::html::parse_html(&parsed_html) {
-            // ~keep The page's links resolve against the URL that served it, not the one
-            // ~keep requested, matching the crawl engine (`crawl_loop.rs`'s `url_for_extract`)
-            // ~keep and the gzip, urlset and sitemap index branches above.
-            let base_url = Url::parse(&resp.final_url).unwrap_or_else(|_| parsed_url.clone());
-            return links_as_sitemap_urls(&doc, &parsed_html, &base_url);
-        }
+        // ~keep The page's links resolve against the URL that served it, not the one
+        // ~keep requested, matching the crawl engine (`crawl_loop.rs`'s `url_for_extract`)
+        // ~keep and the gzip, urlset and sitemap index branches above.
+        let base_url = Url::parse(&resp.final_url).unwrap_or_else(|_| parsed_url.clone());
+        let page = match page_scan {
+            Some(page_scan) => page_scan.attach(&resp.body),
+            None => mask_raw_text_markup(&resp.body),
+        };
+        return links_as_sitemap_urls(&page, &base_url);
     }
 
     Vec::new()
@@ -205,8 +208,8 @@ const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
 /// Turn a page's extracted links into sitemap entries, deduplicated on the
 /// normalized URL. Anchor-only links are not URLs of their own and are skipped.
-fn links_as_sitemap_urls(doc: &tl::VDom<'_>, html: &str, parsed_url: &Url) -> Vec<SitemapUrl> {
-    let links = extract_links(html, &effective_base_url(doc, parsed_url));
+fn links_as_sitemap_urls(page: &MaskedHtml<'_>, parsed_url: &Url) -> Vec<SitemapUrl> {
+    let links = extract_links(page, &effective_base_url(page.base_href.as_deref(), parsed_url));
     let mut url_set: Vec<SitemapUrl> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in &links {
@@ -1179,6 +1182,28 @@ mod tests {
                 "a meta refresh with delay {delay} must be followed, and the link resolved against the page it lands on"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_map_through_a_meta_refresh_reads_each_page_once_with_the_html_parser() {
+        use crate::html::reads;
+        let mock = MockServer::start().await;
+        let base = mock.uri();
+        let start = "map-refresh-start-8c1f";
+        let landing = "map-refresh-landing-8c1f";
+        let refresh = format!(
+            r#"{}<p>{start}</p><meta http-equiv="refresh" content="0; url=/dir/page.html">"#,
+            reads::MARKER
+        );
+        let page = format!(r#"{}<p>{landing}</p><a href="x.html">next</a>"#, reads::MARKER);
+        mount_body(&mock, "/start", "text/html", refresh).await;
+        mount_body(&mock, "/dir/page.html", "text/html", page).await;
+
+        let urls = map_urls(&format!("{base}/start"), &local_test_config()).await;
+
+        assert_eq!(urls, vec![format!("{base}/dir/x.html")]);
+        assert_eq!(reads::count(start), 1, "the page that refreshes is read once");
+        assert_eq!(reads::count(landing), 1, "the page the refresh lands on is read once");
     }
 
     #[tokio::test]
@@ -2388,7 +2413,7 @@ mod tests {
                 screenshot: None,
             };
 
-            let urls: Vec<String> = urls_from_direct_response(requested, &parsed_url, &resp, &config, &context)
+            let urls: Vec<String> = urls_from_direct_response(requested, &parsed_url, &resp, None, &config, &context)
                 .await
                 .into_iter()
                 .map(|u| u.url)

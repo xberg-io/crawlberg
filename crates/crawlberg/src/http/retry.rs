@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::status::error_status;
-use super::{HttpResponse, RefreshRedirects, http_fetch_with};
+use super::{FetchedPage, RefreshRedirects, http_fetch_with};
 use crate::defaults::dispatch::compute_backoff_ms;
 use crate::error::CrawlError;
 use crate::types::CrawlConfig;
@@ -37,14 +37,14 @@ pub(crate) async fn fetch_with_retry(
     extra_headers: &std::collections::HashMap<String, String>,
     client: &reqwest::Client,
     refresh: RefreshRedirects,
-) -> Result<HttpResponse, CrawlError> {
+) -> Result<FetchedPage, CrawlError> {
     let retries = config.retry_count;
     let retry_codes = config.retry_codes.clone();
 
     let mut last_err = None;
     for attempt in 0..=retries {
         match http_fetch_with(url, config, extra_headers, client, refresh).await {
-            Ok(resp) => return Ok(resp),
+            Ok(page) => return Ok(page),
             Err(e) => {
                 let should_retry = should_retry_error(&e, &retry_codes);
                 if should_retry && attempt < retries {

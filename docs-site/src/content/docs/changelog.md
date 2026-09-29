@@ -66,6 +66,25 @@ title: "Changelog"
   limit, leads back to a URL it already requested, or ends on a missing page now stops there, as
   the crawl does, instead of failing the whole `map()`. (#502)
 
+- **Link extraction read markup inside raw-text elements and took the wrong `<base>`.** Only
+  `script`, `style`, `textarea` and `title` were treated as raw text, by a hand-written scanner.
+  Links and a `<base href>` inside `xmp`, `iframe`, `noembed`, `noframes` and `plaintext`, after
+  `<script/>` and in a script inside SVG `foreignObject` were read as real, and a `<!--` in such
+  text hid every link after it. Links inside a bogus comment (`<? ... >`, `<!x ... >`, `<![CDATA[`
+  outside SVG) and inside an SVG or MathML CDATA section were read as real too. A crawled or
+  scraped page is now read once by html5ever with scripting off, and that read decides the raw
+  text, the link tags, the base, the meta refresh target and the render hint. Two kinds of page
+  are still read twice: a page decoded again from a declared non-UTF-8 charset, and a body cut to
+  `max_body_size`. The base is the first `<base href>` in the finished document, as in a browser:
+  a `<base>` in a table moves in front of it, and a `<frameset>` drops the body with its `<base>`.
+  (#201, #287)
+
+- **One tag with tens of thousands of attributes slowed link extraction quadratically.** The
+  HTML parser compares each new attribute name of a tag with every earlier one. Attributes past
+  the 1,024th of one tag are now overwritten with spaces before the parser reads the page, so the
+  cost grows linearly. Repeated attribute names count toward the limit, so an `href` after the
+  1,024th attribute of an `<a>` or `<base>` tag is not read. (#269)
+
 - **A 2xx from a site behind Akamai, Imperva, F5 or Sucuri is returned as content again.** Those
   products stamp their own header on every response they proxy, and a WAF fingerprint that matches
   on response headers alone was enough to refuse the response. Robots.txt, sitemap and asset
