@@ -158,15 +158,28 @@ fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> Http
     block_page_error(&response(), Some(WAF_2XX_MAX_BODY_LEN))
 }
 
-/// The [`CrawlError::WafBlocked`] a robots.txt fetch is refused with when its 2xx `response` is a
-/// block page, or `None` when it is the site's robots.txt.
+/// [`waf_2xx_error`] for a robots.txt fetch: `None` when the body is the site's robots.txt, else
+/// the refusal a 2xx block page gets.
 ///
-/// ~keep This is the 2xx decision without [`WAF_2XX_MAX_BODY_LEN`]: only the classifier's own
-/// body limit applies. That limit keeps a large page from being refused as content, but a
-/// robots.txt that fingerprints as a block page is an interstitial at any size, and reading
-/// one as rules hands a WAF-protected site an unrestricted crawl.
-pub(crate) fn robots_block_page_error(response: &HttpResponse) -> Option<CrawlError> {
-    block_page_error(response, None)
+/// ~keep A body that reads as robots.txt is rules, as RFC 9309 reads any 2xx: a fingerprint
+/// such as `server: cloudflare` with "blocked" in the body also matches a comment written for a
+/// human reader (crawlberg#507). Any other body gets the 2xx decision without
+/// [`WAF_2XX_MAX_BODY_LEN`], only the classifier's own body limit: a block page served as
+/// robots.txt is an interstitial at any size, and reading one as rules hands a WAF-protected
+/// site an unrestricted crawl.
+pub(super) fn robots_2xx_error(
+    status: u16,
+    body_bytes: &[u8],
+    body: &str,
+    headers_map: &HashMap<String, Vec<String>>,
+) -> Option<CrawlError> {
+    if crate::robots::reads_as_robots_txt(body) {
+        return None;
+    }
+    block_page_error(
+        &build_partial_response_with_bytes(status, body_bytes, body, headers_map),
+        None,
+    )
 }
 
 /// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
@@ -462,6 +475,14 @@ mod tests {
                     .append_header("server", "cloudflare")
                     .append_header("x-sucuri-id", "18012"),
                 Err("imperva".to_owned()),
+            ),
+            (
+                "200, server cloudflare, robots.txt text that says blocked, fetched as a page",
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .append_header("server", "cloudflare")
+                    .set_body_string("# AI crawlers are blocked below\nUser-agent: *\nDisallow: /private\n"),
+                Err("cloudflare".to_owned()),
             ),
             (
                 "200, server cloudflare, 20 KB article that says blocked",

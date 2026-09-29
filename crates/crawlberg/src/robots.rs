@@ -47,6 +47,8 @@ struct RobotsParseState {
     current_rules: RulesBlock,
     in_rules: bool,
     sitemaps: Vec<String>,
+    /// How many lines were a directive this parser acts on.
+    directives: usize,
 }
 
 impl RobotsParseState {
@@ -54,9 +56,10 @@ impl RobotsParseState {
     ///
     /// `key` is already lower-cased and `value` already trimmed.
     fn apply_directive(&mut self, key: &str, value: &str) {
-        match key {
+        let known = match key {
             "sitemap" if !value.is_empty() => {
                 self.sitemaps.push(value.to_owned());
+                true
             }
             "user-agent" => {
                 if self.in_rules {
@@ -69,24 +72,28 @@ impl RobotsParseState {
                     self.in_rules = false;
                 }
                 self.current_agents.push(value.to_lowercase());
+                true
             }
             "allow" => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.allow.push(value.to_owned());
                 }
+                true
             }
             "disallow" => {
                 self.in_rules = true;
                 if !value.is_empty() {
                     self.current_rules.disallow.push(value.to_owned());
                 }
+                true
             }
             "crawl-delay" => {
                 self.in_rules = true;
                 if let Ok(delay) = value.parse::<u64>() {
                     self.current_rules.crawl_delay = Some(delay);
                 }
+                true
             }
             "request-rate" => {
                 self.in_rules = true;
@@ -96,9 +103,11 @@ impl RobotsParseState {
                 {
                     self.current_rules.crawl_delay = Some(s);
                 }
+                true
             }
-            _ => {}
-        }
+            _ => false,
+        };
+        self.directives += usize::from(known);
     }
 
     /// Close the block still being accumulated and yield the parsed blocks and sitemaps.
@@ -154,26 +163,41 @@ fn select_rule_blocks<'a>(
     (specific_block, wildcard_block)
 }
 
+/// Each line of `body` without its comment, trimmed, skipping lines left empty.
+fn content_lines(body: &str) -> impl Iterator<Item = &str> {
+    body.lines()
+        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .filter(|line| !line.is_empty())
+}
+
+/// Fold every directive line of `body` into a fresh parse state.
+fn scan(body: &str) -> RobotsParseState {
+    let mut state = RobotsParseState::default();
+    for line in content_lines(body) {
+        if let Some((key, value)) = line.split_once(':') {
+            state.apply_directive(&key.trim().to_lowercase(), value.trim());
+        }
+    }
+    state
+}
+
+/// Whether `body` is a robots.txt file: at least one directive this parser acts on, and no
+/// markup outside comments.
+///
+/// ~keep An HTML interstitial opens with a tag, so a `<` outside a comment marks the body as a
+/// page even when it shows robots.txt lines. A real file can say anything in a comment, such as
+/// "AI crawlers are blocked below", so comments are not read (crawlberg#507).
+pub(crate) fn reads_as_robots_txt(body: &str) -> bool {
+    scan(body).directives > 0 && !content_lines(body).any(|line| line.contains('<'))
+}
+
 /// Parse the body of a robots.txt file and extract rules for the given user-agent.
 ///
 /// Returns the most specific matching rules block, falling back to the wildcard (`*`) block.
 pub fn parse_robots_txt(body: &str, user_agent: &str) -> RobotsRules {
     let ua_lower = user_agent.to_lowercase();
 
-    let mut state = RobotsParseState::default();
-    for raw_line in body.lines() {
-        let line = raw_line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        state.apply_directive(&key.trim().to_lowercase(), value.trim());
-    }
-
-    let (blocks, sitemaps) = state.finish();
+    let (blocks, sitemaps) = scan(body).finish();
     let (specific_block, wildcard_block) = select_rule_blocks(&blocks, &ua_lower);
 
     let using_wildcard = specific_block.is_none() && wildcard_block.is_some();

@@ -4,7 +4,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::error::CrawlError;
-use crate::http::http_fetch;
+use crate::http::http_fetch_robots_txt;
 use crate::robots::{RobotsRules, is_path_allowed, parse_robots_txt};
 use crate::types::CrawlConfig;
 
@@ -156,7 +156,7 @@ impl RobotsOutcome {
 
 /// Classify a failed robots.txt fetch per RFC 9309 section 2.3.1.
 ///
-/// ~keep `http_fetch` maps most non-2xx statuses to typed errors before returning, so the
+/// ~keep The robots.txt fetch maps most non-2xx statuses to typed errors before returning, so the
 /// status code is not observable here -- the error variant is what carries it.
 fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
     match error {
@@ -182,9 +182,9 @@ fn outcome_for_fetch_error(error: &CrawlError) -> RobotsOutcome {
         // `RateLimited` (429) lands here deliberately -- it is a 4xx that the RFC files under
         // "unavailable", but a site actively rate-limiting us is the worst possible moment to
         // conclude "no rules, crawl everything". Google's robots handling treats it the same way.
-        // `WafBlocked` is here for a different reason: `http_fetch` raises it for a 403 but also for
-        // a *2xx* block page (http.rs), and `fetch_robots_document` raises it for a 2xx robots.txt
-        // block page of any size the classifier reads, so it does not imply a 4xx at all.
+        // `WafBlocked` is here for a different reason: the robots.txt fetch raises it for a 403 but
+        // also for a *2xx* block page of any size the classifier reads (http.rs), so it does not
+        // imply a 4xx at all.
         // What it does imply is that the bytes we hold are an interstitial rather than the origin's
         // robots.txt -- reading that as "unavailable" hands a WAF-protected site an unrestricted crawl.
         _ => RobotsOutcome::DisallowAll {
@@ -277,7 +277,7 @@ pub(crate) async fn fetch_robots_document(
     // from `host_str()` instead sent every port-bearing seed's robots request to the default
     // port, where it failed and silently degraded to "no rules".
     let robots_url = crate::normalize::robots_url(&parsed);
-    match http_fetch(&robots_url, config, &std::collections::HashMap::new(), client).await {
+    match http_fetch_robots_txt(&robots_url, config, client).await {
         Ok(resp) if resp.status >= 500 => {
             let outcome = RobotsOutcome::DisallowAll {
                 reason: format!("robots.txt returned HTTP {}", resp.status),
@@ -286,13 +286,10 @@ pub(crate) async fn fetch_robots_document(
             (outcome, None)
         }
         Ok(resp) if resp.status >= 400 => (RobotsOutcome::AllowAll, None),
-        Ok(resp) => match crate::http::robots_block_page_error(&resp) {
-            Some(error) => (outcome_for_fetch_error(&error), None),
-            None => (
-                RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
-                Some(resp.final_url),
-            ),
-        },
+        Ok(resp) => (
+            RobotsOutcome::Rules(parse_robots_txt(&resp.body, user_agent)),
+            Some(resp.final_url),
+        ),
         Err(error) => (outcome_for_fetch_error(&error), None),
     }
 }
@@ -395,6 +392,68 @@ mod tests {
         );
         assert!(outcome.allows("/public"), "the rules must allow /public");
         assert!(!outcome.allows("/private"), "the rules must disallow /private");
+    }
+
+    /// The robots.txt from crawlberg#507: rules with "blocked" in a comment, served by Cloudflare.
+    fn robots_txt_with_a_blocked_comment(padding_rules: usize) -> String {
+        format!(
+            "# AI crawlers are blocked below\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nDisallow: /private\n{}",
+            "Disallow: /archive/page-000000\n".repeat(padding_rules)
+        )
+    }
+
+    /// A robots.txt that says "blocked" in a comment is the site's rules, not a Cloudflare block
+    /// page, below and above the 5000-byte page limit (crawlberg#507).
+    #[tokio::test]
+    async fn a_robots_txt_that_says_blocked_in_a_comment_is_read_as_rules_behind_cloudflare() {
+        for (padding_rules, len) in [(0, 97), (200, 6297)] {
+            let body = robots_txt_with_a_blocked_comment(padding_rules);
+            assert_eq!(body.len(), len, "the fixture must be the issue's {len}-byte body");
+            let outcome = robots_outcome_for(body, &[("server", "cloudflare")]).await;
+            assert!(
+                matches!(outcome, RobotsOutcome::Rules(_)),
+                "{len} bytes: a robots.txt with rules must be read as rules, got {}",
+                describe(&outcome)
+            );
+            assert!(outcome.allows("/public"), "{len} bytes: the rules must allow /public");
+            assert!(
+                !outcome.allows("/private"),
+                "{len} bytes: the rules must disallow /private"
+            );
+        }
+    }
+
+    /// A Cloudflare block page served as /robots.txt still denies the origin: an HTML page, even
+    /// one that shows robots.txt lines, and a text page with no robots.txt directive.
+    #[tokio::test]
+    async fn a_robots_txt_block_page_behind_cloudflare_still_denies_the_origin() {
+        let block_page = "<html><head><title>Attention Required</title></head><body><h1>Sorry, you have been blocked</h1></body></html>";
+        for (label, body) in [
+            ("an HTML block page", block_page.to_owned()),
+            (
+                "an HTML block page of 6 KB",
+                format!("{block_page}<!--{}-->", "x".repeat(6000)),
+            ),
+            (
+                "an HTML block page that shows robots.txt lines",
+                "<html><body><pre>\nUser-agent: *\nDisallow: /private\n</pre><h1>Access blocked</h1></body></html>"
+                    .to_owned(),
+            ),
+            (
+                "a text block page with no robots.txt directive",
+                "Status: blocked\nReason: automated traffic\n".to_owned(),
+            ),
+        ] {
+            let outcome = robots_outcome_for(body, &[("server", "cloudflare")]).await;
+            assert!(
+                outcome
+                    .disallow_all_reason()
+                    .is_some_and(|reason| reason.contains("cloudflare")),
+                "{label}: a Cloudflare block page must deny the origin, got {}",
+                describe(&outcome)
+            );
+            assert!(!outcome.allows("/public"), "{label}: /public must not be allowed");
+        }
     }
 
     #[test]
