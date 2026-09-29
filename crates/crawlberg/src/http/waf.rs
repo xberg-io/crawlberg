@@ -11,6 +11,7 @@ use super::status::HttpStatus;
 use crate::error::CrawlError;
 use crate::types::{WafClassifier, WafClassifyError, WafSignal};
 use crate::waf::TomlClassifier;
+use crate::waf::rules::CHALLENGE_BODY_LIMIT;
 
 /// Process-wide WAF classifier built once from the embedded fingerprint corpus.
 ///
@@ -163,15 +164,26 @@ fn refuse_2xx_with(status: u16, body_len: usize, response: impl FnOnce() -> Http
     block_page_error(&response(), Some(WAF_2XX_MAX_BODY_LEN))
 }
 
-/// The [`CrawlError::WafBlocked`] a robots.txt fetch is refused with when its 2xx `response` is a
-/// block page, or `None` when it is the site's robots.txt.
+/// [`waf_2xx_error`] for a robots.txt fetch: the refusal a 2xx robots.txt gets when the text
+/// [`crate::robots::fingerprint_text`] keeps of it fingerprints as a block page, else `None`.
 ///
-/// ~keep This is the 2xx decision without [`WAF_2XX_MAX_BODY_LEN`]: only the classifier's own
-/// body limit applies. That limit keeps a large page from being refused as content, but a
-/// robots.txt that fingerprints as a block page is an interstitial at any size, and reading
-/// one as rules hands a WAF-protected site an unrestricted crawl.
-pub(crate) fn robots_block_page_error(response: &HttpResponse) -> Option<CrawlError> {
-    block_page_error(response, None)
+/// ~keep That text leaves out whole-line comments, so a real robots.txt whose only match is a
+/// comment such as "AI crawlers are blocked below" behind `server: cloudflare` is read as rules
+/// (crawlberg#507), and it keeps every line of a body with a `<`. There is no
+/// [`WAF_2XX_MAX_BODY_LEN`] here, only the classifier's own body limit, taken on the body as
+/// fetched: a block page served as robots.txt is an interstitial at any size, and reading one as
+/// rules hands a WAF-protected site an unrestricted crawl.
+pub(super) fn robots_2xx_error(
+    status: u16,
+    body_bytes: &[u8],
+    body: &str,
+    headers_map: &HashMap<String, Vec<String>>,
+) -> Option<CrawlError> {
+    if !is_2xx(status) || body_bytes.len() > CHALLENGE_BODY_LIMIT {
+        return None;
+    }
+    let text = crate::robots::fingerprint_text(body);
+    block_page_error(&build_partial_response(status, &text, headers_map), None)
 }
 
 /// The counted refusal for a 2xx `response` the built-in classifier confirms as a block page.
@@ -469,6 +481,14 @@ mod tests {
                 Err("imperva".to_owned()),
             ),
             (
+                "200, server cloudflare, robots.txt text that says blocked, fetched as a page",
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/plain")
+                    .append_header("server", "cloudflare")
+                    .set_body_string("# AI crawlers are blocked below\nUser-agent: *\nDisallow: /private\n"),
+                Err("cloudflare".to_owned()),
+            ),
+            (
                 "200, server cloudflare, 20 KB article that says blocked",
                 html(200, article).append_header("server", "cloudflare"),
                 content.clone(),
@@ -523,8 +543,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("a small DataDome {status} must be refused"));
             assert_eq!(crate::http::status::error_status(&refusal), Some(status), "{refusal:?}");
 
-            let response = super::build_partial_response_with_bytes(status, body.as_bytes(), &body, &headers);
-            let robots = super::robots_block_page_error(&response)
+            let robots = super::robots_2xx_error(status, body.as_bytes(), &body, &headers)
                 .unwrap_or_else(|| panic!("a DataDome {status} robots.txt must be refused"));
             assert_eq!(crate::http::status::error_status(&robots), Some(status), "{robots:?}");
         }
@@ -554,6 +573,33 @@ mod tests {
                 super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.get()),
                 0,
                 "a {status} with {len} body bytes must not be copied to be classified"
+            );
+        }
+    }
+
+    #[test]
+    fn robots_2xx_error_copies_no_response_it_cannot_refuse() {
+        let block_page = "<html><body><h1>Sorry, you have been blocked</h1></body></html>";
+        let headers = std::collections::HashMap::from([("server".to_owned(), vec!["cloudflare".to_owned()])]);
+        for (status, body) in [
+            (404_u16, block_page.to_owned()),
+            (503, block_page.to_owned()),
+            (200, format!("{block_page}<!--{}-->", "x".repeat(100 * 1024))),
+        ] {
+            super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.set(0));
+
+            let refusal = super::robots_2xx_error(status, body.as_bytes(), &body, &headers);
+
+            assert!(
+                refusal.is_none(),
+                "a {status} robots.txt of {} bytes must not be refused here",
+                body.len()
+            );
+            assert_eq!(
+                super::PARTIAL_RESPONSE_BYTES_COPIED.with(|c| c.get()),
+                0,
+                "a {status} robots.txt of {} bytes must not be copied to be classified",
+                body.len()
             );
         }
     }
