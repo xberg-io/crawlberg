@@ -140,6 +140,7 @@ const PROFILE_USERS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// ~keep The drop hands that work to another thread and returns at once: the scan, the kills, the
 /// ~keep wait of up to five seconds and the delete ran for up to a second on a tokio worker, and in
 /// ~keep the pool while it held its state lock.
+#[derive(Debug)]
 pub(crate) struct ScratchProfileDir(Option<ProfileTeardown>);
 
 impl ScratchProfileDir {
@@ -178,7 +179,10 @@ impl ScratchProfileDir {
     fn record_chrome(&mut self, pid: u32) {
         let chrome = chrome_of(pid);
         if chrome.is_none() {
-            tracing::warn!(pid, "the launched Chrome's executable is unreadable; its profile teardown stops no process");
+            tracing::warn!(
+                pid,
+                "the launched Chrome's executable is unreadable; its profile teardown stops no process"
+            );
         }
         self.0.as_mut().expect("the teardown is taken only by Drop").chrome = chrome;
     }
@@ -217,6 +221,7 @@ impl Drop for ScratchProfileDir {
 /// ~keep closure holding it is dropped: tokio drops a blocking task queued as the runtime shuts
 /// ~keep down without running it, and `std::thread::Builder::spawn` drops its closure when the OS
 /// ~keep refuses a thread.
+#[derive(Debug)]
 struct ProfileTeardown {
     dir: std::path::PathBuf,
     /// The executables of the Chrome launched on `dir`, from [`chrome_of`]. `None` when no launch

@@ -20,6 +20,7 @@ use crate::types::CrawlConfig;
 /// ~keep exit path: a failed launch, a cancelled launch or fetch (xberg-io/crawlberg#131), and a
 /// ~keep teardown task that the runtime drops before it finishes, which is how every one-shot
 /// ~keep fetch at the end of a `#[tokio::test]` leaked its directory (xberg-io/crawlberg#415).
+#[derive(Debug)]
 pub(super) enum UserDataDir {
     /// A named profile launched with `save_browser_profile: true`, used in place and kept.
     Persistent(std::path::PathBuf),
