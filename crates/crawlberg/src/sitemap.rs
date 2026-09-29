@@ -772,13 +772,13 @@ mod tests {
                 false,
             ),
             (
-                "a urlset with a CDATA section of block text in a div",
-                "<urlset><url><loc>/a</loc></url><div><![CDATA[Access blocked]]></div></urlset>".to_owned(),
+                "a urlset with a CDATA section of block text in a div's paragraph",
+                "<urlset><url><loc>/a</loc></url><div><p><![CDATA[Access blocked]]></p></div></urlset>".to_owned(),
                 false,
             ),
             (
-                "a urlset with an entity in a div",
-                "<urlset><url><loc>/a</loc></url><div>&lt;</div></urlset>".to_owned(),
+                "a urlset with an entity in a div's paragraph",
+                "<urlset><url><loc>/a</loc></url><div><p>&lt;</p></div></urlset>".to_owned(),
                 false,
             ),
             (
