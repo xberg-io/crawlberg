@@ -89,7 +89,7 @@ fn auth_identity(config: &CrawlConfig) -> String {
     }
 }
 
-/// Process-wide cache of built `reqwest::Client`s, keyed by [`ClientCacheKey`].
+/// Built `reqwest::Client`s, keyed by [`ClientCacheKey`].
 ///
 /// ~keep `build_client` is called on the hot fetch path (once per tier attempt in
 /// `engine/mod.rs::run_tier`), so without this cache every HTTP request pays a fresh
@@ -97,9 +97,61 @@ fn auth_identity(config: &CrawlConfig) -> String {
 /// `Arc`-backed internally, so cloning a cached entry is cheap, and each distinct
 /// proxy/auth/timeout/cookie identity still gets its own client rather than one client
 /// silently serving unrelated sessions (see [`ClientCacheKey`]).
-fn client_cache() -> &'static Mutex<HashMap<ClientCacheKey, reqwest::Client>> {
-    static CACHE: OnceLock<Mutex<HashMap<ClientCacheKey, reqwest::Client>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct ClientCache {
+    clients: Mutex<HashMap<ClientCacheKey, reqwest::Client>>,
+}
+
+impl ClientCache {
+    /// The cached client for `config`'s identity, built and cached on a miss.
+    fn get_or_build(&self, config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
+        let key = ClientCacheKey::from_config(config);
+        if let Ok(clients) = self.clients.lock()
+            && let Some(client) = clients.get(&key)
+        {
+            return Ok(client.clone());
+        }
+
+        let client = configure_client(config)?
+            .build()
+            .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
+
+        self.insert(key, &client);
+
+        Ok(client)
+    }
+
+    /// Store `client` under `key`, clearing the cache wholesale once it is full.
+    fn insert(&self, key: ClientCacheKey, client: &reqwest::Client) {
+        let Ok(mut clients) = self.clients.lock() else {
+            return;
+        };
+        if clients.len() >= MAX_CACHED_CLIENTS {
+            tracing::debug!(
+                cached = clients.len(),
+                cap = MAX_CACHED_CLIENTS,
+                "HTTP client cache full, clearing"
+            );
+            clients.clear();
+        }
+        clients.insert(key, client.clone());
+    }
+
+    /// Whether a client is cached for `config`'s identity.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    fn contains(&self, config: &CrawlConfig) -> bool {
+        let key = ClientCacheKey::from_config(config);
+        self.clients
+            .lock()
+            .map(|clients| clients.contains_key(&key))
+            .unwrap_or(false)
+    }
+}
+
+/// The one process-wide [`ClientCache`] that [`build_client`] serves from.
+fn client_cache() -> &'static ClientCache {
+    static CACHE: OnceLock<ClientCache> = OnceLock::new();
+    CACHE.get_or_init(ClientCache::default)
 }
 
 /// Upper bound on distinct cached clients.
@@ -112,36 +164,12 @@ fn client_cache() -> &'static Mutex<HashMap<ClientCacheKey, reqwest::Client>> {
 /// buy nothing for the extra state.
 const MAX_CACHED_CLIENTS: usize = 64;
 
-/// Whether a cached client already exists for `config`'s identity. Test-only
-/// introspection for verifying [`build_client`]'s caching behavior.
-#[cfg(test)]
-pub(crate) fn client_cache_contains(config: &CrawlConfig) -> bool {
-    let key = ClientCacheKey::from_config(config);
-    client_cache()
-        .lock()
-        .map(|cache| cache.contains_key(&key))
-        .unwrap_or(false)
-}
-
 /// Build a `reqwest::Client` with the given configuration (redirect policy, timeout, cookies, proxy).
 ///
 /// Returns a cached, cheaply-cloned client when one matching this configuration's
 /// [`ClientCacheKey`] already exists; otherwise builds one and caches it for reuse.
 pub(crate) fn build_client(config: &CrawlConfig) -> Result<reqwest::Client, CrawlError> {
-    let key = ClientCacheKey::from_config(config);
-    if let Ok(cache) = client_cache().lock()
-        && let Some(client) = cache.get(&key)
-    {
-        return Ok(client.clone());
-    }
-
-    let client = configure_client(config)?
-        .build()
-        .map_err(|e| CrawlError::other(format!("Failed to build HTTP client: {e}")))?;
-
-    cache_client(key, &client);
-
-    Ok(client)
+    client_cache().get_or_build(config)
 }
 
 /// wasm32 has no redirect policy, request timeout, cookie jar, proxy or DNS resolver to
@@ -251,22 +279,6 @@ fn rotating_proxy(provider: std::sync::Arc<dyn crate::ProxyProvider>) -> reqwest
     })
 }
 
-/// Store `client` under `key`, clearing the cache wholesale once it is full.
-fn cache_client(key: ClientCacheKey, client: &reqwest::Client) {
-    let Ok(mut cache) = client_cache().lock() else {
-        return;
-    };
-    if cache.len() >= MAX_CACHED_CLIENTS {
-        tracing::debug!(
-            cached = cache.len(),
-            cap = MAX_CACHED_CLIENTS,
-            "HTTP client cache full, clearing"
-        );
-        cache.clear();
-    }
-    cache.insert(key, client.clone());
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -275,27 +287,26 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn build_client_reuses_cached_client_for_matching_config() {
-        // ~keep A distinct, unlikely-to-collide timeout so this test's cache entry
-        // cannot already be populated by another test running in parallel.
+    fn get_or_build_keeps_the_entry_for_a_matching_config() {
+        // ~keep A cache of its own: the process-wide one is shared with every test in this
+        // binary, and any of them can fill it past its cap and clear it mid-test.
+        let cache = ClientCache::default();
         let config = CrawlConfig {
             request_timeout: Duration::from_millis(918_273),
             ..CrawlConfig::default()
         };
+
+        let _first = cache.get_or_build(&config).expect("first build must succeed");
         assert!(
-            !client_cache_contains(&config),
-            "precondition failed: another test already cached this exact config identity"
+            cache.contains(&config),
+            "a build must populate the cache after building a client"
         );
 
-        let _first = build_client(&config).expect("first build must succeed");
+        let _second = cache
+            .get_or_build(&config)
+            .expect("second build with the same config must succeed");
         assert!(
-            client_cache_contains(&config),
-            "build_client must populate the cache after building a client"
-        );
-
-        let _second = build_client(&config).expect("second build with the same config must succeed");
-        assert!(
-            client_cache_contains(&config),
+            cache.contains(&config),
             "the cache entry must still be present after a second build with a matching identity"
         );
     }
@@ -397,16 +408,18 @@ mod tests {
             ..CrawlConfig::default()
         };
 
-        let _permissive_client = build_client(&permissive).expect("permissive client must build");
+        let cache = ClientCache::default();
+
+        let _permissive_client = cache.get_or_build(&permissive).expect("permissive client must build");
         assert!(
-            !client_cache_contains(&restrictive),
+            !cache.contains(&restrictive),
             "a client built under deny_private=false must not be served to a deny_private=true \
              config — its resolver carries the permissive policy"
         );
 
-        let _restrictive_client = build_client(&restrictive).expect("restrictive client must build");
+        let _restrictive_client = cache.get_or_build(&restrictive).expect("restrictive client must build");
         assert!(
-            client_cache_contains(&permissive) && client_cache_contains(&restrictive),
+            cache.contains(&permissive) && cache.contains(&restrictive),
             "both policies must hold their own cache entry"
         );
     }
@@ -431,23 +444,20 @@ mod tests {
     /// its runtime is dropped, which reqwest exposes no hook for.
     #[test]
     fn build_client_uses_distinct_cache_entries_across_tokio_runtimes() {
+        let cache = ClientCache::default();
         let config = CrawlConfig {
             request_timeout: Duration::from_millis(918_276),
             ..CrawlConfig::default()
         };
-        assert!(
-            !client_cache_contains(&config),
-            "precondition failed: another test already cached this exact config identity"
-        );
 
         let runtime_a = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime a must build");
         runtime_a.block_on(async {
-            let _client = build_client(&config).expect("client must build on runtime a");
+            let _client = cache.get_or_build(&config).expect("client must build on runtime a");
             assert!(
-                client_cache_contains(&config),
+                cache.contains(&config),
                 "building on runtime a must cache that runtime's identity"
             );
         });
@@ -459,7 +469,7 @@ mod tests {
             .expect("runtime b must build");
         runtime_b.block_on(async {
             assert!(
-                !client_cache_contains(&config),
+                !cache.contains(&config),
                 "a client cached on a since-dropped runtime must not be reused on a new one: \
                  its pooled connections are driven by tasks that died with that runtime"
             );
@@ -468,6 +478,7 @@ mod tests {
 
     #[test]
     fn build_client_uses_distinct_cache_entries_for_distinct_timeouts() {
+        let cache = ClientCache::default();
         let config_a = CrawlConfig {
             request_timeout: Duration::from_millis(918_274),
             ..CrawlConfig::default()
@@ -477,14 +488,121 @@ mod tests {
             ..CrawlConfig::default()
         };
 
-        let _a = build_client(&config_a).expect("client a must build");
+        let _a = cache.get_or_build(&config_a).expect("client a must build");
         assert!(
-            client_cache_contains(&config_a),
+            cache.contains(&config_a),
             "config_a's identity must be cached after building it"
         );
         assert!(
-            !client_cache_contains(&config_b),
+            !cache.contains(&config_b),
             "building a client for config_a must not also cache config_b's distinct identity"
         );
+    }
+
+    /// A hit must serve the cached client itself, not a fresh build.
+    ///
+    /// ~keep Two clients cannot be compared for identity, so the test plants a client whose
+    /// resolver refuses loopback under a permissive config's key. Only the planted client
+    /// refuses `localhost`; a fresh build for the permissive config would try to connect.
+    #[tokio::test]
+    async fn get_or_build_serves_the_cached_client_on_a_hit() {
+        let cache = ClientCache::default();
+        let permissive = CrawlConfig {
+            ssrf: SsrfPolicy {
+                deny_private: false,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let restrictive = CrawlConfig {
+            ssrf: SsrfPolicy {
+                deny_private: true,
+                ..SsrfPolicy::default()
+            },
+            ..CrawlConfig::default()
+        };
+        let planted = configure_client(&restrictive)
+            .expect("restrictive builder must configure")
+            .build()
+            .expect("restrictive client must build");
+        cache.insert(ClientCacheKey::from_config(&permissive), &planted);
+
+        let served = cache.get_or_build(&permissive).expect("a hit must not fail");
+        let error = served
+            .get("http://localhost:1/")
+            .send()
+            .await
+            .expect_err("port 1 is never listening");
+
+        let chain = error_chain(&error);
+        assert!(
+            chain.contains("denied by SSRF policy: loopback"),
+            "the hit must serve the planted client, whose resolver refuses loopback; got: {chain}"
+        );
+    }
+
+    #[test]
+    fn a_full_cache_is_cleared_before_the_next_insert() {
+        let cache = ClientCache::default();
+        let client = cache.get_or_build(&CrawlConfig::default()).expect("client must build");
+        let config_at = |millis: u64| CrawlConfig {
+            request_timeout: Duration::from_millis(millis),
+            ..CrawlConfig::default()
+        };
+        for millis in 1..MAX_CACHED_CLIENTS as u64 {
+            cache.insert(ClientCacheKey::from_config(&config_at(millis)), &client);
+        }
+        assert!(
+            cache.contains(&CrawlConfig::default()) && cache.contains(&config_at(1)),
+            "the cache must hold every entry up to its cap"
+        );
+
+        let past_cap = config_at(MAX_CACHED_CLIENTS as u64);
+        cache.insert(ClientCacheKey::from_config(&past_cap), &client);
+        assert!(
+            cache.contains(&past_cap),
+            "the entry that found the cache full must be stored"
+        );
+        assert!(
+            !cache.contains(&CrawlConfig::default()) && !cache.contains(&config_at(1)),
+            "an insert into a full cache must clear the earlier entries"
+        );
+    }
+
+    /// `build_client` must store what it builds in the process-wide cache.
+    ///
+    /// ~keep Every test in this binary shares that cache, and any of them can fill it past
+    /// its cap, which clears it. A sentinel entry, stored first, tells a clear apart from a
+    /// missing store: while the sentinel is still there, no clear has happened since, so a
+    /// missing entry for `config` is the fault of `build_client`. An attempt that sees a
+    /// clear starts over.
+    #[test]
+    fn build_client_stores_its_client_in_the_process_wide_cache() {
+        let config = CrawlConfig {
+            request_timeout: Duration::from_millis(918_279),
+            ..CrawlConfig::default()
+        };
+        let sentinel_key = ClientCacheKey::from_config(&CrawlConfig {
+            request_timeout: Duration::from_millis(918_280),
+            ..CrawlConfig::default()
+        });
+        let config_key = ClientCacheKey::from_config(&config);
+        let sentinel_client = ClientCache::default()
+            .get_or_build(&CrawlConfig::default())
+            .expect("sentinel client must build");
+
+        for _ in 0..100 {
+            client_cache().insert(sentinel_key.clone(), &sentinel_client);
+            let _client = build_client(&config).expect("client must build");
+            let clients = client_cache().clients.lock().expect("cache lock must not be poisoned");
+            if clients.contains_key(&sentinel_key) {
+                assert!(
+                    clients.contains_key(&config_key),
+                    "build_client must store the client it builds in the process-wide cache"
+                );
+                return;
+            }
+        }
+        panic!("another test cleared the process-wide cache during each of 100 attempts");
     }
 }
