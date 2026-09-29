@@ -534,6 +534,12 @@ All notable changes to crawlberg are documented here.
   `https://example.com/caf%C3%A9`. It now sets `map_search` for the call, so the endpoint matches
   a term the same way as the CLI and the MCP `map` tool. (#362)
 
+- **`map()` resolved a redirected HTML page's links against the address it requested, not the
+  one that answered.** When `/start` redirected to `/dir/page.html`, a link to `x.html` on that
+  page came back as `/x.html` instead of `/dir/x.html`. Every other branch of a direct `map()`
+  fetch (a urlset, a sitemap index, a gzipped sitemap) already resolved against the URL after
+  redirects; the HTML link branch now does too, matching the crawl engine. (#360)
+
 ## [1.8.0] - 2026-09-27
 
 Includes twelve issues raised by an external evaluation, ten of them in the crawl path. Most were
