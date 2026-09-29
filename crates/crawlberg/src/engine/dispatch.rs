@@ -207,7 +207,7 @@ impl CrawlEngine {
 
     /// Synthesise a minimal response with the given HTTP status (empty body).
     ///
-    /// Used by `soft_http_errors` to surface 4xx responses as `ScrapeResult`
+    /// Used by `soft_http_errors` to surface error responses as `ScrapeResult`
     /// records rather than `CrawlError`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn synthesise_status(status: u16) -> crate::tower::CrawlResponse {

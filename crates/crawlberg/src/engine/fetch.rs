@@ -88,6 +88,23 @@ impl Drop for PendingWafBlock {
     }
 }
 
+/// The status a `soft_http_errors` page reports for `err`, or `None` when `err` is not reported softly.
+///
+/// ~keep A WAF block reports the status of the response it refused, which the fetch path keeps as
+/// the error's source. A block page served with a 2xx reports 403: a 2xx soft error reads as success.
+fn soft_error_status(err: &CrawlError) -> Option<u16> {
+    match err {
+        CrawlError::NotFound { .. } => Some(404),
+        CrawlError::Forbidden { .. } => Some(403),
+        CrawlError::WafBlocked { .. } => Some(
+            crate::http::error_status(err)
+                .filter(|status| (400..600).contains(status))
+                .unwrap_or(403),
+        ),
+        _ => None,
+    }
+}
+
 impl DispatchPlan {
     fn from_config(config: &CrawlConfig) -> Self {
         let dispatch = config.dispatch.as_ref();
@@ -497,13 +514,10 @@ impl CrawlEngine {
         plan: &DispatchPlan,
         state: &mut AttemptState,
     ) -> LoopStep {
-        if self.config.soft_http_errors {
-            if matches!(err, CrawlError::NotFound { .. }) {
-                return LoopStep::Done(Ok((Self::synthesise_status(404), false)));
-            }
-            if matches!(err, CrawlError::Forbidden { .. } | CrawlError::WafBlocked { .. }) {
-                return LoopStep::Done(Ok((Self::synthesise_status(403), false)));
-            }
+        if self.config.soft_http_errors
+            && let Some(status) = soft_error_status(&err)
+        {
+            return LoopStep::Done(Ok((Self::synthesise_status(status), false)));
         }
 
         state.last_err = Some(err.clone());
@@ -562,5 +576,27 @@ impl CrawlEngine {
                 KeyValue::new("reason", escalation_reason_label(reason)),
             ],
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn soft_error_status_reports_403_for_a_waf_block_without_a_response_status() {
+        let blocked = CrawlError::waf_blocked("cloudflare", "waf/blocked: cloudflare");
+        assert_eq!(soft_error_status(&blocked), Some(403));
+    }
+
+    #[test]
+    fn soft_error_status_reports_not_found_and_forbidden_and_no_other_error() {
+        assert_eq!(
+            soft_error_status(&CrawlError::not_found("https://example.com/x")),
+            Some(404)
+        );
+        assert_eq!(soft_error_status(&CrawlError::forbidden("forbidden")), Some(403));
+        assert_eq!(soft_error_status(&CrawlError::rate_limited("rate_limited")), None);
+        assert_eq!(soft_error_status(&CrawlError::other("boom")), None);
     }
 }
