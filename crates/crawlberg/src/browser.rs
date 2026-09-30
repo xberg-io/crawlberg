@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::Instrument as _;
 
-use self::launch::launch_or_connect;
+use self::launch::{UserDataDir, launch_or_connect};
 use self::navigation::page_fetch;
 use crate::browser_pool::{BrowserPool, ExternalTabCleanup, kill_browser, release_browser};
 use crate::error::CrawlError;
@@ -26,6 +26,8 @@ use crate::types::{BrowserBackend, CookieInfo, CrawlConfig};
 
 mod launch;
 mod navigation;
+#[cfg(test)]
+mod one_shot_ssrf_tests;
 
 /// Process-wide monotonic session counter for `crawl.browser.session_id`.
 static BROWSER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -325,7 +327,10 @@ async fn one_shot_fetch(
     };
 
     let handler_handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
-    let origin = BrowserOrigin::of_session(config.browser.endpoint.as_deref(), data_dir.is_some());
+    let origin = BrowserOrigin::of_session(
+        config.browser.endpoint.as_deref(),
+        matches!(data_dir, Some(UserDataDir::Scratch(_))),
+    );
     let mut session = OneShotSession {
         browser: Some(Arc::new(browser)),
         firewall: None,
@@ -376,7 +381,7 @@ struct OneShotSession {
     /// caller's Chrome even when the fetch never reaches its own cleanup.
     open_tab: Option<TargetId>,
     handler_handle: Option<JoinHandle<()>>,
-    data_dir: Option<std::path::PathBuf>,
+    data_dir: Option<UserDataDir>,
     shutdown_timeout: Duration,
     origin: BrowserOrigin,
 }
@@ -415,6 +420,8 @@ impl Drop for OneShotSession {
 
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
+                // ~keep The task owns `data_dir`, so a runtime that shuts down before the task
+                // ~keep finishes still removes a scratch directory when it drops the task.
                 handle.spawn(async move {
                     if let Some(firewall) = firewall {
                         firewall.stop().await;
@@ -423,8 +430,8 @@ impl Drop for OneShotSession {
                     // ~keep browser itself. One launched with a throwaway profile is killed with
                     // ~keep interception still on, as `interact` does (xberg-io/crawlberg#468).
                     match (Arc::into_inner(browser), data_dir) {
-                        (Some(browser), Some(profile)) if origin == BrowserOrigin::Killed => {
-                            kill_browser(browser, handler_handle, profile, shutdown_timeout).await;
+                        (Some(browser), Some(UserDataDir::Scratch(profile))) if origin == BrowserOrigin::Killed => {
+                            kill_browser(browser, handler_handle, profile.path().to_path_buf(), shutdown_timeout).await;
                         }
                         (browser, profile) => {
                             match browser {
@@ -433,17 +440,16 @@ impl Drop for OneShotSession {
                                 }
                                 None => handler_handle.abort(),
                             }
-                            if let Some(dir) = profile {
-                                let _ = tokio::fs::remove_dir_all(&dir).await;
-                            }
+                            drop(profile);
                         }
                     }
                 });
             }
             Err(_) => {
                 tracing::warn!(
-                    "dropping a one-shot browser session outside a Tokio runtime; its Chrome \
-                     teardown is left to the process"
+                    "dropping a one-shot browser session outside a Tokio runtime; a launched Chrome \
+                     is killed without closing, a tab opened in a connected Chrome stays open, and \
+                     the profile directory is removed on a background thread"
                 );
             }
         }

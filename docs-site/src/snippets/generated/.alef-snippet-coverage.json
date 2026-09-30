@@ -170,6 +170,7 @@
     "c/metadata/metadata-headings.md",
     "c/metadata/metadata-hreflang.md",
     "c/metadata/metadata-keywords-author.md",
+    "c/metadata/metadata-og-twitter-addresses.md",
     "c/metadata/metadata-og-video-audio.md",
     "c/metadata/metadata-response-headers.md",
     "c/metadata/metadata-word-count.md",
@@ -430,6 +431,7 @@
     "csharp/metadata/metadata-headings.md",
     "csharp/metadata/metadata-hreflang.md",
     "csharp/metadata/metadata-keywords-author.md",
+    "csharp/metadata/metadata-og-twitter-addresses.md",
     "csharp/metadata/metadata-og-video-audio.md",
     "csharp/metadata/metadata-response-headers.md",
     "csharp/metadata/metadata-word-count.md",
@@ -698,6 +700,7 @@
     "dart/metadata/metadata-headings.md",
     "dart/metadata/metadata-hreflang.md",
     "dart/metadata/metadata-keywords-author.md",
+    "dart/metadata/metadata-og-twitter-addresses.md",
     "dart/metadata/metadata-og-video-audio.md",
     "dart/metadata/metadata-response-headers.md",
     "dart/metadata/metadata-word-count.md",
@@ -957,6 +960,7 @@
     "elixir/metadata/metadata-headings.md",
     "elixir/metadata/metadata-hreflang.md",
     "elixir/metadata/metadata-keywords-author.md",
+    "elixir/metadata/metadata-og-twitter-addresses.md",
     "elixir/metadata/metadata-og-video-audio.md",
     "elixir/metadata/metadata-response-headers.md",
     "elixir/metadata/metadata-word-count.md",
@@ -1223,6 +1227,7 @@
     "go/metadata/metadata-headings.md",
     "go/metadata/metadata-hreflang.md",
     "go/metadata/metadata-keywords-author.md",
+    "go/metadata/metadata-og-twitter-addresses.md",
     "go/metadata/metadata-og-video-audio.md",
     "go/metadata/metadata-response-headers.md",
     "go/metadata/metadata-word-count.md",
@@ -1491,6 +1496,7 @@
     "java/metadata/metadata-headings.md",
     "java/metadata/metadata-hreflang.md",
     "java/metadata/metadata-keywords-author.md",
+    "java/metadata/metadata-og-twitter-addresses.md",
     "java/metadata/metadata-og-video-audio.md",
     "java/metadata/metadata-response-headers.md",
     "java/metadata/metadata-word-count.md",
@@ -1759,6 +1765,7 @@
     "kotlin-android/metadata/metadata-headings.md",
     "kotlin-android/metadata/metadata-hreflang.md",
     "kotlin-android/metadata/metadata-keywords-author.md",
+    "kotlin-android/metadata/metadata-og-twitter-addresses.md",
     "kotlin-android/metadata/metadata-og-video-audio.md",
     "kotlin-android/metadata/metadata-response-headers.md",
     "kotlin-android/metadata/metadata-word-count.md",
@@ -2027,6 +2034,7 @@
     "php/metadata/metadata-headings.md",
     "php/metadata/metadata-hreflang.md",
     "php/metadata/metadata-keywords-author.md",
+    "php/metadata/metadata-og-twitter-addresses.md",
     "php/metadata/metadata-og-video-audio.md",
     "php/metadata/metadata-response-headers.md",
     "php/metadata/metadata-word-count.md",
@@ -2295,6 +2303,7 @@
     "python/metadata/metadata-headings.md",
     "python/metadata/metadata-hreflang.md",
     "python/metadata/metadata-keywords-author.md",
+    "python/metadata/metadata-og-twitter-addresses.md",
     "python/metadata/metadata-og-video-audio.md",
     "python/metadata/metadata-response-headers.md",
     "python/metadata/metadata-word-count.md",
@@ -2563,6 +2572,7 @@
     "ruby/metadata/metadata-headings.md",
     "ruby/metadata/metadata-hreflang.md",
     "ruby/metadata/metadata-keywords-author.md",
+    "ruby/metadata/metadata-og-twitter-addresses.md",
     "ruby/metadata/metadata-og-video-audio.md",
     "ruby/metadata/metadata-response-headers.md",
     "ruby/metadata/metadata-word-count.md",
@@ -2831,6 +2841,7 @@
     "rust/metadata/metadata-headings.md",
     "rust/metadata/metadata-hreflang.md",
     "rust/metadata/metadata-keywords-author.md",
+    "rust/metadata/metadata-og-twitter-addresses.md",
     "rust/metadata/metadata-og-video-audio.md",
     "rust/metadata/metadata-response-headers.md",
     "rust/metadata/metadata-word-count.md",
@@ -3090,6 +3101,7 @@
     "swift/metadata/metadata-headings.md",
     "swift/metadata/metadata-hreflang.md",
     "swift/metadata/metadata-keywords-author.md",
+    "swift/metadata/metadata-og-twitter-addresses.md",
     "swift/metadata/metadata-og-video-audio.md",
     "swift/metadata/metadata-response-headers.md",
     "swift/metadata/metadata-word-count.md",
@@ -3356,6 +3368,7 @@
     "typescript/metadata/metadata-headings.md",
     "typescript/metadata/metadata-hreflang.md",
     "typescript/metadata/metadata-keywords-author.md",
+    "typescript/metadata/metadata-og-twitter-addresses.md",
     "typescript/metadata/metadata-og-video-audio.md",
     "typescript/metadata/metadata-response-headers.md",
     "typescript/metadata/metadata-word-count.md",
@@ -3623,6 +3636,7 @@
     "wasm/metadata/metadata-headings.md",
     "wasm/metadata/metadata-hreflang.md",
     "wasm/metadata/metadata-keywords-author.md",
+    "wasm/metadata/metadata-og-twitter-addresses.md",
     "wasm/metadata/metadata-og-video-audio.md",
     "wasm/metadata/metadata-response-headers.md",
     "wasm/metadata/metadata-word-count.md",
@@ -3874,6 +3888,7 @@
     "zig/metadata/metadata-headings.md",
     "zig/metadata/metadata-hreflang.md",
     "zig/metadata/metadata-keywords-author.md",
+    "zig/metadata/metadata-og-twitter-addresses.md",
     "zig/metadata/metadata-og-video-audio.md",
     "zig/metadata/metadata-response-headers.md",
     "zig/metadata/metadata-word-count.md",
@@ -5994,6 +6009,18 @@
         "language": "c"
       },
       "path": "c/metadata/metadata-keywords-author.md",
+      "language": "c",
+      "target": "c",
+      "session": "c",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "c"
+      },
+      "path": "c/metadata/metadata-og-twitter-addresses.md",
       "language": "c",
       "target": "c",
       "session": "c",
@@ -9114,6 +9141,18 @@
         "language": "csharp"
       },
       "path": "csharp/metadata/metadata-keywords-author.md",
+      "language": "csharp",
+      "target": "csharp",
+      "session": "csharp",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "csharp"
+      },
+      "path": "csharp/metadata/metadata-og-twitter-addresses.md",
       "language": "csharp",
       "target": "csharp",
       "session": "csharp",
@@ -12338,6 +12377,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "dart"
+      },
+      "path": "dart/metadata/metadata-og-twitter-addresses.md",
+      "language": "dart",
+      "target": "dart",
+      "session": "dart",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "dart"
       },
@@ -15438,6 +15489,18 @@
         "language": "elixir"
       },
       "path": "elixir/metadata/metadata-keywords-author.md",
+      "language": "elixir",
+      "target": "elixir",
+      "session": "elixir",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "elixir"
+      },
+      "path": "elixir/metadata/metadata-og-twitter-addresses.md",
       "language": "elixir",
       "target": "elixir",
       "session": "elixir",
@@ -18630,6 +18693,18 @@
         "language": "go"
       },
       "path": "go/metadata/metadata-keywords-author.md",
+      "language": "go",
+      "target": "go",
+      "session": "go",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "go"
+      },
+      "path": "go/metadata/metadata-og-twitter-addresses.md",
       "language": "go",
       "target": "go",
       "session": "go",
@@ -21854,6 +21929,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "java"
+      },
+      "path": "java/metadata/metadata-og-twitter-addresses.md",
+      "language": "java",
+      "target": "java",
+      "session": "java",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "java"
       },
@@ -25062,6 +25149,18 @@
         "language": "kotlin_android"
       },
       "path": "kotlin-android/metadata/metadata-keywords-author.md",
+      "language": "kotlin",
+      "target": "kotlin_android",
+      "session": "kotlin_android",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "kotlin_android"
+      },
+      "path": "kotlin-android/metadata/metadata-og-twitter-addresses.md",
       "language": "kotlin",
       "target": "kotlin_android",
       "session": "kotlin_android",
@@ -28286,6 +28385,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "php"
+      },
+      "path": "php/metadata/metadata-og-twitter-addresses.md",
+      "language": "php",
+      "target": "php",
+      "session": "php",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "php"
       },
@@ -31502,6 +31613,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "python"
+      },
+      "path": "python/metadata/metadata-og-twitter-addresses.md",
+      "language": "python",
+      "target": "python",
+      "session": "python",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "python"
       },
@@ -34710,6 +34833,18 @@
         "language": "ruby"
       },
       "path": "ruby/metadata/metadata-keywords-author.md",
+      "language": "ruby",
+      "target": "ruby",
+      "session": "ruby",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "ruby"
+      },
+      "path": "ruby/metadata/metadata-og-twitter-addresses.md",
       "language": "ruby",
       "target": "ruby",
       "session": "ruby",
@@ -38391,6 +38526,20 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "rust"
+      },
+      "path": "rust/metadata/metadata-og-twitter-addresses.md",
+      "language": "rust",
+      "target": "rust",
+      "session": "rust",
+      "requires": [
+        "crate:tokio"
+      ],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "rust"
       },
@@ -41784,6 +41933,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "swift"
+      },
+      "path": "swift/metadata/metadata-og-twitter-addresses.md",
+      "language": "swift",
+      "target": "swift",
+      "session": "swift",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "swift"
       },
@@ -44968,6 +45129,18 @@
         "language": "node"
       },
       "path": "typescript/metadata/metadata-keywords-author.md",
+      "language": "typescript",
+      "target": "node",
+      "session": "node",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "node"
+      },
+      "path": "typescript/metadata/metadata-og-twitter-addresses.md",
       "language": "typescript",
       "target": "node",
       "session": "node",
@@ -48180,6 +48353,18 @@
     },
     {
       "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "wasm"
+      },
+      "path": "wasm/metadata/metadata-og-twitter-addresses.md",
+      "language": "typescript",
+      "target": "wasm",
+      "session": "wasm",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
         "fixture_id": "metadata_og_video_audio",
         "language": "wasm"
       },
@@ -51184,6 +51369,18 @@
         "language": "zig"
       },
       "path": "zig/metadata/metadata-keywords-author.md",
+      "language": "zig",
+      "target": "zig",
+      "session": "zig",
+      "requires": [],
+      "side_effect": "safe"
+    },
+    {
+      "key": {
+        "fixture_id": "metadata_og_twitter_addresses",
+        "language": "zig"
+      },
+      "path": "zig/metadata/metadata-og-twitter-addresses.md",
       "language": "zig",
       "target": "zig",
       "session": "zig",
@@ -62414,6 +62611,66 @@
     },
     {
       "fixture_id": "metadata_keywords_author",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "c"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "go"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "java"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "node"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "php"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "python"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
       "language": "zig"
     },
     {
@@ -78292,6 +78549,66 @@
     },
     {
       "fixture_id": "metadata_keywords_author",
+      "language": "zig"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "c"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "csharp"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "dart"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "elixir"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "go"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "java"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "kotlin_android"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "node"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "php"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "python"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "ruby"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "rust"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "swift"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
+      "language": "wasm"
+    },
+    {
+      "fixture_id": "metadata_og_twitter_addresses",
       "language": "zig"
     },
     {

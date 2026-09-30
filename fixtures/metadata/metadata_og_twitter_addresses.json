@@ -1,0 +1,51 @@
+{
+	"id": "metadata_og_twitter_addresses",
+	"description": "Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch",
+	"docs": {
+		"topic": "metadata",
+		"stem": "metadata-og-twitter-addresses",
+		"title": "Resolves relative Open Graph and Twitter card addresses and drops those the crawler cannot fetch"
+	},
+	"tags": ["metadata"],
+	"input": {
+		"config": {},
+		"mock_responses": [
+			{
+				"status_code": 200,
+				"headers": {
+					"content-type": "text/html; charset=utf-8"
+				},
+				"body_file": "html/og_twitter_addresses.html"
+			}
+		]
+	},
+	"assertions": [
+		{
+			"type": "equals",
+			"field": "status_code",
+			"value": 200
+		},
+		{
+			"type": "equals",
+			"field": "og.image",
+			"value": "https://example.com/dir/og.png"
+		},
+		{
+			"type": "equals",
+			"field": "twitter.image",
+			"value": "https://example.com/img/tw.png"
+		},
+		{
+			"type": "is_empty",
+			"field": "og.url"
+		},
+		{
+			"type": "is_empty",
+			"field": "og.video"
+		},
+		{
+			"type": "is_empty",
+			"field": "og.audio"
+		}
+	]
+}

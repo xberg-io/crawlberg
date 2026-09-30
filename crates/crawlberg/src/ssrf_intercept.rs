@@ -373,29 +373,144 @@ struct TestDelays {
     verdict: Duration,
     /// Between a request's verdict and the answer that delivers it to Chrome.
     deliver: Duration,
-    /// Before the listener takes in a paused request, as a busy host holds it.
-    receive: Duration,
     /// Before a watch's end closes a target, as Chrome under load is slow to destroy one.
     close: Duration,
-    /// Before a page opened while the check stops is dropped, as a flooded Chrome takes.
-    drop_late: Duration,
     /// Leave a closed page's context in place at its watch's end, as when Chrome fails the
     /// dispose, so the page is still open and sending when the watch gives up.
     keep_context: bool,
+    /// Before a page opened while the check stops is dropped, until the test gives the gate a
+    /// permit.
+    drop_late_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Between a request's verdict and its delivery, until the test gives the gate a permit.
     deliver_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Before the listener takes in a paused request, until the test gives the gate a permit.
     receive_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// Before a request's SSRF verdict, until the test gives the gate a permit.
-    verdict_gate: Option<Arc<VerdictGate>>,
+    verdict_gate: Option<Arc<UrlGate>>,
+    /// Between the verdict and the delivery of a request that belongs to no watched page, until
+    /// the test gives the gate a permit. Such a request waits on this gate in place of the
+    /// delivery gate.
+    unwatched_deliver_gate: Option<Arc<UrlGate>>,
+    /// The URLs of the paused requests the listener has taken in, recorded as each is taken in.
+    received: Arc<Mutex<Vec<String>>>,
     /// The pages the listener has dropped, recorded as each drop starts.
     dropped: Arc<Mutex<Vec<TargetId>>>,
+    /// Keep the browser up after the stop has turned interception off or left it on, as a slow
+    /// teardown does, and record the pages still open then.
+    stop_hold: Option<Arc<StopHold>>,
 }
 
-/// Holds each request before its SSRF verdict until the test gives a permit, and lists the URLs
-/// it has held, so a test knows which request the listener has taken in.
+/// How long a stopped check keeps its browser up before the stop returns, and the URLs of the
+/// pages Chrome still had open as that hold began.
 #[cfg(test)]
-struct VerdictGate {
+#[derive(Default)]
+pub(crate) struct StopHold {
+    hold: Duration,
+    open_pages: Mutex<Vec<String>>,
+}
+
+#[cfg(test)]
+impl StopHold {
+    /// The URLs of the pages Chrome still had open as the hold began.
+    pub(crate) fn open_pages(&self) -> Vec<String> {
+        lock(&self.open_pages).clone()
+    }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    static CALL_SITE_DELAYS: TestDelays;
+}
+
+/// Run `body`, a caller of [`BrowserFirewall::start`], so that every check it starts leaves a
+/// closed page's context in place, as when Chrome fails the dispose, and keeps the browser up for
+/// `hold` after its stop. A page that keeps sending is then still sending after the stop.
+#[cfg(test)]
+pub(crate) async fn with_session_page_left_open<F: std::future::Future>(
+    hold: Duration,
+    body: F,
+) -> (F::Output, Arc<StopHold>) {
+    let stop_hold = Arc::new(StopHold {
+        hold,
+        ..StopHold::default()
+    });
+    let delays = TestDelays {
+        keep_context: true,
+        stop_hold: Some(Arc::clone(&stop_hold)),
+        ..TestDelays::default()
+    };
+    (CALL_SITE_DELAYS.scope(delays, body).await, stop_hold)
+}
+
+/// A page on `localhost` that sends a request to a denied address every few milliseconds, and
+/// the config that loads it with a browser crawlberg launches.
+///
+/// ~keep The page is allowlisted by name; the denied server is the literal `127.0.0.1`, which
+/// ~keep `deny_private` refuses.
+#[cfg(test)]
+pub(crate) struct SendingSite {
+    pub(crate) seed: String,
+    pub(crate) config: CrawlConfig,
+    denied: wiremock::MockServer,
+    _site: wiremock::MockServer,
+}
+
+#[cfg(test)]
+impl SendingSite {
+    pub(crate) async fn start() -> Self {
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let denied = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_raw("denied", "text/plain"))
+            .mount(&denied)
+            .await;
+        let target = format!("http://127.0.0.1:{}/secret", denied.address().port());
+        let site = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    "<html><body><p>sending</p><script>setInterval(() => fetch({target:?} + '?' + \
+                     Math.random(), {{ mode: 'no-cors' }}).catch(() => 0), 5);</script></body></html>"
+                ),
+                "text/html",
+            ))
+            .mount(&site)
+            .await;
+        let seed = format!("http://localhost:{}/", site.address().port());
+        let config = CrawlConfig {
+            browser: crate::types::BrowserConfig {
+                backend: crate::types::BrowserBackend::Chromiumoxide,
+                mode: crate::types::BrowserMode::Always,
+                timeout: Duration::from_secs(20),
+                ..crate::types::BrowserConfig::default()
+            },
+            respect_robots_txt: false,
+            ..CrawlConfig::builder()
+                .ssrf_allowlist_host(crate::net::ssrf::HostMatcher::exact("localhost"))
+                .build()
+        };
+        Self {
+            seed,
+            config,
+            denied,
+            _site: site,
+        }
+    }
+
+    /// How many requests reached the denied address.
+    pub(crate) async fn denied_hits(&self) -> usize {
+        self.denied
+            .received_requests()
+            .await
+            .map_or(0, |received| received.len())
+    }
+}
+
+/// Holds each request until the test gives a permit, and lists the URLs it has held, so a test
+/// knows which request the listener has taken in.
+#[cfg(test)]
+struct UrlGate {
     permits: tokio::sync::Semaphore,
     held: Mutex<Vec<String>>,
 }
@@ -446,7 +561,7 @@ impl BrowserFirewall {
             origin,
             context,
             #[cfg(test)]
-            TestDelays::default(),
+            CALL_SITE_DELAYS.try_with(TestDelays::clone).unwrap_or_default(),
         )
         .await
     }
@@ -898,6 +1013,16 @@ async fn serve(
             if shared.context != PageContext::Shared && shared.origin != BrowserOrigin::Killed {
                 disable_fetch(browser).await;
             }
+            #[cfg(test)]
+            if let Some(stop_hold) = &shared.delays.stop_hold {
+                let open = browser
+                    .execute(GetTargetsParams::default())
+                    .await
+                    .map(|response| response.result.target_infos)
+                    .unwrap_or_default();
+                lock(&stop_hold.open_pages).extend(open.into_iter().map(|info| info.url));
+                tokio::time::sleep(stop_hold.hold).await;
+            }
             for done in stopped {
                 let _ = done.send(());
             }
@@ -912,7 +1037,9 @@ async fn serve(
                 Some(Command::Opened(root, context)) if stopping.is_some() => {
                     draining.push(Box::pin(async move {
                         #[cfg(test)]
-                        tokio::time::sleep(shared.delays.drop_late).await;
+                        if let Some(gate) = &shared.delays.drop_late_gate {
+                            let _ = gate.acquire().await;
+                        }
                         #[cfg(test)]
                         lock(&shared.delays.dropped).push(root.clone());
                         drop_page(browser, root, context).await;
@@ -984,10 +1111,10 @@ async fn serve(
                     }
                     #[cfg(test)]
                     {
-                        tokio::time::sleep(shared.delays.receive).await;
                         if let Some(gate) = &shared.delays.receive_gate {
                             let _ = gate.acquire().await;
                         }
+                        lock(&shared.delays.received).push(event.request.url.clone());
                     }
                     let paused_at = Instant::now();
                     running.push(Box::pin(async move {
@@ -1276,7 +1403,12 @@ async fn answer(browser: &Browser, shared: &Shared, event: &EventRequestPaused, 
     #[cfg(test)]
     {
         tokio::time::sleep(shared.delays.deliver).await;
-        if let Some(gate) = &shared.delays.deliver_gate {
+        if _in_flight.is_none()
+            && let Some(gate) = &shared.delays.unwatched_deliver_gate
+        {
+            lock(&gate.held).push(event.request.url.clone());
+            let _ = gate.permits.acquire().await;
+        } else if let Some(gate) = &shared.delays.deliver_gate {
             let _ = gate.acquire().await;
         }
     }
@@ -1926,9 +2058,13 @@ mod race_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_stream::StreamExt;
 
-    use super::{
-        ACTION_GRACE, BrowserFirewall, BrowserOrigin, FetchDisableParams, PageContext, TestDelays, VerdictGate,
-    };
+    use super::{ACTION_GRACE, BrowserFirewall, BrowserOrigin, FetchDisableParams, PageContext, TestDelays, UrlGate};
+
+    /// How long a test gives a stop to finish, or interception to turn off, while the check still
+    /// holds a refusal it must deliver first. A stop that does not wait for the refusal finishes
+    /// within milliseconds; one that waits cannot finish until the test lets the refusal go, so the
+    /// bound only decides how long a correct run waits.
+    const STOP_BOUND: Duration = Duration::from_secs(1);
 
     #[allow(
         clippy::print_stderr,
@@ -1999,13 +2135,21 @@ mod race_tests {
 
     /// Whether `hits` records a connection within five seconds.
     async fn served(hits: &Arc<AtomicUsize>) -> bool {
-        for _ in 0..50 {
+        served_within(hits, Duration::from_secs(5)).await
+    }
+
+    /// Whether `hits` records a connection within `bound`.
+    async fn served_within(hits: &Arc<AtomicUsize>, bound: Duration) -> bool {
+        let deadline = Instant::now() + bound;
+        loop {
             if hits.load(Ordering::SeqCst) > 0 {
                 return true;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        false
     }
 
     /// How many browser contexts the browser has besides its default one.
@@ -2617,7 +2761,7 @@ mod race_tests {
         let Some(browser) = launch(test_name).await else {
             return;
         };
-        let gate = Arc::new(VerdictGate {
+        let gate = Arc::new(UrlGate {
             permits: tokio::sync::Semaphore::new(1),
             held: std::sync::Mutex::default(),
         });
@@ -2673,6 +2817,24 @@ mod race_tests {
         true
     }
 
+    /// Wait up to thirty seconds for Chrome to pause a request for `url`; `false` if it never did.
+    /// The bound only stops a hang.
+    async fn wait_for_pause(
+        paused: &mut chromiumoxide::listeners::EventStream<super::EventRequestPaused>,
+        url: &str,
+    ) -> bool {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while let Some(event) = paused.next().await {
+                if event.request.url == url {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     /// Start a check with `delays`, open a page with it, watch it, and give it a real origin.
     async fn watched_page(
         browser: &Arc<Browser>,
@@ -2704,19 +2866,24 @@ mod race_tests {
     /// A watch that ends has failed every request of its page it refused: the page sees the
     /// refused `fetch` rejected by the time `park` returns.
     ///
-    /// ~keep The injected delivery delay holds the refusal between its verdict and the
-    /// ~keep `Fetch.failRequest` that delivers it, where a slow CDP round trip would hold it.
+    /// ~keep The delivery gate holds the refusal between its verdict and the `Fetch.failRequest`
+    /// ~keep that delivers it, where a slow CDP round trip would hold it. A park that returns
+    /// ~keep while the gate is shut has not waited, and the page still sees the fetch pending.
+    /// ~keep The half second only gives such a park time to return; a park that waits cannot
+    /// ~keep return before the gate opens, since its wait is bounded at `CLOSE_TIMEOUT`.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_refused_request_is_failed_before_its_watch_ends() {
         let test_name = "a_refused_request_is_failed_before_its_watch_ends";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
         let delays = TestDelays {
-            deliver: Duration::from_millis(1000),
+            deliver_gate: Some(Arc::clone(&gate)),
             ..TestDelays::default()
         };
         let (firewall, page, watch) = watched_page(&browser, delays).await;
+        gate.acquire().await.expect("the gate is never closed").forget();
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
             .evaluate(format!(
@@ -2725,7 +2892,14 @@ mod race_tests {
             ))
             .await;
         let judged = wait_for_refusal(&watch, &denied).await;
-        watch.park().await;
+        let mut parking = Box::pin(watch.park());
+        if tokio::time::timeout(Duration::from_millis(500), &mut parking)
+            .await
+            .is_err()
+        {
+            gate.add_permits(1);
+            parking.await;
+        }
         let mut probe = String::new();
         for _ in 0..30 {
             probe = page
@@ -2739,6 +2913,7 @@ mod race_tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        gate.add_permits(1);
         firewall.stop().await;
         drop(page);
         close(browser).await;
@@ -2760,14 +2935,19 @@ mod race_tests {
     /// Stopping the check waits until a refusal it is delivering has reached Chrome, so the
     /// refused request is failed rather than let through when interception turns off. Once the
     /// check has stopped, a tab outside the check reaches the network again.
+    ///
+    /// ~keep The delivery gate holds the refusal, so the stop must still be waiting when the
+    /// ~keep bound ends. The request itself cannot show a stop that skips it: disposing the page's
+    /// ~keep context fails the held request anyway.
     #[tokio::test(flavor = "multi_thread")]
     async fn stopping_the_check_still_fails_a_refused_request() {
         let test_name = "stopping_the_check_still_fails_a_refused_request";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
         let delays = TestDelays {
-            deliver: Duration::from_millis(500),
+            deliver_gate: Some(Arc::clone(&gate)),
             ..TestDelays::default()
         };
         let (firewall, page, watch) = watched_page(&browser, delays).await;
@@ -2780,14 +2960,20 @@ mod race_tests {
             .await;
         tokio::time::sleep(Duration::from_millis(300)).await;
         let reached_while_on = before_hits.load(Ordering::SeqCst);
+        gate.acquire().await.expect("the gate is never closed").forget();
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
             .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        tokio::time::timeout(Duration::from_secs(10), firewall.stop())
-            .await
-            .expect("stopping the check must finish");
+        let judged = wait_for_refusal(&watch, &denied).await;
+        let mut stopping = Box::pin(firewall.stop());
+        let stopped_before_delivery = tokio::time::timeout(STOP_BOUND, &mut stopping).await.is_ok();
+        gate.add_permits(1);
+        if !stopped_before_delivery {
+            tokio::time::timeout(Duration::from_secs(10), stopping)
+                .await
+                .expect("stopping the check must finish");
+        }
         let reached = served(&denied_hits).await;
         let (after, after_hits) = denied_listener().await;
         let _ = other
@@ -2797,6 +2983,14 @@ mod race_tests {
         drop(watch);
         drop((page, other));
         close(browser).await;
+        assert!(
+            judged,
+            "{test_name}: the check must refuse the request before the stop, or the test shows nothing"
+        );
+        assert!(
+            !stopped_before_delivery,
+            "{test_name}: the stop must wait for the refusal it is delivering"
+        );
         assert_eq!(
             reached_while_on, 0,
             "{test_name}: the tab's request must be refused while the check runs, or the probe after \
@@ -2815,18 +3009,20 @@ mod race_tests {
     /// Dropping the check without stopping it still delivers the refusal it is sending, then
     /// turns interception off, so the browser is not left paused with nothing answering.
     ///
-    /// ~keep The watch is dropped right after the check, so the listener's commands close while
-    /// ~keep it is still delivering. A tab opened outside the check after it started is the
-    /// ~keep probe: on a launched browser its requests belong to no watch, so they are refused
-    /// ~keep until interception is off, and reach the network after.
+    /// ~keep The delivery gate holds the refusal until the check and its watch are dropped, so the
+    /// ~keep listener's commands close while it is still delivering. A tab opened outside the
+    /// ~keep check after it started is the probe: on a launched browser its requests belong to no
+    /// ~keep watch, so they are refused until interception is off, and reach the network after.
+    /// ~keep The probe must not get through while the gate still holds the refusal.
     #[tokio::test(flavor = "multi_thread")]
     async fn dropping_the_check_delivers_its_refusals_and_turns_interception_off() {
         let test_name = "dropping_the_check_delivers_its_refusals_and_turns_interception_off";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
         let delays = TestDelays {
-            deliver: Duration::from_millis(500),
+            deliver_gate: Some(Arc::clone(&gate)),
             ..TestDelays::default()
         };
         let (firewall, page, watch) = watched_page(&browser, delays).await;
@@ -2841,19 +3037,30 @@ mod race_tests {
             .await;
         tokio::time::sleep(Duration::from_millis(300)).await;
         let reached_while_on = probe_hits.load(Ordering::SeqCst);
+        gate.acquire().await.expect("the gate is never closed").forget();
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
             .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let judged = wait_for_refusal(&watch, &denied).await;
         drop(firewall);
         drop(watch);
+        let off_before_delivery = served_within(&probe_hits, STOP_BOUND).await;
+        gate.add_permits(1);
         let reached_after_drop = served(&probe_hits).await;
         drop((page, other));
         close(browser).await;
+        assert!(
+            judged,
+            "{test_name}: the check must refuse the request before it is dropped, or the test shows nothing"
+        );
         assert_eq!(
             reached_while_on, 0,
             "{test_name}: another tab's requests must be refused while interception is on"
+        );
+        assert!(
+            !off_before_delivery,
+            "{test_name}: interception must stay on until the refusal the check is delivering has reached Chrome"
         );
         assert_eq!(
             denied_hits.load(Ordering::SeqCst),
@@ -2959,9 +3166,9 @@ mod race_tests {
     /// ~keep the late page is opened and watched: the stop is sent before the late page's
     /// ~keep `Opened` on the same channel, and the gate opens only once the watch has been
     /// ~keep answered. Two 100 ms sleeps held this before and failed their setup in 13 of 20
-    /// ~keep runs on a loaded host. The injected drop delay makes the late page's drop the
-    /// ~keep last thing the drain waits for: a drop of a few milliseconds that the stop did not
-    /// ~keep wait for still finished before the stop did (0 of 5 red).
+    /// ~keep runs on a loaded host. A second gate holds the late page's drop until the watch has
+    /// ~keep been answered and the refusal let go, so the drop is the last thing the drain waits
+    /// ~keep for, and the late page cannot be dropped before its open returns.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_page_watched_while_the_check_stops_is_refused() {
         let test_name = "a_page_watched_while_the_check_stops_is_refused";
@@ -2970,9 +3177,10 @@ mod race_tests {
         };
         for context in [PageContext::Isolated, PageContext::Shared] {
             let gate = Arc::new(tokio::sync::Semaphore::new(1));
+            let drop_gate = Arc::new(tokio::sync::Semaphore::new(0));
             let dropped = Arc::new(std::sync::Mutex::default());
             let delays = TestDelays {
-                drop_late: Duration::from_millis(1500),
+                drop_late_gate: Some(Arc::clone(&drop_gate)),
                 deliver_gate: Some(Arc::clone(&gate)),
                 dropped: Arc::clone(&dropped),
                 ..TestDelays::default()
@@ -3002,6 +3210,7 @@ mod race_tests {
                 Err(error) => Err(crate::error::CrawlError::browser_error(error.to_string())),
             };
             gate.add_permits(1);
+            drop_gate.add_permits(1);
             let _ = stopping.await;
             let late_target = late.as_ref().ok().map(|late| late.target_id().clone());
             let late_dropped = late_target
@@ -3079,40 +3288,58 @@ mod race_tests {
     /// with its context before interception turns off, so a request Chrome paused that the
     /// listener has not taken in yet reaches nothing.
     ///
-    /// ~keep The injected receive delay holds the pause in the listener, as a busy host does:
-    /// ~keep Chrome has paused the request and the listener has not counted it when the stop
-    /// ~keep comes. Turning interception off then would continue the request (measured 14 leaks
-    /// ~keep in 15 loaded runs for a stop with the page open, xberg-io/crawlberg#484), and no
-    /// ~keep wait on what the listener has received can see it.
+    /// ~keep The receive gate holds the pause in the listener, as a busy host does, until the park
+    /// ~keep and the stop are sent: Chrome has paused the request and the listener has not
+    /// ~keep counted it when the stop comes. Turning interception off then would continue the
+    /// ~keep request (measured 14 leaks in 15 loaded runs for a stop with the page open,
+    /// ~keep xberg-io/crawlberg#484), and no wait on what the listener has received can see it.
     #[tokio::test(flavor = "multi_thread")]
     async fn stopping_the_check_does_not_release_a_parked_pages_pending_request() {
         let test_name = "stopping_the_check_does_not_release_a_parked_pages_pending_request";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
         let delays = TestDelays {
-            receive: Duration::from_millis(500),
+            receive_gate: Some(Arc::clone(&gate)),
             ..TestDelays::default()
         };
+        let received = Arc::clone(&delays.received);
         let (firewall, page, watch) = watched_page(&browser, delays).await;
+        gate.acquire().await.expect("the gate is never closed").forget();
         let target = page.target_id().clone();
+        let mut paused = browser
+            .event_listener::<super::EventRequestPaused>()
+            .await
+            .expect("the test must see the paused requests");
         let (denied, denied_hits) = denied_listener().await;
         let _ = page
             .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let pending = watch.page.in_flight.load(Ordering::Acquire);
-        watch.park().await;
-        tokio::time::timeout(Duration::from_secs(10), firewall.stop())
-            .await
-            .expect("stopping the check must finish");
+        let denied_paused = wait_for_pause(&mut paused, &denied).await;
+        // ~keep Only the denied request counts: the page's favicon can be taken in before the
+        // ~keep gate shuts, and still be in flight here.
+        let denied_taken_in = super::lock(&received).contains(&denied);
+        let mut parking = Box::pin(watch.park());
+        let park_held = futures::poll!(&mut parking).is_pending();
+        let mut stopping = Box::pin(firewall.stop());
+        let stop_held = futures::poll!(&mut stopping).is_pending();
+        gate.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            parking.await;
+            stopping.await;
+        })
+        .await
+        .expect("stopping the check must finish");
         let reached = served(&denied_hits).await;
         let still_open = target_is_open(&browser, &target).await;
         drop(page);
         close(browser).await;
-        assert_eq!(
-            pending, 0,
-            "{test_name}: the listener must not have taken the request in before the park, or the test shows nothing"
+        assert!(
+            denied_paused && !denied_taken_in && park_held && stop_held,
+            "{test_name}: Chrome must pause the request and the listener hold it until the park and the stop are sent, \
+             or the test shows nothing (paused {denied_paused}, taken in {denied_taken_in}, park held {park_held}, \
+             stop held {stop_held})"
         );
         assert!(
             !reached,
@@ -3307,6 +3534,7 @@ mod race_tests {
             receive_gate: Some(Arc::clone(&gate)),
             ..TestDelays::default()
         };
+        let received = Arc::clone(&delays.received);
         let (firewall, page, watch) = watched_page_in(&browser, PageContext::Shared, delays).await;
         gate.acquire().await.expect("the gate is never closed").forget();
         let target = page.target_id().clone();
@@ -3319,17 +3547,10 @@ mod race_tests {
         let _ = page
             .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
             .await;
-        let denied_paused = tokio::time::timeout(Duration::from_secs(10), async {
-            while let Some(event) = paused.next().await {
-                if event.request.url == denied {
-                    return true;
-                }
-            }
-            false
-        })
-        .await
-        .unwrap_or(false);
-        let pending = watch.page.in_flight.load(Ordering::Acquire);
+        let denied_paused = wait_for_pause(&mut paused, &denied).await;
+        // ~keep Only the denied request counts: the page's favicon can be taken in before the
+        // ~keep gate shuts, and still be in flight here.
+        let denied_taken_in = super::lock(&received).contains(&denied);
         let mut parking = Box::pin(watch.park());
         let park_held = futures::poll!(&mut parking).is_pending();
         let mut stopping = Box::pin(firewall.stop());
@@ -3361,9 +3582,10 @@ mod race_tests {
         drop((page, other));
         let closed = tokio::time::timeout(Duration::from_secs(20), close(browser)).await;
         assert!(
-            denied_paused && pending == 0 && park_held && stop_held,
+            denied_paused && !denied_taken_in && park_held && stop_held,
             "{test_name}: Chrome must pause the request and the listener hold it until the park and the stop are sent, \
-             or the test shows nothing (paused {denied_paused}, taken in {pending}, park held {park_held}, stop held {stop_held})"
+             or the test shows nothing (paused {denied_paused}, taken in {denied_taken_in}, park held {park_held}, \
+             stop held {stop_held})"
         );
         assert!(
             !reached,
@@ -3464,29 +3686,75 @@ mod race_tests {
 
     /// A stop waits only for the answers it found started, so a page that keeps sending cannot
     /// hold it off.
+    ///
+    /// ~keep The delivery gate holds the watched page's refusal until the stop has taken it in,
+    /// ~keep so the stop has an answer of its own to wait for. The page that keeps sending is a
+    /// ~keep tab outside the check: the stop does not drop it, so its requests keep arriving
+    /// ~keep until interception is off. It starts sending only once the stop has been taken in,
+    /// ~keep and a second gate holds each of its answers until the test ends, so a stop that
+    /// ~keep waited for the later answers could never finish. The page's favicon request is
+    /// ~keep usually held with the refusal, since Chrome sends it after the page loads (22 of 23
+    /// ~keep runs held both), so the count is at least one, not exactly one.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_page_that_keeps_sending_does_not_hold_the_stop_off() {
         let test_name = "a_page_that_keeps_sending_does_not_hold_the_stop_off";
         let Some(browser) = launch(test_name).await else {
             return;
         };
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        let later = Arc::new(UrlGate {
+            permits: tokio::sync::Semaphore::new(0),
+            held: std::sync::Mutex::default(),
+        });
         let delays = TestDelays {
-            deliver: Duration::from_millis(300),
+            deliver_gate: Some(Arc::clone(&gate)),
+            unwatched_deliver_gate: Some(Arc::clone(&later)),
             ..TestDelays::default()
         };
+        let dropped = Arc::clone(&delays.dropped);
         let (firewall, page, watch) = watched_page(&browser, delays).await;
+        gate.acquire().await.expect("the gate is never closed").forget();
+        let target = page.target_id().clone();
+        let other = browser.new_page("about:blank").await.expect("page");
         let (denied, _hits) = denied_listener().await;
         let _ = page
+            .evaluate(format!("fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0); 1"))
+            .await;
+        let judged = wait_for_refusal(&watch, &denied).await;
+        let mut stopping = Box::pin(firewall.stop());
+        let _ = futures::poll!(&mut stopping);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !super::lock(&dropped).contains(&target) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        let taken_in = super::lock(&dropped).contains(&target);
+        let held = watch.page.in_flight.load(Ordering::Acquire);
+        let later_before_stop = super::lock(&later.held).len();
+        let _ = other
             .evaluate(format!(
                 "setInterval(() => fetch({denied:?}, {{ mode: 'no-cors' }}).catch(() => 0), 5); 1"
             ))
             .await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let stopped = tokio::time::timeout(Duration::from_secs(5), firewall.stop()).await;
-        drop((watch, page));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while super::lock(&later.held).is_empty() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        let later_held = !super::lock(&later.held).is_empty();
+        gate.add_permits(1);
+        let stopped = tokio::time::timeout(Duration::from_secs(10), &mut stopping)
+            .await
+            .is_ok();
+        later.permits.add_permits(1);
+        drop((stopping, watch, page, other));
         close(browser).await;
         assert!(
-            stopped.is_ok(),
+            judged && taken_in && held >= 1 && later_before_stop == 0 && later_held,
+            "{test_name}: the stop must take in the page's held refusal, and only an answer the other tab gets after \
+             the stop must be held, or the test shows nothing (refused {judged}, stop taken in {taken_in}, \
+             held {held}, held before the stop {later_before_stop}, held after {later_held})"
+        );
+        assert!(
+            stopped,
             "{test_name}: the stop must finish while the page keeps sending"
         );
     }
@@ -3552,7 +3820,7 @@ mod race_tests {
         let Some(browser) = launch(test_name).await else {
             return;
         };
-        let gate = Arc::new(VerdictGate {
+        let gate = Arc::new(UrlGate {
             permits: tokio::sync::Semaphore::new(1),
             held: std::sync::Mutex::default(),
         });

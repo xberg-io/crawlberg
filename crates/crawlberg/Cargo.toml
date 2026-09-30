@@ -22,7 +22,7 @@ default = ["native-runtime"]
 # ~keep Those Tokio features live under the non-wasm target dependencies so wasm32 builds never request `mio`.
 native-runtime = []
 browser = ["browser-chromiumoxide"]
-browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:sysinfo", "native-runtime"]
+browser-chromiumoxide = ["dep:chromiumoxide", "dep:dirs", "dep:rustix", "dep:sysinfo", "dep:tempfile", "native-runtime"]
 browser-native = ["dep:crawlberg-browser", "native-runtime"]
 # ~keep `liter-llm/tower` supplies ManagedClient and InFlightLimitLayer; without it the
 # ~keep in-flight bound in `LlmExtractorConfig` has no middleware stack to attach to.
@@ -67,9 +67,11 @@ blake3 = { workspace = true }
 chromiumoxide = { workspace = true, optional = true }
 chrono = { workspace = true }
 crawlberg-browser = { workspace = true, optional = true }
+crawlberg-robots = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true, optional = true }
 encoding_rs = { workspace = true }
+fancy-regex = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 html-escape = { workspace = true }
@@ -88,13 +90,15 @@ opentelemetry-semantic-conventions = { workspace = true }
 percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 regex = { workspace = true }
+regex-syntax = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-sysinfo = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true, features = ["system"] }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tl = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
@@ -123,6 +127,11 @@ getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # ~keep source in its `unsupported` backend); web-time backs Instant with performance.now().
 web-time = "1"
 
+# ~keep The Chrome profile teardown kills through a pidfd on Linux, so a reused pid is never killed,
+# ~keep and polls it to wait until the killed process has ended.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, optional = true, features = ["event", "process", "std"] }
+
 [dev-dependencies]
 async-trait = { workspace = true }
 criterion = { workspace = true }
@@ -143,6 +152,10 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"
 tokio-stream = { workspace = true }
 tracing-subscriber = { workspace = true }
 wiremock = "0.6"
+
+# ~keep A profile teardown test holds a thread of its child at its exit with ptrace.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = { workspace = true }
 
 [[bench]]
 name = "citations"
