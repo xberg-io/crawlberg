@@ -134,7 +134,13 @@ async fn claim_user_data_dir(config: &CrawlConfig) -> Result<(UserDataDir, Optio
     let Some(name) = config.browser_profile.as_deref() else {
         return Ok((resolve_user_data_dir(config)?, None));
     };
-    let lock = profile_lock(&crate::browser_profile::BrowserProfile::new(name)?.user_data_dir);
+    let profile = crate::browser_profile::BrowserProfile::new(name)?;
+    if !profile.exists() {
+        profile.create()?;
+    }
+    // ~keep A symlink in the profiles directory gives one directory a second name; both names
+    // ~keep must share one lock.
+    let lock = profile_lock(&std::fs::canonicalize(&profile.user_data_dir).unwrap_or(profile.user_data_dir));
     if config.save_browser_profile {
         let hold = lock.write_owned().await;
         Ok((resolve_user_data_dir(config)?, Some(hold)))

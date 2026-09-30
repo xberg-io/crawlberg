@@ -100,6 +100,9 @@ async fn scrape_ok(test_name: &str, what: &str, config: CrawlConfig, url: &str) 
 
 /// A scrape that does not save the profile, started as soon as a saved scrape on the same profile
 /// returns, copies the profile the saved scrape's Chrome wrote.
+///
+/// ~keep Without the lock this fails only when the copy meets a file Chrome renames, so it is
+/// ~keep often green; the stuck-Chrome test below checks the same order on every run.
 #[tokio::test]
 async fn an_unsaved_scrape_right_after_a_saved_one_copies_the_profile() {
     let test_name = "an_unsaved_scrape_right_after_a_saved_one_copies_the_profile";
@@ -143,6 +146,44 @@ async fn scrapes_started_together_on_one_profile_all_succeed() {
             ),
         );
     }
+}
+
+/// Two profile names for one directory, the second a symlink to the first, share one lock: saved
+/// scrapes started together on both names all succeed.
+#[cfg(unix)]
+#[tokio::test]
+async fn saved_scrapes_on_a_profile_and_a_symlink_to_it_all_succeed() {
+    let test_name = "saved_scrapes_on_a_profile_and_a_symlink_to_it_all_succeed";
+    if chrome_or_skip(test_name).is_none() {
+        return;
+    }
+    let real = BrowserProfile::new(&unique_profile_name("symlink-real")).expect("profile name must be valid");
+    real.create().expect("profile must be creatable");
+    let _guard = ProfileGuard(real.clone());
+    let alias = BrowserProfile::new(&unique_profile_name("symlink-alias")).expect("profile name must be valid");
+    std::os::unix::fs::symlink(&real.user_data_dir, &alias.user_data_dir).expect("symlink must be creatable");
+    let url = start_cookie_server().await;
+    let mut failures = Vec::new();
+    for round in 1..=3 {
+        let on_real = create_engine(Some(config_with_profile(&real.name, true))).expect("engine must build");
+        let on_alias = create_engine(Some(config_with_profile(&alias.name, true))).expect("engine must build");
+        let (on_real, on_alias) = tokio::join!(scrape(&on_real, &url), scrape(&on_alias, &url));
+        for (what, result) in [("the profile", on_real), ("the symlink", on_alias)] {
+            if let Err(error) = result {
+                failures.push(format!("round {round}, {what}: {error:?}"));
+            }
+        }
+    }
+    // ~keep An unsaved scrape waits until the last saved Chrome is reaped, so that Chrome cannot
+    // ~keep recreate the profile directory after the guard deletes it.
+    let after = create_engine(Some(config_with_profile(&real.name, false))).expect("engine must build");
+    let _ = scrape(&after, &url).await;
+    let _ = std::fs::remove_file(&alias.user_data_dir);
+    assert!(
+        failures.is_empty(),
+        "{test_name}: every saved scrape must succeed, {} of 6 failed: {failures:?}",
+        failures.len()
+    );
 }
 
 /// Write an executable `/bin/sh` script at `path`.
