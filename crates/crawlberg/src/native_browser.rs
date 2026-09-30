@@ -18,6 +18,9 @@ static NATIVE_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Render `url` with the native backend. Returns the page, the URLs the SSRF policy refused for
 /// requests the page sent, and the redirects the backend followed within `max_redirects`.
+/// ~keep Only the browser tier in `browser.rs` calls it; a native scrape renders each
+/// ~keep hop with `native_browser_render`.
+#[cfg(any(feature = "browser", test))]
 pub(crate) async fn native_browser_fetch(
     url: &str,
     config: &CrawlConfig,
@@ -188,6 +191,7 @@ fn native_wait_until(wait: &BrowserWait) -> crawlberg_browser::adapter::NativeBr
 ///
 /// `secure` and `http_only` are not tracked by [`CookieInfo`], so they are sent
 /// as `false`; the render only needs name/value/domain/path to replay a session.
+#[cfg(any(feature = "browser", test))]
 fn to_native_cookies(prior_cookies: Option<&[CookieInfo]>) -> Vec<NBCookie> {
     prior_cookies
         .unwrap_or(&[])

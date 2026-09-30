@@ -178,9 +178,12 @@ impl std::fmt::Debug for CrawlResponse {
 /// The URL a self-redirecting fetcher landed on, and the redirects it followed: HTTP redirects,
 /// and the navigations the page started, one each.
 ///
-/// ~keep Only the browser tier builds one, so without the `browser` feature nothing does.
+/// ~keep Only a browser tier builds one, so without a browser feature nothing does.
 #[derive(Debug, Clone)]
-#[cfg_attr(any(target_arch = "wasm32", not(feature = "browser")), allow(dead_code))]
+#[cfg_attr(
+    any(target_arch = "wasm32", not(any(feature = "browser", feature = "browser-native"))),
+    allow(dead_code)
+)]
 pub struct Landing {
     pub url: String,
     pub redirects: usize,

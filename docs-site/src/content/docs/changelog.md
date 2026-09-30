@@ -189,6 +189,15 @@ title: "Changelog"
   that host's subdomains. In `crawlberg-browser`, `NativeCookie` gains `host_only`, so a struct
   literal of it needs the new field.
 
+- **The native browser matched a cookie by its name alone.** A cookie with the same name but
+  another path, or another `Domain` setting, replaced the first cookie. A deletion for one path
+  removed the cookie at every path. A cookie set without a `Path` took the whole request path, a
+  `Path` that did not start with `/` was kept as given, and the path `/only` also matched
+  `/onlyfoo`. The native browser now identifies a cookie by its name, its path and whether it
+  has a `Domain`. A missing or relative `Path` gives the directory of the request path, and a
+  path matches only at a `/` boundary. A page over plain http can no longer overwrite or delete
+  a Secure cookie, and a `__Secure-` or `__Host-` cookie that breaks its prefix rules is ignored.
+
 - **A native scrape through a meta refresh listed only the last page's refused addresses.**
   `ssrf_refused_urls` now lists the addresses the SSRF policy refused on every page of the chain.
 

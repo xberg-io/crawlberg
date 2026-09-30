@@ -1351,18 +1351,18 @@ async fn a_cross_origin_fetch_with_a_wildcard_allow_origin_header_succeeds() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
-    let script = fetch_script("/setcookie", "");
+    let script = fetch_script("/api/setcookie", "");
     let html = format!("<html><body><script>{script}</script></body></html>");
     let with_cookie = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: jsfetch=1\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     let base = serve_raw(raw(&[
         ("/", &ok_response("text/html", &html)),
-        ("/setcookie", with_cookie),
+        ("/api/setcookie", with_cookie),
     ]))
     .await;
     let mut page = test_page();
     page.navigate(&base).await.expect("navigate");
 
-    // The cookie is stored against the fetched path, so it is not returned for the page path.
+    // The cookie takes the default path of the fetched URL, so it is not returned for the page path.
     let stored = page.context.cookie_jar.snapshot();
     assert_eq!(
         stored,
@@ -1370,7 +1370,7 @@ async fn a_set_cookie_on_a_js_fetch_response_reaches_the_shared_jar() {
             "jsfetch".to_string(),
             "1".to_string(),
             "127.0.0.1".to_string(),
-            "/setcookie".to_string(),
+            "/api".to_string(),
             false,
             false,
             true
